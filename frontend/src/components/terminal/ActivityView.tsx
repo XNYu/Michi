@@ -26,6 +26,8 @@ import {
   ACTIVITY_PREVIEW_LIMIT,
   truncateActivityBuckets,
 } from './activityTruncation';
+import { withoutSystemWorkspaces } from '../../state/assistant/systemWorkspace';
+import { isVisibleConversationNode } from '../../state/conversationVisibility';
 
 function useOptionalAgentDomain() {
   try {
@@ -97,7 +99,7 @@ function hasStreamingNode(
   return false;
 }
 
-function deriveActivityData(
+export function deriveActivityData(
   projects: readonly Project[],
   nodes: Record<string, ChatNodeState>,
 ): ActivityTree[] {
@@ -107,7 +109,7 @@ function deriveActivityData(
     for (const tree of project.trees) {
       if (tree.archivedAt) continue;
       const rootNode = nodes[tree.rootNodeId];
-      if (!rootNode || rootNode.deletedAt) continue;
+      if (!rootNode || rootNode.deletedAt || !isVisibleConversationNode(rootNode)) continue;
       const streaming = hasStreamingNode(tree, project, nodes);
       const bucket = getTimeBucket(tree.lastActiveAt, streaming);
       items.push({ tree, project, isStreaming: streaming, bucket });
@@ -129,7 +131,9 @@ export default function ActivityView({
 }: {
   onActivate?: () => void;
 }) {
-  const { projects, activeProjectId, activeProject, focusedNodeId, selection, treeSelection } = useChatProjects();
+  const { projects: allProjects, activeProjectId, activeProject, focusedNodeId, selection, treeSelection } = useChatProjects();
+  // The assistant's system workspace has no place in the activity list.
+  const projects = useMemo(() => withoutSystemWorkspaces(allProjects), [allProjects]);
   const { openPanes, focusedPane } = useChatPanes();
   const {
     selectProject,

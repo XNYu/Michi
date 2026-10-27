@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { CREW_DESCRIPTOR } from '../../backend/src/agents/capabilityDescriptors';
 import { installMockApi, bootWithWorkspace } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR, openSettings } from '../fixtures/shell';
 
 test('Crew renders native tool/title metadata and offers fork with common approvals and memory controls', async ({ page }) => {
   let defaultMemory = 'incognito';
@@ -39,14 +40,13 @@ test('Crew renders native tool/title metadata and offers fork with common approv
   await bootWithWorkspace(page, 'Crew validation');
   await expect(page.getByRole('button', { name: /^Permissions:/ }).first()).toBeVisible();
   await expect(page.getByRole('combobox', { name: 'Crew memory' })).toHaveCount(0);
-  await page.locator('[contenteditable="true"]').first().fill('Read probe.txt');
+  await page.locator(COMPOSER_EDITOR).first().fill('Read probe.txt');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await expect(page.getByText('Crew read the requested file.')).toBeVisible();
   await expect(page.getByText('Crew file check').first()).toBeVisible();
   await expect(page.getByText('Read probe.txt', { exact: true }).last()).toBeVisible();
   await expect(page.getByRole('button', { name: /^Permissions:/ }).first()).toBeVisible();
-  await page.getByText('Settings', { exact: true }).last().click();
-  await page.getByText('Model', { exact: true }).click();
+  await openSettings(page, 'Runtime (global)');
   await expect(page.getByRole('switch', { name: 'Native Resume for Kiro Crew' })).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('switch', { name: 'Native Fork for Kiro Crew' })).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('switch', { name: 'Use global permissions' })).toBeVisible();

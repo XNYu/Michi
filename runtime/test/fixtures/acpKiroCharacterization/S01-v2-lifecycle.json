@@ -1,0 +1,732 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "claude-x",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v2",
+          "--model",
+          "claude-x"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "start twice is a no-op"
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "capabilities",
+    "capabilities": [
+      {
+        "loadSession": true,
+        "promptCapabilities": {
+          "image": true
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new with an MCP server",
+    "=newSession": [
+      {
+        "sessionId": "S1",
+        "modes": {
+          "currentModeId": "default",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ]
+        },
+        "models": {
+          "currentModelId": "claude-x",
+          "availableModels": [
+            {
+              "modelId": "claude-x",
+              "name": "X"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S1"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 1
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S1",
+          "mcpServerCount": 1
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [
+            {
+              "name": "michi",
+              "type": "http",
+              "url": "http://127.0.0.1:1/api/mcp/slot",
+              "headers": []
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new with metadata and a model",
+    "=newSession2": [
+      {
+        "sessionId": "S2",
+        "modes": {
+          "currentModeId": "default",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ]
+        },
+        "models": {
+          "currentModelId": "claude-x",
+          "availableModels": [
+            {
+              "modelId": "claude-x",
+              "name": "X"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S2"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S2",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [],
+          "_meta": {
+            "chatId": "c1"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "state",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "modes": {
+            "currentModeId": "default",
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "id": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          "models": {
+            "currentModelId": "claude-x",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      },
+      {
+        "sessionId": "S2",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S2",
+          "modes": {
+            "currentModeId": "default",
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "id": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          "models": {
+            "currentModelId": "claude-x",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      },
+      {
+        "sessionId": "missing",
+        "alive": true,
+        "hasSession": false,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": "<undefined>",
+        "sessionState": {
+          "runtimeId": "kiro",
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_mode",
+    "=setMode": [
+      "<undefined>"
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "S1",
+          "modeId": "planner"
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_mode the agent did not apply",
+    "=setMode2": [
+      {
+        "error": "ACPError",
+        "message": "Kiro did not select requested agent absent"
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "S1",
+          "modeId": "absent"
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_model",
+    "=setModel": [
+      "<undefined>"
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "session/set_model",
+        "params": {
+          "sessionId": "S1",
+          "modelId": "claude-z"
+        }
+      }
+    ]
+  },
+  {
+    "step": "state after configuration",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "modes": {
+            "currentModeId": "default"
+          },
+          "models": {
+            "currentModelId": "claude-z",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          },
+          "configOptions": "<undefined>"
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-z",
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "commands/execute",
+    "=executeCommand": [
+      {
+        "success": true,
+        "message": "usage shown",
+        "data": {
+          "credits": 3
+        }
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "_kiro.dev/commands/execute",
+        "params": {
+          "sessionId": "S1",
+          "command": {
+            "command": "usage",
+            "args": {}
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_config_option needs v3",
+    "=setConfigOption": [
+      {
+        "error": "ACPError",
+        "message": "Generic config options require Kiro v3"
+      }
+    ]
+  },
+  {
+    "step": "unknown session prompt",
+    "p0": [
+      {
+        "error": "ACPError",
+        "message": "unknown session: nope"
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "nope",
+          "textLen": 2
+        }
+      ]
+    ]
+  },
+  {
+    "step": "shutdown",
+    "=shutdown": [
+      "<undefined>"
+    ],
+    "kill": [
+      [
+        4242,
+        "SIGTERM"
+      ]
+    ],
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process exited",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "claude-x",
+          "code": null,
+          "signal": "SIGTERM",
+          "expected": true,
+          "pendingRpcCount": 0,
+          "sessionCount": 2
+        }
+      ]
+    ]
+  },
+  {
+    "step": "state after shutdown",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": false,
+        "hasSession": false,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "modes": {
+            "currentModeId": "default"
+          },
+          "models": {
+            "currentModelId": "claude-z",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          },
+          "configOptions": "<undefined>"
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-z",
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "calls after shutdown",
+    "=cancelAfter": [
+      false
+    ],
+    "=setModeAfter": [
+      {
+        "error": "ACPRequestNotSentError",
+        "message": "ACP process exited with code null"
+      }
+    ]
+  },
+  {
+    "step": "shutdown without a process",
+    "=shutdown2": [
+      "<undefined>"
+    ]
+  },
+  {
+    "step": "restart",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4243,
+          "cwd": "/work",
+          "model": "claude-x",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4243
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v2",
+          "--model",
+          "claude-x"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4243
+        }
+      ]
+    ]
+  },
+  {
+    "step": "state after restart",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": false,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "modes": {
+            "currentModeId": "default"
+          },
+          "models": {
+            "currentModelId": "claude-z",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          },
+          "configOptions": "<undefined>"
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-z",
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  }
+]

@@ -104,6 +104,39 @@ describe('useLazyTreeMessages live-turn races', () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it('retries a read that fails after the initial retry timer without requiring navigation', async () => {
+    vi.useFakeTimers();
+    let rejectRead!: (error: Error) => void;
+    apiMocks.fetchTreeMessages.mockReset()
+      .mockReturnValueOnce(new Promise((_, reject) => { rejectRead = reject; }))
+      .mockResolvedValueOnce([{ id: 'fresh', node_id: 'n1', role: 'user', content: 'Recovered history', seq: 0, created_at: 1 }]);
+    const nodesRef = { current: { n1: node() } };
+    const projects = [project(1)];
+    const dispatch = vi.fn();
+    renderHook(() => useLazyTreeMessages({ hydrated: true, activeProjectId: 'ws-1', projects, nodesRef, dispatch }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { rejectRead(new TypeError('Failed to fetch')); });
+    expect(dispatch).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(apiMocks.fetchTreeMessages).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'messages-loaded', nodeIds: ['n1'] }));
+  });
+
+  it('backs off failed reads and stops retrying after leaving the tree', async () => {
+    vi.useFakeTimers();
+    apiMocks.fetchTreeMessages.mockReset().mockRejectedValue(new TypeError('Backend restarting'));
+    const nodesRef = { current: { n1: node() } };
+    const projects = [project(1)];
+    const dispatch = vi.fn();
+    const { unmount } = renderHook(() => useLazyTreeMessages({ hydrated: true, activeProjectId: 'ws-1', projects, nodesRef, dispatch }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(apiMocks.fetchTreeMessages).toHaveBeenCalledTimes(3);
+    expect(dispatch).not.toHaveBeenCalled();
+    unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(apiMocks.fetchTreeMessages).toHaveBeenCalledTimes(3);
+  });
+
   it('does not install an old snapshot over a live turn and retries after cancellation', async () => {
     const first = deferred<unknown[]>();
     const second = deferred<unknown[]>();

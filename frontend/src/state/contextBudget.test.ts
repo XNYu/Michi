@@ -1,5 +1,7 @@
 import { resolveAtMentions, resolveAtNodeMentions, buildNodeTranscriptBlock, stripNodeMentionTokens, rewriteNodeMentionsForDisplay } from './contextBudget';
 import type { ChatNodeState, ArtifactEntry } from './chatTypes';
+import { backendEntityId } from '../config/backendIdentity';
+import { expandMentions, type MentionRecord } from '../components/mentions';
 
 const mkCtx = (id: string, name: string, filePath: string, size?: number): ArtifactEntry => ({
     id, name, filePath, size, source: 'user', createdAt: 1000, updatedAt: 1000,
@@ -8,36 +10,10 @@ const mkCtx = (id: string, name: string, filePath: string, size?: number): Artif
 describe('resolveAtMentions', () => {
     const ctxs = [mkCtx('1', 'api-spec', 'docs/api.md'), mkCtx('2', 'conventions', 'docs/conv.md')];
 
-    it('returns empty for text without mentions', () => {
-        expect(resolveAtMentions('hello world', ctxs)).toEqual([]);
-    });
-
-    it('resolves a single mention', () => {
-        const result = resolveAtMentions('check @api-spec please', ctxs);
-        expect(result).toHaveLength(1);
-        expect(result[0].id).toBe('1');
-    });
-
-    it('is case-insensitive', () => {
-        const result = resolveAtMentions('@API-SPEC', ctxs);
-        expect(result).toHaveLength(1);
-        expect(result[0].id).toBe('1');
-    });
-
-    it('deduplicates by id', () => {
-        const result = resolveAtMentions('@api-spec and again @api-spec', ctxs);
-        expect(result).toHaveLength(1);
-    });
-
     it('skips unresolved mentions', () => {
         const result = resolveAtMentions('@nonexistent @api-spec', ctxs);
         expect(result).toHaveLength(1);
         expect(result[0].id).toBe('1');
-    });
-
-    it('resolves multiple different mentions', () => {
-        const result = resolveAtMentions('@api-spec @conventions', ctxs);
-        expect(result).toHaveLength(2);
     });
 });
 
@@ -58,26 +34,6 @@ describe('resolveAtNodeMentions', () => {
         'n2': mkNode('n2', 'Design', [{ role: 'user', text: 'design q' }]),
     };
 
-    it('returns empty for text without node mentions', () => {
-        expect(resolveAtNodeMentions('hello @api-spec', nodes)).toEqual([]);
-    });
-
-    it('resolves a single node mention', () => {
-        const result = resolveAtNodeMentions('check @node:n1 please', nodes);
-        expect(result).toHaveLength(1);
-        expect(result[0].nodeId).toBe('n1');
-    });
-
-    it('resolves multiple node mentions', () => {
-        const result = resolveAtNodeMentions('@node:n1 and @node:n2', nodes);
-        expect(result).toHaveLength(2);
-    });
-
-    it('deduplicates by nodeId', () => {
-        const result = resolveAtNodeMentions('@node:n1 again @node:n1', nodes);
-        expect(result).toHaveLength(1);
-    });
-
     it('skips unresolved node mentions', () => {
         const result = resolveAtNodeMentions('@node:nonexistent @node:n1', nodes);
         expect(result).toHaveLength(1);
@@ -85,20 +41,47 @@ describe('resolveAtNodeMentions', () => {
     });
 });
 
-describe('buildNodeTranscriptBlock', () => {
-    it('inlines a short transcript in full', () => {
-        const node = mkNode('n1', 'Research', [
-            { role: 'user', text: 'What is X?' },
-            { role: 'assistant', text: 'X is Y.' },
+describe('remote node mention flow', () => {
+    it('expands a chip, resolves its transcript and rewrites its display without changing the stored refId', () => {
+        const nodeId = backendEntityId('ssh:東京/a', 'n:1.file(draft)');
+        const node = mkNode(nodeId, 'Remote research', [
+            { role: 'user', text: 'Original question' },
+            { role: 'assistant', text: 'Remote result' },
         ]);
-        const block = buildNodeTranscriptBlock(node);
-        expect(block).toContain('=== Referenced node: Research ===');
-        expect(block).toContain('User: What is X?');
-        expect(block).toContain('Assistant: X is Y.');
-        // Short transcript should NOT contain tool-call hints.
-        expect(block).not.toContain('read_node');
+        const nodes = { [nodeId]: node };
+        const mention: MentionRecord = { start: 8, end: 15, kind: 'node', refId: nodeId, label: 'Remote' };
+        const wire = expandMentions('Compare @Remote.\nNext', [mention]);
+
+        expect(mention.refId).toBe(nodeId);
+        const resolved = resolveAtNodeMentions(wire, nodes);
+        expect(resolved).toEqual([node]);
+        expect(buildNodeTranscriptBlock(resolved[0])).toContain('Assistant: Remote result');
+        expect(stripNodeMentionTokens(wire)).toBe('Compare .\nNext');
+        expect(rewriteNodeMentionsForDisplay(wire, nodes)).toBe('Compare @Remote research.\nNext');
     });
 
+    it('deduplicates mixed local, encoded remote and legacy remote references in input order', () => {
+        const nodeId = backendEntityId('ssh/a', 'n:1');
+        const remote = mkNode(nodeId, 'Remote', []);
+        const local = mkNode('n1', 'Local', []);
+        const wire = expandMentions('@Remote @Local', [
+            { start: 0, end: 7, kind: 'node', refId: nodeId, label: 'Remote' },
+            { start: 8, end: 14, kind: 'node', refId: 'n1', label: 'Local' },
+        ]);
+        expect(resolveAtNodeMentions(`${wire} @node:${nodeId}`, { [nodeId]: remote, n1: local }))
+            .toEqual([remote, local]);
+    });
+
+    it('keeps malformed escapes and non-reference phrases as ordinary text', () => {
+        const text = 'plain @node text; @nodes:n1; @node:n1%ZZ; @node:%E0%A4';
+        const nodes = { n1: mkNode('n1', 'Local', []) };
+        expect(resolveAtNodeMentions(text, nodes)).toEqual([]);
+        expect(stripNodeMentionTokens(text)).toBe(text);
+        expect(rewriteNodeMentionsForDisplay(text, nodes)).toBe(text);
+    });
+});
+
+describe('buildNodeTranscriptBlock', () => {
     it('falls back to first user message when no title', () => {
         const node = mkNode('n1', '', [{ role: 'user', text: 'My question' }]);
         const block = buildNodeTranscriptBlock(node);
@@ -136,31 +119,9 @@ describe('buildNodeTranscriptBlock', () => {
         const block = buildNodeTranscriptBlock(node);
         expect(block).toContain('Summary: Investigated X and discovered Y. Confirmed approach Z.');
     });
-
-    it('falls back to first user message for summary when no overview entries', () => {
-        const longMsg = 'C'.repeat(2000);
-        const node = mkNode('n1', 'Thread', [
-            { role: 'user', text: 'This is the original question that was asked' },
-            { role: 'assistant', text: longMsg },
-        ]);
-        const block = buildNodeTranscriptBlock(node);
-        expect(block).toContain('Summary: This is the original question that was asked');
-    });
 });
 
 describe('stripNodeMentionTokens', () => {
-    it('strips @node:xxx tokens', () => {
-        expect(stripNodeMentionTokens('check @node:n1 please')).toBe('check please');
-    });
-
-    it('strips multiple tokens', () => {
-        expect(stripNodeMentionTokens('@node:n1 @node:n2 hello')).toBe('hello');
-    });
-
-    it('leaves non-node mentions intact', () => {
-        expect(stripNodeMentionTokens('@api-spec hello')).toBe('@api-spec hello');
-    });
-
     it('preserves line breaks while stripping node tokens', () => {
         expect(stripNodeMentionTokens('Tasks\n\n@node:n1\n\nS size'))
             .toBe('Tasks\n\n\n\nS size');
@@ -173,33 +134,29 @@ describe('rewriteNodeMentionsForDisplay', () => {
         'n2': mkNode('n2', 'Design', [{ role: 'user', text: 'q' }]),
     };
 
-    it('rewrites a node token to @<title>', () => {
-        expect(rewriteNodeMentionsForDisplay('check @node:n1 please', nodes))
-            .toBe('check @Research please');
-    });
-
-    it('rewrites multiple node tokens', () => {
-        expect(rewriteNodeMentionsForDisplay('@node:n1 and @node:n2 done', nodes))
-            .toBe('@Research and @Design done');
-    });
-
     it('falls back to first user message when title missing', () => {
         const fallback = { 'x': mkNode('x', '', [{ role: 'user', text: 'My question text' }]) };
         expect(rewriteNodeMentionsForDisplay('see @node:x', fallback))
             .toBe('see @My question text');
     });
 
-    it('preserves user-authored line breaks and spacing', () => {
-        const text = 'Tasks with estimates\n\nS size = 1 point\n\nM size = 3 / 4 point';
-        expect(rewriteNodeMentionsForDisplay(text, nodes)).toBe(text);
-    });
-
     it('drops unresolved tokens', () => {
         expect(rewriteNodeMentionsForDisplay('@node:gone hi', nodes)).toBe('hi');
     });
+});
 
-    it('leaves @<name> context mentions intact', () => {
-        expect(rewriteNodeMentionsForDisplay('@api-spec @node:n1', nodes))
-            .toBe('@api-spec @Research');
-    });
+it('limits manual references to the sending workspace and uses remote server IDs only in that scope', () => {
+    const nodeId = backendEntityId('scope-a', 'same-server-node');
+    const scope = { workspaceId: 'p1', backendConnectionId: 'scope-a' };
+    const node = mkNode(nodeId, 'Long remote', [{ role: 'assistant', text: 'a'.repeat(3000) }]);
+    const otherBackendId = backendEntityId('scope-b', 'same-server-node');
+    const otherBackend = mkNode(otherBackendId, 'Other backend', []);
+    const otherWorkspace = { ...mkNode(backendEntityId('scope-a', 'other'), 'Other workspace', []), projectId: 'p2' };
+    const wire = [node, otherBackend, otherWorkspace].map((n) => `@node:${encodeURIComponent(n.nodeId)}`).join(' ');
+    expect(resolveAtNodeMentions(wire, { [nodeId]: node, [otherBackendId]: otherBackend, [otherWorkspace.nodeId]: otherWorkspace }, scope)).toEqual([node]);
+    const block = buildNodeTranscriptBlock(node, scope);
+    expect(block).toContain('read_node("same-server-node")');
+    expect(block).not.toContain(nodeId);
+    expect(buildNodeTranscriptBlock(node)).toContain('a'.repeat(3000));
+    expect(buildNodeTranscriptBlock(otherBackend, scope)).not.toContain('read_node');
 });

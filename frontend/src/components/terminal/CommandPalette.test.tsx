@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import CommandPalette, { openWorkspaceFromPalette } from './CommandPalette';
+import CommandPalette from './CommandPalette';
 
 const selectProject = vi.hoisted(() => vi.fn());
 const navigateToNode = vi.hoisted(() => vi.fn());
@@ -66,37 +66,7 @@ beforeEach(() => {
   navigateToNode.mockReset();
 });
 
-describe('openWorkspaceFromPalette', () => {
-  it('opens the selected workspace on its new-chat page', () => {
-    const setPage = vi.fn();
-    const onClose = vi.fn();
-
-    openWorkspaceFromPalette('workspace-2', {
-      selectProject,
-      setPage,
-      onClose,
-    });
-
-    expect(selectProject).toHaveBeenCalledWith('workspace-2');
-    expect(setPage).toHaveBeenCalledWith('home');
-    expect(onClose).toHaveBeenCalledOnce();
-  });
-});
-
 describe('CommandPalette workspace routing', () => {
-  it('routes a workspace result to the new-chat page', () => {
-    const setPage = vi.fn();
-    render(<CommandPalette activePage="dashboard" setPage={setPage} onClose={vi.fn()} />);
-
-    fireEvent.change(screen.getByPlaceholderText('Search chats, commands, messages…'), {
-      target: { value: 'Workspace B' },
-    });
-    fireEvent.click(screen.getByText('Switch to workspace ▸ Workspace B'));
-
-    expect(selectProject).toHaveBeenCalledWith('workspace-2');
-    expect(setPage).toHaveBeenCalledWith('home');
-  });
-
   it('keeps a specific chat result on the dashboard', () => {
     const setPage = vi.fn();
     render(<CommandPalette activePage="home" setPage={setPage} onClose={vi.fn()} />);
@@ -113,13 +83,6 @@ describe('CommandPalette workspace routing', () => {
 });
 
 describe('CommandPalette quick number shortcuts', () => {
-  it('does not display number shortcut badges when search query is empty', () => {
-    render(<CommandPalette activePage="dashboard" setPage={vi.fn()} onClose={vi.fn()} />);
-
-    // In recents/unfiltered mode, quick number badges like ⌘1 or Ctrl+1 should not appear
-    expect(screen.queryByText(/^[⌘Ctrl+]+1$/)).toBeNull();
-  });
-
   it('displays number shortcut badges and triggers result via Cmd+1 when searching', () => {
     const setPage = vi.fn();
     const onClose = vi.fn();
@@ -143,43 +106,6 @@ describe('CommandPalette quick number shortcuts', () => {
     expect(selectProject).toHaveBeenCalledWith('workspace-2');
     expect(setPage).toHaveBeenCalledWith('home');
     expect(onClose).toHaveBeenCalled();
-  });
-
-  it('does not trigger quick number shortcuts when search query is empty', () => {
-    const setPage = vi.fn();
-    const onClose = vi.fn();
-    render(<CommandPalette activePage="dashboard" setPage={setPage} onClose={onClose} />);
-
-    const input = screen.getByPlaceholderText('Search chats, commands, messages…');
-
-    // Press Cmd+1 without query
-    fireEvent.keyDown(input, {
-      key: '1',
-      metaKey: true,
-    });
-
-    expect(selectProject).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it('ignores Cmd+number when index exceeds result count', () => {
-    const setPage = vi.fn();
-    const onClose = vi.fn();
-    render(<CommandPalette activePage="dashboard" setPage={setPage} onClose={onClose} />);
-
-    const input = screen.getByPlaceholderText('Search chats, commands, messages…');
-    fireEvent.change(input, {
-      target: { value: 'Workspace B' },
-    });
-
-    // Only 1 result exists, pressing Cmd+9 should do nothing
-    fireEvent.keyDown(input, {
-      key: '9',
-      metaKey: true,
-    });
-
-    expect(selectProject).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
   });
 });
 

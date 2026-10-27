@@ -83,9 +83,15 @@ them.
 
 Remote mode refuses to start without a token of at least 16 characters. It is
 intended for the desktop-to-backend connection mode and cannot be combined with
-`MICHI_REQUIRE_AUTH=true`. `MICHI_BIND_HOST=127.0.0.1` keeps the Backend private
-to the server when Michi reaches it through SSH. If you intentionally use a
-private network or reverse proxy, bind the interface required by that setup.
+`MICHI_REQUIRE_AUTH=true`. Remote mode listens on loopback (`127.0.0.1`) unless
+`MICHI_BIND_HOST` says otherwise, so the Backend stays private to the server and
+Michi reaches it through an SSH tunnel. To listen on a network interface, set
+`MICHI_BIND_HOST` explicitly, or pass `--public` to `remote:launch` (which writes
+`MICHI_BIND_HOST=0.0.0.0`). Do that only behind a firewall, private network, or
+HTTPS reverse proxy: the remote token is then the only thing guarding the API.
+Earlier builds listened on every interface when only `MICHI_REMOTE_ACCESS=1` was
+set; a setup that connects to such a server directly, without a tunnel, now has
+to set `MICHI_BIND_HOST`.
 
 ### Manual foreground startup
 
@@ -101,8 +107,10 @@ npm run remote:start
 ```
 
 Unlike `remote:launch`, `remote:start` stays in the foreground and stops when
-its terminal ends. If you manage Michi with a system-wide service rather than
-the built-in user-service option, a minimal unit looks like:
+its terminal ends. It listens on loopback even without `MICHI_BIND_HOST`, so
+connect to it through Michi's SSH tunnel. If you manage Michi with a
+system-wide service rather than the built-in user-service option, a minimal
+unit looks like:
 
 ```ini
 [Unit]
@@ -144,6 +152,49 @@ usable build is found,
 machine and starts the existing background launcher. It prepares Node.js 22
 when needed, with a checksum verified against the official Node distribution.
 Repeated connections reuse the installation; connecting does not upgrade it.
+
+### Update a connected machine
+
+The Connect flow and **Settings → Connections** compare the remote service with
+the local app's build. When the remote commit is an ancestor of the local build,
+Michi shows **Remote Michi is older than this app**, both revision IDs, and an
+**Update remote Michi** button for SSH connections. Equal versions and unrelated
+branches do not produce an update prompt. Missing version information is never
+treated as an older version. Existing servers can use their legacy `/api/version`
+endpoint until their first update; newer servers report the running build in
+health checks, independent of subsequent changes to their source checkout.
+
+Clicking update fetches the exact local build's commit from the gateway's trusted
+source repository/ref (the same overrides used for installation), installs only
+backend/shared dependencies, and builds in a fresh checkout under
+`~/.local/share/michi/devdesktop/releases/`. That commit must already be published
+on the configured source branch. A local-only or unavailable commit produces a
+source error and leaves the running installation in place. Direct URL connections
+show manual/SSH update guidance because they do not provide SSH access.
+Local builds with uncommitted app source changes show an explanation instead of
+an update button: those changes cannot be reproduced by fetching the commit.
+
+The current service stays running until the build succeeds. Michi then switches
+the installation and restarts the remote service, interrupting running chats. It
+preserves the selected data directory, database, port and token. A failed build
+does not stop the existing service; a failed launch attempts to restore the old
+installation. Both checkouts are retained. Local source changes block the update,
+and concurrent setup/recovery cannot switch the same installation. After startup,
+the local gateway checks the running service's revision before reporting success.
+
+Once accepted, updating continues if its progress dialog closes while the local
+gateway stays running. Reopening Settings, switching back to Connections, or
+choosing the machine in the Connect flow shows that update's latest progress
+instead of another update button, followed by its outcome. The local gateway
+keeps the latest outcome until it restarts or the connection is edited or
+removed. A duplicate update is rejected while the first one runs; a view that
+receives that rejection follows the running update instead of reporting a
+failure. Failures retain the usual diagnostic controls; the remote
+build log is `~/.local/share/michi/devdesktop/update.<attempt-id>.log`. The selected
+installation is recorded in `<data-dir>/remote-installation.json`, allowing later
+recovery to use the updated checkout in background or systemd service mode.
+
+### Connected runtimes and folders
 
 The managed checkout, downloaded Node.js and private setup logs are in
 `~/.local/share/michi/devdesktop/`. New installations keep their database,
@@ -207,7 +258,7 @@ compatible Node/sysroot, setup reports a compatibility error.
 
 The launcher uses detached background mode here. Automatic systemd supervision,
 host discovery, runtime installation
-and automatic updates are not part of this experiment. Agent runtime readiness
+and unattended updates are not part of this experiment. Agent runtime readiness
 and authentication must still be configured on the remote machine. Setup checks
 Kiro's login status separately and reports a warning when its CLI is installed
 but not signed in. A successful connection is not a successful model-response test.
@@ -311,6 +362,13 @@ request and reconnects to durable remote state.
 Choose **Direct URL** for a server already reachable through Tailscale, a
 private network, an HTTPS reverse proxy, or an approved tunnel service. Example
 URLs include `https://michi.example.com` and `http://100.64.0.10:3000`.
+
+The server must listen on the interface that URL reaches. Remote mode binds
+loopback by default, so set `MICHI_BIND_HOST` to that interface's address (for
+example the Tailscale address `100.64.0.10`), or use `remote:launch -- --public`
+to bind every interface. Prefer the specific address, and keep the port behind
+a firewall or private network. A reverse proxy on the same host can keep the
+loopback default.
 
 Connection tokens and non-secret SSH connection settings are stored by the local bundled backend in
 `~/.michi/config.json` with file mode `0600`. They are not returned to the

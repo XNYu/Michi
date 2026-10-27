@@ -31,6 +31,9 @@ const setComposerDraftFn = vi.fn();
 const sendMessageFn = vi.fn();
 const queueMessageFn = vi.fn();
 const cancelStreamFn = vi.fn();
+const steerMessageFn = vi.fn();
+const addPendingCommentFn = vi.fn();
+let mockCanSteer = false;
 let mockEditorMentions: MentionRecord[] = [];
 
 vi.mock('../../state/chatStore', async () => {
@@ -49,11 +52,11 @@ vi.mock('../../state/chatStore', async () => {
     switchAgent: () => Promise.resolve(),
     resolvePermission: () => {},
     denyPermission: () => {},
-    addPendingComment: () => {},
+    addPendingComment: addPendingCommentFn,
     removePendingComment: () => {},
     clearPendingComments: () => {},
     queueMessage: queueMessageFn,
-    steerMessage: async () => false,
+    steerMessage: steerMessageFn,
     dequeueMessage: () => {},
     setComposerDraft: setComposerDraftFn,
     deleteContext: () => {},
@@ -61,7 +64,7 @@ vi.mock('../../state/chatStore', async () => {
   const projects = () => ({
     activeProject: mockProject,
     availableModes: [],
-    agentStatus: null,
+    agentStatus: mockCanSteer ? { capabilities: { modes: false }, capabilityDescriptor: { steer: { availability: 'native', confidence: 'native' } } } : null,
     refreshAgentStatus: () => {},
   });
   const panes = () => ({
@@ -75,6 +78,7 @@ vi.mock('../../state/chatStore', async () => {
     ...actual,
     useChatStore: () => ({ ...projects(), ...panes(), ...actions() }),
     useChatActions: () => actions(),
+    useOptionalChatActions: () => actions(),
     useChatProjects: () => projects(),
     useChatPanes: () => panes(),
     useStructuralSelector: (selector: (nodes: Record<string, ChatNodeState>) => unknown) =>
@@ -149,9 +153,14 @@ beforeEach(() => {
   sendMessageFn.mockReset();
   queueMessageFn.mockReset();
   cancelStreamFn.mockReset();
+  steerMessageFn.mockReset().mockResolvedValue(true);
+  addPendingCommentFn.mockReset();
+  mockCanSteer = false;
   mockEditorMentions = [];
   mockNode.status = 'idle';
   delete mockNode.composerDraft;
+  delete mockNode.pendingQueued;
+  delete mockNode.pendingComments;
 });
 
 afterEach(() => {
@@ -177,13 +186,6 @@ function dragEvent(type: string, files: File[]) {
 }
 
 describe('TPane drag-and-drop', () => {
-  it('shows overlay on dragenter when dataTransfer has Files', () => {
-    const { container } = render(<TPane nodeId="n1" />);
-    const root = container.firstChild as HTMLElement;
-    fireEvent(root, dragEvent('dragenter', [new File(['x'], 'a.md')]));
-    expect(container.textContent).toMatch(/drop 1 file/);
-  });
-
   it('does NOT show overlay for non-file drags', () => {
     const { container } = render(<TPane nodeId="n1" />);
     const root = container.firstChild as HTMLElement;
@@ -202,21 +204,6 @@ describe('TPane drag-and-drop', () => {
     expect(container.textContent).toMatch(/drop \d+ file/);
     fireEvent(root, dragEvent('dragleave', [new File(['x'], 'a.md')]));
     expect(container.textContent).not.toMatch(/drop \d+ file/);
-  });
-
-  it('drop with electron path focuses pane and does NOT create contexts (deferred to send)', async () => {
-    (window as any).electron = {
-      getPathForFile: (f: File) => `/abs/${f.name}`,
-    };
-    const { container } = render(<TPane nodeId="n1" />);
-    const root = container.firstChild as HTMLElement;
-    const a = new File(['x'], 'foo.md');
-    const b = new File(['y'], 'bar.json');
-    await act(async () => {
-      fireEvent(root, dragEvent('drop', [a, b]));
-    });
-    expect(focusPaneFn).toHaveBeenCalledWith('n1');
-    expect(createContextFn).not.toHaveBeenCalled();
   });
 
   it('drop does NOT touch composer draft and does NOT fire success toast', async () => {
@@ -242,21 +229,6 @@ describe('TPane drag-and-drop', () => {
 });
 
 describe('TPane composer draft freshness', () => {
-  it('enables the toolbar action immediately when an empty draft becomes non-empty', () => {
-    render(<TPane nodeId="n1" />);
-
-    fireEvent.change(screen.getByTestId('composer-editor'), {
-      target: { value: 'typed before the RAF' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Send (Enter)' }));
-
-    expect(sendMessageFn).toHaveBeenCalledWith(
-      'n1',
-      'typed before the RAF',
-      expect.objectContaining({ displayText: 'typed before the RAF' }),
-    );
-  });
-
   it('switches Stop to Send next before the draft store RAF while streaming', () => {
     mockNode.status = 'streaming';
     render(<TPane nodeId="n1" />);
@@ -300,23 +272,65 @@ describe('TPane composer draft freshness', () => {
     expect(setComposerDraftFn).toHaveBeenLastCalledWith('n1', null);
   });
 
-  it('uses the same latest snapshot when the toolbar Send button is clicked', async () => {
-    mockNode.composerDraft = { value: 'seed', mentions: [] };
+  it.each(['idle', 'streaming'] as const)('preserves a file quote while typing and %s submission', async (status) => {
+    const quoteSource = { type: 'artifact' as const, filePath: '/doc.txt', snapshot: {
+      hashKind: 'sha256-text-utf8' as const, contentHash: 'f'.repeat(64), backendConnectionId: 'local', projectId:'p1', treeId:'tr1', resolvedFilePath:'/doc.txt',
+    } };
+    mockNode.status = status;
+    mockNode.composerDraft = { value:'', mentions:[], quotedText:'file selection', quoteSource };
     render(<TPane nodeId="n1" />);
-
     await act(async () => {
-      fireEvent.change(screen.getByTestId('composer-editor'), {
-        target: { value: 'latest toolbar text' },
-      });
-      fireEvent.click(screen.getByRole('button', { name: 'Send (Enter)' }));
+      fireEvent.change(screen.getByTestId('composer-editor'), {target:{value:'review this'}});
+      fireEvent.click(screen.getByTestId('editor-submit'));
     });
+    if (status === 'streaming') {
+      expect(queueMessageFn.mock.calls[0][1]).toMatchObject({quotedText:'file selection',quoteSource});
+    } else {
+      expect(sendMessageFn.mock.calls[0][1]).toContain('already-read version');
+      expect(sendMessageFn.mock.calls[0][2]).toMatchObject({quoteSource,rejectedDraft:{quoteSource}});
+    }
+  });
 
-    expect(sendMessageFn).toHaveBeenCalledWith(
-      'n1',
-      'latest toolbar text',
-      expect.objectContaining({ displayText: 'latest toolbar text' }),
-    );
-    expect(setComposerDraftFn).toHaveBeenLastCalledWith('n1', null);
+  it('preserves queued file sources and comments in an accepted steer request', async () => {
+    const quoteSource = { type: 'artifact' as const, filePath:'/doc.txt', snapshot: {
+      hashKind:'sha256-text-utf8' as const, contentHash:'e'.repeat(64), backendConnectionId:'local', projectId:'p1', treeId:'tr1', resolvedFilePath:'/doc.txt',
+    } };
+    const comment = {id:'c1',quotedText:'selected',body:'fix',createdAt:1,source:quoteSource};
+    mockNode.status = 'streaming'; mockCanSteer = true;
+    mockNode.pendingQueued = [{id:'q1',value:'review',mentions:[],attachments:[],quotedText:'selected',quoteSource,comments:[comment],commentBlock:'comment context',queuedAt:1}];
+    render(<TPane nodeId="n1" />);
+    await act(async () => { fireEvent.click(screen.getByRole('button',{name:'Steer now'})); });
+    expect(steerMessageFn.mock.calls[0][2].userMetadata).toMatchObject({quotedText:'selected',quoteSource,comments:[comment]});
+    expect(steerMessageFn.mock.calls[0][1]).toContain('already-read version');
+  });
+
+  it('clears the file source when a new assistant selection replaces the quote', async () => {
+    mockNode.composerDraft = {value:'',mentions:[],quotedText:'file selection',quoteSource:{type:'artifact',filePath:'/doc.txt'}};
+    render(<TPane nodeId="n1" />);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('quote-selection'));
+      fireEvent.change(screen.getByTestId('composer-editor'),{target:{value:'explain'}});
+      fireEvent.click(screen.getByTestId('editor-submit'));
+    });
+    expect(sendMessageFn.mock.calls[0][2].quoteSource).toBeUndefined();
+    expect(sendMessageFn.mock.calls[0][1]).toContain('previous assistant reply');
+  });
+
+  it.each([false,true])('restores dequeued comment context with structured metadata=%s', async (structured) => {
+    const source = {type:'artifact' as const,filePath:'/doc.txt'};
+    const comment = {id:'c1',quotedText:'selected',body:'fix',createdAt:1,source};
+    mockNode.pendingQueued = [{id:'q1',value:'@Thread',mentions:[{start:0,end:7,kind:'node',refId:'n2',label:'Thread'}],attachments:[],commentBlock:'legacy file context',...(structured ? {comments:[comment]} : {}),queuedAt:1}];
+    render(<TPane nodeId="n1" />);
+    await act(async () => {fireEvent.click(screen.getByRole('button',{name:'Dequeue message'}));});
+    const draft = setComposerDraftFn.mock.calls.at(-1)![1];
+    if (structured) {
+      expect(addPendingCommentFn).toHaveBeenCalledWith('n1','selected','fix',source);
+      expect(draft.value).toBe('@Thread');
+      expect(draft.mentions[0].start).toBe(0);
+    } else {
+      expect(draft.value).toBe('legacy file context\n\n@Thread');
+      expect(draft.mentions[0].start).toBe('legacy file context\n\n'.length);
+    }
   });
 
   it('does not let an unrelated rerender roll back an uncommitted editor change', async () => {

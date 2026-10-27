@@ -2,6 +2,12 @@
 
 Applies to: installed desktop/web, source checkouts and remote backends. Shell examples use macOS/Linux syntax unless stated otherwise. Source checked: 2026-10-16. Configuration is backend-specific; some credential/Electron paths do not honor every directory override.
 
+## Pages and Meta agent settings
+
+Source checked for this section: 2026-10-26. **Settings → Meta agent** configures the runtime/provider/model shared by the Pages Assistant, initial Home generation and automatic maintenance. Supported restricted runtimes are Pi, Claude, Codex and Kiro; Crew is unavailable for this profile. Ordinary workspace conversations retain their own settings. The current Pages interface supports the local backend only. See `pages-maintenance` for workspace enablement, page-tree exclusions and runtime checks.
+
+**Layout preferences** is a separate per-page document under Page actions/Page settings. It is not a global appearance setting or runtime profile, and saving it does not invoke a model. See `pages-and-components` and `page-component-design`.
+
 ## Know which installation you are configuring
 
 | Location | Default purpose |
@@ -71,7 +77,7 @@ Crew users must also Sync their existing App and approve the current Stub / Rout
 
 ## Directory and deployment overrides
 
-`MICHI_DATA_DIR`, `MICHI_CONFIG_DIR` and `MICHI_LOG_DIR` choose state/config/log locations in supporting modules. `MICHI_ENABLED_RUNTIMES` restricts registered runtimes. Node.js 22.19+ is the source/remote baseline. The backend's default repository port and installed web launcher's port differ; use the actual printed address.
+`MICHI_DATA_DIR`, `MICHI_CONFIG_DIR` and `MICHI_LOG_DIR` choose state/config/log locations in supporting modules. `MICHI_ENABLED_RUNTIMES` restricts registered runtimes. The Agent Desk integration is off unless the local backend starts with `MICHI_DESK=1` (the desktop app reads it from `~/.michi/.env`). While it is off, Michi shows no Desk pages, sidebar entries, search results or Settings → Desk section (the ⌘J assistant keeps its saved runtime and model), the assistant has no Desk tools, and nothing contacts Agent Desk. Michi does not start the Agent Desk service itself. Node.js 22.19+ is the source/remote baseline. The backend's default repository port and installed web launcher's port differ; use the actual printed address.
 
 Development launchers, updates and Electron packaging can stop processes or replace the app. They are not read-only diagnostic commands. For remote deployment use `remote-backend` rather than a local desktop launch recipe.
 

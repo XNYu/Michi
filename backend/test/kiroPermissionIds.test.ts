@@ -3,18 +3,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { parseChatStreamEvent } from 'michi-shared';
-import { AcpClient } from '../src/services/acpClient';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import { toChatStreamEvent } from '../src/routes/chatStreamEvents';
 import { setupMichiRoutes } from '../src/routes/michi';
 import { ChatManager } from '../src/services/chatManager';
 import { chatHub } from '../src/agents/chatHub';
 import { registerSession, clearAllSessions } from '../src/agents/sessionRegistry';
 import { initDb, closeDb, getDb } from '../src/services/db';
+import { michiTestHost } from './helpers/michiTestHost';
 
 for (const choice of ['allow-once', 'deny', 'cancel']) test(`UUID permission survives adapter, stream parser and HTTP ${choice}`, async (t) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-permission-id-'));
@@ -40,7 +42,7 @@ for (const choice of ['allow-once', 'deny', 'cancel']) test(`UUID permission sur
         return {};
     };
     await c.newSession();
-    const runtime = { engine: 'v3', ensureClient: async () => c,
+    const runtime = { host: michiTestHost(), engine: 'v3', ensureClient: async () => c,
         respondToPermission: (_sid: string, id: number, option: string) => c.respondToPermission(id, option),
         cancelPermission: (_sid: string, id: number) => c.cancelPermission(id),
     } as unknown as KiroRuntime;
@@ -58,7 +60,7 @@ for (const choice of ['allow-once', 'deny', 'cancel']) test(`UUID permission sur
     t.mock.method(chatHub, 'getPendingPermission', () => parsed.data);
     t.mock.method(chatHub, 'resolvePermission', () => {});
     const app = express(); app.use(express.json()); app.use('/api', setupMichiRoutes(new ChatManager(undefined, directory)));
-    const server = app.listen(0);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     try {
         const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/chats/node/permission-response`;
         const post = (body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });

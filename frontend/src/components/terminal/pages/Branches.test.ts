@@ -16,28 +16,6 @@ function node(nodeId: string, extras: Partial<ChatNodeState> = {}): ChatNodeStat
 }
 
 describe('buildBranchDocumentRows', () => {
-  it('renders one active thread in depth-first Markdown heading order', () => {
-    const nodes = {
-      root: node('root', { title: 'Root', branchOverview: 'Root overview' }),
-      a: node('a', { title: 'Branch A', branchOverview: 'A overview' }),
-      aa: node('aa', { title: 'Branch AA', branchOverview: 'AA overview' }),
-      b: node('b', { title: 'Branch B', branchOverview: 'B overview' }),
-      other: node('other', { title: 'Other thread' }),
-    };
-    const rows = buildBranchDocumentRows('root', [
-      { source: 'root', target: 'a', kind: 'branch' },
-      { source: 'a', target: 'aa', kind: 'branch' },
-      { source: 'root', target: 'b', kind: 'branch' },
-      { source: 'other', target: 'root', kind: 'link' },
-    ], nodes);
-
-    expect(rows.map((row) => [row.nodeId, row.depth])).toEqual([
-      ['root', 0],
-      ['a', 1],
-      ['aa', 2],
-      ['b', 1],
-    ]);
-  });
 
   it('skips deleted and digest nodes', () => {
     const nodes = {

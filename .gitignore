@@ -52,6 +52,9 @@ frontend/.env.local
 # `.env.development` / `.env.production` are tracked (public defaults only).
 # `.env.development.local` is covered by the `.env.*.local` rule above.
 
+# Runtime package: staged package and tarball from `npm run pack:check -w michi-runtime`
+runtime/.pack/
+
 # Electron
 electron/dist/
 dist-electron/
@@ -85,10 +88,25 @@ frontend/.omc/
 docs/
 !docs/
 docs/*
+!docs/access-modes.md
 !docs/user-guide.md
 !docs/harness-p0-p3-tasks.md
 !docs/remote-backend.md
 !docs/kiro-acp-validation.md
+!docs/internal-usage-telemetry.md
+!docs/validation/
+docs/validation/*
+!docs/validation/2026-10-13-claude-sdk-electron.md
+!docs/validation/2026-10-22-claude-sdk-integration.md
+!docs/investigations/
+docs/investigations/*
+!docs/investigations/claude-agent-sdk/
+docs/investigations/claude-agent-sdk/*
+!docs/investigations/claude-agent-sdk/2026-10-12-comparison.md
+!docs/investigations/claude-agent-sdk/2026-10-21-acp-comparison.md
+!docs/features/
+docs/features/*
+!docs/features/*.md
 
 # Local-only assets
 CLAUDE.md

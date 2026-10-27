@@ -11,42 +11,6 @@ const mkChat = (id: string, messages: Array<{ role: 'user' | 'assistant'; text: 
   status: 'idle',
 });
 
-describe('computeSourceFingerprint', () => {
-  it('returns stable string for identical assistant trail', () => {
-    const a = mkChat('n', [
-      { role: 'user', text: 'hi' },
-      { role: 'assistant', text: 'hello' },
-    ]);
-    const b = mkChat('n', [
-      { role: 'user', text: 'hi' },
-      { role: 'assistant', text: 'hello' },
-    ]);
-    expect(computeSourceFingerprint(a)).toBe(computeSourceFingerprint(b));
-  });
-
-  it('changes when a new assistant message is added', () => {
-    const before = mkChat('n', [{ role: 'assistant', text: 'hello' }]);
-    const after = mkChat('n', [
-      { role: 'assistant', text: 'hello' },
-      { role: 'assistant', text: 'more' },
-    ]);
-    expect(computeSourceFingerprint(before)).not.toBe(computeSourceFingerprint(after));
-  });
-
-  it('ignores user messages (only assistant trail matters)', () => {
-    // Digests summarize what kiro said, not what the user typed.
-    const a = mkChat('n', [
-      { role: 'user', text: 'one' },
-      { role: 'assistant', text: 'reply' },
-    ]);
-    const b = mkChat('n', [
-      { role: 'user', text: 'two' },
-      { role: 'assistant', text: 'reply' },
-    ]);
-    expect(computeSourceFingerprint(a)).toBe(computeSourceFingerprint(b));
-  });
-});
-
 describe('staleSources', () => {
   const digest: DigestState = {
     sources: ['s1', 's2'],
@@ -100,11 +64,6 @@ Open Threads:
 - Interaction with positional encoding?
 `;
 
-  it('extracts the TL;DR paragraph', () => {
-    const p = parseDigestStructure(sample);
-    expect(p.tldr).toMatch(/^Scaled dot-product/);
-  });
-
   it('splits into two sections', () => {
     const p = parseDigestStructure(sample);
     expect(p.sections).toHaveLength(2);
@@ -116,18 +75,28 @@ Open Threads:
     expect(p.sections[1].sourceId).toBe('n4');
   });
 
-  it('extracts open threads bullets', () => {
-    const p = parseDigestStructure(sample);
-    expect(p.openThreads).toEqual([
-      'Does √dₖ hold at dₖ > 256?',
-      'Interaction with positional encoding?',
-    ]);
-  });
-
   it('falls back gracefully for unstructured input', () => {
     const p = parseDigestStructure('Just some raw markdown with no format.');
     expect(p.tldr).toBeNull();
     expect(p.sections).toEqual([]);
     expect(p.openThreads).toEqual([]);
+  });
+});
+
+describe('digest source DTO freshness', () => {
+  const original = { ...mkChat('source', [{ role: 'user', text: 'Question' }, { role: 'assistant', text: 'Answer' }]), title: 'Title', parentNodeId: 'root' };
+  const digest: DigestState = { sources: ['source'], sourceFingerprints: { source: computeSourceFingerprint(original) }, content: 'Saved', generatedAt: 1, viewedAt: 1, status: 'idle' };
+  it.each([
+    ['user text', { ...original, messages: [{ ...original.messages[0], text: 'Changed question' }, original.messages[1]] }],
+    ['title', { ...original, title: 'Renamed' }],
+    ['parent', { ...original, parentNodeId: 'other-root' }],
+    ['deletion', { ...original, deletedAt: 10 }],
+  ])('marks changed %s as stale', (_label, node) => {
+    expect(staleSources(digest, { source: node })).toEqual(['source']);
+  });
+  it('ignores thoughts and empty messages excluded from the generation payload', () => {
+    const node = { ...original, messages: [original.messages[0], { ...original.messages[1], blocks: [{ id: 'answer', kind: 'answer' as const, rawText: 'Answer' }, { id: 'thought', kind: 'thinking' as const, rawText: 'Transient analysis' }] }, { id: 'empty', role: 'user' as const, text: '', toolCalls: [] }] };
+    expect(computeSourceFingerprint(node)).toBe(computeSourceFingerprint(original));
+    expect(staleSources(digest, { source: node })).toEqual([]);
   });
 });

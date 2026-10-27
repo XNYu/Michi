@@ -48,6 +48,16 @@ test('shared MCP endpoint routes explicit SessionIDs, keeps warm catalog stable,
     )));
     const save = (sid: string, name: string) => client.callTool({ name: 'save_artifact',
         arguments: { session_id: sid, name, body: `from-${sid}` } });
+    // A call the group cannot route is a tool error that tells the agent how to fix session_id.
+    const assertUnrouted = async (call: ReturnType<typeof save>, why: RegExp) => {
+        const result = await call;
+        assert.equal(result.isError, true);
+        const text = (result.content as Array<{ text: string }>).map(part => part.text).join('');
+        assert.match(text, /session_id/);
+        assert.match(text, why);
+    };
+    const unbound = /not bound to this MCP endpoint\. Use the current session id/;
+    const noTurn = /no active turn/;
     try {
         const initial = await client.listTools();
         assert.ok(initial.tools.length > 5);
@@ -77,30 +87,32 @@ test('shared MCP endpoint routes explicit SessionIDs, keeps warm catalog stable,
         assert.deepEqual(agentCalls, [{ session: 'A', args: {} }, { session: 'B', args: {} }],
             'orchestration calls must use the chosen slot invoker and strip the routing field');
         const n = calls.length;
-        for (const sid of ['', 'unused-W', 'unknown', '__pending__']) await assert.rejects(save(sid, 'rejected'));
-        await assert.rejects(client.callTool({ name: 'save_artifact', arguments: { name: 'missing-id', body: 'x' } }));
+        await assertUnrouted(save('', 'rejected'), /Missing required argument "session_id"/);
+        for (const sid of ['unused-W', 'unknown', '__pending__']) await assertUnrouted(save(sid, 'rejected'), unbound);
+        await assertUnrouted(client.callTool({ name: 'save_artifact', arguments: { name: 'missing-id', body: 'x' } }),
+            /Missing required argument "session_id": pass the current session id/);
         assert.equal(calls.length, n);
         endA();
-        await assert.rejects(save('A', 'after-turn'));
+        await assertUnrouted(save('A', 'after-turn'), noTurn);
         await save('B', 'peer-still-active');
         const endOld = registry.beginSessionTurn(group, 'A');
         const endNew = registry.beginSessionTurn(group, 'A');
         endOld();
         await save('A', 'new-turn-survives-old-finally');
         endNew();
-        await assert.rejects(save('A', 'old-turn-finished'));
+        await assertUnrouted(save('A', 'old-turn-finished'), noTurn);
         registry.beginSessionTurn(group, 'A');
         registry.endSessionTurn(group, 'A');
-        await assert.rejects(save('A', 'cancelled'));
+        await assertUnrouted(save('A', 'cancelled'), noTurn);
         registry.beginSessionTurn(group, 'A');
         await registry.dispose(a.slotId);
-        await assert.rejects(save('A', 'released'));
+        await assertUnrouted(save('A', 'released'), unbound);
         await save('B', 'release-preserves-peer');
         const foreign = registry.create('C', '/tmp', null, callbacks('C'), { nodeId: 'node-c' });
         const otherGroup = registry.createSessionGroup(foreign);
         registry.bindSession(otherGroup, 'C', foreign.slotId);
         registry.beginSessionTurn(otherGroup, 'C');
-        await assert.rejects(save('C', 'wrong-group'));
+        await assertUnrouted(save('C', 'wrong-group'), unbound);
         b.exposedToolNames = new Set(['set_branch_overview']);
         const denied = await save('B', 'hidden-tool');
         assert.equal(denied.isError, true, 'each target retains its own exposed-tool gate');

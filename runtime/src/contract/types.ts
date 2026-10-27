@@ -1,0 +1,546 @@
+import type { AgentSessionState } from 'michi-shared';
+import type {
+  EventConfidence,
+  EventSource,
+  JsonValue,
+} from "michi-shared";
+import type { NormalizedEvent } from "./events";
+import type { RuntimeDescriptor } from "./descriptor";
+import type { HostNodeRecord } from "./host";
+
+// Public wire types are owned by shared; runtime/session internals remain here.
+import type {
+  RuntimeId, AgentReasoning, AgentCapabilities, AgentProviderInfo,
+  AgentModelInfo,
+} from 'michi-shared';
+export type {
+  RuntimeId, AgentReasoning, AgentCapabilities, AgentProviderInfo,
+  AgentRuntimeOption, AgentStatus,
+  AgentSessionState, JsonValue, EventConfidence, EventSource, RuntimeReasoning, ModelReasoningCapabilities,
+  WebSearchProviderInfo,
+} from 'michi-shared';
+export type ModelInfo = AgentModelInfo;
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface AgentTurnInput {
+  /** Server-owned identities used to associate native fork points with this turn. */
+  turnId?: string;
+  assistantMessageId?: string;
+  /**
+   * A person typed this prompt in the host's composer. Set only by the
+   * host's user message path, never for agent-written turns (Michi:
+   * send_to_thread deliveries, Agent Run continuations). Runtimes may gate
+   * human-only behavior on it.
+   */
+  humanOrigin?: boolean;
+  userMessageId?: string;
+  /** Trusted, bounded Pages context rendered for the model only. */
+  pageContext?: string;
+  /** Server-owned scheduler/batch authority; never sourced from model tool args. */
+  maintenanceContext?: MaintenanceTurnContext;
+  attachments?: ReadonlyArray<{
+    name: string;
+    absPath: string;
+  }>;
+}
+
+export interface MaintenanceTurnContext {
+  workspaceId: string;
+  ownerUserId: string;
+  jobId: string;
+  runId: string;
+  claimedBy: string;
+  configRevision: number;
+  planId: string;
+  sources: Array<{
+    sourceTurnId: string;
+    evidence: { nodeId: string; turnId: string; assistantId: string };
+    /** Complete frozen candidate set for model routing; never an authority grant. */
+    manifest: Array<{ kind: 'page' | 'database'; id: string; revision: number; pageIds: string[] }>;
+  }>;
+}
+
+/** Bound to the currently owning scheduled chat send; cleared on its completion. */
+export interface MaintenanceExecutionContext extends MaintenanceTurnContext {
+  execution: { nodeId: string; turnId: string; assistantId: string; runId: string };
+}
+export type ExtraContext = {
+  name: string;
+  /** Empty string for `link` artifacts (which carry `url` instead). */
+  filePath: string;
+  /** External URL for `link` artifacts. Mutually exclusive with a real filePath. */
+  url?: string;
+  size?: number;
+  kind?: "embedded" | "reference" | "symlink";
+};
+
+/**
+ * Result of a runtime's local install/auth probe.
+ *
+ * `/agent/status` used to hardcode `available: true` for every registered
+ * runtime, which made the runtime picker's "unavailable" state dead code and
+ * meant a user with no kiro-cli / claude / codex installed was told all four
+ * were ready — the failure only surfaced on the first send. Probes must be
+ * cheap enough to run on a status request: filesystem and cached state only,
+ * never a process spawn or a network call.
+ */
+export interface RuntimeAvailability {
+  available: boolean;
+  /** Short human-readable reason when unavailable (never a credential value). */
+  detail?: string;
+}
+
+export interface SessionMode {
+  id: string;
+  label?: string;
+  description?: string;
+}
+
+/** Who drives a session: a person in a chat, or a coordinator with no live viewer. */
+export type RuntimeOwnerMode = 'interactive' | 'headless';
+
+/** Durable owner of one runtime session, named by the host. A runtime reads only `mode` and `key`. */
+export interface RuntimeSessionOwner {
+  readonly mode: RuntimeOwnerMode;
+  /** Host-chosen identity. It equals the public id of the session the owner holds; runtimes compare owners by mode and key only. */
+  readonly key: string;
+  /** Host data the runtime carries unchanged and never reads. */
+  readonly hostRef?: unknown;
+}
+
+export interface RuntimeToolProfile {
+  /** When present, tools outside this allow-list must not execute. */
+  allowedToolNames?: readonly string[];
+  /** Immutable public capability snapshot/configuration for adapter use. */
+  capabilitySnapshot?: JsonValue;
+  /**
+   * The contract's restricted flag: the session may call only the host's own
+   * tools. Runtimes must not let it edit files, run shell commands or reach
+   * the network natively, whatever the chat's permission mode; each adapter
+   * enforces it on its own runtime or refuses the session (see
+   * SessionProfilePort.isRestricted, which must honor it). Set only by the
+   * host, never from a request. Michi: its assistant, a chat that reads and
+   * coordinates other threads but is not a worker (backend/src/assistant).
+   */
+  restricted?: boolean;
+  /** Legacy host marker for Michi assistant profiles. */
+  assistant?: boolean;
+  /** Server-created hard-restricted scheduled Pages maintenance profile. */
+  maintenance?: true;
+  /**
+   * The Meta agent's closed toolset this profile carries. Set only by the
+   * backend (assistantToolProfile / maintenanceToolProfile); runtimes check
+   * what they actually expose against allowedToolNames and fail closed.
+   */
+  metaAgentToolset?: 'chat' | 'maintenance';
+}
+
+export interface RuntimePermissionRequest {
+  owner: RuntimeSessionOwner;
+  ownerUserId: string | null;
+  workspaceId: string | null;
+  toolName: string;
+  input: unknown;
+  toolCallId?: string;
+}
+
+export type RuntimePermissionDecision = "allow_once" | "allow_always" | "deny" | "ask";
+
+/** Run coordinators provide a durable permission broker. Chat sessions omit it
+ * and continue through the existing workspace policy/banner flow. */
+export interface RuntimePermissionBroker {
+  requestPermission(request: RuntimePermissionRequest): Promise<RuntimePermissionDecision>;
+}
+
+export interface RuntimeSessionBootstrapOptions {
+  owner?: RuntimeSessionOwner;
+  bootstrapInstructions?: string;
+  replayHistory?: ChatMessage[];
+  toolProfile?: RuntimeToolProfile;
+  permissionBroker?: RuntimePermissionBroker;
+  nativeResumeToken?: JsonValue | null;
+  /** Hash of the immutable effective runtime profile/capabilities. */
+  profileHash?: string | null;
+}
+
+/** One parent message included in an inherited branch transcript. */
+export interface BranchContextMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * Server-resolved branch prefix. When present, the runtime must use this
+ * transcript instead of walking `parentChatId`'s live ancestor chain, so the
+ * visible context stops at the user's chosen branch point.
+ */
+export interface BranchContext {
+  parentNodeId: string;
+  kind: 'exact' | 'approx' | 'legacy';
+  boundaryMessageId?: string;
+  messages: BranchContextMessage[];
+  /** Caveat about an unfinished parent tail or an approximate cut. */
+  note?: string;
+}
+
+export interface NewAgentSessionOptions extends RuntimeSessionBootstrapOptions {
+  crewMemoryMode?: import("michi-shared").CrewMemoryMode;
+  cwd: string;
+  parentChatId?: string;
+  /** Exact inherited prefix; suppresses the runtime's live ancestor-chain preamble. */
+  branchContext?: BranchContext;
+  mergeContexts?: string[];
+  extraContexts?: ExtraContext[];
+  contextManifest?: ExtraContext[];
+  /** Default true. When false, the runtime omits set_follow_ups instructions and tool. */
+  enableFollowUps?: boolean;
+  /** Optional model id forwarded to runtime (e.g. Kiro --model arg, or Pi provider model) */
+  model?: string | null;
+  /** Provider id for Pi runtime; ignored by Kiro */
+  provider?: string | null;
+  /** Reasoning level for Pi runtime; ignored by Kiro */
+  reasoning?: AgentReasoning | null;
+  /**
+   * Optional client-supplied session id. Pi runtime adopts this as
+   * `session.id` so chatId === nodeId, removing the second namespace
+   * (and the acp_session_id reverse-lookup that came with it). Kiro
+   * ignores this — ACP requires server-minted ids.
+   */
+  sessionId?: string;
+  /**
+   * Workspace this chat belongs to. Required for the globalContext tools
+   * (list_threads / search_messages / read_node) as a cold-start/cache
+   * fallback. MCP-backed runtimes prefer resolving workspace_id from the
+   * supplied host node id at tool-call time.
+   */
+  workspaceId?: string | null;
+  /**
+   * The host's user id of the chat owner; undefined where the host has no
+   * signed-in users. A runtime may key per-user state by it (Michi: in its
+   * cloud mode Pi resolves the user's own provider key by it; on desktop it
+   * is undefined and Pi falls back to the shared keys).
+   */
+  ownerUserId?: string | null;
+}
+
+export interface LoadAgentSessionOptions extends RuntimeSessionBootstrapOptions {
+  nativeEngine?: string | null;
+  /** Keep the same follow-up setting when restoring a native session. */
+  enableFollowUps?: boolean;
+  sessionId: string;
+  /** The host's node id for this runtime session, when distinct from sessionId. */
+  nodeId?: string | null;
+  cwd: string;
+  model?: string | null;
+  provider?: string | null;
+  reasoning?: AgentReasoning | null;
+  /**
+   * Workspace this session belongs to. Used as a cache/fallback by
+   * globalContext tools; MCP-backed runtimes prefer nodeId -> nodes.workspace_id.
+   * Optional because legacy callers (and Pi rehydrate) can derive it from the
+   * persisted node row.
+   */
+  workspaceId?: string | null;
+  /** See NewAgentSessionOptions.ownerUserId. */
+  ownerUserId?: string | null;
+}
+
+export interface ForkAgentSessionOptions extends NewAgentSessionOptions {
+  /** Backend-validated parent token. The new session must have a different native identity. */
+  sourceNativeSessionId: string;
+  /**
+   * Set only when the child must stop at a historical anchor. Runtimes that
+   * can only fork their latest native state reject this so the caller can use
+   * the exact text fallback instead of silently inheriting later turns.
+   */
+  anchorMessageId?: string;
+}
+
+export interface AgentSession {
+  getSessionState?(): AgentSessionState;
+  onSessionState?(notify: () => void): () => void;
+  /** Refresh idle retention when a caller acquires this live session. */
+  touch?(): void;
+  readonly nativeEngine?: string;
+  getNativeResumeToken?(): JsonValue;
+  /** The owner's key (Michi: the node id for chats, the Attempt id for Agent Runs). */
+  id: string;
+  /** Explicit product owner. Optional only for backward-compatible adapters. */
+  owner?: RuntimeSessionOwner;
+  /** Immutable profile hash used to reject unsafe session reuse. */
+  runtimeProfileHash?: string | null;
+  /**
+   * Runtime-owned resume/transport id when it differs from the host's node
+   * id (for example Kiro's ACP session id). Never expose this to the frontend.
+   */
+  nativeSessionId?: string | null;
+  runtimeId: RuntimeId;
+  parentChatId?: string;
+  currentModeId?: string | null;
+  currentModelId?: string | null;
+  /** Returns this session's own user/assistant transcript, used by ancestor preamble stitching. */
+  getHistory(): ChatMessage[];
+  /** Mid-stream partial assistant text for an in-progress turn (auto-branch case). Returns undefined when not streaming. */
+  getPendingAssistant(): string | undefined;
+  send(text: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent>;
+  /**
+   * ChatHub committed to running a turn on this session (called before its
+   * first await). Runtimes that start turns on their own can make those give
+   * way to it. Returns a release for a turn that ends without sending.
+   */
+  claimTurn?(): (() => void) | void;
+  cancel(): Promise<CancelAck | void> | CancelAck | void;
+  steer?(text: string): Promise<SteerResult>;
+  followUp?(text: string): Promise<SteerResult>;
+  clearQueue?(): Promise<void> | void;
+  compact?(instructions?: string): Promise<CompactResult>;
+  describeNativeState?(): Record<string, unknown>;
+  setMode?(modeId: string): Promise<void>;
+  setModel?(modelId: string): Promise<void>;
+  respondToPermission?(requestId: number, optionId: string): void;
+  cancelPermission?(requestId: number): void;
+  respondToUserInput?(requestId: number, answers: Array<{ question: string; answer: string }>): void;
+  skipUserInput?(requestId: number): void;
+  /**
+   * Execute a runtime-native command (e.g. Kiro slash command via ACP
+   * `_kiro.dev/commands/execute`). Optional; when absent, commands are
+   * sent as prompt text. Returns structured result.
+   */
+  executeCommand?(command: string, args?: Record<string, unknown>): Promise<{ success: boolean; message?: string; data?: unknown }>;
+}
+
+export interface CancelAck {
+  acknowledged: boolean;
+  /**
+   * Provenance of the acknowledgement. Runtimes with a real protocol-level
+   * interrupt response (Codex `turn/interrupt`, Pi `agent.abort()`) report
+   * `native`. Runtimes that can only observe a proxy for the stop — an ACP
+   * notification accepted by the transport, or a confirmed process death —
+   * report `inferred` so the UI never claims the agent itself confirmed.
+   * Defaults to `native` for backward compatibility with older adapters.
+   */
+  source?: EventSource;
+  confidence?: EventConfidence;
+  /** Wire method or mechanism that produced the ack, for the activity line. */
+  nativeMethod?: string;
+}
+
+export interface SteerResult {
+  accepted: boolean;
+  turnId?: string;
+  pending?: boolean;
+  reason?: string;
+}
+
+export interface CompactResult {
+  started: boolean;
+  /**
+   * True when this call also observed compaction *finish* (Kiro's ACP command
+   * is a request that resolves on completion). Runtimes whose compaction
+   * completes asynchronously through the event stream (Codex emits a
+   * `contextCompaction` item) leave this unset and let the translator close
+   * the lifecycle, so the hub does not emit a premature `compaction_end`.
+   */
+  completed?: boolean;
+  /** Human-readable summary the runtime returned, when it returns one. */
+  detail?: string;
+}
+
+/** The native session id fields of a host's stored chat binding. */
+export type RuntimeResumeBinding = Pick<HostNodeRecord, 'acp_session_id' | 'external_session_id'> & { id?: string };
+
+export interface AgentRuntime {
+  readonly nativeEngine?: string;
+  id: RuntimeId;
+  label: string;
+  /**
+   * What the adapter supports. `spawnBranches` and `saveContext` do not look
+   * at the host's AgentToolBridge: the tools they name also need its methods.
+   */
+  capabilities: AgentCapabilities;
+  /** What this instance can do and how it behaves. */
+  readonly descriptor: RuntimeDescriptor;
+
+  /**
+   * Cheap, synchronous local readiness probe: is the CLI installed and are
+   * credentials present? Runtimes that need no local binary (Pi) may omit it
+   * and are treated as available. Must not spawn processes or hit the network —
+   * `/agent/status` calls this on every poll. Runtimes that do run a one-time
+   * version/auth probe should cache it at construction and read the cache here.
+   */
+  checkAvailability?(): RuntimeAvailability;
+
+  warm(cwd: string, opts?: { model?: string | null }): Promise<void>;
+  newSession(opts: NewAgentSessionOptions): Promise<AgentSession>;
+  forkSession?(opts: ForkAgentSessionOptions): Promise<AgentSession>;
+  loadSession?(opts: LoadAgentSessionOptions): Promise<AgentSession>;
+  /** Opt in only for failures where another native load is safe, never for ambiguous timeouts. */
+  isNativeResumeRetryable?(error: unknown): boolean;
+  /**
+   * The native session id a stored chat binding resumes, read the way this
+   * runtime records it, or null when the binding has none. A host asks the
+   * runtime first and falls back to its own column rule only when absent.
+   */
+  resumeTokenFromBinding?(binding: RuntimeResumeBinding | null | undefined): string | null;
+  /**
+   * Runtime-owned teardown for a live session. Callers should use this instead
+   * of casting AgentSession to runtime-specific dispose/destroy methods so the
+   * runtime can keep its private maps, process/slot ownership, and
+   * sessionRegistry in sync.
+   */
+  releaseSession(sessionId: string, expectedOwner?: RuntimeSessionOwner): Promise<void> | void;
+  listModes?(sessionId: string): Promise<SessionMode[]>;
+  listModels?(opts?: { provider?: string }): Promise<ModelInfo[]>;
+  /** Refresh a dynamic model catalog from the underlying runtime. */
+  refreshModels?(): Promise<ModelInfo[]>;
+  /**
+   * Map a persisted model id onto the id this runtime's catalog uses for the
+   * same model (for example a legacy alias onto its concrete id). Lets the
+   * model sanitizer keep a user's choice instead of resetting it when a
+   * catalog switches id scheme. Returns the input unchanged when unknown.
+   */
+  canonicalModelId?(modelId: string): string;
+  /**
+   * Force a fresh connectivity check for a cwd, tearing down any stale
+   * process/connection first. Powers the "Test Connection" affordance the UI
+   * shows after a connection-class turn failure. Resolves `{ ok }` when the
+   * runtime can reach its backend again, or `{ ok: false, detail }` with a
+   * human-readable reason. Optional: runtimes without it fall back to warm().
+   */
+  checkHealth?(cwd: string, opts?: { model?: string | null }): Promise<{ ok: boolean; detail?: string }>;
+  /**
+   * Sidecar thread-title generation on a cheap model owned by this runtime
+   * (for example Luna for Kiro). Runs in parallel with the main turn so the
+   * sidebar stops showing "Untitled" before the agent has
+   * finished thinking. Resolves `null` when the runtime cannot produce a
+   * title; callers fall back to the agent's own title sentinel. Runtimes that
+   * generate titles inside the session (Claude, Codex) leave this undefined.
+   */
+  generateTitle?(opts: GenerateTitleOptions): Promise<string | null>;
+  shutdown(): Promise<void>;
+}
+
+export interface GenerateTitleOptions {
+  /** The user's first message, as shown in the UI (no mention expansion). */
+  userText: string;
+  /** Quoted or selected text the user is replying to; gives the title subject context. */
+  contextText?: string;
+  /** Workspace folder of the chat that needs a title. Runtimes may ignore it. */
+  cwd?: string | null;
+  signal?: AbortSignal;
+}
+
+export interface VerifyProviderKeyOptions {
+  provider?: string;
+  key?: string;
+  model?: string;
+}
+
+export interface VerifyProviderKeyResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  latencyMs: number;
+  error?: string;
+}
+
+/**
+ * Sub-interface for runtimes that surface a multi-provider catalog and
+ * verifiable API keys (currently Pi). The registry does not require this;
+ * routes/agent.ts uses `hasProviders` to narrow before calling.
+ */
+export interface AgentRuntimeWithProviders extends AgentRuntime {
+  listProviders(): Promise<AgentProviderInfo[]>;
+  verifyProviderKey(opts: VerifyProviderKeyOptions): Promise<VerifyProviderKeyResult>;
+}
+
+export function hasProviders(runtime: AgentRuntime): runtime is AgentRuntimeWithProviders {
+  return runtime.capabilities.apiKeys === true
+    && typeof (runtime as AgentRuntimeWithProviders).listProviders === "function"
+    && typeof (runtime as AgentRuntimeWithProviders).verifyProviderKey === "function";
+}
+
+export interface ProviderEnvBinding {
+  provider: string;
+  envVars: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Owner equality and assertion helpers
+// ---------------------------------------------------------------------------
+
+/** Whether a person drives the owner's session (interactive) or nobody watches it (headless). */
+export function ownerMode(owner: RuntimeSessionOwner): RuntimeOwnerMode {
+  const mode: unknown = owner.mode;
+  if (mode === 'interactive' || mode === 'headless') return mode;
+  throw new Error(`Unknown runtime session owner mode: ${JSON.stringify(mode)}`);
+}
+
+/** The interactive owner keyed by a session's public id: the owner of a session whose host names none. */
+export function interactiveOwner(key: string): RuntimeSessionOwner {
+  return { mode: 'interactive', key };
+}
+
+/**
+ * Equality for two `RuntimeSessionOwner` values: the same mode and the same key.
+ * `hostRef` takes no part: the host's key alone identifies its owner.
+ *
+ * This function is the single authoritative owner-matching predicate. Internal
+ * modules (sessionRegistry, runWorkerTools, release guards) should delegate
+ * here instead of duplicating the comparison.
+ */
+export function sameOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boolean {
+  return ownerMode(left) === ownerMode(right) && left.key === right.key;
+}
+
+/**
+ * Asserts that `actual` is structurally equal to `expected`.
+ * Throws a descriptive error when ownership does not match — used as a
+ * release guard by `AgentRuntime.releaseSession()` implementations and
+ * by `submit_agent_result` validation.
+ */
+export function assertOwner(actual: RuntimeSessionOwner, expected: RuntimeSessionOwner): void {
+  if (!sameOwner(actual, expected)) {
+    throw new Error(
+      `Owner mismatch: expected ${ownerLabel(expected)}, got ${ownerLabel(actual)}`,
+    );
+  }
+}
+
+/**
+ * Returns a human-readable label for an owner, safe for error messages and logs.
+ * Never includes credentials or secrets.
+ */
+export function ownerLabel(owner: RuntimeSessionOwner): string {
+  return `${ownerMode(owner)}(${owner.key})`;
+}
+
+// ---------------------------------------------------------------------------
+// Session identity documentation
+// ---------------------------------------------------------------------------
+
+/**
+ * Session identity contract:
+ *
+ * Every runtime session exposes two distinct identities:
+ *
+ * 1. **Public session id** (`AgentSession.id`):
+ *    - The owner's key, chosen by the host (Michi: a chat's node id, an
+ *      Agent Run's Attempt id).
+ *    - This is the key used by ChatHub, MCP slots, session registry, and all
+ *      product-level routing.
+ *
+ * 2. **Native session id** (`AgentSession.nativeSessionId`):
+ *    - A runtime-private transport/process identifier that may differ from the
+ *      public id (e.g. Kiro ACP session id, Codex thread id).
+ *    - Used only for native resume and internal runtime bookkeeping.
+ *    - Persisted as a private `nativeResumeToken` in the Attempt recovery
+ *      metadata and MUST NOT be surfaced to the frontend or backup exports.
+ *    - May be `null` for runtimes that do not support native resume (e.g. Pi).
+ *
+ * Invariant: `session.id === owner.key`.
+ */

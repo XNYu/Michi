@@ -1,3 +1,4 @@
+import { backendFetch } from '../../services/api/backendRequest';
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ReviewPaneItem } from '../../state/paneItems';
 import { useChatActions, useChatProjects } from '../../state/chatStore';
@@ -58,7 +59,7 @@ export default function ReviewPane({ item }: { item: ReviewPaneItem }) {
     }
     const controller = new AbortController();
     setDiff({ phase: 'loading' });
-    fetch(`${workspaceBackendApiBase(item.projectId)}/workspaces/${encodeURIComponent(item.projectId)}/diff?path=${encodeURIComponent(selectedPath)}`, { signal: controller.signal })
+    backendFetch(`${workspaceBackendApiBase(item.projectId)}/workspaces/${encodeURIComponent(item.projectId)}/diff?path=${encodeURIComponent(selectedPath)}`, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(response.status === 404 ? 'No diff is available for this file' : `Request failed (${response.status})`);
         return response.json() as Promise<{ diff: string; truncated?: boolean }>;

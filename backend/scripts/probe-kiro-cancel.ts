@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AcpClient, AcpUpdate } from '../src/services/acpClient';
+import type { AcpClient, AcpUpdate } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import type { AddressInfo } from 'node:net';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 
@@ -19,7 +19,10 @@ async function startHttpProbe(directory: string, client: AcpClient) {
   const { default: express } = await import('express');
   const { initDb, closeDb, getDb } = await import('../src/services/db');
   const { getNode } = await import('../src/services/dbRepository');
-  const { KiroRuntime } = await import('../src/agents/kiro/KiroRuntime');
+  const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+  const { resolveKiroEngine } = await import('michi-runtime/internal/adapters/kiro/kiroProtocol');
+  const { kiroEnvOptions } = await import('../src/agents/michiKiroOptions');
+  const { createMichiRuntimeHost } = await import('../src/agents/michiRuntimeHost');
   const { registerRuntime } = await import('../src/agents/registry');
   const { setupMichiRoutes } = await import('../src/routes/michi');
   const { ChatManager } = await import('../src/services/chatManager');
@@ -28,7 +31,9 @@ async function startHttpProbe(directory: string, client: AcpClient) {
   initDb();
   getDb().prepare('INSERT INTO workspaces (id,name,cwd,created_at,updated_at) VALUES (?,?,?,1,1)').run('probe-ws', 'Isolated cancel probe', directory);
   getDb().prepare("INSERT INTO nodes (id,workspace_id,title,kind,status,minimized,spawned_by_agent,created_at) VALUES ('probe-node','probe-ws','Cancel probe','chat','idle',0,0,1)").run();
-  const runtime = new KiroRuntime({} as AgentToolBridge, undefined, 0, directory);
+  // As the Kiro factory builds it, without MCP slots.
+  const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, defaultCwd: directory,
+    ...kiroEnvOptions(), engine: resolveKiroEngine(process.env.MICHI_KIRO_ENGINE), host: createMichiRuntimeHost() });
   // Attach the instrumented, already initialized client to the real pool.
   (runtime as any).pool.set(directory, client);
   registerRuntime(runtime);
@@ -96,13 +101,16 @@ async function main() {
     resources: [],
     includeMcpJson: false,
   }));
-  const { AcpClient } = await import('../src/services/acpClient');
+  const { AcpClient } = await import('michi-runtime/internal/adapters/kiro/acpClient');
+  const { kiroEnvOptions } = await import('../src/agents/michiKiroOptions');
+  const { createMichiRuntimeHost } = await import('../src/agents/michiRuntimeHost');
   const fault = process.argv.find((arg) => arg.startsWith('--fault='))?.slice('--fault='.length);
   const withPeer = process.argv.includes('--with-peer');
   assert.ok(!fault || fault === 'drop-completion' || fault === 'ignore-cancel');
   assert.ok(!fault || process.argv.includes('--http'), 'fault probes require the real HTTP/runtime recovery path');
   assert.ok(!withPeer || fault, 'peer safety probe requires fault injection');
-  const client = new AcpClient(undefined, directory);
+  const client = new AcpClient(undefined, directory, undefined, 'v2', undefined, 'kiro',
+    { ...kiroEnvOptions(), observability: createMichiRuntimeHost().observability });
   const wire: Array<Record<string, unknown>> = [];
   // Instrument the actual stdio messages, not inferred session-file timestamps.
   const internals = client as any;

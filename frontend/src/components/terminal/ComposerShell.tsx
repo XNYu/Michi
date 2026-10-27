@@ -1,3 +1,4 @@
+import './mobile.css';
 import React, {
   forwardRef,
   useImperativeHandle,
@@ -145,8 +146,9 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
           </div>
         )}
         <div
+          className="terminal-composer__input"
           style={{
-            padding: '10px 12px 4px 12px',
+            padding: 'var(--composer-input-padding, 10px 12px 4px 12px)',
             display: 'flex',
             alignItems: 'flex-start',
             gap: 8,
@@ -155,6 +157,8 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
         >
           {caretAdornments}
           <span
+            className="terminal-composer__prompt"
+            aria-hidden="true"
             style={{
               color: 'var(--term-accent)',
               fontFamily: 'var(--ui-font)',
@@ -170,8 +174,9 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
         </div>
         <div
           ref={toolbarRef}
+          className="terminal-composer__toolbar"
           style={{
-            padding: '4px 10px 8px 10px',
+            padding: 'var(--composer-toolbar-padding, 4px 10px 8px 10px)',
             display: 'flex',
             alignItems: 'center',
             gap: 6,

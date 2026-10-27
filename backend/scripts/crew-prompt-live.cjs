@@ -7,12 +7,15 @@ if (process.env.MICHI_CREW_LIVE_TEST !== '1') throw new Error('Set MICHI_CREW_LI
 const root = path.resolve(__dirname, '../..');
 process.env.TS_NODE_PROJECT = path.join(root, 'backend/tsconfig.json');
 require('ts-node/register');
-const { AcpClient } = require('../src/services/acpClient');
-const { KiroSession } = require('../src/agents/kiro/KiroSession');
-const { createCrewGateway } = require('../src/agents/crew/acp/gatewayClient');
-const { parseCrewAcpConfig } = require('../src/agents/crew/acp/main');
+const { AcpClient } = require('michi-runtime/internal/adapters/kiro/acpClient');
+const { KiroSession } = require('michi-runtime/internal/adapters/kiro/KiroSession');
+const { CREW_KIRO_FLAVOR } = require('michi-runtime/internal/adapters/crew/crewFlavor');
+const { createCrewGateway } = require('michi-runtime/internal/adapters/crew/acp/gatewayClient');
+const { parseCrewAcpConfig } = require('michi-runtime/internal/adapters/crew/acp/main');
 const { buildPreamble } = require('../src/agents/preamble');
-const { crewTurnFormat } = require('../src/agents/crew/crewPrompt');
+const { crewTurnFormat } = require('../src/agents/hostText/kiro');
+const { createMichiRuntimeHost } = require('../src/agents/michiRuntimeHost');
+const host = createMichiRuntimeHost();
 const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-crew-prompt-'));
 const model = process.env.MICHI_CREW_LIVE_MODEL || 'claude-opus-5.5';
 const effort = process.env.MICHI_CREW_LIVE_EFFORT || 'xhigh';
@@ -20,7 +23,7 @@ const gateway = createCrewGateway(parseCrewAcpConfig([], process.env).gateway);
 const client = new AcpClient(undefined, cwd, model, 'v2', {
     bin: process.execPath, args: selected => [path.join(root, 'backend/dist/crewAcp.js'), '--model', selected],
     standardFork: true, cancelTimeoutMs: 15000,
-});
+}, undefined, { observability: host.observability });
 let sid, timer;
 const report = { model, effort, checks: [] };
 (async () => {
@@ -30,9 +33,9 @@ const report = { model, effort, checks: [] };
         sid = info.sessionId;
         assert.equal(info.modes.currentModeId, 'template:michi-crew', 'New chats must select the installed Michi template');
         assert.equal((await client.executeCommand(sid, 'effort', { value: effort })).success, true);
-        const runtime = { id: 'crew', ensureClient: async () => client,
+        const runtime = { id: 'crew', host, ensureClient: async () => client,
             getCurrentMode: () => info.modes.currentModeId, getCurrentModel: () => model };
-        const session = new KiroSession('disposable-node', sid, runtime, cwd, { runtimeId: 'crew', enableFollowUps: false });
+        const session = new KiroSession('disposable-node', sid, runtime, cwd, { runtimeId: 'crew', flavor: CREW_KIRO_FLAVOR, enableFollowUps: false });
         const started = Date.now();
         let firstOutputMs, text = '', tools = 0;
         timer = setTimeout(() => { void client.cancel(sid); }, 180000);

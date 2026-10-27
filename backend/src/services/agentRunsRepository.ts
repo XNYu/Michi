@@ -64,7 +64,6 @@ export interface CreateAttemptInput {
   runId: string;
   profileIndex: number;
   runtimeProfile: RuntimeProfileV1;
-  publicSessionId: string;
   recoveryEnvelope: RecoveryEnvelopeV1 | null;
 }
 
@@ -227,7 +226,9 @@ export class AgentRunsRepository {
     return rows.map((row): AgentRunAttemptDtoV1 => ({
       version: 1, id: row.id, runId: row.run_id, attemptIndex: row.attempt_index,
       profileIndex: row.profile_index, runtimeProfile: JSON.parse(row.runtime_profile),
-      status: row.status, publicSessionId: row.public_session_id,
+      // Runtime sessions have always used the Attempt id. Older rows may
+      // contain a separately generated operation/import id in this column.
+      status: row.status, publicSessionId: row.id,
       recoveryEnvelope: row.recovery_envelope ? JSON.parse(row.recovery_envelope) : null,
       startedAt: row.started_at, checkpointAt: row.checkpoint_at,
       completedAt: row.completed_at, error: row.error ? JSON.parse(row.error) : null,
@@ -427,7 +428,7 @@ export class AgentRunsRepository {
         public_session_id, recovery_envelope, started_at
       ) VALUES (?, ?, ?, ?, ?, 'preparing', ?, ?, ?)`).run(
         id, input.runId, raw.next_attempt_index, input.profileIndex,
-        JSON.stringify(input.runtimeProfile), input.publicSessionId,
+        JSON.stringify(input.runtimeProfile), id,
         input.recoveryEnvelope ? JSON.stringify(input.recoveryEnvelope) : null, this.now(),
       );
       getDb().prepare('UPDATE agent_runs SET active_attempt_id = ?, next_attempt_index = next_attempt_index + 1, updated_at = ? WHERE id = ? AND owner_user_id = ?')

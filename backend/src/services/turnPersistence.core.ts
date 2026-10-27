@@ -23,6 +23,8 @@ import {
   appendBranchOverviewEntry,
   clearSpawnPromptFromComposerDraft,
   checkpointTurnContent,
+  endBackgroundSubagents,
+  isBackgroundSubagentPending,
   parseBranchOverviewEntries,
   serializeBranchOverviewEntries,
   type DurableMessage,
@@ -34,6 +36,7 @@ import {
   durableMessageMetadata,
   MESSAGE_SQL,
   NODE_SQL,
+  storedSubagentEnds,
   terminalNodeStatus,
   TURN_SQL,
 } from './turnPersistence.recipes';
@@ -99,12 +102,39 @@ function saveMessageRow(
   db.runNamed(MESSAGE_SQL.upsert, { rev: null, ...msg } as Record<string, unknown>);
 }
 
+/**
+ * The assistant message to write, with the background-subagent ends its
+ * row already holds applied. An end can be stored on the row of a turn
+ * still open (endNodeBackgroundSubagents: Stop in the agent's launch turn,
+ * a crash or dispose mid-turn), and that turn's projection never hears of
+ * it. A stored copy with an outcome is final, so the snapshot's copy still
+ * waiting for one takes it (shared endBackgroundSubagents) instead of
+ * writing the row back to pending. The row is read only when the snapshot
+ * holds such a copy, inside the caller's transaction, so no end can land
+ * between this read and the write.
+ */
+function withStoredSubagentEnds(db: DbPrimitives, snapshot: DurableTurnSnapshot): DurableMessage {
+  const message = snapshot.assistantMessage;
+  const roster = message.subagents;
+  if (!roster?.length) return message;
+  const pending = new Set<string>();
+  for (const entry of roster) {
+    if (entry && typeof entry.sessionId === 'string' && isBackgroundSubagentPending(entry)) pending.add(entry.sessionId);
+  }
+  if (pending.size === 0) return message;
+  const row = db.get<{ metadata: string | null }>(MESSAGE_SQL.getAssistantMetadata, message.id, snapshot.nodeId);
+  const ends = storedSubagentEnds(row?.metadata ?? null).filter((end) => pending.has(end.sessionId));
+  if (ends.length === 0) return message;
+  const subagents = endBackgroundSubagents(roster, ends);
+  return subagents === roster ? message : { ...message, subagents };
+}
+
 function writeAssistantSnapshot(
   db: DbPrimitives,
   snapshot: DurableTurnSnapshot,
   content = snapshot.assistantMessage.content,
 ): void {
-  const message = snapshot.assistantMessage;
+  const message = withStoredSubagentEnds(db, snapshot);
   const result = db.run(
     MESSAGE_SQL.updateAssistant,
     content,
@@ -296,6 +326,25 @@ export function coreFinalizeTurn(db: DbPrimitives, snapshot: DurableTurnSnapshot
 
     const now = Date.now();
     const completedAt = snapshot.completedAt ?? now;
+    let completionSeq: number | null = null;
+    const inputOrigin = row.user_message_id === null ? undefined : db.get<{ scheduled_job_id: unknown }>(
+      `SELECT json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.scheduledJobId') AS scheduled_job_id
+       FROM messages WHERE id = ? AND node_id = ?`, row.user_message_id, snapshot.nodeId,
+    );
+    const scheduledInput = snapshot.userMessage?.metadata?.scheduledJobId || inputOrigin?.scheduled_job_id;
+    if (snapshot.status === 'completed' && row.user_message_id !== null && !scheduledInput) {
+      // Resolve the CURRENT workspace: a node may have moved since this turn began.
+      const node = db.get<{ workspace_id: string }>('SELECT workspace_id FROM nodes WHERE id = ?', snapshot.nodeId);
+      if (!node) throw new Error(`node ${snapshot.nodeId} does not exist`);
+      const key = `conversation_completion_seq:${node.workspace_id}`;
+      const counter = db.get<{ value: string }>('SELECT value FROM meta WHERE key = ?', key);
+      const previous = counter ? Number(counter.value) : 0;
+      if (!Number.isSafeInteger(previous) || previous < 0 || previous === Number.MAX_SAFE_INTEGER) {
+        throw new Error('Invalid conversation completion counter');
+      }
+      completionSeq = previous + 1;
+      db.run('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, String(completionSeq));
+    }
     db.run(
       TURN_SQL.finalize,
       snapshot.status,
@@ -305,6 +354,7 @@ export function coreFinalizeTurn(db: DbPrimitives, snapshot: DurableTurnSnapshot
       now,
       completedAt,
       now,
+      completionSeq,
       snapshot.turnId,
     );
     return getTurnRow(db, snapshot.turnId)!;

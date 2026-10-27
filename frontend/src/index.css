@@ -98,6 +98,15 @@
   }
 }
 
+/* Baseline keyboard focus. Component-specific rules still win; this only
+   fills the gaps (icon buttons, rows, ad-hoc controls). */
+@layer base {
+  :where(button, [role='button'], a[href], input, select, textarea):focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent);
+    outline-offset: 1px;
+  }
+}
+
 /* Configure the typography plugin's prose colors against our theme tokens. */
 @layer base {
   .prose {
@@ -173,12 +182,12 @@
 
 /* ----------------------------------------------------------------------------
    Message typography (Michi messages + user bubbles).
-   Calibrated in mocks/typography-lab.html. Latin glyphs render in Geist by
+   Body rhythm follows the Claude Code Prose base rules. Latin glyphs render in Geist by
    default (Source Serif 4 is the serif preset); CJK glyphs use the OS system font (PingFang on macOS, Microsoft YaHei on Windows,
    Noto Sans CJK on Linux) via the standard stack — browser routes by Unicode
    coverage automatically.
 
-   --message-body-size is read from the assistantFontSize pref (set on :root by
+   --message-body-size is read from the messageFontSize pref (set on :root by
    prefs.tsx). Both user and assistant messages share these values so they
    render identically.
    --------------------------------------------------------------------------- */
@@ -192,38 +201,16 @@
      with the prose typeface; the no-JS / SSR default below is a safe mono
      stack. */
   --message-code-font: 'Geist Mono', 'IBM Plex Mono', Menlo, ui-monospace, monospace;
-  /* Slider drives --message-body-size-base (prefs.tsx). Density-scoped rules
-     below derive --message-body-size from it, so the slider stays orthogonal
-     to density and composer chrome (outside .terminal-message-assistant)
-     reads the unscaled base. */
-  --message-body-size-base: 14.5px;
+  /* Font size remains user configurable; pane density only changes chrome. */
+  --message-body-size-base: 16px;
   --message-body-size: var(--message-body-size-base);
   --message-body-leading: 1.5;
   --message-paragraph-spacing: 1.05em;
-  --message-list-item-spacing: 0.45em;
-  --message-h1-scale: 1.6;
-  --message-h2-scale: 1.32;
-  --message-h3-scale: 1.15;
+  --message-prose-flow: 0.75em;
 }
 
 :root:lang(ja) {
   --message-cjk-font: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic', sans-serif;
-}
-
-/* Density-scoped overrides for assistant prose. Density only adjusts
-   line-height and letter-spacing — font size stays driven exclusively by
-   the slider (--message-body-size-base) so the two controls don't fight. */
-.terminal-message[data-density='comfortable'] {
-  --message-body-leading: 1.6;
-  letter-spacing: 0.01em;
-}
-.terminal-message[data-density='compact'] {
-  --message-body-leading: 1.45;
-  letter-spacing: 0;
-}
-.terminal-message[data-density='dense'] {
-  --message-body-leading: 1.3;
-  letter-spacing: -0.005em;
 }
 
 /* Shared base used by both message bubbles' .prose and
@@ -246,40 +233,94 @@
   letter-spacing: 0;
   font-feature-settings: "kern" 1, "liga" 1;
 }
-:is(.terminal-message-assistant, .terminal-message-user) .prose :where(p, ul, ol, blockquote, pre) {
-  margin-top: 0;
-  margin-bottom: var(--message-paragraph-spacing);
+/* Feature components provide the outer block; their nested table/pre keeps
+   its own internal layout rather than adding a second paragraph margin. */
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(.michi-code-block, .michi-table-feature, .michi-mermaid-block) {
+  margin-block: var(--message-prose-flow) 0;
 }
-.terminal-message-user .prose > :last-child {
-  margin-bottom: 0;
+:is(.terminal-message-assistant, .terminal-message-user) .prose .michi-table-feature table {
+  margin-block: 0;
+}
+/* Use leading margins, including the previous semantic block across the
+   display:contents roots used during streaming. Whitespace blocks are ignored
+   by the splitter metadata, so completion does not change the rhythm. */
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(p, ul, ol, dl, blockquote, pre, table, figure, details, .michi-code-block, .michi-table-feature, .michi-mermaid-block) {
+  margin-block: var(--message-prose-flow) 0;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(ul, ol) {
+  padding-inline-start: 2em;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose :where(li) {
-  margin-top: 0;
-  margin-bottom: var(--message-list-item-spacing);
+  margin-block: calc(var(--message-prose-flow) * 0.333) 0;
+  padding-inline-start: 0.5em;
 }
-:is(.terminal-message-assistant, .terminal-message-user) .prose :where(h1, h2, h3) {
-  font-family: inherit;
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(li > p, li > ul, li > ol, li > blockquote, li > pre) {
+  margin-block: calc(var(--message-prose-flow) * 0.333) 0;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(ul > li > ul) {
+  list-style-type: circle;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(ul > li > ul > li > ul) {
+  list-style-type: square;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(strong, b) {
   font-weight: 600;
 }
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(h1, h2, h3, h4, h5, h6) {
+  font-family: inherit;
+  font-weight: 580;
+  letter-spacing: 0;
+  margin-block: calc(var(--message-prose-flow) * var(--message-heading-space)) 0;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(h1, h2, h3, h4, h5, h6) :where(strong, b) {
+  font-weight: inherit;
+}
 :is(.terminal-message-assistant, .terminal-message-user) .prose h1 {
-  font-size: calc(var(--message-body-size) * var(--message-h1-scale));
-  line-height: 1.05;
-  letter-spacing: -0.025em;
-  margin-top: 0;
-  margin-bottom: 0.4em;
+  --message-heading-space: 3;
+  font-size: 1.75em;
+  line-height: 1.25;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose h2 {
-  font-size: calc(var(--message-body-size) * var(--message-h2-scale));
-  line-height: 1.18;
-  letter-spacing: -0.015em;
-  margin-top: 2.2em;
-  margin-bottom: 0.55em;
+  --message-heading-space: 2.5;
+  font-size: 1.375em;
+  line-height: 1.25;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose h3 {
-  font-size: calc(var(--message-body-size) * var(--message-h3-scale));
+  --message-heading-space: 2;
+  font-size: 1.125em;
   line-height: 1.3;
-  margin-top: 1.6em;
-  margin-bottom: 0.4em;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(h4, h5, h6) {
+  --message-heading-space: 1.667;
+  font-size: 1em;
+  line-height: 1.3;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(h5, h6) {
+  font-size: 0.875em;
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(h1, h2, h3, h4, h5, h6) + :where(p, ul, ol, dl, blockquote, pre, table, figure, details, .michi-code-block, .michi-table-feature, .michi-mermaid-block, h1, h2, h3, h4, h5, h6),
+:is(.terminal-message-assistant, .terminal-message-user) .prose[data-markdown-after='heading'] > :first-child {
+  margin-block-start: calc(var(--message-prose-flow) * 0.667);
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(ul, ol, dl) + :where(p, ul, ol, dl, blockquote, pre, table, figure, details, .michi-code-block, .michi-table-feature, .michi-mermaid-block, h1, h2, h3, h4, h5, h6),
+:is(.terminal-message-assistant, .terminal-message-user) .prose[data-markdown-after='list'] > :first-child {
+  margin-block-start: calc(var(--message-prose-flow) * 2);
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(ul, ol, dl) + :where(h1, h2, h3, h4, h5, h6),
+:is(.terminal-message-assistant, .terminal-message-user) .prose[data-markdown-after='list'] > :is(h1, h2, h3, h4, h5, h6) {
+  margin-block-start: calc(var(--message-prose-flow) * max(2, var(--message-heading-space)));
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(table, .michi-table-feature) + :where(p, ul, ol, dl, blockquote, pre, table, figure, details, .michi-code-block, .michi-table-feature, .michi-mermaid-block, h1, h2, h3, h4, h5, h6),
+:is(.terminal-message-assistant, .terminal-message-user) .prose[data-markdown-after='table'] > :first-child {
+  margin-block-start: calc(var(--message-prose-flow) * 2);
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(table, .michi-table-feature) + :where(h1, h2, h3, h4, h5, h6),
+:is(.terminal-message-assistant, .terminal-message-user) .prose[data-markdown-after='table'] > :is(h1, h2, h3, h4, h5, h6) {
+  margin-block-start: calc(var(--message-prose-flow) * max(2, var(--message-heading-space)));
+}
+:is(.terminal-message-assistant, .terminal-message-user) .prose :where(li:first-child, li > p:first-child, blockquote > :first-child),
+:is(.terminal-message-assistant, .terminal-message-user) .prose[data-markdown-first] > :first-child {
+  margin-block-start: 0;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose table {
   font-size: calc(var(--message-body-size) * 0.95);
@@ -317,6 +358,14 @@
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose :not(pre) > code {
   font-size: calc(var(--message-body-size) * 0.9);
+  font-weight: 400;
+  line-height: 1;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  border: 0.5px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 0.4em;
+  padding: 0.0625em 0.25em;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .terminal-message-frame {
@@ -352,8 +401,7 @@
   white-space: nowrap;
 }
 
-:is(.terminal-message-assistant, .terminal-message-user) .prose .michi-code-block,
-.prose .michi-code-block {
+:where(.prose) .michi-code-block {
   margin-top: var(--message-paragraph-spacing, 1em);
   margin-bottom: var(--message-paragraph-spacing, 1em);
 }
@@ -589,13 +637,50 @@
   word-break: normal;
 }
 
-.michi-table-controls,
 .michi-mermaid-controls {
   display: flex;
   justify-content: flex-end;
   gap: 4px;
   padding: 6px;
   border-bottom: 1px solid var(--term-line, var(--line));
+}
+
+/* Touch (no hover): the controls stay visible as a toolbar strip inside the
+   table box, since nothing could reveal them. */
+.michi-table-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--term-line, var(--line));
+}
+
+/* Pointer devices: the controls sit just outside the box, above its top-right
+   corner, and appear on hover or keyboard focus. They overlap the space above
+   the table instead of covering the header row or reserving a strip. */
+@media (hover: hover) {
+  .michi-table-controls {
+    position: absolute;
+    /* Offsets resolve against the padding box; 1px clears the box border so
+       the right edges line up and the gap is measured from the border. */
+    bottom: calc(100% + 1px);
+    right: -1px;
+    z-index: 1;
+    /* The gap is padding, not an offset, so the pointer stays inside the
+       controls (and :hover on the table) while crossing it. */
+    padding: 0 0 4px;
+    border-bottom: 0;
+    opacity: 0;
+    /* Hidden controls must not catch clicks, selection or hover meant for
+       the content above the table. */
+    pointer-events: none;
+    transition: opacity var(--t-soft) var(--t-ease);
+  }
+  .michi-table-feature:hover .michi-table-controls,
+  .michi-table-controls:has(:focus-visible) {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .michi-table-controls button,
@@ -768,6 +853,14 @@
 }
 .terminal-message-user[data-density='dense'] { padding: 6px 13px 7px; }
 .terminal-message-user[data-density='compact'] { padding: 8px 15px 9px; }
+
+/* The long-message fade belongs to its content, never its expansion control. */
+.t-user-text-toggle { color: var(--term-muted); }
+.t-user-text-toggle:is(:hover, :focus-visible) { color: var(--term-fg); }
+.t-user-text-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent);
+  outline-offset: 1px;
+}
 
 .terminal-message-steered,
 .terminal-message-thread-source {
@@ -1021,6 +1114,52 @@ body {
   -webkit-backdrop-filter: blur(var(--term-glass-blur)) saturate(var(--term-glass-saturate));
   backdrop-filter: blur(var(--term-glass-blur)) saturate(var(--term-glass-saturate));
 }
+/* Separate the conversation list from the titlebar without shifting rows. */
+.terminal-sidebar:not([data-collapsed])::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: color-mix(in srgb, var(--term-line) 50%, transparent);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* The docked sidebar and titlebar form one continuous outer frame. Paint the
+   lower frame once behind both columns so the content's rounded corner reveals
+   exactly the same material as the rail, including native macOS vibrancy. */
+.terminal-shell[data-sidebar-layout='docked'] {
+  --term-chrome-bg: var(--term-sidebar-bg, var(--term-surface));
+  --term-topbar-zone-bg: transparent;
+  --term-sidebar-body-bg: transparent;
+  --term-sidebar-edge: none;
+  --term-sidebar-shadow: none;
+}
+.terminal-shell[data-sidebar-layout='docked'] > .terminal-body {
+  background: var(--term-chrome-bg);
+}
+.terminal-shell[data-sidebar-layout='docked'] .terminal-sidebar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.terminal-shell[data-sidebar-layout='docked'] .terminal-content-col {
+  position: relative;
+  border-top-left-radius: var(--ui-radius);
+  overflow: clip;
+}
+/* An overlay hairline keeps pane widths and caption alignment unchanged. */
+.terminal-shell[data-sidebar-layout='docked'] .terminal-content-col::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-top: 1px solid color-mix(in srgb, var(--term-line) 50%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--term-line) 50%, transparent);
+  border-top-left-radius: inherit;
+  pointer-events: none;
+}
 /* Pull interactive rows out to the sidebar edge so their borderLeft (selection
    indicator) and absolute-positioned streaming bars stay flush against the
    sidebar's true edge, cancelling the tree container's --sb-inset padding.
@@ -1070,7 +1209,7 @@ html[data-vibrancy='on'] {
 
 /* The generic row hover lives in shared CSS that classic also uses, so it's
    overridden per-mode here rather than edited in place. */
-.terminal-sidebar[data-row-style]:not([data-row-style='classic']) .t-row-hover:not(.is-active):hover {
+.terminal-sidebar[data-row-style]:not([data-row-style='classic']) .t-row-hover:not(.is-active):is(:hover, :focus-within) {
   background: var(--sb-card-hover) !important;
 }
 /* Card modes drop the kebab's fade-to-solid strip entirely. Its job was to mask
@@ -1146,8 +1285,8 @@ html[data-vibrancy="on"],
   /* Tint = the same solidity slider, so ⇩ translucency ⇨ more desktop shows
      through the native material. Uniform across the whole chrome frame. */
   --term-vibrancy-tint: color-mix(in srgb, var(--term-surface) calc(var(--term-sidebar-solid-alpha) * 100%), transparent);
-  /* Drive the sidebar bg var itself so BOTH the sidebar body and the topbar
-     Zone-1 spacer (which reads --term-sidebar-bg) share one uniform frost. */
+  /* Both legs of the docked frame, plus the narrow sidebar overlay, use the
+     same tint. Children stay transparent to avoid a second translucent coat. */
   --term-sidebar-bg: var(--term-vibrancy-tint);
   /* Reverse the elevation. Normally the sidebar casts a shadow RIGHTWARD onto
      the main panel (sidebar reads higher). But under vibrancy the glass sidebar
@@ -1170,28 +1309,10 @@ html[data-vibrancy="on"],
 [data-vibrancy="on"] .terminal-topbar {
   background: var(--term-vibrancy-tint) !important;
 }
-/* The topbar's Zone-1 spacer (the region above the sidebar holding the traffic
-   lights + icon strip) is a child of .terminal-topbar and paints its OWN
-   --term-sidebar-bg tint. Under vibrancy that stacks a SECOND translucent layer
-   on top of the topbar's tint → the top strip composites darker/whiter than the
-   single-layer sidebar body. Make it transparent so the topbar's one tint is
-   the only layer there, matching the sidebar. Its right border + shadow (set
-   as separate properties) are untouched, so the sidebar's edge line still runs
-   continuously through the topbar. */
-[data-vibrancy="on"] .terminal-topbar > div[aria-hidden] {
-  background: transparent !important;
-}
-/* Right-cluster (thread view toggles + Artifacts trigger) must stay OPAQUE to
-   mask the pane caption text beneath. Use the panel surface color so it blends
-   with the main content zone (which is already opaque under vibrancy — only the
-   sidebar is glass). */
-/* Right cluster is always transparent now — icons inherit pane color beneath
-   them, and the cells strip mask-image fades text before it reaches them.
-   This override is kept for explicitness under vibrancy. */
-/* Right cluster stays opaque under vibrancy — same as the pane cells. The
-   inline style already sets topbarBg + dim filter; no override needed. */
+/* The docked sidebar reveals the tint painted once by .terminal-body. Narrow
+   overlays have no frame behind them, so they still need their own tint. */
 [data-vibrancy="on"] .terminal-sidebar {
-  background: var(--term-vibrancy-tint) !important;
+  background: var(--term-sidebar-body-bg, var(--term-vibrancy-tint)) !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
@@ -1542,16 +1663,47 @@ html[data-vibrancy="on"],
 .hide-sb { scrollbar-width: none; -ms-overflow-style: none; }
 
 /* Thin, terminal-themed scrollbar. Uses --term-* tokens so it adapts per theme. */
-.term-scrollbar { scrollbar-width: thin; scrollbar-color: var(--term-line) transparent; }
+:root {
+  /* Scrollbar indirection: surfaces rebind the pair instead of restyling every
+     bar. Values stay lazily resolved so the palette's --term-* wins where set. */
+  --term-scrollbar-thumb: var(--term-line, var(--line, #b5ac98));
+  --term-scrollbar-thumb-hover: var(--term-muted, var(--fg-subtle, #70695d));
+}
+.term-scrollbar { scrollbar-width: thin; scrollbar-color: var(--term-scrollbar-thumb) transparent; }
 .term-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
 .term-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .term-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--term-line);
+  background: var(--term-scrollbar-thumb);
   border-radius: var(--ui-radius-pill);
-  border: 2px solid var(--term-bg);
+  border: 2px solid var(--term-scrollbar-border, var(--term-bg));
 }
-.term-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--term-muted); }
+.term-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--term-scrollbar-thumb-hover); }
 .term-scrollbar::-webkit-scrollbar-corner { background: transparent; }
+
+/* Sidebar scrollbars are a pointer affordance: Sidebar.tsx adds
+   data-scrollbars="quiet" while the pointer is away and rebinds the thumb to
+   transparent. Keeping the bar (rather than display:none) lets
+   scrollbar-gutter reserve its space, so revealing it never reflows a row. */
+.terminal-sidebar[data-scrollbars='quiet'] {
+  --term-scrollbar-thumb: transparent;
+  --term-scrollbar-thumb-hover: transparent;
+  --term-scrollbar-border: transparent;
+}
+.terminal-sidebar .term-scrollbar { scrollbar-gutter: stable; }
+
+/* Collapsing the sidebar fades its content in place (still clipped by the
+   shell); the content keeps its expanded width, so nothing reflows mid-slide. */
+.terminal-sidebar-content {
+  transition: opacity 100ms var(--t-ease);
+}
+.terminal-sidebar[data-collapsed] .terminal-sidebar-content {
+  opacity: 0;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .terminal-sidebar { transition: none !important; }
+  .terminal-sidebar-content { transition: none; }
+}
 
 /* Terminal hover utilities — pair with --t-* motion tokens.
    Replaces inline onMouseEnter style mutations with smooth CSS transitions. */
@@ -1892,9 +2044,15 @@ html[data-vibrancy="on"],
   transition: background var(--t-quick) var(--t-ease),
               color var(--t-quick) var(--t-ease);
 }
-.t-row-hover:not(.is-active):hover {
+.t-row-hover:not(.is-active):hover,
+.t-row-hover:not(.is-active):focus-within {
   background: var(--term-hover-bg, var(--term-alt)) !important;
   color: var(--term-fg) !important;
+}
+/* Rows that are buttons to the keyboard (sidebar bottom nav, Appearance swatches): a ring inside the row. */
+.t-row-focus:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
 }
 
 /* Show-more toggle: dotted underline goes solid + color becomes readable on hover. */
@@ -1982,7 +2140,9 @@ html[data-vibrancy="on"],
   transition: opacity var(--t-quick) ease-out;
 }
 .t-row-hover:hover .ws-hover-chevron,
-.t-row-hover:hover .ws-hover-actions {
+.t-row-hover:hover .ws-hover-actions,
+.t-row-hover:focus-within .ws-hover-chevron,
+.t-row-hover:focus-within .ws-hover-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -2719,11 +2879,36 @@ html[data-vibrancy="on"],
   pointer-events: none;
 }
 .t-row-hover:hover .row-kebab,
-.row-kebab.is-open {
+.t-row-hover:focus-within .row-kebab,
+.row-kebab.is-open,
+.row-kebab:focus-within {
   opacity: 1;
 }
 .row-kebab > button {
+  pointer-events: none;
+}
+.t-row-hover:hover .row-kebab > button,
+.t-row-hover:focus-within .row-kebab > button,
+.row-kebab.is-open > button,
+.row-kebab:focus-within > button {
   pointer-events: auto;
+}
+
+/* Coarse pointers have no hover state to reveal these affordances. Showing
+   them permanently beats stranding workspace actions and the row menu behind
+   an interaction the device cannot express. */
+@media (hover: none) {
+  .ws-hover-chevron,
+  .ws-hover-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .row-kebab {
+    opacity: 1;
+  }
+  .row-kebab > button {
+    pointer-events: auto;
+  }
 }
 .row-kebab > button:hover {
   color: var(--term-fg) !important;
@@ -3314,6 +3499,13 @@ html[data-vibrancy="on"],
   color: var(--term-fg);
   font-weight: 500;
   line-height: 1.4;
+  /* Questions keep their line breaks: approval questions (scheduled jobs) put
+     one fact per line, and one can carry a whole message to approve
+     (send_to_thread from the Michi assistant), so a long one scrolls. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .ask-card-hint {
   color: var(--term-mid);
@@ -3546,10 +3738,11 @@ html[data-vibrancy="on"],
 
   /* One scrim recipe for every dim-behind surface. Warm-tinted off the app bg
      so it reads as part of the palette (not a flat black wash) and adapts to
-     light/dark themes. Drawers historically used a lighter 22% dim; modals a
-     denser one — keep both rungs, one token each. */
-  --scrim-drawer: color-mix(in srgb, var(--term-bg) 22%, transparent);
+     light/dark themes. Drawers and modals share one dim (the Cmd+K palette's
+     46%) so opening Settings and opening the palette look identical; the two
+     tokens stay so a surface can still diverge later. */
   --scrim-modal: color-mix(in srgb, var(--term-bg) 46%, transparent);
+  --scrim-drawer: var(--scrim-modal);
 
   /* Text/glyph color that sits ON a saturated fill — accent (primary buttons,
      "always allow", checked boxes), danger, and digest buttons. Never '#fff':
@@ -3561,6 +3754,10 @@ html[data-vibrancy="on"],
      counterpart of --term-accent-f / --term-digest-f, derived so it tracks
      every palette. */
   --term-danger-f: color-mix(in srgb, var(--term-danger) 9%, var(--term-surface));
+  /* Error TEXT; icons and fills keep --term-danger. cssVarsFor() sets the
+     per-palette value (mixed toward fg on the dark palettes, whose danger is
+     too dim for words); this is only the fallback outside the shell. */
+  --term-danger-text: var(--term-danger);
 }
 
 /* ── Button primitive · .ui-btn ──────────────────────────────────────────────
@@ -4048,7 +4245,9 @@ html[data-page-hidden] .t-branch-anchor-pulse {
 :root[data-reduce-motion='on'] *::before,
 :root[data-reduce-motion='on'] *::after {
   animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
   animation-iteration-count: 1 !important;
-  transition-duration: var(--t-quick) !important;
+  transition-duration: 0.01ms !important;
+  transition-delay: 0ms !important;
   scroll-behavior: auto !important;
 }

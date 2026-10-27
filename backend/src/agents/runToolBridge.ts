@@ -26,22 +26,12 @@ import {
   type ActiveTurnResolver,
   type AgentRunCaller,
 } from './agentRunInvocation';
+import type { AgentRunToolInvoker } from 'michi-runtime/internal/contract/tools';
 
-export const AGENT_RUN_TOOL_NAMES = [
-  'list_agents',
-  'spawn_agent',
-  'check_agent',
-  'wait_agent',
-  'send_agent_input',
-  'cancel_agent',
-  'watch_agent_runs',
-  'update_agent_watch',
-] as const;
-export type AgentRunToolName = typeof AGENT_RUN_TOOL_NAMES[number];
-
-export interface AgentRunToolInvoker {
-  invoke(name: AgentRunToolName, args: Record<string, unknown>, meta?: { runtimeToolCallId?: string | null }): Promise<Record<string, unknown>>;
-}
+// The Agent Run tool names and invoker live in michi-runtime
+// (runtime/src/contract/tools.ts); re-exported so existing imports keep working.
+export { AGENT_RUN_TOOL_NAMES } from 'michi-runtime/internal/contract/tools';
+export type { AgentRunToolName, AgentRunToolInvoker } from 'michi-runtime/internal/contract/tools';
 
 interface DefinitionServicePort {
   discoverEnabled(ownerUserId: string, workspaceId: string): AgentDefinitionDtoV1[];

@@ -531,6 +531,7 @@ function removeService() {
 }
 
 function printConnection(config, mode, extra = {}) {
+  writeSecureFile(path.join(config.dataDir, 'remote-installation.json'), `${JSON.stringify({ serverPath: config.serverPath })}\n`);
   console.log('');
   console.log('Michi remote backend is running.');
   console.log(`Mode: ${mode}`);

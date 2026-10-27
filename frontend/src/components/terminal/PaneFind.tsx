@@ -139,7 +139,9 @@ export default function PaneFind({ open, node, onClose, onScrollToMatch, focusNo
   }
 
   return (
-    <div className="t-pane-find" onMouseDown={(e) => e.stopPropagation()}>
+    // Closes on any Esc while up: a layer the ⌘J panel's Esc yields to when
+    // it is in the panel, or the page has focus ("pane": under the panel).
+    <div className="t-pane-find" data-escape-layer="pane" onMouseDown={(e) => e.stopPropagation()}>
       <input
         ref={inputRef}
         value={query}

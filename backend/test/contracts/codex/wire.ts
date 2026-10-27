@@ -3,14 +3,17 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { TestContext } from 'node:test';
-import { CodexAppServerClient } from '../../../src/agents/codex/CodexAppServerClient';
-import { CodexRuntime } from '../../../src/agents/codex/CodexRuntime';
-import type { CodexSession } from '../../../src/agents/codex/CodexSession';
+import { CodexAppServerClient } from 'michi-runtime/internal/adapters/codex/CodexAppServerClient';
+import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
+import type { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSession';
 import type { RuntimePermissionDecision } from '../../../src/agents/types';
-import type { McpSlotRegistry } from '../../../src/services/mcpServer';
+import type { McpSlot } from '../../../src/services/mcpServer';
 import type { NormalizedEvent } from '../../../src/services/chatEvents';
 import { assertSchema } from './schema';
 import { responseTypes } from './dispositions';
+import { fakeMcpRegistry } from '../../helpers/fakeMcpRegistry';
+import { chatOwner, runOwner } from '../../helpers/owners';
+import { codexTestOptions } from '../../helpers/codexTestOptions';
 
 export const threadId = 'contract-thread';
 export const turnId = 'contract-turn';
@@ -77,13 +80,12 @@ export async function wireClient(t: TestContext, cleanup = true) {
 export async function activeWire(t: TestContext, chat = false) {
   const wire = await wireClient(t, false);
   const broker = { decision: 'ask' as RuntimePermissionDecision, async requestPermission() { return this.decision; } };
-  const runtime = new CodexRuntime({ spawnBranches: async () => [], saveContext: () => null, updateContext: () => null }, {
-    create: () => ({ slotId: 'contract-slot' }), dispose: async () => {}, get: () => undefined,
-  } as unknown as McpSlotRegistry, 0, { client: wire.client, followUpsHookPocEnabled: false, followUpsExperimentMode: 'sentinel' });
+  const runtime = new CodexRuntime({ ...codexTestOptions(), bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null }, mcpSlots: fakeMcpRegistry({
+    create: () => ({ slotId: 'contract-slot' }) as McpSlot, get: () => undefined,
+  }, { mcpPort: 0 }) }, { client: wire.client, followUpsHookPocEnabled: false, followUpsExperimentMode: 'sentinel' });
   const session = await runtime.newSession({
     sessionId: 'contract-attempt', cwd: process.env.MICHI_DATA_DIR!, model: 'fixture-model',
-    owner: chat ? { kind: 'chat_node', nodeId: 'contract-attempt' }
-      : { kind: 'agent_run', runId: 'contract-run', attemptId: 'contract-attempt' },
+    owner: chat ? chatOwner('contract-attempt') : runOwner('contract-run', 'contract-attempt'),
     permissionBroker: broker, enableFollowUps: false,
   }) as CodexSession;
   const events: NormalizedEvent[] = [];

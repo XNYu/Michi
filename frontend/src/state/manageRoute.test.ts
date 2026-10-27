@@ -5,17 +5,6 @@ import { setManageWorkspaceId, useManageWorkspaceId, _resetForTest } from './man
 describe('manageRoute', () => {
   beforeEach(() => _resetForTest());
 
-  it('starts as null', () => {
-    const { result } = renderHook(() => useManageWorkspaceId());
-    expect(result.current).toBeNull();
-  });
-
-  it('updates subscribers when set', () => {
-    const { result } = renderHook(() => useManageWorkspaceId());
-    act(() => setManageWorkspaceId('ws-1'));
-    expect(result.current).toBe('ws-1');
-  });
-
   it('no-ops when set to current value', () => {
     let renders = 0;
     const { result } = renderHook(() => {

@@ -1,0 +1,1602 @@
+/* Michi databases (All threads and the ones a person makes): side list, view
+   tabs, toolbar and panels, the six views, cells and editors. Palette tokens
+   only (--term-*, --sel-bar-*), so Monokai, Bone, Slate and Gruvbox all read. */
+
+.michi-db-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.michi-db-muted {
+  color: var(--term-muted);
+}
+
+/* ── Page: side list + database ──────────────────────────────── */
+.michi-threads.michi-db-page {
+  flex-direction: row;
+}
+.michi-db-page__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.michi-db-side {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 6px;
+  width: 220px;
+  padding: 16px 10px;
+  overflow-y: auto;
+  border-right: 1px solid var(--term-line);
+}
+.michi-db-side .michi-section-label {
+  padding: 8px 8px 2px;
+}
+.michi-db-side__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.michi-db-side__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.michi-db-side__item {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+.michi-db-side__item:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+.michi-db-side__item[aria-current='true'] {
+  background: var(--term-alt);
+  color: var(--term-fg);
+}
+.michi-db-side__item:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
+}
+.michi-db-side__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-side__count {
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-db-side__more {
+  position: absolute;
+  right: 2px;
+  opacity: 0;
+}
+.michi-db-side__row:hover .michi-db-side__more,
+.michi-db-side__more:focus-visible,
+.michi-db-side__more[aria-expanded='true'] {
+  opacity: 1;
+}
+.michi-db-side__row:hover .michi-db-side__count {
+  visibility: hidden;
+}
+.michi-db-side__new {
+  color: var(--term-muted);
+}
+.michi-db-side__input {
+  width: 100%;
+  height: 28px;
+}
+
+/* ── Database: bar, tabs, toolbar ────────────────────────────── */
+.michi-db {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.michi-db__bar {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--term-line);
+}
+.michi-db__title {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+.michi-db__body {
+  display: flex;
+  flex-direction: column;
+}
+.michi-db-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.michi-db-tabs__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.michi-db-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-md);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.michi-db-tab:hover {
+  color: var(--term-fg);
+}
+.michi-db-tab[data-active='true'] {
+  background: var(--term-alt);
+  color: var(--term-fg);
+}
+.michi-db-tab:focus-visible,
+.michi-db-tool:focus-visible,
+.michi-db-icon-btn:focus-visible,
+.michi-db-btn:focus-visible,
+.michi-db-link-btn:focus-visible,
+.michi-db-chip__x:focus-visible,
+.michi-db-th__btn:focus-visible,
+.michi-db-cell:focus-visible,
+.michi-db-open:focus-visible,
+.michi-db-new-row:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
+}
+.michi-db-icon-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+}
+.michi-db-icon-btn:hover,
+.michi-db-icon-btn[aria-expanded='true'],
+.michi-db-icon-btn[aria-pressed='true'] {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+.michi-db-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.michi-db-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.michi-db-tool:hover,
+.michi-db-tool[aria-expanded='true'] {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+.michi-db-tool[data-on='true'] {
+  color: var(--term-fg);
+}
+.michi-db-tool__count {
+  margin-left: 2px;
+  color: var(--term-accent);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.michi-db-count {
+  padding: 0 6px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.michi-db-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.michi-db-btn--primary {
+  border-color: var(--term-accent);
+  background: var(--term-accent);
+  color: var(--term-bg);
+  font-weight: 600;
+}
+.michi-db-btn--primary:hover {
+  background: color-mix(in srgb, var(--term-accent) 86%, var(--term-fg));
+}
+.michi-db-link-btn {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--term-accent);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.michi-db-link-btn:hover {
+  text-decoration: underline;
+}
+
+.michi-db-more {
+  margin: -56px 20px 72px;
+}
+
+/* ── Filter chips ────────────────────────────────────────────── */
+.michi-db-chips {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--term-line);
+}
+.michi-db-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-surface);
+  color: var(--term-mid);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.michi-db-chip__x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+}
+.michi-db-chip__x:hover {
+  background: var(--term-alt);
+  color: var(--term-fg);
+}
+.michi-db-chips .michi-db-link-btn {
+  align-self: center;
+}
+
+/* ── Popovers, menus, panels ─────────────────────────────────── */
+.michi-db-pop {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+}
+.michi-db-pop__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  outline: none;
+}
+.michi-db-pop__field {
+  padding: 2px 2px 6px;
+}
+.michi-db-pop__field .michi-db-input {
+  width: 100%;
+}
+.michi-db-pop__caption,
+.michi-db-panel__cap {
+  padding: 4px 8px 6px;
+  color: var(--term-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.michi-db-pop__sep {
+  height: 1px;
+  margin: 4px;
+  background: var(--term-line);
+}
+.michi-db-mi {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+.michi-db-mi:hover,
+.michi-db-mi:focus-visible {
+  outline: none;
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.michi-db-mi[aria-checked='true'] {
+  background: var(--term-alt);
+}
+.michi-db-mi:disabled {
+  color: var(--term-faint);
+  cursor: not-allowed;
+}
+.michi-db-mi[data-danger='true'] {
+  color: var(--term-danger);
+}
+.michi-db-mi__icon {
+  display: inline-flex;
+  width: 14px;
+  color: var(--term-muted);
+}
+.michi-db-mi[data-danger='true'] .michi-db-mi__icon {
+  color: inherit;
+}
+.michi-db-mi__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-mi__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-db-mi[aria-checked='true'] .michi-db-mi__hint {
+  color: var(--term-digest);
+}
+.michi-db-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px;
+}
+.michi-db-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.michi-db-panel__head .michi-db-panel__cap {
+  padding: 0 4px;
+}
+.michi-db-panel__empty {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-db-seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+}
+.michi-db-seg button {
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.michi-db-seg button[aria-pressed='true'] {
+  background: var(--term-alt);
+  color: var(--term-fg);
+}
+.michi-db-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.michi-db-rule__value,
+.michi-db-rule__grow {
+  flex: 1;
+  min-width: 0;
+}
+.michi-db-grip {
+  display: inline-flex;
+  color: var(--term-faint);
+  cursor: grab;
+}
+.michi-db-grip:focus-visible {
+  outline: 2px solid var(--term-accent);
+  color: var(--term-fg);
+}
+.michi-db-input,
+.michi-db-select {
+  box-sizing: border-box;
+  height: 28px;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font: inherit;
+  font-size: var(--fs-md);
+}
+.michi-db-select {
+  padding-right: 4px;
+}
+.michi-db-input:focus,
+.michi-db-select:focus {
+  outline: none;
+  border-color: var(--term-accent);
+}
+.michi-db-input[aria-invalid='true'] {
+  border-color: var(--term-danger);
+}
+textarea.michi-db-input {
+  height: auto;
+  padding: 8px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.michi-db-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+.michi-db-switch:hover {
+  color: var(--term-fg);
+}
+.michi-db-switch__track {
+  position: relative;
+  flex-shrink: 0;
+  width: 26px;
+  height: 14px;
+  border-radius: var(--ui-radius-pill);
+  background: var(--term-line);
+  transition: background var(--t-quick) ease;
+}
+.michi-db-switch__track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--ui-radius-pill);
+  background: var(--term-mid);
+  transition: transform var(--t-quick) ease, background var(--t-quick) ease;
+}
+.michi-db-switch[aria-checked='true'] .michi-db-switch__track {
+  background: var(--term-accent);
+}
+.michi-db-switch[aria-checked='true'] .michi-db-switch__track::after {
+  transform: translateX(12px);
+  background: var(--term-surface);
+}
+.michi-db-switch:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
+}
+.michi-db-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px;
+}
+.michi-db-form__row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-db-form__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.michi-db-types {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+}
+.michi-db-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.michi-db-type:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.michi-db-type[aria-pressed='true'] {
+  background: var(--term-accent-f);
+  color: var(--term-fg);
+}
+
+/* ── Cells ───────────────────────────────────────────────────── */
+.michi-db-pill {
+  --pill-tone: var(--term-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in srgb, var(--pill-tone) 16%, transparent);
+  color: var(--term-fg);
+  font-size: var(--fs-sm);
+  line-height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-pill[data-tone='on'] {
+  background: color-mix(in srgb, var(--pill-tone) 22%, transparent);
+}
+.michi-db-pill__dot {
+  display: inline-flex;
+}
+.michi-db-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* A thread's status, with Archived beside it when Michi keeps it off Home. */
+.michi-db-state-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.michi-db-app[data-michi='true'] {
+  border-color: var(--term-accent);
+  color: var(--term-accent);
+}
+.michi-db-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.michi-db-progress__meter {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: var(--ui-radius-pill);
+  background: var(--term-line);
+  overflow: hidden;
+}
+.michi-db-progress__meter i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--term-accent);
+}
+.michi-db-progress[data-full='true'] .michi-db-progress__meter i {
+  background: var(--term-digest);
+}
+.michi-db-link {
+  color: var(--term-accent);
+  text-decoration: none;
+}
+.michi-db-link:hover {
+  text-decoration: underline;
+}
+.michi-db-thumb {
+  display: block;
+  width: 36px;
+  height: 22px;
+  border-radius: var(--ui-radius-sm);
+  object-fit: cover;
+}
+.michi-db-num {
+  display: block;
+  text-align: right;
+}
+.michi-db-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-check {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--term-accent);
+  cursor: pointer;
+}
+.michi-db-check:disabled {
+  cursor: default;
+}
+
+/* ── Editors ─────────────────────────────────────────────────── */
+.michi-db-editor {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+.michi-db-editor .michi-db-input {
+  flex: 1;
+  width: 100%;
+  height: 26px;
+}
+.michi-db-editor--date .michi-db-input {
+  flex: 1 1 0;
+}
+.michi-db-editor__suffix {
+  color: var(--term-muted);
+}
+.michi-db-editor__error {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: var(--z-sticky);
+  padding: 2px 6px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-surface);
+  color: var(--term-danger);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.michi-db-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.michi-db-picker .michi-db-input {
+  width: 100%;
+}
+.michi-db-picker__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.michi-db-picker__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+.michi-db-picker__option:hover,
+.michi-db-picker__option:focus-visible {
+  outline: none;
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.michi-db-picker__option[data-locked='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.michi-db-picker__empty {
+  padding: 2px 8px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+
+/* ── Table ───────────────────────────────────────────────────── */
+.michi-db-table {
+  flex: 1;
+  min-height: 0;
+  padding: 0 20px 72px;
+  overflow: auto;
+  /* Rows scrolled into view (a focused cell) stop below the sticky header, and rows
+     coming and going above the fold never shift the view under it. */
+  scroll-padding-top: 36px;
+  overflow-anchor: none;
+}
+.michi-db-grid {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--fs-md);
+}
+.michi-db-th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-raised);
+  min-width: 110px;
+  padding: 0;
+  border-bottom: 1px solid var(--term-line);
+  background: var(--term-bg);
+  text-align: left;
+  font-weight: 500;
+}
+.michi-db-th--check,
+.michi-db-th--add {
+  min-width: 0;
+  padding: 0 8px;
+}
+.michi-db-th__btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 9px 10px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--term-muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.michi-db-th[data-own='true'] .michi-db-th__btn {
+  color: var(--term-mid);
+}
+.michi-db-th__btn:hover,
+.michi-db-th__btn[aria-expanded='true'] {
+  color: var(--term-fg);
+}
+.michi-db-th__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.michi-db-td {
+  height: 34px;
+  padding: 0 10px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--term-line);
+  white-space: nowrap;
+}
+.michi-db-td--check {
+  padding: 0 8px;
+}
+.michi-db-td[data-editing='true'] {
+  overflow: visible;
+  padding: 0 4px;
+  box-shadow: inset 0 0 0 1px var(--term-accent);
+}
+.michi-db-row:hover td {
+  background: color-mix(in srgb, var(--term-hover-bg, var(--term-alt)) 50%, transparent);
+}
+.michi-db-row[data-selected='true'] td {
+  background: var(--term-accent-f);
+}
+.michi-db-row[aria-current='true'] {
+  outline: 1px solid var(--term-accent);
+  outline-offset: -1px;
+}
+.michi-db-row:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
+}
+.michi-db-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  min-height: 33px;
+  overflow: hidden;
+}
+/* The cell fills its td, padding and all, so its focus ring runs round the td's
+   edge instead of over the value's first letters. */
+.michi-db-td > .michi-db-cell {
+  margin: 0 -10px;
+  padding: 0 10px;
+}
+.michi-db-cell[data-editable='true'] {
+  cursor: text;
+}
+/* The title opens its row; its Rename button edits it. */
+.michi-db-cell[data-title='true'] {
+  cursor: pointer;
+}
+.michi-db-cell > .michi-db-text {
+  flex: 1;
+  min-width: 0;
+}
+.michi-db-open {
+  display: inline-flex;
+  opacity: 0;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-surface);
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.michi-db-row:hover .michi-db-open,
+.michi-db-row:focus-within .michi-db-open,
+.michi-db-open:focus-visible {
+  opacity: 1;
+}
+.michi-db-group-row th {
+  height: 32px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--term-line);
+  background: var(--term-surface);
+  text-align: left;
+  font-weight: 500;
+}
+.michi-db-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--term-fg);
+  font-size: var(--fs-md);
+}
+.michi-db-group__dot {
+  display: inline-flex;
+}
+.michi-db-group__count,
+.michi-db-group__sum {
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-db-new-row {
+  display: block;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--term-muted);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.michi-db-new-row:hover {
+  color: var(--term-fg);
+}
+.michi-db-empty {
+  margin: 0;
+  padding: 16px 20px;
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+}
+
+/* ── Board ───────────────────────────────────────────────────── */
+.michi-db-board {
+  display: grid;
+  grid-auto-columns: minmax(230px, 1fr);
+  grid-auto-flow: column;
+  align-items: start;
+  gap: 12px;
+  padding: 16px 20px 72px;
+}
+.michi-db-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 80px;
+  padding: 4px;
+  margin: -4px;
+  border-radius: var(--ui-radius);
+}
+.michi-db-col__head {
+  padding: 0 2px 4px;
+}
+.michi-db-col__head .michi-db-group__label {
+  color: var(--term-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.michi-db-col__drop {
+  height: 52px;
+  border: 1px dashed var(--term-accent);
+  border-radius: var(--ui-radius);
+  background: color-mix(in srgb, var(--term-accent) 8%, transparent);
+}
+.michi-db-col[data-refused='true'] {
+  background: color-mix(in srgb, var(--term-danger) 6%, transparent);
+}
+.michi-db-col__note {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-db-slot {
+  min-width: 0;
+}
+.michi-db-slot[data-movable='true'] > .michi-card {
+  cursor: grab;
+}
+.michi-db-slot[data-dragging='true'] > .michi-card {
+  opacity: 0.45;
+}
+.michi-db-ghost {
+  cursor: grabbing;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--term-fg) 14%, transparent);
+}
+.michi-db-col__add {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: none;
+  color: var(--term-muted);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-quick) ease;
+}
+.michi-db-col:hover .michi-db-col__add,
+.michi-db-col__add:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .michi-db-col__add {
+    opacity: 1;
+  }
+}
+.michi-db-col__add:hover {
+  background: color-mix(in srgb, var(--term-fg) 6%, transparent);
+  color: var(--term-fg);
+}
+.michi-db-col__new {
+  width: 100%;
+}
+.michi-db-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--term-mid);
+  font-size: var(--fs-sm);
+}
+.michi-db-fact {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+}
+.michi-db-fact .michi-db-progress {
+  width: 90px;
+}
+
+/* ── Timeline ────────────────────────────────────────────────── */
+.michi-db-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px 72px;
+  overflow: auto;
+}
+.michi-db-dates {
+  display: flex;
+  gap: 16px;
+}
+.michi-db-dates label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-db-tl {
+  --name: 240px;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--name) + var(--days) * 22px); /* AXIS_MIN_DAY_PX */
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+}
+.michi-db-tl__head,
+.michi-db-tl__lane,
+.michi-db-tl__group {
+  display: grid;
+  grid-template-columns: var(--name) minmax(0, 1fr);
+  align-items: center;
+  border-bottom: 1px solid var(--term-line);
+}
+.michi-db-tl__lane:last-child {
+  border-bottom: 0;
+}
+.michi-db-tl__head {
+  height: 30px;
+  color: var(--term-muted);
+  font-size: var(--fs-xs);
+}
+.michi-db-tl__group {
+  grid-template-columns: 1fr;
+  height: 30px;
+  padding: 0 10px;
+  background: var(--term-surface);
+}
+.michi-db-tl__name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 0 10px;
+}
+.michi-db-tl__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-tl__days {
+  display: grid;
+  grid-template-columns: repeat(var(--days), minmax(0, 1fr));
+  height: 100%;
+}
+.michi-db-tl__days > span {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  border-left: 1px solid color-mix(in srgb, var(--term-line) 50%, transparent);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+/* A label wider than its day (`Oct 1`) starts at its day and runs into the
+   next ones, which axisLabels leaves unlabelled. */
+.michi-db-tl__days > span[data-wide='true'] {
+  justify-content: flex-start;
+}
+.michi-db-tl__days > span[data-wide='true'] > .michi-db-tl__label {
+  position: absolute;
+  left: 3px;
+}
+.michi-db-tl__days > span[data-today='true'] {
+  color: var(--term-accent);
+  font-weight: 600;
+}
+.michi-db-tl__lane {
+  height: 34px;
+}
+.michi-db-tl__lane:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.michi-db-tl__lane[data-selected='true'] {
+  background: var(--term-accent-f);
+}
+.michi-db-tl__lane[aria-current='true'] {
+  box-shadow: inset 0 0 0 1px var(--term-accent);
+}
+.michi-db-tl__track {
+  position: relative;
+  height: 100%;
+}
+.michi-db-tl__plan,
+.michi-db-tl__actual {
+  position: absolute;
+  height: 7px;
+  border-radius: var(--ui-radius-sm);
+}
+.michi-db-tl__plan {
+  top: 8px;
+  border: 1px solid var(--term-line-s);
+}
+.michi-db-tl__actual {
+  top: 18px;
+  background: var(--term-accent);
+}
+.michi-db-tl__actual[data-over='true'] {
+  background: var(--term-select);
+}
+.michi-db-tl__actual[data-state='done'] {
+  background: var(--term-digest);
+}
+.michi-db-tl__actual[data-state='stalled'] {
+  background: var(--term-mauve);
+}
+.michi-db-tl__actual[data-state='doing'] {
+  background: var(--term-mid);
+}
+.michi-db-tl__actual[data-state='idea'] {
+  /* Like the Chatted only dot: faint still clears 3:1 against every ground. */
+  background: var(--term-faint);
+}
+.michi-db-tl__actual[data-point='true'] {
+  top: 13px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: var(--ui-radius-pill);
+}
+.michi-db-tl__now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--term-accent);
+}
+.michi-db-tl__off {
+  position: absolute;
+  top: 9px;
+  left: 4px;
+  color: var(--term-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+/* ── Calendar (the threads page's month grid, plus drops) ─────── */
+.michi-cal__by {
+  margin-left: 8px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-cal__day[data-over='true'] {
+  box-shadow: inset 0 0 0 1px var(--term-accent);
+  background: color-mix(in srgb, var(--term-accent) 8%, transparent);
+}
+.michi-cal__item[draggable='true'] {
+  cursor: grab;
+}
+
+/* ── Gallery and list ────────────────────────────────────────── */
+.michi-db-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 16px 20px 72px;
+}
+.michi-db-gcard {
+  overflow: hidden;
+}
+.michi-db-gcard__cover {
+  display: block;
+  width: calc(100% + 24px);
+  height: 120px;
+  margin: -10px -12px 4px;
+  object-fit: cover;
+}
+.michi-db-gcard__words {
+  display: -webkit-box;
+  min-height: 3em;
+  overflow: hidden;
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.michi-db-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 960px;
+  padding: 16px 20px 72px;
+  container-type: inline-size;
+}
+.michi-db-list__group {
+  display: flex;
+  flex-direction: column;
+}
+.michi-db-list__group > .michi-db-group {
+  padding: 0 8px 6px;
+}
+/* One line per row, like Home's thread rows: dot · title · facts on the
+   right. The title keeps its room; facts give way and truncate first. */
+.michi-db-list__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--term-line);
+  cursor: pointer;
+}
+.michi-db-list__row:hover {
+  background: color-mix(in srgb, var(--term-hover-bg, var(--term-alt)) 50%, transparent);
+}
+.michi-db-list__row[data-selected='true'] {
+  background: var(--term-accent-f);
+}
+.michi-db-list__row[aria-current='true'] {
+  box-shadow: inset 2px 0 0 var(--term-accent);
+}
+.michi-db-list__row:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
+}
+.michi-db-list__dot {
+  display: inline-flex;
+  flex: 0 0 12px;
+  align-items: center;
+  justify-content: center;
+}
+.michi-db-list__row > .michi-tag {
+  flex: none;
+}
+.michi-db-list__title {
+  flex: 1 1 0;
+  min-width: min(180px, 40%);
+  overflow: hidden;
+  font-size: var(--fs-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-facts--line {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  gap: 10px;
+  max-width: 60%;
+  overflow: hidden;
+  color: var(--term-muted);
+}
+.michi-db-facts--line .michi-db-fact {
+  flex: 0 1 auto;
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.michi-db-facts--line .michi-db-pill,
+.michi-db-facts--line .michi-db-app {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-facts--line .michi-db-fact[data-column='lastActivity'] {
+  flex-shrink: 0;
+}
+/* A narrow list keeps the title readable: the app goes first, then where it lives. */
+@container (max-width: 560px) {
+  .michi-db-facts--line .michi-db-fact[data-column='app'] {
+    display: none;
+  }
+}
+@container (max-width: 420px) {
+  .michi-db-facts--line .michi-db-fact[data-column='project'] {
+    display: none;
+  }
+}
+.michi-db-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--fs-sm);
+}
+.michi-db-place > svg {
+  flex-shrink: 0;
+}
+
+/* ── A widget view, off ──────────────────────────────────────── */
+.michi-db-off {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 20px;
+  padding: 14px 16px;
+  border: 1px dashed var(--term-line-s);
+  border-radius: var(--ui-radius);
+  color: var(--term-muted);
+}
+.michi-db-off__title {
+  flex: 1;
+  color: var(--term-mid);
+}
+.michi-db-off__link {
+  border: 0;
+  background: transparent;
+  color: var(--term-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ── Row drawer ──────────────────────────────────────────────── */
+.michi-db-peek__db {
+  margin-bottom: -6px;
+}
+.michi-db-peek__value {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  min-width: 40px;
+  border-radius: var(--ui-radius-sm);
+}
+.michi-db-peek__value[data-editable='true'] {
+  cursor: text;
+}
+.michi-db-peek__value[data-editable='true']:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.michi-db-peek__value[data-empty='true'] {
+  color: var(--term-faint);
+}
+.michi-db-peek__value:focus-visible {
+  outline: 2px solid var(--term-accent);
+}
+.michi-db-peek__editing {
+  display: flex;
+  width: 100%;
+}
+.michi-db-peek__edit {
+  margin-left: 8px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.michi-db-peek__body {
+  width: 100%;
+}
+
+.michi-db-batch {
+  transition: bottom var(--t-soft) ease;
+}
+.michi-batch__btn[data-danger='true'] {
+  color: var(--term-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .michi-db-batch,
+  .michi-db-switch__track,
+  .michi-db-switch__track::after {
+    transition: none;
+  }
+}
+
+/* ── Conversations (task boards) ─────────────────────────────── */
+.michi-db-threads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.michi-db-thread {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px 7px 1px 5px;
+  border: 1px solid var(--term-line);
+  border-radius: 999px;
+  background: var(--term-surface);
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+button.michi-db-thread {
+  cursor: pointer;
+}
+button.michi-db-thread:hover {
+  border-color: var(--term-line-s);
+  color: var(--term-fg);
+}
+.michi-db-thread[data-missing='true'] {
+  border-style: dashed;
+  color: var(--term-faint);
+}
+.michi-db-thread__title {
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-thread--more {
+  color: var(--term-muted);
+}
+
+/* Task board: cards, attention mark and status glyphs */
+.michi-card[data-attention='true'] {
+  box-shadow: inset 3px 0 0 var(--term-accent);
+}
+.michi-card[data-attention='true'][aria-current='true'] {
+  box-shadow: inset 3px 0 0 var(--term-accent), 0 0 0 1px var(--term-accent);
+}
+.michi-card__attention {
+  color: var(--term-accent);
+  font-weight: 500;
+}
+.michi-card__none {
+  color: var(--term-faint);
+  font-size: var(--fs-sm);
+}
+.michi-task-status[data-status='todo'] { color: var(--term-muted); }
+.michi-task-status[data-status='doing'] { color: var(--term-mid); }
+.michi-task-status[data-status='waiting'] { color: var(--term-accent); }
+.michi-task-status[data-status='done'] { color: var(--term-digest); }
+
+/* ── A task's details ────────────────────────────────────────── */
+.michi-db-peek__owner {
+  display: block;
+  margin-top: 2px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-db-peek__threads .michi-peek__caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.michi-db-peek__thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.michi-db-peek__thread {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: none;
+  color: var(--term-fg);
+  font: inherit;
+  text-align: left;
+}
+button.michi-db-peek__thread {
+  cursor: pointer;
+}
+button.michi-db-peek__thread:hover {
+  background: color-mix(in srgb, var(--term-fg) 5%, transparent);
+}
+.michi-db-peek__thread-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-peek__thread-line {
+  grid-column: 2 / -1;
+  overflow: hidden;
+  color: var(--term-mid);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-db-peek__none {
+  margin: 0;
+  color: var(--term-faint);
+  font-size: var(--fs-sm);
+}
+
+/* ── What the Meta agent's upkeep changed (task boards) ──────── */
+.michi-task-marks {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  margin-left: auto;
+}
+.michi-task-mark {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--term-accent) 14%, transparent);
+  color: var(--term-accent);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.michi-task-mark[data-mark='updated'] {
+  background: color-mix(in srgb, var(--term-fg) 8%, transparent);
+  color: var(--term-mid);
+}
+.michi-task-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.michi-task-suggestion__what {
+  margin: 0 0 4px;
+  color: var(--term-fg);
+  font-size: var(--fs-sm);
+}
+.michi-db-peek__origin {
+  margin: 0;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+
+/* All tasks: the workspace a card's task is in. */
+.michi-card__workspace {
+  min-width: 0;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

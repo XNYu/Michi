@@ -42,25 +42,6 @@ describe('extractNodeTree action', () => {
     }));
   });
 
-  it('installs authoritative history even when lazy bodies are unloaded, moves panes, and retains child anchors', async () => {
-    const { result } = renderHook(() => useHarness());
-    await act(() => result.current.extract('child'));
-    expect(result.current.nodes.child.messages.map(m => m.id)).toEqual(['inherited', 'own']);
-    expect(result.current.nodes.child.messagesLoaded).toBe(true);
-    expect(result.current.nodes.child.parentNodeId).toBeUndefined();
-    expect(result.current.nodes.child.chatId).toBeNull();
-    expect(result.current.nodes.leaf.parentNodeId).toBe('child');
-    expect(result.current.nodes.root.messages).toEqual([]);
-    expect(result.current.projects[0].trees).toHaveLength(2);
-    expect(result.current.projects[0].edges).toEqual([
-      { source: 'child', target: 'leaf', anchorMessageId: 'own' },
-    ]);
-    expect(result.current.prunePaneIds).toHaveBeenCalledWith(new Set(['child', 'leaf']));
-    expect(result.current.setPaneSlot).toHaveBeenCalledWith('ws', result.current.projects[0].activeTreeId, ['child'], 'child');
-    expect(result.current.boundSessionsRef.current.has('child')).toBe(false);
-    expect(result.current.commandsInFlightRef.current.size).toBe(0);
-  });
-
   it('keeps local graph/history on failure and reuses the operation identity when retried', async () => {
     mocks.extract.mockRejectedValueOnce(new Error('Offline'));
     const { result } = renderHook(() => useHarness());

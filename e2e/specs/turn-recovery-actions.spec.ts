@@ -1,0 +1,166 @@
+import { expect, test } from '@playwright/test';
+import { mkdir } from 'node:fs/promises';
+import { bootWithWorkspace, installMockApi, sseBody } from '../fixtures/mockApi';
+
+for (const recovery of ['unavailable', 'saved'] as const) {
+  test(`checking an uncertain turn ${recovery === 'saved' ? 'restores its complete result' : 'keeps output until an explicit rerun'}`, async ({ page }) => {
+    const posts: Array<{ turnId: string; nodeId: string; text: string }> = [];
+    const checks: URL[] = [];
+    const cancelRequests: string[] = [];
+    await installMockApi(page, { custom: async route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.pathname.endsWith('/cancel')) cancelRequests.push(url.pathname);
+      if (request.method() === 'POST' && /\/chats\/[^/]+\/message$/.test(url.pathname)) {
+        const body = request.postDataJSON();
+        posts.push(body);
+        const { turnId, nodeId } = body;
+        await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+          { event: 'turn_start', data: { turnId, nodeId, assistantId: `answer-${posts.length}`, userText: body.text, seq: 0 } },
+          { event: 'chunk', data: { turnId, seq: 1, text: posts.length === 1 ? 'Original partial result.' : 'Explicit new execution.' } },
+          ...(posts.length === 1
+            ? [{ event: 'error' as const, data: { turnId, seq: 2, message: 'Final save could not be confirmed', code: 'turn_persistence_failed', recoverable: true } }]
+            : [{ event: 'done' as const, data: { turnId, seq: 2, persisted: true, stopReason: 'end_turn' as const } }]),
+        ]) });
+        return true;
+      }
+      if (request.method() === 'GET' && /\/chats\/[^/]+\/stream$/.test(url.pathname) && posts[0] && url.searchParams.get('fromTurnId') === posts[0].turnId) {
+        checks.push(url);
+        if (recovery === 'unavailable') {
+          await route.fulfill({ status: 410, json: { error: 'Original replay unavailable', code: 'turn_replay_unavailable' } });
+        } else {
+          const { turnId, nodeId } = posts[0];
+          await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+            { event: 'turn_start', data: { turnId, nodeId, assistantId: 'answer-1', userText: posts[0].text, seq: 0 } },
+            { event: 'chunk', data: { turnId, seq: 1, text: 'Original partial result. Complete recovered answer.' } },
+            { event: 'done', data: { turnId, seq: 2, persisted: true, stopReason: 'end_turn' } },
+          ]) });
+        }
+        return true;
+      }
+      return false;
+    } });
+    await bootWithWorkspace(page);
+    await page.locator('[contenteditable="true"]').first().fill('Perform one mock action');
+    await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+    await expect(page.getByText('Original partial result.', { exact: true })).toBeVisible();
+    await page.getByTestId('error-tail-retry').click();
+    if (recovery === 'saved') {
+      await expect(page.getByText('Original partial result. Complete recovered answer.', { exact: true })).toBeVisible();
+      await expect(page.getByTestId('error-tail-retry')).toHaveCount(0);
+      await expect(page.locator('.terminal-message-assistant')).toHaveCount(1);
+    } else {
+      await expect(page.getByText(/The original result could not be confirmed/)).toBeVisible();
+      await expect(page.getByText('Original partial result.', { exact: true })).toBeVisible();
+    }
+    expect(posts).toHaveLength(1);
+    expect(checks).toHaveLength(1);
+    expect(checks[0].searchParams.get('fromSeq')).toBe('0');
+    expect(cancelRequests).toHaveLength(0);
+    await mkdir('/tmp/michi-improvements-2026-10-24', { recursive: true });
+    await page.screenshot({ path: `/tmp/michi-improvements-2026-10-24/recovery-${recovery}.png` });
+    if (recovery === 'unavailable') {
+      await page.getByRole('button', { name: 'Run again', exact: true }).click();
+      await expect(page.getByText(/may repeat file changes/)).toBeVisible();
+      expect(posts).toHaveLength(1);
+      await page.getByRole('button', { name: 'Run again anyway' }).click();
+      await expect(page.getByText('Explicit new execution.', { exact: true })).toBeVisible();
+      await expect(page.getByText('Original partial result.', { exact: true })).toBeVisible();
+      expect(posts).toHaveLength(2);
+      expect(posts[1].turnId).not.toBe(posts[0].turnId);
+    }
+  });
+}
+
+// This starts from backend rows, as after hydration, rather than generating a
+// classified live-stream failure whose failed turn ID remains in renderer state.
+test('a hydrated unclassified error preserves output until an explicitly confirmed new execution', async ({ page }) => {
+  const workspaceId = 'hydrated-recovery-ws';
+  const nodeId = 'hydrated-recovery-node';
+  const treeId = 'hydrated-recovery-tree';
+  const originalOutput = 'Previously produced output must remain available.';
+  const originalPrompt = 'Perform the previously requested action';
+  const posts: Array<{ turnId: string; text: string }> = [];
+  const checks: URL[] = [];
+  const destructiveCalls: string[] = [];
+  const workspace = {
+    workspace: { id: workspaceId, name: 'Hydrated recovery workspace', active_tree_id: treeId, created_at: 1 },
+    trees: [{ id: treeId, workspace_id: workspaceId, root_node_id: nodeId, name: 'Uncertain hydrated conversation', created_at: 1, last_active_at: 1 }],
+    nodes: [{
+      id: nodeId, kind: 'chat', workspace_id: workspaceId, tree_id: treeId,
+      acp_session_id: nodeId, runtime_id: 'mock', title: 'Uncertain hydrated conversation',
+      status: 'error', created_at: 1,
+      // This watermark belongs to an older successful turn, not necessarily
+      // the failed operation. Checking must not guess it as errorTurnId.
+      last_applied_turn_id: 'older-successful-turn', last_applied_seq: 9,
+    }],
+    messages: [
+      { id: 'hydrated-original-user', node_id: nodeId, role: 'user', seq: 0, content: originalPrompt, created_at: 1 },
+      { id: 'hydrated-original-assistant', node_id: nodeId, role: 'assistant', seq: 1, content: originalOutput, created_at: 2 },
+    ],
+    edges: [], artifacts: [],
+  };
+  const prefs = { onboardingCompletedAt: 1, sidebarCollapsed: false,
+    sidebarExpanded: { workspaces: { [workspaceId]: true }, threads: { [treeId]: true }, branches: {} },
+  };
+  await installMockApi(page, { workspaces: [workspace], custom: async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (request.method() === 'GET' && url.pathname.endsWith('/prefs')) {
+      await route.fulfill({ json: { prefs } }); return true;
+    }
+    if (/\/(?:cancel|trim)(?:\/|$)/.test(url.pathname) || request.method() === 'DELETE') {
+      destructiveCalls.push(`${request.method()} ${url.pathname}`);
+    }
+    if (request.method() === 'POST' && url.pathname.endsWith('/commands')) {
+      const body = request.postDataJSON();
+      for (const command of body.commands ?? []) {
+        if (/delete|trim|truncate/i.test(command.type ?? '')) destructiveCalls.push(command.type);
+      }
+    }
+    if (request.method() === 'GET' && /\/chats\/[^/]+\/stream$/.test(url.pathname)) checks.push(url);
+    if (request.method() === 'POST' && /\/chats\/[^/]+\/message$/.test(url.pathname)) {
+      const body = request.postDataJSON();
+      posts.push(body);
+      await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+        { event: 'turn_start', data: { turnId: body.turnId, nodeId, assistantId: 'hydrated-new-assistant', userText: body.text, seq: 0 } },
+        { event: 'chunk', data: { turnId: body.turnId, seq: 1, text: 'Explicit execution after hydration.' } },
+        { event: 'done', data: { turnId: body.turnId, seq: 2, persisted: true, stopReason: 'end_turn' } },
+      ]) });
+      return true;
+    }
+    return false;
+  } });
+  await page.addInitScript(prefs => {
+    localStorage.setItem('michi:migrated', '1');
+    localStorage.setItem('michi:v1:prefs', JSON.stringify(prefs));
+  }, prefs);
+  await page.goto('/');
+  await page.locator(`.terminal-sidebar [data-sidebar-row="${nodeId}"]`).click();
+  const pane = page.locator(`.terminal-pane[data-node-id="${nodeId}"]`);
+  await expect(pane.getByText(originalOutput, { exact: true })).toBeVisible();
+  const recovery = pane.getByTestId('error-tail-retry');
+  await expect(recovery).toHaveText('Check original turn');
+  await recovery.click();
+  await expect(pane.getByText(/The original result could not be confirmed/)).toBeVisible();
+  await expect(pane.getByText(originalOutput, { exact: true })).toBeVisible();
+  await expect(pane.locator('.terminal-message-user')).toHaveCount(1);
+  await expect(pane.locator('.terminal-message-assistant')).toHaveCount(1);
+  expect(posts).toHaveLength(0);
+  expect(checks).toHaveLength(0);
+  expect(destructiveCalls).toHaveLength(0);
+  await mkdir('/tmp/michi-improvements-2026-10-24', { recursive: true });
+  await page.screenshot({ path: '/tmp/michi-improvements-2026-10-24/recovery-hydrated-unknown.png' });
+
+  await pane.getByRole('button', { name: 'Run again', exact: true }).click();
+  await expect(page.getByText(/may repeat file changes/)).toBeVisible();
+  expect(posts).toHaveLength(0);
+  await page.getByRole('button', { name: 'Run again anyway' }).click();
+  await expect(pane.getByText('Explicit execution after hydration.', { exact: true })).toBeVisible();
+  await expect(pane.getByText(originalOutput, { exact: true })).toBeVisible();
+  await expect(pane.locator('.terminal-message-user')).toHaveCount(2);
+  await expect(pane.locator('.terminal-message-assistant')).toHaveCount(2);
+  expect(posts).toHaveLength(1);
+  expect(posts[0].turnId).not.toBe('older-successful-turn');
+  expect(destructiveCalls).toHaveLength(0);
+});

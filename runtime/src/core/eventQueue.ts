@@ -1,0 +1,89 @@
+import type { NormalizedEvent } from '../contract/events';
+import { HEARTBEAT_INTERVAL_MS } from './constants';
+
+// ---- Internal queue ----------------------------------------------------------
+
+export class EventQueue {
+  private buf: Array<NormalizedEvent | null> = [];
+  private waiter: ((v: NormalizedEvent | null) => void) | undefined;
+  private heartbeatTimer: NodeJS.Timeout | undefined;
+  private lastPushMs = Date.now();
+  private readonly onHeartbeat: (idleMs: number) => void;
+  private _disposed = false;
+
+  constructor(onHeartbeat: (idleMs: number) => void) {
+    this.onHeartbeat = onHeartbeat;
+    this.startHeartbeat();
+  }
+
+  get isDisposed(): boolean { return this._disposed; }
+
+  private startHeartbeat(): void {
+    this.heartbeatTimer = setInterval(() => {
+      const idleMs = Date.now() - this.lastPushMs;
+      this.onHeartbeat(idleMs);
+    }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
+  }
+
+  push(ev: NormalizedEvent | null): void {
+    if (this._disposed) return;
+    this.lastPushMs = Date.now();
+    if (this.waiter) {
+      const w = this.waiter;
+      this.waiter = undefined;
+      w(ev);
+    } else {
+      this.buf.push(ev);
+    }
+  }
+
+  /** Push an event to the FRONT of the buffer (used when a consumer must
+   *  return an already-pulled event so another consumer can pick it up). */
+  pushFront(ev: NormalizedEvent): void {
+    if (this.waiter) {
+      const w = this.waiter;
+      this.waiter = undefined;
+      w(ev);
+    } else {
+      this.buf.unshift(ev);
+    }
+  }
+
+  async pull(): Promise<NormalizedEvent | null> {
+    if (this.buf.length > 0) return this.buf.shift()!;
+    if (this._disposed) return null;
+    return new Promise<NormalizedEvent | null>((resolve) => {
+      this.waiter = resolve;
+    });
+  }
+
+  async *drainUntilTurnEnd(): AsyncIterableIterator<NormalizedEvent> {
+    while (true) {
+      const ev = await this.pull();
+      if (ev === null) return;
+      yield ev;
+      if (ev.kind === 'turn_end') return;
+    }
+  }
+
+  /** Resolve any pending pull() with null without disposing the queue.
+   *  Used by send() to kick the idle pump out of its blocking pull() so
+   *  it can re-check the gate and yield control. */
+  interruptWaiter(): void {
+    if (this.waiter) {
+      const w = this.waiter;
+      this.waiter = undefined;
+      w(null);
+    }
+  }
+
+  dispose(): void {
+    this._disposed = true;
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
+    this.interruptWaiter();
+  }
+}

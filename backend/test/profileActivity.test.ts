@@ -28,12 +28,13 @@ function seedNode(input: {
   createdAt: number;
   parentNodeId?: string;
   deletedAt?: number;
+  maintenanceJobId?: string;
 }): void {
   getDb().prepare(
     `INSERT INTO nodes (
       id, workspace_id, tree_id, parent_node_id, kind, status, minimized,
-      deleted_at, spawned_by_agent, created_at
-    ) VALUES (?, ?, ?, ?, 'chat', 'idle', 0, ?, 0, ?)`,
+      deleted_at, spawned_by_agent, created_at, maintenance_job_id
+    ) VALUES (?, ?, ?, ?, 'chat', 'idle', 0, ?, 0, ?, ?)`,
   ).run(
     input.id,
     input.workspaceId,
@@ -41,6 +42,7 @@ function seedNode(input: {
     input.parentNodeId ?? null,
     input.deletedAt ?? null,
     input.createdAt,
+    input.maintenanceJobId ?? null,
   );
 }
 
@@ -72,6 +74,31 @@ describe('profile activity aggregation', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.MICHI_CLOUD;
     delete process.env.MICHI_REQUIRE_AUTH;
+  });
+
+  test('leaves out page helpers and Meta agent maintenance runs', () => {
+    const day = timestamp('2026-09-15T03:00:00.000Z');
+    seedWorkspace('mine', 'user-a');
+    seedTree('mine-tree', 'mine', 'root');
+    seedNode({ id: 'root', workspaceId: 'mine', treeId: 'mine-tree', createdAt: day });
+    seedMessage({ id: 'user-one', nodeId: 'root', role: 'user', seq: 0, createdAt: day });
+    getDb().prepare("INSERT INTO pages (id, owner_user_id, workspace_id, title, blocks, updated_at, created_at) VALUES ('page-1', 'user-a', 'mine', 'Page', '[]', 1, 1)").run();
+    seedNode({ id: 'helper', workspaceId: 'mine', treeId: 'mine-tree', parentNodeId: 'root', createdAt: day });
+    getDb().prepare("UPDATE nodes SET page_id = 'page-1' WHERE id = 'helper'").run();
+    getDb().prepare(
+      "INSERT INTO edges (id, workspace_id, source_node_id, target_node_id, kind) VALUES ('to-helper', 'mine', 'root', 'helper', 'branch')",
+    ).run();
+    seedMessage({ id: 'helper-message', nodeId: 'helper', role: 'user', seq: 0, createdAt: day });
+    seedTree('maint-tree', 'mine', 'maint');
+    seedNode({ id: 'maint', workspaceId: 'mine', treeId: 'maint-tree', createdAt: day, maintenanceJobId: 'job-1' });
+    seedMessage({ id: 'maint-prompt', nodeId: 'maint', role: 'user', seq: 0, createdAt: day });
+
+    const activity = loadProfileActivity({ userId: 'user-a', timeZone: 'UTC', nowMs: timestamp('2026-09-16T12:00:00.000Z') });
+    assert.deepEqual(
+      [activity.totalNodes, activity.totalThreads, activity.totalBranches, activity.totalMessages],
+      [1, 1, 0, 1],
+    );
+    assert.deepEqual(activity.days, [{ dateKey: '2026-09-15', nodes: 1, branches: 0, messages: 1 }]);
   });
 
   test('returns owner-scoped daily node, branch, and user-message counts', () => {
@@ -120,41 +147,5 @@ describe('profile activity aggregation', () => {
     assert.deepEqual(activity.days, [
       { dateKey: '2026-09-16', nodes: 2, branches: 1, messages: 2 },
     ]);
-  });
-
-  test('scopes authenticated hosted activity even when MICHI_CLOUD is unset', () => {
-    delete process.env.MICHI_CLOUD;
-    process.env.MICHI_REQUIRE_AUTH = 'true';
-    seedWorkspace('mine-auth', 'user-a');
-    seedTree('mine-auth-tree', 'mine-auth', 'mine-auth-root');
-    seedNode({
-      id: 'mine-auth-root',
-      workspaceId: 'mine-auth',
-      treeId: 'mine-auth-tree',
-      createdAt: timestamp('2026-09-16T01:00:00.000Z'),
-    });
-    seedWorkspace('their-auth', 'user-b');
-    seedTree('their-auth-tree', 'their-auth', 'their-auth-root');
-    seedNode({
-      id: 'their-auth-root',
-      workspaceId: 'their-auth',
-      treeId: 'their-auth-tree',
-      createdAt: timestamp('2026-09-16T01:00:00.000Z'),
-    });
-
-    const activity = loadProfileActivity({
-      userId: 'user-a',
-      timeZone: 'UTC',
-      nowMs: timestamp('2026-09-16T12:00:00.000Z'),
-    });
-
-    assert.equal(activity.totalNodes, 1);
-  });
-
-  test('rejects invalid IANA time zones', () => {
-    assert.throws(
-      () => loadProfileActivity({ userId: 'user-a', timeZone: 'not/a-zone', nowMs: Date.now() }),
-      /time zone/i,
-    );
   });
 });

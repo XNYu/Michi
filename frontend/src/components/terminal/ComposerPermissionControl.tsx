@@ -15,7 +15,7 @@ export const PERMISSION_CHOICES: ReadonlyArray<{ mode: ChatPermissionMode; label
 ];
 
 /** Same chip, anchor and ContextMenu used by the Composer agent picker. */
-export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled = false, compact = false, scope = 'chat', apiBase = activeBackendApiBase() }: {
+export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled = false, compact = false, scope = 'chat', apiBase = activeBackendApiBase(), yoloRestartHint }: {
   apiBase?: string;
   mode: ChatPermissionMode;
   /** One chat's runtime, or all registered runtimes for the global setting. */
@@ -24,6 +24,11 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
   disabled?: boolean;
   compact?: boolean;
   scope?: 'chat' | 'global';
+  /**
+   * What switching into or out of YOLO also does (Claude restarts on the
+   * next message, ending a running workflow); shown on those choices.
+   */
+  yoloRestartHint?: string;
 }) {
   const [anchor, setAnchor] = useState<PaneMenuAnchor | null>(null);
   const [saving, setSaving] = useState(false);
@@ -41,12 +46,14 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
   const displayedMode = mode === 'yolo' && !supportsYolo ? 'trust' : mode;
   const choices = PERMISSION_CHOICES.filter((choice) => supportsYolo || choice.mode !== 'yolo');
   const label = PERMISSION_CHOICES.find((choice) => choice.mode === displayedMode)?.label ?? 'Ask';
+  const crossesYolo = (next: ChatPermissionMode) => (next === 'yolo') !== (displayedMode === 'yolo');
+  const baseTitle = `Permissions: ${label} · ${scope === 'global' ? 'all chats' : 'this chat'}`;
   return <>
     {/* Every label here is a short word, and "A…" says less than the shield
         alone, so this chip keeps its width and a crowded toolbar takes the
         space from the model name instead. Callers switch it to icon-only. */}
     <button type="button" className="t-toolbar-chip" data-icononly={compact || undefined} style={{ flexShrink: 0 }}
-      aria-label={`Permissions: ${label}`} title={`Permissions: ${label} · ${scope === 'global' ? 'all chats' : 'this chat'}`}
+      aria-label={`Permissions: ${label}`} title={yoloRestartHint && supportsYolo ? `${baseTitle}. ${yoloRestartHint}` : baseTitle}
       aria-haspopup="menu" aria-expanded={!!anchor} disabled={disabled || saving}
       onClick={(event) => {
         event.stopPropagation();
@@ -64,7 +71,10 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
     {anchor && !disabled && <ContextMenu {...anchor} menuKind="agents" width={300}
       onClose={() => setAnchor(null)} sections={[{ label: scope === 'global' ? 'Permissions · all chats' : 'Permissions · this chat', items: choices.map((choice) => ({
         id: choice.mode, label: choice.label,
-        sublabel: choice.mode === 'trust' && !supportsYolo ? 'Approve tool requests automatically.' : choice.description,
+        sublabel: [
+          choice.mode === 'trust' && !supportsYolo ? 'Approve tool requests automatically.' : choice.description,
+          yoloRestartHint && supportsYolo && crossesYolo(choice.mode) ? yoloRestartHint : undefined,
+        ].filter(Boolean).join(' '),
         glyph: choice.mode === displayedMode ? '✓' : undefined,
         run: () => {
           setSaving(true);

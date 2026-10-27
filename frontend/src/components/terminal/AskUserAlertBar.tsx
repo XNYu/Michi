@@ -7,6 +7,8 @@ import {
   type PendingAskUser,
 } from '../../state/askUserSelectors';
 import type { PageId } from '../../state/commands';
+import { isSystemWorkspace } from '../../state/assistant/systemWorkspace';
+import { openAssistantPanel } from '../../state/assistant/assistantStore';
 
 /**
  * Global "the agent is asking you something" reminder.
@@ -42,6 +44,9 @@ export default function AskUserAlertBar({ onNav }: { onNav?: (page: PageId) => v
   );
 
   const reveal = useCallback((target: PendingAskUser) => {
+    // The ⌘J assistant asks in its own panel (e.g. approving a message it
+    // wants to send to another thread), not in a pane of a hidden workspace.
+    if (projects.some((p) => isSystemWorkspace(p) && p.chatIds.includes(target.nodeId)) && openAssistantPanel()) return;
     navigateToNode(navDeps, target.nodeId);
     onNav?.('dashboard');
     if (!target.anchorMessageId) return;
@@ -54,7 +59,7 @@ export default function AskUserAlertBar({ onNav }: { onNav?: (page: PageId) => v
         }),
       );
     });
-  }, [navDeps, onNav]);
+  }, [navDeps, onNav, projects]);
 
   if (pending.length === 0) return null;
 

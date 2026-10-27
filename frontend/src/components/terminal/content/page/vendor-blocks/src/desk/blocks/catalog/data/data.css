@@ -1,0 +1,49 @@
+/* Data and metrics (Task 24). Greys, the accent for what is there, amber (#d97706) for what ran over, green for done. */
+.desk-stat{display:flex;flex-direction:column;gap:2px;max-width:280px}
+.desk-stat-label{font-size:12px;color:var(--desk-meta)}
+.desk-stat-value{font-size:32px;font-weight:600;letter-spacing:-.6px;line-height:1.25;font-variant-numeric:tabular-nums}
+.desk-stat-delta{font-size:13px;font-variant-numeric:tabular-nums;color:var(--desk-meta)}
+.desk-stat-delta.is-up{color:var(--accent-ink)}
+.desk-stat-delta.is-down{color:var(--warning)}
+.desk-stat-spark{height:40px;margin-top:8px}
+
+.desk-rings{display:flex;flex-wrap:wrap;gap:20px 28px;list-style:none;margin:0;padding:0}
+.desk-ring{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:84px}
+.desk-ring-pct{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.desk-ring-label{max-width:120px;font-size:13px;line-height:1.4;color:var(--desk-name);text-align:center}
+
+.desk-gauge{display:inline-flex;flex-direction:column;align-items:center}
+.desk-gauge-value{font-size:24px;font-weight:600;letter-spacing:-.4px;font-variant-numeric:tabular-nums}
+.desk-gauge-value small{margin-left:2px;font-size:13px;font-weight:400;letter-spacing:0;color:var(--desk-meta)}
+.desk-gauge-range{display:flex;justify-content:space-between;margin-top:2px;font-size:12px;color:var(--desk-meta-soft);font-variant-numeric:tabular-nums}
+
+.desk-pa{display:flex;flex-direction:column;gap:16px;list-style:none;margin:0;padding:0}
+.desk-pa-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:5px}
+.desk-pa-name{font-size:14px;font-weight:500;color:var(--desk-name)}
+.desk-pa-nums{font-size:12px;color:var(--desk-meta);font-variant-numeric:tabular-nums;text-align:right}
+.desk-pa-excess{font-style:normal;color:var(--warning)}
+.desk-pa-track{display:flex;height:8px;margin-top:3px;border-radius:4px;background:var(--subtle);overflow:hidden}
+.desk-pa-track>span{height:100%;background:var(--accent)}
+.desk-pa-track.is-plan>span{background:var(--soft)}
+
+.desk-lb{list-style:none;margin:0;padding:0}
+.desk-lb li{display:flex;align-items:baseline;gap:12px;padding:9px 0;border-bottom:1px solid var(--desk-edge);font-size:15px}
+.desk-lb li.is-top{font-weight:600}
+.desk-lb-rank{flex:none;width:20px;font-size:13px;font-weight:400;color:var(--desk-meta-soft);font-variant-numeric:tabular-nums}
+.desk-lb-name{flex:1;min-width:0}
+.desk-lb-name small{display:block;font-size:12px;font-weight:400;color:var(--desk-meta)}
+.desk-lb-value{font-variant-numeric:tabular-nums}
+
+.desk-rate{list-style:none;margin:0;padding:0}
+.desk-rate li{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--desk-edge)}
+.desk-rate-label{flex:1;min-width:0;font-size:15px}
+.desk-rate-stars{display:inline-flex}
+.desk-rate-score{width:28px;font-size:13px;color:var(--desk-meta);text-align:right;font-variant-numeric:tabular-nums}
+
+.desk-pc{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px 28px}
+.desk-pc-head{margin:0 0 4px;font-size:12px;font-weight:500;color:var(--desk-meta)}
+.desk-pc ul{list-style:none;margin:0;padding:0}
+.desk-pc li{display:flex;gap:8px;padding:5px 0;font-size:15px;line-height:1.6}
+.desk-pc-mark{flex:none;display:grid;place-items:center;height:1.6em}
+.desk-pc-side.is-pro .desk-pc-mark{color:var(--desk-done)}
+.desk-pc-side.is-con .desk-pc-mark{color:var(--warning)}

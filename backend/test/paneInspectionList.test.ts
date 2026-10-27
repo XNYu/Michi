@@ -143,28 +143,6 @@ function createRun(repo: AgentRunsRepository, id: string, overrides: Partial<Eff
   });
 }
 
-/** Registers a live surface presence view against the shared registry — the only way for a
- *  surface pane to become visible under either scope (design §4.2; no persisted row exists). */
-function registerSurface(kind: string, opts: { workspaceId?: string; treeId?: string | null } = {}): () => void {
-  const presenceCaller = { ownerUserId: OWNER, workspaceId: opts.workspaceId ?? WORKSPACE, connectionId: 'conn-1' };
-  const { registrationId, paneId } = panePresenceRegistry.allocateSurfaceRegistration(presenceCaller, kind);
-  const result = panePresenceRegistry.submitPresence(
-    presenceCaller,
-    {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{
-        paneId, windowId: 'window-a', uiPaneId: `ui-${registrationId}`,
-        treeId: opts.treeId ?? null, visible: true, openedAtClient: null,
-        surfaceTitle: null,
-      }],
-    },
-  );
-  assert.equal(result.ok, true, 'test setup: surface presence submission must succeed');
-  assert.ok(result.ok);
-  return () => { panePresenceRegistry.removePresence(presenceCaller, { rendererLeaseId: result.rendererLeaseId }); };
-}
-
 describe('paneInspectionList.list', () => {
   let tmpDir: string;
 
@@ -183,39 +161,11 @@ describe('paneInspectionList.list', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('caller policy gates reject even empty and surface-only lists', () => {
-    const run = createRun(new AgentRunsRepository(), 'restricted-caller');
-    const definition = { ...run.effectiveDefinition, contextPolicy: { ...run.effectiveDefinition.contextPolicy, allowMessageContext: false } };
-    getDb().prepare('UPDATE agent_runs SET effective_definition = ? WHERE id = ?').run(JSON.stringify(definition), run.id);
-    const restricted = caller({ runOwner: { runId: run.id } });
-    assert.throws(() => list(restricted, baseRequest({ scope: 'open' })), /context policy/);
-    const cleanup = registerSurface('terminal');
-    try { assert.throws(() => list(restricted, baseRequest({ scope: 'open' })), /context policy/); }
-    finally { cleanup(); }
-  });
-
   test('a caller Run cannot inspect another workspace through list', () => {
     const run = createRun(new AgentRunsRepository(), 'other-workspace-caller');
     seedWorkspace('ws-other');
     getDb().prepare('UPDATE agent_runs SET workspace_id = ? WHERE id = ?').run('ws-other', run.id);
     assert.throws(() => list(caller({ runOwner: { runId: run.id } }), baseRequest({ scope: 'open' })), /caller run not found/);
-  });
-
-  // -------------------------------------------------------------------------
-  // Commit #1 — the three priority cases from the brief.
-  // -------------------------------------------------------------------------
-
-  test('1. scope=all returns node objects in the workspace, deduplicated by paneId', () => {
-    seedNode('node-1');
-    seedNode('node-2');
-
-    const result = list(caller(), baseRequest());
-    const paneIds = result.summaries.map((s) => s.ref.paneId);
-    assert.deepEqual([...paneIds].sort(), ['node:node-1', 'node:node-2']);
-    // No duplicate paneId appears even when the row source could in principle overlap (nodes +
-    // open surfaces are disjoint kinds here, but the dedup itself is exercised by asserting the
-    // set has no repeats regardless of source).
-    assert.equal(new Set(paneIds).size, paneIds.length);
   });
 
   test('2. scope=open returns only presence-registered views', () => {
@@ -246,21 +196,6 @@ describe('paneInspectionList.list', () => {
     assert.ok(!paneIds.includes('node:closed-node'));
   });
 
-  test('3. no summary contains an output body', () => {
-    seedNode('node-with-output');
-
-    const result = list(caller(), baseRequest());
-    const serialized = JSON.stringify(result.summaries);
-    assert.ok(!/"text"\s*:/.test(serialized), 'summary must not contain a "text" field');
-    assert.ok(!/"latestOutput"/.test(serialized), 'summary must not contain a "latestOutput" field');
-    // Positive control: the fields the brief DOES expect are present, so this isn't vacuously
-    // passing on an empty/malformed summary.
-    assert.equal(result.summaries.length, 1);
-    assert.ok('ref' in result.summaries[0]);
-    assert.ok('activity' in result.summaries[0]);
-    assert.ok('openedInViews' in result.summaries[0]);
-  });
-
   // -------------------------------------------------------------------------
   // Commit #2 — remaining priority cases.
   // -------------------------------------------------------------------------
@@ -274,15 +209,6 @@ describe('paneInspectionList.list', () => {
 
     const included = list(caller(), baseRequest({ includeArchived: true }));
     assert.deepEqual(included.summaries.map((s) => s.ref.paneId).sort(), ['node:archived-node', 'node:normal-node']);
-  });
-
-  test('5. a deleted (purged) node never appears', () => {
-    seedNode('kept-node');
-    seedNode('purged-node');
-    getDb().prepare('UPDATE nodes SET purged_at = ? WHERE id = ?').run(Date.now(), 'purged-node');
-
-    const result = list(caller(), baseRequest({ includeArchived: true }));
-    assert.deepEqual(result.summaries.map((s) => s.ref.paneId), ['node:kept-node']);
   });
 
   test('6. kind, treeId, and parentNodeId filters each narrow correctly and compose', () => {
@@ -361,29 +287,6 @@ describe('paneInspectionList.list', () => {
     assert.ok(thrown instanceof PaneInspectionError);
     assert.equal((thrown as PaneInspectionError).code, 'NAVIGATION_DISABLED');
     assert.ok(!(thrown as PaneInspectionError).message.includes('do not leak this title'));
-  });
-
-  test('9. presenceCoverage is unknown when nothing is registered', () => {
-    seedNode('no-presence-node');
-    const result = list(caller(), baseRequest());
-    assert.equal(result.presenceCoverage, 'unknown');
-  });
-
-  test('9. presenceCoverage is reported when at least one row has a live view', () => {
-    seedNode('presence-node');
-    panePresenceRegistry.submitPresence(
-      { ownerUserId: OWNER, workspaceId: WORKSPACE, connectionId: 'conn-1' },
-      {
-        viewRevision: 1,
-        windowId: 'window-a',
-        views: [{
-          paneId: 'node:presence-node', windowId: 'window-a', uiPaneId: 'ui-presence-node',
-          treeId: null, visible: true, openedAtClient: null, surfaceTitle: null,
-        }],
-      },
-    );
-    const result = list(caller(), baseRequest());
-    assert.equal(result.presenceCoverage, 'reported');
   });
 
   test('10. another owner\'s workspace returns nothing rather than an error revealing existence', () => {

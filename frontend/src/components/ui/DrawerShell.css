@@ -25,10 +25,6 @@
   }
 }
 
-.ui-scrim--drawer.drawer-shell-scrim {
-  animation: none;
-}
-
 .drawer-shell-scrim[data-state='closed'] {
   visibility: hidden;
   pointer-events: none;

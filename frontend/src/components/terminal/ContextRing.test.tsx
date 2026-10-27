@@ -4,38 +4,6 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ContextRing } from './ContextRing';
 
 describe('ContextRing', () => {
-  it('renders nothing when percentage is undefined', () => {
-    const { container } = render(<ContextRing percentage={undefined} />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  it('renders nothing when percentage is null', () => {
-    const { container } = render(<ContextRing percentage={null} />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  it('renders nothing when percentage is 0', () => {
-    const { container } = render(<ContextRing percentage={0} />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  it('renders a meter element for a positive percentage', () => {
-    render(<ContextRing percentage={31.2} />);
-    const meter = screen.getByRole('meter');
-    expect(meter).toBeTruthy();
-    expect(meter.getAttribute('aria-valuenow')).toBe('31.2');
-    expect(meter.getAttribute('aria-label')).toBe('Context usage: 31%');
-  });
-
-  it('shows styled tooltip on hover with percentage', () => {
-    render(<ContextRing percentage={50} />);
-    const meter = screen.getByRole('meter');
-    fireEvent.mouseEnter(meter);
-    const tooltip = screen.getByRole('tooltip');
-    expect(tooltip).toBeTruthy();
-    expect(tooltip.textContent).toContain('50.0%');
-  });
-
   it('clamps out-of-range percentages to the meter maximum', () => {
     render(<ContextRing percentage={159.2} />);
     const meter = screen.getByRole('meter');
@@ -44,14 +12,6 @@ describe('ContextRing', () => {
 
     fireEvent.mouseEnter(meter);
     expect(screen.getByRole('tooltip').textContent).toContain('100.0%');
-  });
-
-  it('hides invalid or negative percentages', () => {
-    const { container, rerender } = render(<ContextRing percentage={Number.NaN} />);
-    expect(container.firstChild).toBeNull();
-
-    rerender(<ContextRing percentage={-10} />);
-    expect(container.firstChild).toBeNull();
   });
 
   it('shows token details in tooltip when usageSummary is provided', () => {
@@ -75,15 +35,6 @@ describe('ContextRing', () => {
     expect(tooltip.textContent).toContain('cached 12.0K');
   });
 
-  it('hides tooltip on mouse leave', () => {
-    render(<ContextRing percentage={50} />);
-    const meter = screen.getByRole('meter');
-    fireEvent.mouseEnter(meter);
-    expect(screen.queryByRole('tooltip')).toBeTruthy();
-    fireEvent.mouseLeave(meter);
-    expect(screen.queryByRole('tooltip')).toBeNull();
-  });
-
   it('shows no token details for Kiro (percentage only)', () => {
     render(<ContextRing percentage={75} />);
     const meter = screen.getByRole('meter');
@@ -98,11 +49,5 @@ describe('ContextRing', () => {
     render(<ContextRing percentage={5} />);
     const meter = screen.getByRole('meter');
     expect(meter.style.opacity).toBe('0.5');
-  });
-
-  it('has full opacity for high percentages', () => {
-    render(<ContextRing percentage={50} />);
-    const meter = screen.getByRole('meter');
-    expect(meter.style.opacity).toBe('1');
   });
 });

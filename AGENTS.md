@@ -9,8 +9,12 @@ project guidance. Keep personal preferences and machine-specific notes separate.
 ## Commands
 
 Install with `npm install` from the root. The npm workspaces are `frontend/`,
-`backend/`, and `shared/`, plus the Electron wrapper in `electron/`.
+`backend/`, `shared/` and `runtime/` (`michi-runtime`, the agent runtime
+layer; TypeScript source, no build step), plus the Electron wrapper in `electron/`.
 The backend requires Node.js 22+ for built-in SQLite.
+After pulling the commit that introduced `runtime/`, run `npm install` once from
+the root to create its workspace link; predev and preelectron:dev fail fast
+until that link exists.
 
 - `npm run dev`: builds shared code, then starts the backend esbuild watcher
   and Vite frontend. Default ports are backend 3000 and frontend 3001.
@@ -32,6 +36,17 @@ The backend requires Node.js 22+ for built-in SQLite.
   Filter with `npm test -w frontend -- src/state/chatStreamRunner.test.ts`.
 - `npm test -w backend`: builds shared code and runs node --test through
   ts-node on backend/test/*.test.ts, with a per-test timeout.
+- `npm test -w michi-runtime`: builds shared code and runs node --test
+  through ts-node on runtime/test/*.test.ts: the tests that need only the
+  package, adapter tests included. Tests that use Michi's host, backend code
+  or crew-app packaging stay in backend/test: crewLauncher and
+  crewLauncherStdio exercise the Crew App as Michi installs it (crew-app/ and
+  backend/dist), and crewLauncherStdio also needs backend's express.
+  The package-only acpDualEngine and acpErrors tests have not moved yet.
+  `npm run test:runtime` runs it plus the runtime boundary ratchet
+  (backend/test/runtimeBoundary.test.ts).
+  `npm run typecheck -w michi-runtime` builds shared code, then checks src
+  and tests.
 - `npm run test:e2e`: builds shared code and runs Playwright against the web UI.
   The mock API fixture intercepts backend requests; this suite does not require
   a real backend, SQLite, credentials or an agent CLI. Preserve that isolation.
@@ -44,6 +59,14 @@ and packaging are not side-effect-free test commands.
 
 ## Testing workflow
 
+Default to the smallest validation set that covers this task's changed behavior
+and affected consumers. Before running checks, briefly state the selected checks
+and the risks they cover. Once those checks pass and no concrete risk remains
+unresolved, stop validation. Explain the additional risk before expanding the
+scope; "just in case", preparing a commit, or a routine local merge is not a reason
+to add or repeat full suites. Honor explicitly requested validation and the
+full-suite criteria below.
+
 Run commands from the repository root. Paths after `-w frontend --` are relative
 to `frontend/`, not the repository root. `npm exec -w backend` runs in `backend/`.
 
@@ -53,7 +76,8 @@ Choose validation by the behavior and dependencies affected:
   runtime tests. For small copy/style changes, run relevant existing tests or a
   focused visual check. Add tests when they protect meaningful behavior.
 - Local frontend/backend changes: run the affected test files and nearby behavior
-  tests. For TypeScript changes, run the affected workspace's typecheck.
+  tests. For TypeScript changes, run the affected workspace's typecheck once after
+  the final relevant edits.
 - Streaming, queues, cancellation, hydration or persistence changes: cover the
   affected transitions and failure paths; add the relevant isolated E2E spec when
   browser interaction is involved. Trace protocol changes across both workspaces.
@@ -66,29 +90,46 @@ Choose validation by the behavior and dependencies affected:
   the resulting code, environment or evidence gives a reason to do so. A routine
   local merge does not require another full suite.
 
+During edits, use explicit test files, `test:related` with this task's source files,
+or a focused watch loop. In a shared dirty checkout, prefer these over
+`test:changed`, which can include unrelated work. Include affected dependencies
+and consumers when selecting tests; file ownership alone does not define impact.
+Reuse passing results unless later code, dependency, configuration or environment
+changes could invalidate them. Run builds when needed to validate bundling,
+resource paths, packaging or generated artifacts; do not automatically append a
+build to successful tests and typechecking.
+
+The commands below are alternatives chosen by scope, not a checklist to run in
+sequence.
+
 ```bash
-# During edits: choose a focused file, changed tests, or a warm watch loop.
+# During edits: choose a focused file, related tests, or a warm watch loop.
 npm test -w frontend -- src/state/chatStreamRunner.test.ts
-npm run test:changed -w frontend
 npm run test:related -w frontend -- src/components/ui/DrawerShell.tsx
 npm run test:watch -w frontend -- src/state/chatStreamRunner.test.ts
+
+# Use changed-test selection when the checkout's changes match the task scope.
+npm run test:changed -w frontend
 
 # Select an environment when appropriate.
 npm run test:node -w frontend
 npm run test:dom -w frontend
 
-# Typecheck the affected workspace after TypeScript changes.
+# Typecheck the affected workspace once after the final relevant TypeScript edits.
 npm run typecheck -w frontend
 
 # Backend typecheck/tests consume built shared code; select explicit test files.
+# The isolateUserDirs preload keeps tests out of ~/.michi (data.db, config, logs).
 npm run shared:build
 npm exec -w backend -- tsc --noEmit
-npm exec -w backend -- node --require ts-node/register --test \
+npm exec -w backend -- node --require ts-node/register \
+  --require ./test/helpers/isolateUserDirs.cjs --test \
   --test-timeout=30000 --test-concurrency=1 test/kiroCancelResume.integration.test.ts
 
 # Full suites when the scope above warrants them.
 npm test -w frontend
 npm test -w backend
+npm run test:runtime
 ```
 
 - `test:changed` includes staged, unstaged and untracked changes. Common modules
@@ -117,17 +158,21 @@ npm test -w backend
 - backend/src/server.ts opens databases, configures auth/CORS and routes, and
   registers enabled factories from backend/src/agents/runtimeFactories.ts.
   Do not assume CORS is globally open.
-- Runtime adapters live in backend/src/agents/: Kiro uses kiro-cli over ACP,
-  Pi uses provider APIs in-process, Claude uses the Claude CLI, and Codex uses
-  app-server JSON-RPC. Crew reuses KiroRuntime with a bundled ACP adapter connected
-  to the official Kiro Crew Gateway; its factory pins the v2 engine independently
-  of MICHI_KIRO_ENGINE. Preserve Crew's own capabilities and approval/setup
-  requirements; see agents/crew/README.md and runtimeFactories.ts. CLI requirements
-  depend on the selected runtime.
+- Runtime adapters live in runtime/src/adapters/ (package michi-runtime);
+  Pi stays in backend/src/agents/pi/. Kiro uses kiro-cli over ACP, Pi uses
+  provider APIs in-process, Claude uses the pinned Agent SDK with the installed
+  Claude CLI, and Codex uses app-server JSON-RPC. Crew reuses KiroRuntime with a
+  bundled ACP adapter connected to the official Kiro Crew Gateway; its preset
+  (createCrewRuntime) pins the v2 engine independently of MICHI_KIRO_ENGINE.
+  Preserve Crew's own capabilities and approval/setup requirements; see
+  runtime/src/adapters/crew/README.md and runtime/src/adapters/crew/crewRuntime.ts.
+  CLI requirements depend on the selected runtime.
 - backend/src/agents/chatHub.ts owns durable turns and subscriber replay;
   sessionRegistry.ts tracks live sessions. services/chatManager.ts is a
   compatibility facade and binding helper, not the owner of a global ACP pool.
-  Kiro pooling lives under agents/kiro/ and services/acpClient.ts.
+  Kiro pooling lives under runtime/src/adapters/kiro/, including
+  runtime/src/adapters/kiro/acpClient.ts, which extends the generic ACP client
+  core in runtime/src/adapters/acp/.
 - shared/src/ owns shared protocol types and turn projection. Transport uses
   SSE payloads via fetchStream/ReadableStream, multiplexed over one WebSocket per
   gateway/window after capability negotiation. Old gateways fall back to HTTP
@@ -137,7 +182,7 @@ npm test -w backend
   `npm run test:stream-transport` tests concurrent streams alongside ordinary
   requests in isolated Chromium without SQLite, real agents or user data.
 - For event changes, trace the affected runtime adapter, normalized types in
-  backend/src/services/chatEvents.ts, backend/src/routes/chatStreamEvents.ts,
+  runtime/src/contract/events.ts, backend/src/routes/chatStreamEvents.ts,
   shared/frontend event schemas, frontend/src/services/api/stream.ts and api.ts,
   frontend/src/state/chatStreamRunner.ts, and relevant reducers/projection.
   Update affected tests and SSE mocks. Do not assume chatStore handles every hop.
@@ -159,9 +204,15 @@ npm test -w backend
 - Preserve turn/assistant IDs and sequence watermarks across live streams,
   replay and hydration.
 - Kiro MCP HTTP entries require headers: [] even when empty; see
-  backend/src/agents/kiro/KiroRuntime.ts. Preserve ACP queue draining and
+  runtime/src/adapters/kiro/kiroProtocol.ts. Preserve ACP queue draining and
   previous in-flight prompt handling so cancelled chunks cannot leak into
   the next prompt.
+- Runtime package boundary: `backend/test/runtimeBoundary.test.ts` and
+  `npm run build` ratchet imports from runtime-layer files into app code,
+  `process.env` reads in those files, and runtime-id literal comparisons outside
+  adapter directories. Do not add new entries; inject the dependency through a
+  runtime port or option instead. If an entry is unavoidable, add it to
+  `backend/test/fixtures/runtimeBoundary/` with the reason in the commit message.
 
 ## Persistence and frontend
 

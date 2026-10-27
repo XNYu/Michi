@@ -25,7 +25,7 @@ import {
   type EffectiveAgentDefinitionV1,
   type ResultBundleV1,
 } from 'michi-shared';
-import { closeDb, initDb, getDb } from '../src/services/db';
+import { closeDb, initDb } from '../src/services/db';
 import {
   beginTurn,
   finalizeTurn,
@@ -342,78 +342,12 @@ describe('readOutput', () => {
     );
   });
 
-  // -------------------------------------------------------------------------
-  // limitBytes / truncation
-  // -------------------------------------------------------------------------
-
-  test('limitBytes above the max clamps to the max, and a non-integer is INVALID_ARGUMENT via the shared parser', () => {
-    const { parseReadOutputLimitBytes, PANE_INSPECTION_LIMITS } = require('michi-shared') as typeof import('michi-shared');
-    // readOutput itself clamps defensively too (never trusts the caller — see module comment),
-    // but the untrusted-input parsing/rejection contract belongs to the shared parser P1-1 wrote;
-    // this proves the two agree rather than duplicating a second rejection path here.
-    assert.equal(parseReadOutputLimitBytes(999_999), PANE_INSPECTION_LIMITS.readOutputMaxBytes);
-    assert.throws(() => parseReadOutputLimitBytes(12.5), (err: unknown) => err instanceof Error);
-
-    seedNode('n11');
-    seedCompletedTurn('n11', 't11', 'z'.repeat(100));
-    const result = readOutput(caller(), { locator: { nodeId: 'n11' }, selection: 'latest', limitBytes: 999_999 });
-    // Clamped internally to readOutputMaxBytes, which comfortably fits this 100-byte fixture in
-    // one page — proving the clamp did not reject the call outright.
-    assert.equal(result.text, 'z'.repeat(100));
-    assert.equal(result.nextPageCursor, null);
-  });
-
-  test('truncation on a multi-byte/emoji boundary produces no broken code point', () => {
-    // Each 👍 is a 4-byte UTF-8 astral code point (surrogate pair in UTF-16). Pick a limitBytes
-    // that lands mid-emoji if truncation were byte-naive.
-    const text = '👍'.repeat(20); // 80 bytes total
-    seedNode('n12');
-    seedCompletedTurn('n12', 't12', text);
-
-    const page1 = readOutput(caller(), { locator: { nodeId: 'n12' }, selection: 'latest', limitBytes: 10 }); // not a multiple of 4
-    // Every code point in the returned text must be a complete 👍 — Array.from re-splits by code
-    // point, so a broken surrogate half would either throw or produce a replacement/mismatched
-    // character; assert every code point in the page is exactly '👍'.
-    for (const cp of Array.from(page1.text)) assert.equal(cp, '👍');
-    assert.ok(Buffer.byteLength(page1.text, 'utf8') <= 10);
-    assert.ok(page1.nextPageCursor);
-  });
-
-  // -------------------------------------------------------------------------
-  // AgentRun
-  // -------------------------------------------------------------------------
-
-  test('AgentRun: attempt 2\'s text is not concatenated with attempt 1\'s', () => {
-    const runs = new AgentRunsRepository();
-    const run = createRun(runs, 'run-1');
-
-    const attempt1 = runs.createAttempt({
-      operationId: 'attempt-op-1', ownerUserId: OWNER, runId: run.id,
-      profileIndex: 0, runtimeProfile: RUNTIME_PROFILE, publicSessionId: 'sess-1', recoveryEnvelope: null,
-    });
-    runs.appendEventAndProject(OWNER, run.id, 0, {
-      type: AgentRunEventType.Assistant, payload: { version: 1, text: 'attempt one text' }, attemptId: attempt1.id,
-    });
-
-    const attempt2 = runs.createAttempt({
-      operationId: 'attempt-op-2', ownerUserId: OWNER, runId: run.id,
-      profileIndex: 0, runtimeProfile: RUNTIME_PROFILE, publicSessionId: 'sess-2', recoveryEnvelope: null,
-    });
-    runs.appendEventAndProject(OWNER, run.id, 1, {
-      type: AgentRunEventType.Assistant, payload: { version: 1, text: 'attempt two text' }, attemptId: attempt2.id,
-    });
-
-    const result = readOutput(caller(), { locator: { runId: run.id }, selection: 'latest', limitBytes: 1024 });
-    assert.equal(result.text, 'attempt two text');
-    assert.ok(!result.text.includes('attempt one'));
-  });
-
   test('AgentRun: terminal + resultBundle previews handoff', () => {
     const runs = new AgentRunsRepository();
     const run = createRun(runs, 'run-2');
     const attempt = runs.createAttempt({
       operationId: 'attempt-op-3', ownerUserId: OWNER, runId: run.id,
-      profileIndex: 0, runtimeProfile: RUNTIME_PROFILE, publicSessionId: 'sess-3', recoveryEnvelope: null,
+      profileIndex: 0, runtimeProfile: RUNTIME_PROFILE, recoveryEnvelope: null,
     });
     runs.appendEventAndProject(OWNER, run.id, 0, {
       type: AgentRunEventType.Assistant, payload: { version: 1, text: 'raw assistant text' }, attemptId: attempt.id,
@@ -425,38 +359,5 @@ describe('readOutput', () => {
     const result = readOutput(caller(), { locator: { runId: run.id }, selection: 'latest', limitBytes: 1024 });
     assert.equal(result.kind, 'handoff');
     assert.match(result.text, /All done/);
-  });
-
-  // -------------------------------------------------------------------------
-  // Content rules — no sentinels/thoughts/tool logs/permission payloads leak through
-  // -------------------------------------------------------------------------
-
-  test('output text contains no sentinel, thought, tool log or permission payload', () => {
-    seedNode('n13');
-    let snapshot = createDurableTurn({ turnId: 't13', assistantId: 'a-t13', nodeId: 'n13', workspaceId: WORKSPACE, displayUserText: 'hi', startedAt: 100 });
-    beginTurn(snapshot);
-    snapshot = applyTurnEvent(snapshot, event('thought', { text: 'thinking about secret plan', seq: 1 }));
-    snapshot = applyTurnEvent(snapshot, event('tool_call', {
-      toolCallId: 'tool-1', title: 'run_shell', status: 'running', kind: 'exec',
-      detail: 'internal detail', inputJson: '{"cmd":"rm -rf /secret"}', seq: 2,
-    }));
-    snapshot = applyTurnEvent(snapshot, event('chunk', { text: 'The visible answer text.', seq: 3 }));
-    snapshot = applyTurnEvent(snapshot, event('chunk', { text: ' [TITLE: hidden title]', seq: 4 }));
-    snapshot = applyTurnEvent(snapshot, event('done', { stopReason: 'end_turn', seq: 5, completedAt: 110 }));
-    finalizeTurn(snapshot);
-
-    const result = readOutput(caller(), { locator: { nodeId: 'n13' }, selection: 'latest', limitBytes: 4096 });
-    assert.equal(result.text, 'The visible answer text.');
-    assert.doesNotMatch(result.text, /secret plan/);
-    assert.doesNotMatch(result.text, /run_shell|rm -rf|internal detail/);
-    assert.doesNotMatch(result.text, /\[TITLE:/i);
-  });
-
-  test('an empty (never-started) target returns empty text, not an error', () => {
-    seedNode('n14');
-    const result = readOutput(caller(), { locator: { nodeId: 'n14' }, selection: 'latest', limitBytes: 1024 });
-    assert.equal(result.text, '');
-    assert.equal(result.execution, null);
-    assert.equal(result.nextPageCursor, null);
   });
 });

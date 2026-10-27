@@ -1,3 +1,5 @@
+import { injectedHostEvent } from "michi-runtime/internal/adapters/kiro/kiroHostEvents";
+import { encodeMichiHostEvent } from "../hostEvents";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentSession, AgentTurnInput, ChatMessage } from "../types";
@@ -6,7 +8,7 @@ import type { AcpPromptBlock } from "../../services/acp/client";
 import { translateAcpToolCall } from "../../services/acp/toolCallTranslate";
 import type { AcpAgentRuntime } from "./AcpRuntime";
 import { followUpReminder } from "../preamble";
-import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from "../kiro/acpErrors";
+import { classifyAcpError, isRetryable, needsRespawn, toErrorKind } from "michi-runtime/internal/adapters/kiro/acpErrors";
 
 const KIRO_IMAGE_MEDIA_TYPES: Record<string, string> = {
     ".gif": "image/gif",
@@ -282,6 +284,8 @@ export class AcpSession implements AgentSession {
         const completionStripper = new StreamingSentinelStripper(KIRO_METADATA_DONE_SENTINEL);
         try {
             for await (const update of c.prompt(this.nativeSessionId, text, imageBlocks)) {
+                const hostEvent = injectedHostEvent(update);
+                if (hostEvent) { yield hostEvent; continue; }
                 const kind = update.sessionUpdate;
                 if (kind === "agent_message_chunk") {
                     const content = update.content;
@@ -319,43 +323,39 @@ export class AcpSession implements AgentSession {
             } else if (kind === "__heartbeat__") {
                 yield { kind: "heartbeat", idleMs: update.idleMs || 0 };
             } else if (kind === "spawn_branches") {
-                yield {
-                    kind: "spawn_branches",
+                yield encodeMichiHostEvent({ type: "spawn_branches", payload: {
                     topics: Array.isArray(update.topics) ? update.topics : [],
-                };
+                    } });
             } else if (kind === "artifact_saved") {
                 if (typeof update.name === "string" && typeof update.filePath === "string") {
-                    yield {
-                        kind: "artifact_saved",
+                    yield encodeMichiHostEvent({ type: "artifact_saved", payload: {
                         contextId: typeof update.contextId === "string" ? update.contextId : undefined,
                         name: update.name,
                         filePath: update.filePath,
                         size: typeof update.size === "number" ? update.size : undefined,
-                    };
+                    } });
                 }
             } else if (kind === "artifact_updated") {
                 if (typeof update.name === "string" && typeof update.filePath === "string") {
-                    yield {
-                        kind: "artifact_updated",
+                    yield encodeMichiHostEvent({ type: "artifact_updated", payload: {
                         contextId: typeof update.contextId === "string" ? update.contextId : undefined,
                         name: update.name,
                         filePath: update.filePath,
                         size: typeof update.size === "number" ? update.size : undefined,
-                    };
+                    } });
                 }
             } else if (kind === "branch_overview") {
                 if (typeof update.overview === "string" && update.overview.trim()) {
-                    yield {
-                        kind: "branch_overview",
+                    yield encodeMichiHostEvent({ type: "branch_overview", payload: {
                         overview: update.overview.trim(),
-                    };
+                    } });
                 }
             } else if (kind === "follow_ups") {
                 const followUps = Array.isArray(update.followUps)
                     ? update.followUps.map((f: unknown) => String(f).trim()).filter(Boolean).slice(0, 3)
                     : [];
                 if (followUps.length > 0) {
-                    yield { kind: "follow_ups" as const, followUps };
+                    yield encodeMichiHostEvent({ type: "follow_ups", payload: { followUps } });
                 }
             } else if (kind === "permission_request") {
                 // Incoming permission request from the ACP agent — forward to

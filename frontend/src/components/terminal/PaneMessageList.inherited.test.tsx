@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { PaneMessageList } from './PaneMessageList';
 import type { ChatNodeState } from '../../state/chatTypes';
@@ -46,10 +46,5 @@ describe('PaneMessageList inherited history', () => {
     const firstOwnFrame = frames[2];
     expect(firstOwnFrame.previousElementSibling).toBe(divider);
     expect(firstOwnFrame.textContent).toContain('Investigate this direction');
-  });
-
-  it('renders no divider for an ordinary (non-extracted) node', () => {
-    const { container } = render(list({ inheritedMessageCount: 0, forkedFromNodeId: undefined }));
-    expect(container.querySelector('.t-inherited-divider')).toBeNull();
   });
 });

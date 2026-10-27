@@ -1,8 +1,9 @@
+import { backendFetch } from './backendRequest';
 import { API_BASE_URL } from '../../config/env';
 import { isChatPermissionSettings, type ChatPermissionSettings } from 'michi-shared';
 
 export async function savePermissionSettings(settings: ChatPermissionSettings, apiBase = API_BASE_URL): Promise<ChatPermissionSettings> {
-  const res = await fetch(`${apiBase}/permissions/settings`, {
+  const res = await backendFetch(`${apiBase}/permissions/settings`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings),
   });
   if (!res.ok) throw new Error('Failed to save permission settings');

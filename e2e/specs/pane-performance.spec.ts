@@ -2,7 +2,10 @@ import { test, expect, type Page } from '@playwright/test';
 import { execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { longConversationMessages, longConversationRuns } from '../fixtures/longConversationPerf';
 import { installMockApi } from '../fixtures/mockApi';
+import { openThreadFromSidebar } from '../fixtures/shell';
 
 test.skip(process.env.MICHI_PANE_PERF !== '1', 'Set MICHI_PANE_PERF=1 to run the pane performance suite.');
 test.describe.configure({ mode: 'serial' });
@@ -35,6 +38,9 @@ interface FrameStats {
 interface ScenarioResult {
   name: string;
   paneCount: number;
+  messageCount?: number;
+  runCount?: number;
+  chunkCount?: number;
   frames?: FrameStats;
   interactionMaxMs?: number;
   heapBefore?: number | null;
@@ -60,6 +66,13 @@ declare global {
 }
 
 const results: ScenarioResult[] = [];
+const LONG = process.env.MICHI_LONG_PERF === '1';
+let MESSAGE_COUNT = Number(process.env.MICHI_PERF_MESSAGES ?? 1000);
+let RUN_COUNT = Number(process.env.MICHI_PERF_RUNS ?? 0);
+let PANE_COUNT = Number(process.env.MICHI_PERF_PANES ?? 1);
+const REPLICATES = Number(process.env.MICHI_PERF_REPLICATES ?? 3);
+const CHUNK_COUNT = Number(process.env.MICHI_PERF_CHUNKS ?? 48);
+const FIVE_THOUSAND_CHUNKS = Number(process.env.MICHI_PERF_5K_CHUNKS ?? CHUNK_COUNT);
 
 function percentile(values: number[], p: number): number {
   if (values.length === 0) return 0;
@@ -218,7 +231,7 @@ function makeNode(pane: number) {
     runtimeId: 'mock',
     projectId: PROJECT_ID,
     parentNodeId: pane === 0 ? undefined : ROOT_NODE_ID,
-    messages,
+    messages: LONG ? longConversationMessages(pane, MESSAGE_COUNT) : messages,
     followUps: [
       `Continue pane ${pane} analysis?`,
       `Branch pane ${pane} into a mitigation plan?`,
@@ -267,7 +280,7 @@ function makeSavedState(paneCount: number) {
 }
 
 async function installPerfInit(page: Page, paneCount: number) {
-  await page.addInitScript(({ state, streamingMarkdownBlocks, markdownReinterpretHz }) => {
+  await page.addInitScript(({ state, streamingMarkdownBlocks, markdownReinterpretHz, chunkCount }) => {
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.localStorage.setItem('michi:migrated', '1');
@@ -305,7 +318,7 @@ async function installPerfInit(page: Page, paneCount: number) {
               kind: 'tool',
               detail: 'Scanning fixture transcript during streamed turn.',
             })));
-            for (let i = 0; i < 96; i += 1) {
+            for (let i = 0; i < chunkCount; i += 1) {
               const text = i % 12 === 0
                 ? `\n\n### Streaming section ${i / 12 + 1}\n\n- token batch ${i}\n- pane-local update\n\n`
                 : `streamed token batch ${i} with markdown-safe prose. `;
@@ -335,17 +348,27 @@ async function installPerfInit(page: Page, paneCount: number) {
     };
   }, {
     state: makeSavedState(paneCount),
+    chunkCount: LONG ? (MESSAGE_COUNT >= 5000 ? FIVE_THOUSAND_CHUNKS : CHUNK_COUNT) : 96,
     streamingMarkdownBlocks: STREAMING_MARKDOWN_BLOCKS,
     markdownReinterpretHz: MARKDOWN_REINTERPRET_HZ,
   });
 }
 
 async function bootHeavyWorkspace(page: Page, paneCount: number) {
-  await installMockApi(page);
+  await installMockApi(page, LONG ? { custom: async (route) => {
+    const pathname = new URL(route.request().url()).pathname.replace(/^.*\/api/, '');
+    let body: unknown;
+    if (pathname === '/agent/status') body = { runtime: 'mock', label: 'Mock', hasRequiredKey: true, customAgentsEnabled: true, capabilities: { modes: false, permissions: false, apiKeys: false }, availableRuntimes: [{ id: 'mock', label: 'Mock', available: true }] };
+    else if (pathname === '/agent-runs') body = { runs: longConversationRuns(PANE_COUNT, MESSAGE_COUNT, RUN_COUNT) };
+    else if (pathname === '/agent-runs/subscribe') {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': idle\n\n' }); return true;
+    } else return false;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) }); return true;
+  } } : {});
   await installPerfInit(page, paneCount);
   await page.goto('/');
   await page.getByText(`${paneCount} Pane Heavy Perf`).first().waitFor({ state: 'visible', timeout: 15_000 });
-  await clickFirstHomeRecent(page);
+  await openHeavyThread(page);
   await page.locator('.terminal-dashboard').waitFor({ state: 'visible', timeout: 15_000 });
   await expect(page.locator('.terminal-pane')).toHaveCount(1, { timeout: 15_000 });
   for (let i = 1; i < paneCount; i += 1) {
@@ -357,18 +380,15 @@ async function bootHeavyWorkspace(page: Page, paneCount: number) {
     paneCount,
   );
   await page.waitForFunction(
-    (expected) => document.querySelectorAll('[data-msg-id]').length >= expected * 8,
-    paneCount,
+    (expected) => document.querySelectorAll('[data-msg-id]').length >= expected,
+    paneCount * (LONG ? MESSAGE_COUNT : 8),
   );
   await page.waitForTimeout(800);
 }
 
-async function clickFirstHomeRecent(page: Page) {
-  await page.evaluate(() => {
-    const row = document.querySelector<HTMLElement>('[data-testid="home-continue-row"]');
-    if (!row) throw new Error('missing home recent row');
-    row.click();
-  });
+/** Home has no Recent list; the thread opens from its root in the sidebar. */
+async function openHeavyThread(page: Page) {
+  await openThreadFromSidebar(page, 'Heavy pane 0');
 }
 
 async function dispatchAppShortcut(
@@ -504,7 +524,7 @@ async function submitToPane(page: Page, nodeId: string, text: string) {
     if (strip && wrapper) strip.scrollLeft = wrapper.offsetLeft;
   }, nodeId);
   const pane = page.locator(`.terminal-pane[data-node-id="${nodeId}"]`).first();
-  await pane.click({ position: { x: 24, y: 24 } });
+  if (!LONG) await pane.click({ position: { x: 24, y: 24 } });
   const editor = pane.locator('[contenteditable="true"]').last();
   await editor.click();
   await page.keyboard.type(text);
@@ -547,6 +567,7 @@ async function measureWithCounters(
   const result: ScenarioResult = {
     name,
     paneCount,
+    ...(LONG ? { messageCount: MESSAGE_COUNT, runCount: RUN_COUNT, chunkCount: MESSAGE_COUNT >= 5000 ? FIVE_THOUSAND_CHUNKS : CHUNK_COUNT } : {}),
     heapBefore,
     heapAfter,
     renderDelta,
@@ -577,6 +598,8 @@ test.afterAll(() => {
     label: BASELINE_LABEL,
     commit,
     generatedAt: new Date().toISOString(),
+    machine: { platform: os.platform(), arch: os.arch(), cpus: os.cpus().length },
+    fixture: { messageCount: MESSAGE_COUNT, runCount: RUN_COUNT, paneCount: PANE_COUNT, chunks: CHUNK_COUNT, fiveThousandChunks: FIVE_THOUSAND_CHUNKS, intervalMs: 16, warmups: 1, replicates: REPLICATES, viewport: LONG ? { width: 3000, height: 900 } : undefined, markdown: 'react-markdown', streamingMarkdownBlocks: STREAMING_MARKDOWN_BLOCKS ?? 'default', production: process.env.E2E_PRODUCTION === '1' },
     scenarios: results,
   };
   const file = path.join(OUT_DIR, `pane-performance-${BASELINE_LABEL}.json`);
@@ -585,6 +608,7 @@ test.afterAll(() => {
 });
 
 test('4 pane heavy horizontal scroll, streaming isolation, and interactions', async ({ page }) => {
+  test.skip(LONG);
   await bootHeavyWorkspace(page, 4);
 
   await measureWithCounters(page, '4p-scroll-10s', 4, async () => ({
@@ -619,6 +643,7 @@ test('4 pane heavy horizontal scroll, streaming isolation, and interactions', as
 });
 
 test('6 pane heavy scroll and streaming pressure', async ({ page }) => {
+  test.skip(LONG);
   await bootHeavyWorkspace(page, 6);
 
   await measureWithCounters(page, '6p-scroll-pressure-10s', 6, async () => ({
@@ -638,4 +663,34 @@ test('6 pane heavy scroll and streaming pressure', async ({ page }) => {
     const heapAfterClose = await collectHeap(page);
     return { frames, heapAfterClose };
   }, 'n0');
+});
+
+
+const cells = process.env.MICHI_PERF_MATRIX === '1'
+  ? [1000, 5000].flatMap((messages) => [1, 4].flatMap((panes) => [0, 200].map((runs) => ({ messages, panes, runs }))))
+  : [{ messages: MESSAGE_COUNT, panes: PANE_COUNT, runs: RUN_COUNT }];
+for (const cell of cells) test(`deterministic long conversation ${cell.messages}m ${cell.panes}p ${cell.runs}r`, async ({ page }) => {
+  MESSAGE_COUNT = cell.messages; PANE_COUNT = cell.panes; RUN_COUNT = cell.runs;
+  test.skip(!LONG);
+  test.setTimeout(180_000);
+  page.setDefaultTimeout(30_000);
+  await page.setViewportSize({ width: 3000, height: 900 });
+  await bootHeavyWorkspace(page, PANE_COUNT);
+  if (RUN_COUNT) await expect(page.getByTestId('agent-run-card')).toHaveCount(RUN_COUNT, { timeout: 30_000 });
+  for (let replicate = -1; replicate < REPLICATES; replicate += 1) {
+    console.log(`[long-perf] begin ${MESSAGE_COUNT}/${PANE_COUNT}/${RUN_COUNT} replicate ${replicate}`);
+    await measureWithCounters(page, `${MESSAGE_COUNT}m-${PANE_COUNT}p-${RUN_COUNT}r-${replicate < 0 ? 'warmup' : `sample${replicate + 1}`}`, PANE_COUNT, async () => {
+      const framesPromise = measureFrames(page, 2_400, false);
+      await submitToPane(page, 'n0', `fixed stream replicate ${replicate}`);
+      const editor = page.locator('.terminal-pane[data-node-id="n0"] [contenteditable="true"]').last();
+      const start = Date.now();
+      await editor.fill('输入 latency 日本語');
+      await expect(editor).toContainText('输入 latency 日本語');
+      const interactionMaxMs = Date.now() - start;
+      const frames = await framesPromise;
+      await expect(page.getByText('Inspect inactive panes?').first()).toBeVisible({ timeout: 30_000 });
+      await editor.fill('');
+      return { frames, interactionMaxMs };
+    });
+  }
 });

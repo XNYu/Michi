@@ -1,0 +1,254 @@
+/* Settings › Meta agent. Palette, type and radius tokens only, so every palette
+   and the Corner radius pref read. Settings are plain rows; colour is reserved for controls and status icons. */
+
+.meta-set {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  font-family: var(--ui-font);
+  color: var(--term-fg);
+}
+.meta-set__lede {
+  margin: -13px 0 0;
+  font-size: var(--fs-2xl);
+  line-height: 1.6;
+  color: var(--term-fg);
+}
+.meta-set__quiet {
+  margin: 0;
+  color: var(--term-muted);
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+}
+.meta-set__quiet.is-error,
+.meta-set__error {
+  color: var(--term-danger-text, var(--term-danger));
+}
+.meta-set__error { margin: 0; font-size: var(--fs-md); }
+.meta-set__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--term-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.meta-set__link:hover { text-decoration: underline; }
+
+.meta-set__sec {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--term-line);
+  scroll-margin-top: 24px;
+}
+.meta-set__sec > h2,
+.meta-set__head > h2 {
+  margin: 0 0 10px;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: 1.55;
+  color: var(--term-fg);
+}
+.meta-set__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.meta-set__saved { display: inline-flex; align-items: center; gap: 4px; color: var(--term-muted); font-size: var(--fs-sm); }
+.meta-set__saved > svg { align-self: center; color: var(--term-digest); }
+
+/* ── Runtime: two radio cards and the restriction note ─────────── */
+.meta-set__radio {
+  border: 0;
+  border-bottom: 1px solid var(--term-line);
+  border-radius: 0;
+  background: transparent;
+}
+.meta-set__radio[data-checked='true'] {
+  background: transparent;
+}
+.meta-set__radio-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 0;
+  cursor: pointer;
+}
+.meta-set__radio-head input {
+  appearance: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 3px 0 0;
+  border: 1.5px solid var(--term-line-s);
+  border-radius: 50%;
+  background: var(--term-surface);
+  cursor: pointer;
+}
+.meta-set__radio-head input:checked { border: 4px solid var(--term-accent); }
+.meta-set__radio-head input:disabled { cursor: default; }
+.meta-set__radio-head input:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent);
+  outline-offset: 2px;
+}
+.meta-set__radio-t { display: block; font-size: var(--fs-xl); font-weight: 600; line-height: 1.45; color: var(--term-fg); }
+.meta-set__radio-d { display: block; font-size: var(--fs-md); line-height: 1.5; color: var(--term-muted); }
+
+.meta-set__custom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: -3px;
+  padding: 0 0 18px 24px;
+}
+.meta-set__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.meta-set__chip.ui-btn { padding: 5px 10px; line-height: 1.45; }
+.meta-set__chip[aria-pressed='true'] {
+  border-color: var(--term-line-s);
+  background: var(--term-alt);
+  color: var(--term-fg);
+}
+.meta-set__chip:disabled:not([aria-pressed='true']) { opacity: 0.45; }
+.meta-set__chip-note { color: var(--term-muted); font-size: var(--fs-sm); }
+.meta-set__chip[aria-pressed='true']:disabled { opacity: 1; cursor: default; }
+.meta-set__hints { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-md); line-height: 1.5; color: var(--term-muted); }
+.meta-set__install { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; margin-top: 3px; }
+.meta-set__install code {
+  padding: 1px 4px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-alt);
+  color: var(--term-fg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  user-select: all;
+}
+
+.meta-set__pickers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: var(--fs-md);
+  color: var(--term-muted);
+}
+.meta-set__picker { display: inline-flex; align-items: center; gap: 6px; }
+.meta-set .ui-select { width: auto; max-width: 260px; padding: 3px 6px; }
+/* Inline pickers read as the card's text line ("Model … · Reasoning …"); the box shows on hover and focus. */
+.meta-set__pickers .ui-select {
+  padding: 0 2px;
+  line-height: 1.3;
+  border-color: transparent;
+  background: transparent;
+  color: var(--term-mid);
+}
+.meta-set__pickers .ui-select:hover:not(:disabled) { border-color: var(--term-line); }
+.meta-set__pickers > .meta-set__picker + .meta-set__picker::before { content: '·'; margin-right: 2px; color: var(--term-faint); }
+.meta-set__catalog { font-size: var(--fs-sm); color: var(--term-muted); }
+
+.meta-set__guard {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--term-mid);
+  font-size: var(--fs-lg);
+  line-height: 1.6;
+}
+.meta-set__guard > svg { flex: none; margin-top: 3px; color: var(--term-digest); }
+.meta-set__guard p { margin: 0; }
+.meta-set__guard b { color: var(--term-fg); font-weight: 600; }
+
+/* The runtime cannot run the Meta agent: the first-run card's needs-a-key box. */
+.meta-set__notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 0;
+  border: 1px solid color-mix(in srgb, var(--term-select) 42%, var(--term-line));
+  border-radius: var(--ui-radius-lg);
+  background: transparent;
+  color: var(--term-fg);
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+}
+.meta-set__notice > svg { flex: none; margin-top: 3px; color: var(--term-select); }
+.meta-set__notice p { flex: 1; margin: 0; }
+.meta-set__notice .ui-btn { flex: none; }
+
+/* ── Reading / Writing rows ────────────────────────────────────── */
+.meta-set__row {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--term-line);
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+}
+.meta-set__row-k { color: var(--term-mid); }
+.meta-set__row-v { color: var(--term-fg); }
+.meta-set__ctl { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.meta-set__state { color: var(--term-mid); font-size: var(--fs-sm); white-space: nowrap; }
+.meta-set__tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-surface);
+  color: var(--term-mid);
+  font: 400 var(--fs-xs)/1 var(--font-mono);
+  white-space: nowrap;
+}
+.meta-set__usage { margin: 0; font-size: var(--fs-md); color: var(--term-muted); }
+
+/* ── Guard failure ─────────────────────────────────────────────── */
+.meta-set__alert {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--term-danger) 30%, var(--term-surface));
+  border-radius: var(--ui-radius-lg);
+  background: transparent;
+  color: var(--term-fg);
+  font-size: var(--fs-lg);
+  /* The mock's 21.6 px line at Michi's 13 px body size. */
+  line-height: 1.66;
+}
+.meta-set__alert-icon { color: var(--term-danger); }
+.meta-set__alert-body b { font-weight: 600; }
+.meta-set__alert-body p { margin: 0; color: var(--term-fg); }
+.meta-set__alert code {
+  padding: 1px 4px;
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in srgb, var(--term-surface) 70%, transparent);
+  color: var(--term-fg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+}
+.meta-set__alert-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* The mock's compact action row: Button's own variants at a 24 px height. */
+.meta-set__alert-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--term-danger) 22%, var(--term-line));
+  font-size: var(--fs-md);
+  color: var(--term-mid);
+}
+.meta-set__alert-details dt { font-weight: 600; color: var(--term-fg); }
+.meta-set__alert-details dd { margin: 0; }
+.meta-set__alert-detail { margin-top: 2px; color: var(--term-muted); }
+
+@media (max-width: 640px) {
+  .meta-set__row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
+  .meta-set__row-v { grid-column: 1; grid-row: 2; font-size: var(--fs-md); color: var(--term-muted); }
+  .meta-set__ctl { grid-column: 2; grid-row: 1 / span 2; }
+  .meta-set__notice { flex-wrap: wrap; }
+}

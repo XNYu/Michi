@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { installMockApi, bootWithWorkspace, sseBody } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 declare global {
   interface Window {
@@ -63,7 +64,7 @@ test.describe('chat stream', () => {
         };
       });
       await bootWithWorkspace(page);
-      const composer = page.locator('[contenteditable="true"]').first();
+      const composer = page.locator(COMPOSER_EDITOR).first();
       await composer.fill('Review the current changes');
       await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
       await expect(page.getByText('The changes are ready.', { exact: true })).toBeVisible();
@@ -108,7 +109,7 @@ test.describe('chat stream', () => {
     await installMockApi(page);
     await bootWithWorkspace(page);
 
-    const composer = page.locator('[contenteditable="true"]').first();
+    const composer = page.locator(COMPOSER_EDITOR).first();
     await composer.fill('hello kiro');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
 
@@ -125,7 +126,7 @@ test.describe('chat stream', () => {
     await installMockApi(page);
     await bootWithWorkspace(page);
 
-    await page.locator('[contenteditable="true"]').first().fill('hi');
+    await page.locator(COMPOSER_EDITOR).first().fill('hi');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
 
     // FollowUpRow renders the three follow-up suggestions from defaultTurn.
@@ -170,7 +171,7 @@ test.describe('chat stream', () => {
         requestAnimationFrame(sampleFrame);
       });
       await bootWithWorkspace(page);
-      await page.locator('[contenteditable="true"]').first().fill('请简短回答');
+      await page.locator(COMPOSER_EDITOR).first().fill('请简短回答');
       await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
       await expect.poll(() => page.evaluate(() => !!window.shortAnswerTest?.stream)).toBe(true);
 

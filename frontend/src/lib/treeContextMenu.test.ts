@@ -107,32 +107,6 @@ describe('buildTreeContextMenu — node pin', () => {
     expect(unpinNode).toHaveBeenCalledWith('b1');
   });
 
-  it('never offers Pin/Unpin on the tree root (thread-level pin owns that)', () => {
-    const sections = buildTreeContextMenu({
-      targetId: 'r1',
-      project: makeProject(),
-      nodes: { r1: makeNode('r1', { pinnedAt: 5 }), b1: makeNode('b1') },
-      selection: new Set(),
-      actions: makeActions({ pinNode: vi.fn(), unpinNode: vi.fn() }),
-    });
-    const ids = itemIds(sections);
-    expect(ids).not.toContain('pin');
-    expect(ids).not.toContain('unpin');
-  });
-
-  it('omits the item when the caller does not wire pin actions', () => {
-    const sections = buildTreeContextMenu({
-      targetId: 'b1',
-      project: makeProject(),
-      nodes: { r1: makeNode('r1'), b1: makeNode('b1') },
-      selection: new Set(),
-      actions: makeActions(),
-    });
-    const ids = itemIds(sections);
-    expect(ids).not.toContain('pin');
-    expect(ids).not.toContain('unpin');
-  });
-
   it('does not add pin items to the multi-select menu', () => {
     const sections = buildTreeContextMenu({
       targetId: 'b1',
@@ -145,4 +119,17 @@ describe('buildTreeContextMenu — node pin', () => {
     expect(ids).not.toContain('pin');
     expect(ids).not.toContain('unpin');
   });
+});
+
+it('protects roots from inactive trees in single and mixed selection menus', () => {
+  const project = makeProject();
+  project.trees.push({ id: 't2', rootNodeId: 'r2', createdAt: 1, lastActiveAt: 1 });
+  const actions = makeActions({ pinNode: vi.fn(), unpinNode: vi.fn() });
+  const nodes = { r1: makeNode('r1'), r2: makeNode('r2'), b1: makeNode('b1') };
+  const single = buildTreeContextMenu({ targetId: 'r2', project, nodes, selection: new Set(), actions });
+  expect(single.flatMap((section) => section.items).find((item) => item.id === 'delete')?.disabled).toBe(true);
+  expect(itemIds(single)).not.toContain('pin');
+  const mixed = buildTreeContextMenu({ targetId: 'r2', project, nodes, selection: new Set(['r2', 'b1']), actions });
+  mixed.flatMap((section) => section.items).find((item) => item.id === 'delete')?.run();
+  expect(actions.deleteNode).toHaveBeenCalledExactlyOnceWith('b1');
 });

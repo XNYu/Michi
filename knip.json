@@ -5,7 +5,8 @@
       "entry": [
         "src/index.tsx",
         "src/**/*.test.{ts,tsx}",
-        "src/setupTests.ts"
+        "src/setupTests.ts",
+        "src/components/terminal/spaces/metaChat/harness/main.tsx"
       ],
       "project": ["src/**/*.{ts,tsx}"]
     },
@@ -21,6 +22,10 @@
       "entry": ["src/index.ts"],
       "project": ["src/**/*.ts"]
     },
+    "runtime": {
+      "entry": ["src/index.ts", "test/**/*.test.ts"],
+      "project": ["src/**/*.ts"]
+    },
     "electron": {
       "entry": ["main.ts", "preload.ts"],
       "project": ["**/*.ts"]
@@ -34,7 +39,6 @@
     ".claude/**",
     "**/dist/**",
     "**/build/**",
-    "backend/src/agents/codex/gen/**",
     "research/**"
   ],
   "ignoreExportsUsedInFile": true,

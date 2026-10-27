@@ -1,0 +1,2 @@
+/* The Spaces Home status line's stopped mark; the line itself is styled in home.css. */
+.spaces-home-status__dot[data-tone='danger'] { background: var(--term-danger); }

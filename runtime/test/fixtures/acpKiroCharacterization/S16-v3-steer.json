@@ -1,0 +1,1332 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "<undefined>",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v3",
+          "--auth-method",
+          "cli"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new",
+    "=newSession": [
+      {
+        "sessionId": "S1",
+        "configOptions": [
+          {
+            "id": "model",
+            "type": "select",
+            "category": "model",
+            "currentValue": "m1",
+            "options": [
+              {
+                "value": "m1",
+                "name": "Model one"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "select",
+            "category": "mode",
+            "currentValue": "agent",
+            "options": [
+              {
+                "value": "agent",
+                "name": "Agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          {
+            "id": "effortLevel",
+            "type": "select",
+            "currentValue": "low",
+            "options": [
+              {
+                "group": "Effort",
+                "options": [
+                  {
+                    "value": "low"
+                  },
+                  {
+                    "value": "high"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "models": {
+          "currentModelId": "m1",
+          "availableModels": [
+            {
+              "value": "m1",
+              "name": "Model one",
+              "modelId": "m1"
+            },
+            {
+              "value": "m2",
+              "name": "Model two",
+              "_meta": {
+                "kiro": {
+                  "hasEffort": true,
+                  "effortLevels": [
+                    "low",
+                    "high"
+                  ],
+                  "defaultEffortLevel": "low"
+                }
+              },
+              "modelId": "m2"
+            }
+          ]
+        },
+        "modes": {
+          "currentModeId": "agent",
+          "availableModes": [
+            {
+              "value": "agent",
+              "name": "Agent",
+              "id": "agent"
+            },
+            {
+              "value": "planner",
+              "name": "Planner",
+              "id": "planner"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S1"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S1",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [],
+          "_meta": {
+            "kiro": {}
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "steer with no prompt",
+    "=steerIdle": [
+      {
+        "queued": false
+      }
+    ]
+  },
+  {
+    "step": "prompt",
+    "p1": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "nativeEngine": "v3",
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 4
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "work"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "steer",
+    "=steer": [
+      {
+        "queued": true,
+        "messageId": "m1"
+      }
+    ],
+    "=steerBlank": [
+      {
+        "queued": false
+      }
+    ],
+    "=steerDeclined": [
+      {
+        "queued": false
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "_session/steer",
+        "params": {
+          "sessionId": "S1",
+          "message": "also do this"
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "_session/steer",
+        "params": {
+          "sessionId": "S1",
+          "message": "no"
+        }
+      }
+    ]
+  },
+  {
+    "step": "prompt result clears the steer",
+    "p1": [
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "end_turn"
+      },
+      "<end>"
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "_session/steer/clear",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "state",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "configOptions": [
+            {
+              "id": "model",
+              "type": "select",
+              "category": "model",
+              "currentValue": "m1",
+              "options": [
+                {
+                  "value": "m1",
+                  "name": "Model one"
+                },
+                {
+                  "value": "m2",
+                  "name": "Model two",
+                  "_meta": {
+                    "kiro": {
+                      "hasEffort": true,
+                      "effortLevels": [
+                        "low",
+                        "high"
+                      ],
+                      "defaultEffortLevel": "low"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mode",
+              "type": "select",
+              "category": "mode",
+              "currentValue": "agent",
+              "options": [
+                {
+                  "value": "agent",
+                  "name": "Agent"
+                },
+                {
+                  "value": "planner",
+                  "name": "Planner"
+                }
+              ]
+            },
+            {
+              "id": "effortLevel",
+              "type": "select",
+              "currentValue": "low",
+              "options": [
+                {
+                  "group": "Effort",
+                  "options": [
+                    {
+                      "value": "low"
+                    },
+                    {
+                      "value": "high"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "models": {
+            "currentModelId": "m1",
+            "availableModels": [
+              {
+                "value": "m1",
+                "name": "Model one",
+                "modelId": "m1"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                },
+                "modelId": "m2"
+              }
+            ]
+          },
+          "modes": {
+            "currentModeId": "agent",
+            "availableModes": [
+              {
+                "value": "agent",
+                "name": "Agent",
+                "id": "agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner",
+                "id": "planner"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "nativeEngine": "v3",
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "a cancelled prompt's steer is not queued",
+    "p2": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "nativeEngine": "v3",
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 5
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "again"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "steer in flight",
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "_session/steer",
+        "params": {
+          "sessionId": "S1",
+          "message": "late"
+        }
+      }
+    ]
+  },
+  {
+    "step": "cancel",
+    "=cancel": [
+      true
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "steer answered",
+    "=steerInFlight": [
+      {
+        "queued": false,
+        "messageId": "m2"
+      }
+    ]
+  },
+  {
+    "step": "prompt result; clear refused",
+    "p2": [
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "cancelled"
+      },
+      "<end>"
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "_session/steer/clear",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "state after a refused clear",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": false,
+        "needsSessionRecovery": true,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "configOptions": [
+            {
+              "id": "model",
+              "type": "select",
+              "category": "model",
+              "currentValue": "m1",
+              "options": [
+                {
+                  "value": "m1",
+                  "name": "Model one"
+                },
+                {
+                  "value": "m2",
+                  "name": "Model two",
+                  "_meta": {
+                    "kiro": {
+                      "hasEffort": true,
+                      "effortLevels": [
+                        "low",
+                        "high"
+                      ],
+                      "defaultEffortLevel": "low"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mode",
+              "type": "select",
+              "category": "mode",
+              "currentValue": "agent",
+              "options": [
+                {
+                  "value": "agent",
+                  "name": "Agent"
+                },
+                {
+                  "value": "planner",
+                  "name": "Planner"
+                }
+              ]
+            },
+            {
+              "id": "effortLevel",
+              "type": "select",
+              "currentValue": "low",
+              "options": [
+                {
+                  "group": "Effort",
+                  "options": [
+                    {
+                      "value": "low"
+                    },
+                    {
+                      "value": "high"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "models": {
+            "currentModelId": "m1",
+            "availableModels": [
+              {
+                "value": "m1",
+                "name": "Model one",
+                "modelId": "m1"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                },
+                "modelId": "m2"
+              }
+            ]
+          },
+          "modes": {
+            "currentModeId": "agent",
+            "availableModes": [
+              {
+                "value": "agent",
+                "name": "Agent",
+                "id": "agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner",
+                "id": "planner"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "nativeEngine": "v3",
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "clearSteer directly",
+    "=newSession2": [
+      {
+        "sessionId": "S2",
+        "configOptions": [
+          {
+            "id": "model",
+            "type": "select",
+            "category": "model",
+            "currentValue": "m1",
+            "options": [
+              {
+                "value": "m1",
+                "name": "Model one"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "select",
+            "category": "mode",
+            "currentValue": "agent",
+            "options": [
+              {
+                "value": "agent",
+                "name": "Agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          {
+            "id": "effortLevel",
+            "type": "select",
+            "currentValue": "low",
+            "options": [
+              {
+                "group": "Effort",
+                "options": [
+                  {
+                    "value": "low"
+                  },
+                  {
+                    "value": "high"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "models": {
+          "currentModelId": "m1",
+          "availableModels": [
+            {
+              "value": "m1",
+              "name": "Model one",
+              "modelId": "m1"
+            },
+            {
+              "value": "m2",
+              "name": "Model two",
+              "_meta": {
+                "kiro": {
+                  "hasEffort": true,
+                  "effortLevels": [
+                    "low",
+                    "high"
+                  ],
+                  "defaultEffortLevel": "low"
+                }
+              },
+              "modelId": "m2"
+            }
+          ]
+        },
+        "modes": {
+          "currentModeId": "agent",
+          "availableModes": [
+            {
+              "value": "agent",
+              "name": "Agent",
+              "id": "agent"
+            },
+            {
+              "value": "planner",
+              "name": "Planner",
+              "id": "planner"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S2"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S2",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [],
+          "_meta": {
+            "kiro": {}
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "clear",
+    "=clearSteer": [
+      {
+        "cleared": true
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "_session/steer/clear",
+        "params": {
+          "sessionId": "S2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "steering unsupported",
+    "p3": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "nativeEngine": "v3",
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S2",
+          "textLen": 5
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S2",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S2",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "third"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "steer",
+    "=steerUnsupported": [
+      {
+        "queued": false
+      }
+    ],
+    "log": [
+      [
+        "error",
+        "acp",
+        "rpc request failed",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "<undefined>",
+          "rpcId": 12,
+          "method": "_session/steer",
+          "sessionId": "S2",
+          "rpcCode": -32601,
+          "rpcMessage": "Method not found",
+          "rpcData": "<undefined>"
+        }
+      ]
+    ],
+    "p3": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "nativeEngine": "v3",
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ]
+        }
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "_session/steer",
+        "params": {
+          "sessionId": "S2",
+          "message": "x"
+        }
+      }
+    ]
+  },
+  {
+    "step": "steer after -32601",
+    "=steerAfter": [
+      {
+        "queued": false
+      }
+    ]
+  },
+  {
+    "step": "prompt result",
+    "p3": [
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "end_turn"
+      },
+      "<end>"
+    ]
+  }
+]

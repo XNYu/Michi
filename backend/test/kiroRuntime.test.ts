@@ -1,18 +1,24 @@
+import { michiKiroRestrictedAgent } from '../src/agents/kiro/kiroMetaAgent';
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
-import { CursorRuntime } from '../src/agents/cursor/CursorRuntime';
-import { GrokRuntime } from '../src/agents/grok/GrokRuntime';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { hostEventUpdate } from 'michi-runtime/internal/adapters/kiro/kiroHostEvents';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { AgentSession } from '../src/agents/types';
-import type { ModelInfo } from '../src/agents/types';
+import type { SessionRegistryPort } from 'michi-runtime/internal/contract/host';
+import * as sessionRegistry from '../src/agents/sessionRegistry';
+
 import type { RuntimeModelCache } from '../src/agents/runtimeModelCache';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { closeDb, initDb } from '../src/services/db';
 import { saveNode, saveWorkspace } from '../src/services/dbRepository';
+import { michiTestHost } from './helpers/michiTestHost';
+import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
+import { chatOwner } from './helpers/owners';
 
 const bridge: AgentToolBridge = {
   spawnBranches: async () => [],
@@ -20,58 +26,9 @@ const bridge: AgentToolBridge = {
   updateContext: () => null,
 };
 
-function tick(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
-}
-
 describe('KiroRuntime warm session handoff', () => {
-  test('newSession waits for matching inflight warm slot and consumes it', async () => {
-    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
-    const rt = runtime as any;
-
-    rt.ensureClient = async () => ({});
-    let coldSessionNewCalls = 0;
-    rt.openSession = async () => {
-      coldSessionNewCalls += 1;
-      return { sid: `cold-${coldSessionNewCalls}` };
-    };
-
-    let replenishCalls = 0;
-    rt.warmNextSession = () => {
-      replenishCalls += 1;
-    };
-
-    let releaseWarm!: () => void;
-    const warmLock = new Promise<void>((resolve) => {
-      releaseWarm = () => {
-        rt.warmedSessions.set('/tmp/a', [{
-          sid: 'warm-sid',
-          currentModeId: 'mode-warm',
-        }]);
-        resolve();
-      };
-    });
-    rt.warmSessionLocks.set('/tmp/a', warmLock);
-
-    let resolved = false;
-    const pending = runtime.newSession({ cwd: '/tmp/a', sessionId: 'node-1' }).then((session) => {
-      resolved = true;
-      return session;
-    });
-    await tick();
-    assert.equal(resolved, false, 'newSession should wait for the inflight warm slot');
-
-    releaseWarm();
-    const session = await pending;
-    assert.equal(session.id, 'node-1');
-    assert.equal(session.nativeSessionId, 'warm-sid');
-    assert.equal(session.currentModeId, 'mode-warm');
-    assert.equal(coldSessionNewCalls, 0, 'warm handoff should avoid cold session/new');
-    assert.equal(replenishCalls, 1, 'consuming a warm slot should schedule replenish');
-  });
-
   test('newSession cold-opens when inflight warm finishes without a slot', async () => {
-    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
+    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
     const rt = runtime as any;
 
     rt.ensureClient = async () => ({});
@@ -93,15 +50,13 @@ describe('KiroRuntime warm session handoff', () => {
   test('claimed conversation slot receives its own Agent Run invoker binding', async () => {
     const bindings: any[] = [];
     const slots = new Map<string, any>();
-    const registry = {
-      get: (id: string) => slots.get(id),
-      dispose: async (id: string) => { slots.delete(id); },
-    };
+    const registry = fakeMcpRegistry({ get: (id: string) => slots.get(id), dispose: async (id: string) => { slots.delete(id); } });
+    registry.rebind = (id, patch) => { const target = slots.get(id); if (target) Object.assign(target, patch); };
     const sessionBridge = {
       ...bridge,
       agentRunToolsForSession: (binding: unknown) => { bindings.push(binding); return { invoke: async () => ({}) }; },
     };
-    const runtime = new KiroRuntime(sessionBridge, registry as any, 0, '/tmp/default');
+    const runtime = new KiroRuntime({ bridge: sessionBridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
     const rt = runtime as any;
     rt.ensureClient = async () => ({});
     rt.warmNextSession = () => {};
@@ -110,39 +65,50 @@ describe('KiroRuntime warm session handoff', () => {
     rt.warmedSessions.set('/tmp/a', [{ sid: 'kiro-session-a', slotId: slot.slotId }]);
     await runtime.newSession({ cwd: '/tmp/a', sessionId: 'node-a', workspaceId: 'ws-a', ownerUserId: 'owner-a' });
     assert.ok(slot.agentRuns);
+    assert.deepEqual(slot.owner, { mode: 'interactive', key: 'node-a' });
     assert.deepEqual(bindings, [{
-      runtimeId: 'kiro', sessionId: 'kiro-session-a', owner: { kind: 'chat_node', nodeId: 'node-a' },
+      runtimeId: 'kiro', sessionId: 'kiro-session-a', owner: chatOwner('node-a'),
       ownerUserId: 'owner-a', workspaceId: 'ws-a', nodeId: 'node-a',
     }]);
   });
+
+  test('cold-created chat slot is owner-bound before newSession returns', async () => {
+    const slot: any = { slotId: 'slot-cold', parentChatId: '__pending__', nodeId: null, cwd: '/tmp/a', workspaceId: null, ownerUserId: null };
+    const registry = fakeMcpRegistry();
+    registry.slots.set(slot.slotId, slot);
+    const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: registry, defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({}) });
+    const rt = runtime as any;
+    rt.ensureClient = async () => ({});
+    rt.warmNextSession = () => {};
+    rt.openSession = async () => ({ sid: 'kiro-session-cold', slotId: slot.slotId });
+
+    await runtime.newSession({ cwd: '/tmp/a', sessionId: 'node-cold', workspaceId: 'ws-a' });
+
+    assert.deepEqual(slot.owner, { mode: 'interactive', key: 'node-cold' });
+    assert.equal(slot.nodeId, 'node-cold');
+    assert.equal(slot.workspaceId, 'ws-a');
+  });
 });
 describe('KiroRuntime model catalog cache', () => {
-  test('returns the disk snapshot immediately and replaces it after a live refresh', async () => {
-    const cached: ModelInfo[] = [{ id: 'cached-kiro', label: 'Cached Kiro' }];
-    let saved: ModelInfo[] | null = null;
+  test('native catalog setup and refresh retain the last nonempty engine-scoped snapshot', async () => {
+    const loaded: string[] = [];
+    const saved: Array<{ key: string; models: any[] }> = [];
     const cache: RuntimeModelCache = {
-      load: () => cached,
-      save: (_runtimeId, models) => { saved = models; },
+      load: (key) => { loaded.push(key); return [{ id: 'cached' }]; },
+      save: (key, models) => { saved.push({ key, models }); },
     };
-    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default', cache);
+    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', modelCache: cache, host: michiTestHost(), engine: 'v3' });
     const rt = runtime as any;
-
-    let resolveLive!: (value: any[]) => void;
-    let liveCalls = 0;
-    rt.getAvailableModels = async () => {
-      liveCalls += 1;
-      return new Promise<any[]>((resolve) => { resolveLive = resolve; });
-    };
-
-    const first = await runtime.listModels();
-    assert.deepEqual(first, cached, 'cached models should not wait for session/new');
-    assert.equal(liveCalls, 1, 'returning the snapshot should still start one refresh');
-
-    resolveLive([{ modelId: 'fresh-kiro', name: 'Fresh Kiro', description: 'updated' }]);
-  const fresh = await runtime.refreshModels();
-
-  assert.deepEqual(fresh.map((m) => m.id), ['fresh-kiro']);
-  assert.deepEqual(saved, fresh);
+    try {
+      rt.storeAvailableModels([{ modelId: 'native', name: 'Native', _meta: { kiro: { hasEffort: true, effortLevels: ['low', 'high'] } } }]);
+      rt.getAvailableModels = async () => [];
+      const models = await runtime.refreshModels();
+      assert.deepEqual(loaded, ['kiro-v3']);
+      assert.deepEqual(models.map((model) => model.id), ['native']);
+      assert.deepEqual(models[0].supportedReasoningLevels, ['low', 'high']);
+      assert.equal(saved.length, 1);
+      assert.equal(saved[0].key, 'kiro-v3');
+    } finally { await runtime.shutdown(); }
   });
 
   test('v2 marks the auto router as not supporting effort, including stale snapshots', async () => {
@@ -150,7 +116,7 @@ describe('KiroRuntime model catalog cache', () => {
       load: () => [{ id: 'auto', label: 'auto' }, { id: 'claude-opus-5.5', label: 'claude-opus-5.5' }],
       save: () => {},
     };
-    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default', cache, { engine: 'v2' });
+    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', modelCache: cache, host: michiTestHost(), engine: 'v2' });
     const rt = runtime as any;
     rt.getAvailableModels = async () => [{ modelId: 'auto', name: 'auto' }, { modelId: 'claude-opus-5.5', name: 'claude-opus-5.5' }];
 
@@ -165,6 +131,18 @@ describe('KiroRuntime model catalog cache', () => {
 });
 
 describe('KiroRuntime node/native identity', () => {
+  test('chat MCP slots carry the owning node through native session load', async () => {
+    const registry = fakeMcpRegistry();
+    const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: registry, defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({}) });
+    const loaded = await runtime.loadAcpSession({
+      sessionId: 'acp-session-1', nodeId: 'node-1', workspaceId: 'ws-1', cwd: '/tmp/a',
+      client: { loadSession: async () => ({}) } as any,
+    });
+
+    assert.deepEqual(registry.get(loaded.slotId!)?.owner, { mode: 'interactive', key: 'node-1' });
+    await registry.dispose(loaded.slotId!);
+  });
+
   test('loadSession resolves the persisted ACP sid while exposing the node id', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-kiro-identity-'));
     process.env.MICHI_DATA_DIR = tmpDir;
@@ -185,8 +163,14 @@ describe('KiroRuntime node/native identity', () => {
         external_session_id: null, trim_snapshot: null, created_at: 1,
       });
 
-      const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
+      const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
       const rt = runtime as any;
+      rt.ensureClient = async () => ({});
+      rt.warmNextSession = () => {};
+      rt.openSession = async () => ({ sid: 'acp-fresh-no-follow-ups' });
+      const fresh = await runtime.newSession({
+        sessionId: 'fresh-no-follow-ups', cwd: '/tmp/a', enableFollowUps: false,
+      });
       let loadedSid = '';
       rt.loadAcpSession = async ({ sessionId }: { sessionId: string }) => {
         loadedSid = sessionId;
@@ -195,10 +179,13 @@ describe('KiroRuntime node/native identity', () => {
 
       const session = await runtime.loadSession({
         sessionId: 'node-1', nodeId: 'node-1', cwd: '/tmp/a', workspaceId: 'ws-1',
+        enableFollowUps: false,
       });
       assert.equal(loadedSid, 'acp-session-1');
       assert.equal(session.id, 'node-1');
       assert.equal(session.nativeSessionId, 'acp-session-1');
+      assert.equal((fresh as KiroSession).getEnableFollowUps(), false);
+      assert.equal((session as KiroSession).getEnableFollowUps(), false);
     } finally {
       closeDb();
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -211,6 +198,7 @@ describe('Kiro branch overview metadata tool', () => {
     const prompts: string[] = [];
     const promptSessionIds: string[] = [];
     const fakeRuntime = {
+      host: michiTestHost(),
       ensureClient: async () => ({
         prompt: async function* (sessionId: string, text: string) {
           promptSessionIds.push(sessionId);
@@ -229,9 +217,10 @@ describe('Kiro branch overview metadata tool', () => {
 
     assert.deepEqual(promptSessionIds, ['kiro-overview-session']);
     assert.match(prompts[0], /set_branch_overview/);
-    assert.deepEqual(events.find((event) => event.kind === 'branch_overview'), {
-      kind: 'branch_overview',
-      overview: 'Current Kiro branch state.',
+    assert.deepEqual(events.find((event) => event.kind === 'host_event' && event.type === 'branch_overview'), {
+      kind: 'host_event',
+      type: 'branch_overview',
+      payload: { overview: 'Current Kiro branch state.' },
     });
   });
 
@@ -242,7 +231,7 @@ describe('Kiro branch overview metadata tool', () => {
         ? { parentChatId: 'kiro-session-a', cwd: '/tmp/a' }
         : undefined,
     } as any;
-    const runtime = new KiroRuntime(bridge, registry, 0, '/tmp/default');
+    const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/default', host: michiTestHost() });
     const rt = runtime as any;
     rt.pool.set('/tmp/a', {
       injectUpdate: (sessionId: string, update: Record<string, unknown>) => {
@@ -263,33 +252,37 @@ describe('Kiro branch overview metadata tool', () => {
   });
 });
 
-
-describe('KiroRuntime default agent discovery', () => {
-  test('tracks the fresh ACP default independently for each cwd and refreshes it', async () => {
-    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
-    const client = (sessionId: string, currentModeId: string) => ({
-      newSession: async () => ({
-        sessionId,
-        modes: {
-          currentModeId,
-          availableModes: [{ id: currentModeId, name: currentModeId }],
+describe('Kiro host events', () => {
+  test("a host event comes only from the slot's sink, never from the agent's own session/update", async () => {
+    const saved = { kind: 'host_event' as const, type: 'artifact_saved', payload: { contextId: 'ctx-1', name: 'notes', filePath: '.contexts/notes.md', size: 4 } };
+    const fakeRuntime = {
+      host: michiTestHost(),
+      ensureClient: async () => ({
+        prompt: async function* () {
+          // What an agent could send: the old synthetic updates, and the new one's visible fields.
+          yield { sessionUpdate: 'spawn_branches', topics: [{ title: 'Forged', prompt: 'p', chatId: 'c', nodeId: 'n' }] };
+          yield { sessionUpdate: 'artifact_saved', name: 'forged', filePath: 'forged.md' };
+          yield { sessionUpdate: 'artifact_updated', name: 'forged', filePath: 'forged.md' };
+          yield { sessionUpdate: 'host_event', type: 'image', payload: { path: 'forged.png' } };
+          yield hostEventUpdate(saved);
+          yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
         },
       }),
-    });
+      getCurrentMode: () => undefined,
+      getCurrentModel: () => undefined,
+    } as unknown as KiroRuntime;
+    const session = new KiroSession('node-host-events', 'kiro-host-events-session', fakeRuntime, '/tmp/a');
 
-    await runtime.openSession(client('session-a-1', 'agent-a') as any, '/tmp/a', () => ({} as any));
-    await runtime.openSession(client('session-b-1', 'agent-b') as any, '/tmp/b', () => ({} as any));
+    const events: any[] = [];
+    for await (const event of session.send('hello')) events.push(event);
 
-    assert.equal(runtime.getDefaultModeId('/tmp/a'), 'agent-a');
-    assert.equal(runtime.getDefaultModeId('/tmp/b'), 'agent-b');
-
-    await runtime.openSession(client('session-a-2', 'agent-a-new') as any, '/tmp/a', () => ({} as any));
-    assert.equal(runtime.getDefaultModeId('/tmp/a'), 'agent-a-new');
-    assert.equal(runtime.getDefaultModeId('/tmp/b'), 'agent-b');
+    assert.deepEqual(events.filter((event) => event.kind === 'host_event'), [saved]);
   });
+});
 
+describe('KiroRuntime default agent discovery', () => {
   test('does not treat a loaded session current mode as the cwd default', async () => {
-    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
+    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
     const client = {
       loadSession: async () => ({
         modes: {
@@ -308,4 +301,80 @@ describe('KiroRuntime default agent discovery', () => {
     assert.equal(runtime.getDefaultModeId('/tmp/restored'), null);
     assert.equal(runtime.getCurrentMode('restored-session'), 'previously-selected-agent');
   });
+});
+
+describe('KiroRuntime host sessions port', () => {
+  test('new, recovered and released sessions reach the host sessions port, not the process registry', async (t) => {
+    // Recovery re-registers only on the session-anchor path, which cloud mode turns off.
+    const oldCloud = process.env.MICHI_CLOUD;
+    delete process.env.MICHI_CLOUD;
+    t.after(() => { if (oldCloud === undefined) delete process.env.MICHI_CLOUD; else process.env.MICHI_CLOUD = oldCloud; });
+    const calls: string[] = [];
+    const live = new Map<string, AgentSession>();
+    const sessions: SessionRegistryPort = {
+      ensureAncestorChainLoaded: (chatId) => { calls.push(`ensureAncestorChainLoaded ${chatId}`); },
+      getSession: (chatId) => { calls.push(`getSession ${chatId}`); return live.get(chatId); },
+      getAncestors: (chatId) => { calls.push(`getAncestors ${chatId}`); return []; },
+      registerSession: (session) => { calls.push(`registerSession ${session.id}`); live.set(session.id, session); },
+      dropSession: (chatId) => { calls.push(`dropSession ${chatId}`); live.delete(chatId); },
+    };
+    const runtime = new KiroRuntime({ bridge, mcpSlots: fakeMcpRegistry(), defaultCwd: '/tmp/default',
+      host: { ...michiTestHost(), sessions }, engine: 'v3' });
+    t.after(() => runtime.shutdown());
+    const rt = runtime as any;
+    assert.equal(rt.sessionAnchorsEnabled, true);
+    let opened = 0;
+    rt.ensureClient = async () => ({});
+    rt.warmNextSession = () => {};
+    rt.openSession = async () => ({ sid: `port-native-${++opened}` });
+    rt.loadAcpSession = async ({ sessionId }: { sessionId: string }) => ({ sid: sessionId });
+
+    // Kiro leaves registering a new session to its caller; stand in for it.
+    const parent = await runtime.newSession({ sessionId: 'port-parent', cwd: '/tmp/a', enableFollowUps: false });
+    live.set(parent.id, parent);
+    const child = await runtime.newSession({ sessionId: 'port-child', parentChatId: 'port-parent', cwd: '/tmp/a', enableFollowUps: false });
+    live.set(child.id, child);
+    // A connection-class recovery replaces the cwd's process, purging every session on it.
+    rt.pool.set('/tmp/a', { shutdown: async () => {} });
+    assert.equal(await runtime.recoverSession(child.nativeSessionId!, '/tmp/a'), true);
+    // A cancel-watchdog recovery replaces a quarantined process with a new client.
+    t.mock.method(AcpClient.prototype, 'start', () => {});
+    t.mock.method(AcpClient.prototype, 'initialize', async () => {});
+    t.mock.method(AcpClient.prototype, 'cancel', async () => false);
+    rt.pool.set('/tmp/a', { needsSessionRecovery: () => true, hasHealthyWork: () => false, shutdown: async () => {} });
+    assert.ok(await runtime.recoverCancelledSession(child.nativeSessionId!, '/tmp/a') instanceof AcpClient);
+    await runtime.releaseSession('port-child');
+    for (const id of ['port-parent', 'port-child']) assert.equal(sessionRegistry.getSession(id), undefined, id);
+    assert.deepEqual(calls, [
+      'ensureAncestorChainLoaded port-parent',
+      'getSession port-parent',
+      'getAncestors port-parent',
+      'getSession port-child',
+      'dropSession port-parent',
+      'dropSession port-child',
+      'registerSession port-child',
+      'getSession port-child',
+      'dropSession port-child',
+      'registerSession port-child',
+      'dropSession port-child',
+    ]);
+    assert.equal(live.size, 0);
+  });
+});
+
+test('KiroRuntime refuses the old positional arguments with a TypeError', async () => {
+  const Untyped = KiroRuntime as unknown as new (...args: unknown[]) => KiroRuntime;
+  const host = michiTestHost();
+  const expected = { name: 'TypeError', message: 'KiroRuntime takes one options object { host, bridge, mcpSlots?, … } (runtime contract v1)' };
+  assert.throws(() => new Untyped(bridge, fakeMcpRegistry(), '/tmp/default', undefined, { host }), expected);
+  assert.throws(() => new Untyped(undefined), expected);
+  assert.throws(() => new Untyped({ host }), expected);
+  assert.throws(() => new Untyped({ bridge }), expected);
+  // Present but undefined counts as missing.
+  assert.throws(() => new Untyped({ host, bridge: undefined }), expected);
+  assert.throws(() => new Untyped({ host: undefined, bridge }), expected);
+  // MCP slots stay optional: without them sessions get no host tools.
+  const runtime = new KiroRuntime({ host, bridge, defaultCwd: '/tmp/default' });
+  assert.deepEqual(runtime.descriptor.topology.toolDelivery, []);
+  await runtime.shutdown();
 });

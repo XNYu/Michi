@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  serializeMessageRowsForNode,
   STATE_KEY_PREFIX,
   LEGACY_STATE_KEY,
   buildStateKey,
@@ -51,6 +52,23 @@ describe('per-project key derivation', () => {
 });
 
 describe('readLocalStoragePayload', () => {
+  it('discards remote content from legacy and per-project caches before hydration', () => {
+    const remote = { ...mkProject('remote-old', ['remote-node']), backendConnectionId: 'remote-1' };
+    const saved = { version: STATE_SCHEMA_VERSION, projects: [mkProject('local', ['n1']), remote],
+      activeProjectId: 'remote-old', nodes: { n1: mkNode('n1', 'local'), 'remote-node': mkNode('remote-node', 'remote-old') } };
+    localStorage.setItem(LEGACY_STATE_KEY, JSON.stringify(saved));
+    expect(readLocalStoragePayload()!.projects.map(project => project.id)).toEqual(['local']);
+    expect(localStorage.getItem(LEGACY_STATE_KEY)).not.toContain('remote-node');
+    localStorage.clear();
+    localStorage.setItem(stateIndexKey(LEGACY_STATE_KEY), JSON.stringify({ projectIds: ['remote-old'], version: STATE_SCHEMA_VERSION }));
+    localStorage.setItem(stateProjectKey(LEGACY_STATE_KEY, 'remote-old'), JSON.stringify({ project: remote, nodes: saved.nodes }));
+    expect(readLocalStoragePayload()!.projects).toEqual([]);
+    expect(localStorage.getItem(stateProjectKey(LEGACY_STATE_KEY, 'remote-old'))).toBeNull();
+    writeScopedLocalStorage({ baseKey: LEGACY_STATE_KEY, projects: [remote], activeProjectId: remote.id,
+      nodes: saved.nodes, changedIds: new Set([remote.id]), indexDirty: true });
+    expect(localStorage.getItem(stateProjectKey(LEGACY_STATE_KEY, 'remote-old'))).toBeNull();
+    expect(JSON.parse(localStorage.getItem(stateIndexKey(LEGACY_STATE_KEY))!).projectIds).toEqual([]);
+  });
   it('reassembles the raw SavedState from the per-project layout', () => {
     const base = buildStateKey('user1');
     localStorage.setItem(
@@ -244,4 +262,13 @@ describe('writeScopedLocalStorage', () => {
     expect(payload.projects.map((p: any) => p.id)).toEqual(['pA', 'pB']);
     expect(Object.keys(payload.nodes).sort()).toEqual(['n1', 'n2']);
   });
+});
+
+
+it('serializes file snapshot source alongside persisted user quotes', () => {
+  const source = { type: 'artifact' as const, filePath: 'a.md', snapshot: { hashKind: 'sha256-text-utf8' as const, contentHash: 'abc', backendConnectionId: 'local', projectId: 'p', resolvedFilePath: '/a.md' } };
+  const n = mkNode('n', 'p');
+  n.messages = [{ id: 'u', role: 'user', text: 'edit', toolCalls: [], quotedText: 'old selection', quoteSource: source }];
+  const rows = serializeMessageRowsForNode({ n }, 'n');
+  expect(JSON.parse(rows[0].metadata!).quoteSource).toEqual(source);
 });

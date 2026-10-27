@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  accumulateWorkspaceDirtyDelta,
   buildExplicitWorkspaceCommands,
   emptyWorkspaceDirtyDelta,
 } from './workspacePersistence';
@@ -19,6 +20,24 @@ function fixture() {
 }
 
 describe('explicit workspace command projection', () => {
+  it.each(['add', 'rename', 'remove'] as const)('persists a folder-only %s through workspace.upsert', (change) => {
+    const { project, nodes } = fixture();
+    const root = { id: 'root', path: '/workspace', addedAt: 1 };
+    const extra = { id: 'extra', path: '/reference', label: 'Reference', addedAt: 2 };
+    const prev: Project = { ...project, cwd: root.path, folders: change === 'add' ? [root] : [root, extra] };
+    const folders = change === 'add' ? [root, extra]
+      : change === 'rename' ? [root, { ...extra, label: 'Renamed reference' }]
+        : [root];
+    const cur: Project = { ...prev, folders };
+    const delta = accumulateWorkspaceDirtyDelta(prev, cur, nodes, nodes, emptyWorkspaceDirtyDelta());
+
+    const batch = buildExplicitWorkspaceCommands(cur, nodes, delta, new Map());
+
+    expect(batch.commands.map((command) => command.type)).toEqual(['workspace.upsert']);
+    expect(JSON.parse(String(batch.commands[0].payload.folders))).toEqual(folders);
+    expect(batch.commands[0].payload.cwd).toBe(root.path);
+  });
+
   it('scopes composer draft writes to the current window', () => {
     const { project, nodes } = fixture();
     nodes.n1.composerDraft = { value: 'unsent draft', mentions: [] };
@@ -109,24 +128,30 @@ describe('explicit workspace command projection', () => {
     expect(result.commands.filter((command) => command.type === 'context.upsert')).toHaveLength(artifacts.length);
   });
 
-  it('does not index edges or artifacts for a node-only delta', () => {
+  it('writes a newer view mark as a patch of its own, after the upsert that creates the node', () => {
     const { project, nodes } = fixture();
-    const failOnScan = () => { throw new Error('unexpected collection scan'); };
-    project.edges = new Proxy([], {
-      get(target, prop, receiver) {
-        if (prop === 'map' || prop === Symbol.iterator) return failOnScan;
-        return Reflect.get(target, prop, receiver);
-      },
-    });
-    project.artifacts = new Proxy([], {
-      get(target, prop, receiver) {
-        if (prop === 'map' || prop === Symbol.iterator) return failOnScan;
-        return Reflect.get(target, prop, receiver);
-      },
-    });
+    const reply = { id: 'a1', role: 'assistant' as const, text: 'Done', toolCalls: [] };
+    const viewed = { n1: { ...nodes.n1, messages: [reply], viewedAt: 500 } };
     const delta = emptyWorkspaceDirtyDelta();
     delta.nodeIds.add('n1');
+    const created = buildExplicitWorkspaceCommands(project, viewed, delta, new Map(), undefined, new Map());
+    expect(created.commands.map((command) => command.type)).toEqual(['node.upsert', 'node.patch', 'node.patch']);
+    expect(created.commands[2].payload).toEqual({ id: 'n1', viewed_at: 500 });
+    expect(created.commands[0].payload).not.toHaveProperty('viewed_at');
+    expect([...created.viewedAtUpdates]).toEqual([['n1', 500]]);
 
-    expect(() => buildExplicitWorkspaceCommands(project, nodes, delta, new Map())).not.toThrow();
+    const known = new Map(created.nodeProjectionUpdates);
+    const again = buildExplicitWorkspaceCommands(project, viewed, delta, known, undefined, new Map([['n1', 500]]));
+    expect(again.commands).toEqual([]);
+    const later = buildExplicitWorkspaceCommands(project, { n1: { ...viewed.n1, viewedAt: 900 } }, delta, known, undefined, new Map([['n1', 500]]));
+    expect(later.commands).toEqual([{ type: 'node.patch', payload: { id: 'n1', viewed_at: 900 } }]);
+    const older = buildExplicitWorkspaceCommands(project, { n1: { ...viewed.n1, viewedAt: 400 } }, delta, known, undefined, new Map([['n1', 500]]));
+    expect(older.commands).toEqual([]);
+    expect(buildExplicitWorkspaceCommands(project, viewed, delta, known).commands).toEqual([]);
+    const unanswered = { n1: { ...viewed.n1, messages: [], viewedAt: 900 } };
+    expect(buildExplicitWorkspaceCommands(project, unanswered, delta, known, undefined, new Map([['n1', 500]])).commands).toEqual([]);
+    const placeholder = { n1: { ...unanswered.n1, messagesLoaded: false, messageCount: 2 } };
+    expect(buildExplicitWorkspaceCommands(project, placeholder, delta, known, undefined, new Map([['n1', 500]])).commands)
+      .toEqual([{ type: 'node.patch', payload: { id: 'n1', viewed_at: 900 } }]);
   });
 });

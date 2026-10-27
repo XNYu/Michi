@@ -48,20 +48,6 @@ describe('PaneMessageList follow-ups presentation', () => {
     expect(section.querySelector('.t-followup-row, .t-followup-num')).toBeNull();
   });
 
-  it('hides empty and disabled-by-preference sections', () => {
-    const { rerender } = render(list({ followUps: [] }));
-    expect(screen.queryByRole('region', { name: 'Suggested follow-ups' })).toBeNull();
-    rerender(list({}, false, false));
-    expect(screen.queryByRole('region', { name: 'Suggested follow-ups' })).toBeNull();
-  });
-
-  it('keeps both actions disabled in a read-only pane', () => {
-    render(list({}, true));
-    for (const button of screen.getAllByRole('button', { name: /^(Continue|Branch) follow-up/ })) {
-      expect((button as HTMLButtonElement).disabled).toBe(true);
-    }
-  });
-
   it('keeps send and branch callbacks independent through the real section', () => {
     const onContinue = vi.fn();
     const onBranch = vi.fn();

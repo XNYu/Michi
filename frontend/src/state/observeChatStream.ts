@@ -1,6 +1,7 @@
 import type { StreamHandlers } from '../services/chatStreamEvents';
 import { settleCancellationObservation } from '../services/api/stream';
 import type { ChatAction } from './chatTypes';
+import { subagentActivityAction, subagentListAction } from './subagentStreamActions';
 
 type Ref<T> = { current: T };
 
@@ -11,7 +12,7 @@ interface ObserveOptions {
   lastTurnRef: Ref<string>;
   lastSeqRef: Ref<number>;
   onTerminal?: () => void;
-  extraHandlers?: Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError'>;
+  extraHandlers?: Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError' | 'onErrorPayload'>;
   onTurnEnd?: (reason: 'done' | 'error', nodeId: string) => void;
   onStreamComplete?: () => void;
   cursor?: 'foreground' | 'background';
@@ -84,16 +85,16 @@ export function createBackgroundTurnBinding({
           cursor,
         });
       },
-      onChunk: (text, _seq, incomingAssistantId, incomingTurnId) => {
+      onChunk: (text, _seq, incomingAssistantId, incomingTurnId, observedAt) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
         if (assistantId) {
-          dispatch({ type: 'chunk', nodeId, assistantId, text });
+          dispatch({ type: 'chunk', nodeId, assistantId, text, observedAt });
         }
       },
-      onThought: (text, _seq, incomingAssistantId, incomingTurnId) => {
+      onThought: (text, _seq, incomingAssistantId, incomingTurnId, observedAt) => {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
         if (assistantId) {
-          dispatch({ type: 'thought', nodeId, assistantId, text });
+          dispatch({ type: 'thought', nodeId, assistantId, text, observedAt });
         }
       },
       onPlan: (entries) => {
@@ -111,14 +112,14 @@ export function createBackgroundTurnBinding({
         const env = tool as typeof tool & { assistantId?: string; turnId?: string; seq?: number };
         rememberEnvelope(env.assistantId, env.turnId);
         if (assistantId) {
-          dispatch({ type: 'tool-call', nodeId, assistantId, tool: toolState(tool) });
+          dispatch({ type: 'tool-call', nodeId, assistantId, tool: toolState(tool), observedAt: tool.observedAt });
         }
       },
       onToolCallUpdate: (tool) => {
         const env = tool as typeof tool & { assistantId?: string; turnId?: string; seq?: number };
         rememberEnvelope(env.assistantId, env.turnId);
         if (assistantId) {
-          dispatch({ type: 'tool-call-update', nodeId, assistantId, tool: toolState(tool) });
+          dispatch({ type: 'tool-call-update', nodeId, assistantId, tool: toolState(tool), observedAt: tool.observedAt });
         }
       },
       onImage: (data) => {
@@ -143,26 +144,28 @@ export function createBackgroundTurnBinding({
       onPermissionResolved: (data) => dispatch({ type: 'permission-resolved', nodeId, requestId: data.requestId }),
       onPermissionRequest: (permission) => dispatch({ type: 'permission-request', nodeId, permission }),
       onUserInputRequest: (data) =>
-        dispatch({ type: 'user-input-request', nodeId, userInput: { requestId: data.requestId, questions: data.questions, answers: [] } }),
-      onUserInputResolved: () => dispatch({ type: 'user-input-resolved', nodeId }),
-      onSubagentListUpdate: (data) =>
-        dispatch({ type: 'subagent-list-update', nodeId, subagents: data.subagents }),
-      onSubagentToolActivity: (data) =>
-        dispatch({
-          type: 'subagent-tool-activity',
-          nodeId,
-          subagentSessionId: data.subagentSessionId,
-          title: data.title,
-          status: data.status,
-        }),
+        dispatch({ type: 'user-input-request', nodeId, assistantId: data.assistantId, userInput: { requestId: data.requestId, interactionId: data.interactionId, questions: data.questions, answers: [] } }),
+      onUserInputResolved: (data) => dispatch({ type: 'user-input-resolved', nodeId, requestId: data.requestId, interactionId: data.interactionId, answers: data.answers, outcome: data.outcome }),
+      onSubagentListUpdate: (data) => {
+        const env = data as typeof data & { assistantId?: string; turnId?: string };
+        rememberEnvelope(env.assistantId, env.turnId);
+        dispatch(subagentListAction(nodeId, assistantId, data));
+      },
+      onSubagentToolActivity: (data) => {
+        const env = data as typeof data & { assistantId?: string; turnId?: string };
+        rememberEnvelope(env.assistantId, env.turnId);
+        dispatch(subagentActivityAction(nodeId, assistantId, data));
+      },
       onContextUsage: (data) =>
         dispatch({ type: 'context-usage', nodeId, contextUsagePercentage: data.contextUsagePercentage }),
       onUsageSummary: (data) =>
         dispatch({
           type: 'usage-summary',
           nodeId,
+          assistantId,
           contextUsagePercentage: data.contextUsagePercentage,
           totalCredits: data.totalCredits,
+          charge: data.charge,
           turnDurationMs: data.turnDurationMs,
           source: data.source,
           totalTokens: data.totalTokens,
@@ -176,6 +179,7 @@ export function createBackgroundTurnBinding({
       onCompactionEnd: () => dispatch({ type: 'compaction', nodeId, active: false }),
       onRetryStart: (data) => dispatch({ type: 'runtime-activity', nodeId, assistantId, detail: data.detail ?? 'Reconnecting' }),
       onRetryEnd: () => dispatch({ type: 'runtime-activity', nodeId, assistantId }),
+      onWarning: (warning) => dispatch({ type: 'warning', nodeId, assistantId, warning }),
       onMcpServerError: (data) =>
         dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error }),
       onDone: (stopReason, incomingAssistantId, incomingTurnId, persisted, completedAt) => {
@@ -188,6 +192,7 @@ export function createBackgroundTurnBinding({
           dispatch({
             type: 'error', nodeId, assistantId,
             message: 'The turn finished but the backend did not confirm durable persistence.',
+            errorKind: 'turn_persistence_failed', turnId,
           });
           onTurnEnd?.('error', nodeId);
           onTerminal?.();
@@ -197,6 +202,7 @@ export function createBackgroundTurnBinding({
           dispatch({
             type: 'error', nodeId, assistantId,
             message: 'Agent process exited before completing the turn.',
+            errorKind: 'turn_outcome_unknown', turnId,
           });
           onTurnEnd?.('error', nodeId);
           onTerminal?.();
@@ -208,14 +214,16 @@ export function createBackgroundTurnBinding({
         onStreamComplete?.();
         onTerminal?.();
       },
-      onError: (message, incomingAssistantId, incomingTurnId, code) => {
+      onErrorPayload: (data) => handleError(data.message, data.assistantId, data.turnId, data.code, data.recoverable, data.completedAt),
+      onError: (message, incomingAssistantId, incomingTurnId, code) => handleError(message, incomingAssistantId, incomingTurnId, code),
+    };
+    function handleError(message: string, incomingAssistantId?: string, incomingTurnId?: string, code?: string, recoverable?: boolean, completedAt?: number) {
         rememberEnvelope(incomingAssistantId, incomingTurnId);
         settleCancellationObservation(chatId, turnId, { state: 'error', detail: message });
-        if (assistantId) dispatch({ type: 'error', nodeId, assistantId, message, errorKind: code });
+        if (assistantId) dispatch({ type: 'error', nodeId, assistantId, message, errorKind: code, recoverable, completedAt, turnId });
         onTurnEnd?.('error', nodeId);
         onTerminal?.();
-      },
-    };
+    }
     return {
       ...base,
       ...extraHandlers,
@@ -225,6 +233,7 @@ export function createBackgroundTurnBinding({
       onTurnStart: base.onTurnStart,
       onDone: base.onDone,
       onError: base.onError,
+      onErrorPayload: base.onErrorPayload,
     };
   };
 

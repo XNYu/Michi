@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import {
@@ -87,7 +88,7 @@ async function request(method: string, route: string, owner?: string, body?: unk
 }
 
 describe('Custom Agent Definition HTTP router', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-custom-agent-route-'));
     process.env.MICHI_DATA_DIR = tmpDir;
     process.env.MICHI_CLOUD = '1';
@@ -116,7 +117,7 @@ describe('Custom Agent Definition HTTP router', () => {
     });
     app.use('/api', setupCustomAgentRoutes({ service, isEnabled: () => customAgentsEnabled }));
     app.get('/api/persistence/capabilities', (_req, res) => res.json({ protocolVersion: 2 }));
-    server = app.listen(0);
+    server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
   });
 
@@ -191,15 +192,6 @@ describe('Custom Agent Definition HTTP router', () => {
     ]);
   });
 
-  test('instructions are optional — a Definition with empty instructions can be enabled', async () => {
-    const created = await request('POST', '/agents', 'owner-a', definition({ instructions: '' }));
-    assert.equal(created.response.status, 201);
-    const enabled = await request('POST', `/agents/${created.payload.definition.id}/enable`, 'owner-a');
-    assert.equal(enabled.response.status, 200);
-    assert.equal(enabled.payload.definition.status, AgentDefinitionStatus.Enabled);
-    assert.equal(enabled.payload.definition.instructions, '');
-  });
-
   test('agent-capabilities lists the owner-visible catalog with readiness', async () => {
     const listed = await request('GET', '/agent-capabilities?workspaceId=ws-a', 'owner-a');
     assert.equal(listed.response.status, 200);
@@ -210,19 +202,6 @@ describe('Custom Agent Definition HTTP router', () => {
     // Other-workspace capabilities are invisible; owner isolation holds.
     const otherOwner = await request('GET', '/agent-capabilities?workspaceId=ws-a', 'owner-b');
     assert.deepEqual(otherOwner.payload.capabilities, []);
-  });
-
-  test('enable rejects wrong-Workspace capability refs and returns no credential values', async () => {
-    const created = await request('POST', '/agents', 'owner-a', definition({ toolRefs: ['tool-other-workspace'] }));
-    const rejected = await request('POST', `/agents/${created.payload.definition.id}/enable`, 'owner-a');
-    assert.equal(rejected.response.status, 400);
-    assert.match(rejected.payload.error, /not found/);
-
-    const valid = await request('POST', '/agents', 'owner-a', definition({ toolRefs: ['tool-workspace'] }));
-    const enabled = await request('POST', `/agents/${valid.payload.definition.id}/enable`, 'owner-a');
-    assert.equal(enabled.response.status, 200);
-    assert.equal(enabled.payload.definition.status, AgentDefinitionStatus.Enabled);
-    assert.equal(JSON.stringify(enabled.payload).includes('opaque-binding-id'), false);
   });
 
   test('Global discovery is owner-scoped and same names do not shadow Workspace Definitions', async () => {

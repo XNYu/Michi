@@ -204,6 +204,32 @@ describe('multiplexed stream transport', () => {
     expect(FakeSocket.instances).toHaveLength(0);
   });
 
+  it('rejects an unavailable probe without downgrading feeds to native HTTP', async () => {
+    configureStreamTransport('http://localhost:3000/api', Promise.reject(new Error('Backend switching')));
+    await expect(fetchStream('http://localhost:3000/api/workspaces/one/watch/stream')).rejects.toThrow('Backend switching');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('shares a fresh probe after an outage and restores multiplexing on subscription retry', async () => {
+    let resolveProbe!: (available: boolean) => void;
+    const probe = vi.fn(() => new Promise<boolean>((resolve) => { resolveProbe = resolve; }));
+    configureStreamTransport('http://localhost:3000/api', Promise.reject(new Error('Backend switching')), probe);
+    await expect(fetchStream('http://localhost:3000/api/workspaces/one/watch/stream')).rejects.toThrow('Backend switching');
+    const first = fetchStream('http://localhost:3000/api/workspaces/one/watch/stream');
+    const second = fetchStream('http://localhost:3000/api/workspaces/two/watch/stream');
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    resolveProbe(true);
+    const socket = await openSocket(2);
+    for (const id of ['1', '2']) {
+      socket.receive({ type: 'headers', id, status: 200 });
+      socket.receive({ type: 'end', id });
+    }
+    await expect((await first).text()).resolves.toBe('');
+    await expect((await second).text()).resolves.toBe('');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('acquires fresh credentials when hydration reconfigures the same gateway', async () => {
     configureStreamTransport('http://localhost:3000/api', Promise.resolve(true));
     const first = fetchStream('http://localhost:3000/api/chats/one/stream');

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 test('Kiro V3 commands render results and queued commands never become model prompts', async ({ page }) => {
   const prompts: string[] = [], commands: string[] = [];
@@ -26,7 +27,7 @@ test('Kiro V3 commands render results and queued commands never become model pro
     return false;
   } });
   await bootWithWorkspace(page);
-  const editor = page.locator('[contenteditable="true"]').first();
+  const editor = page.locator(COMPOSER_EDITOR).first();
   await editor.fill('Start a session');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await expect(page.getByText('Hello from mock kiro.').first()).toBeVisible();
@@ -71,7 +72,7 @@ test('sending during a command preserves the draft and does not send a second re
     return true;
   } });
   await bootWithWorkspace(page);
-  const editor = page.locator('[contenteditable="true"]').first();
+  const editor = page.locator(COMPOSER_EDITOR).first();
   await editor.fill('/context');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await expect.poll(() => commands).toEqual(['context']);

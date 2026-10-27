@@ -14,6 +14,12 @@ conversation, run them side by side, and fold the good ones back together.
 
 [Features](#features) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Shortcuts](#shortcuts) · [Configuration](#configuration)
 
+
+https://github.com/user-attachments/assets/9f4cd982-0371-4921-9776-79ab58295346
+
+
+
+
 </div>
 
 See the [user guide](docs/user-guide.md) for first tasks, context and branching,
@@ -36,6 +42,14 @@ The same public articles are available to agents through `michi_docs`.
   favorite or search them; import external files without copying via symlinks;
   preview supported files in a read-only pane; and mention artifacts or prior
   nodes in a prompt.
+- **Native Pages**: workspace pages and child pages with a block editor,
+  database views, responsive grids, per-item Sources and page-local layout
+  preferences. The Pages Assistant and background Meta agent maintain content
+  with revision checks and human-edit protection. The current Pages interface
+  supports the local backend; remote Pages is not yet available. See the
+  [Pages guide](backend/src/docs/pages-and-components.md),
+  [maintenance guide](backend/src/docs/pages-maintenance.md), and
+  [component design guide](backend/src/docs/page-component-design.md).
 - **Agent-native interaction**: reasoning, plans, tool calls, live subagent
   rosters, permission prompts, structured Ask User cards, follow-up actions,
   inline images, and runtime errors all appear in the conversation flow.
@@ -93,7 +107,39 @@ Home lists recent threads across workspaces. Separate windows retain independent
 composer drafts, and a message sent during confirmed runtime cleanup continues
 automatically once the previous turn releases its session.
 
----
+## Chat permissions
+
+In **Settings → Model → Permissions**, enable **Use global permissions** to
+choose one mode for all ordinary chats on that Backend. Composer permission
+controls are hidden while this switch is enabled. Turn it off to choose
+**Ask**, **Trust**, or **YOLO** separately in each chat's Composer. Individual
+choices are preserved when global control is enabled and restored when it is
+disabled. New chats default to Ask; a choice made in the Home Composer applies
+before the first prompt. Settings and chat choices are persisted by the Backend.
+Kiro and Pi Composers offer **Ask / Trust**; Claude and Codex also offer **YOLO**.
+Existing YOLO choices display as Trust on Kiro and Pi, with the same execution
+behavior. The global menu retains YOLO when that Backend registers a runtime
+that supports it, since the setting also controls chats using that runtime.
+
+- **Ask** prompts before changes and tools requiring approval. Native read-only
+  tools can run automatically. Pi also asks for unknown/MCP tools.
+- **Trust** automatically approves tools while retaining the runtime's native
+  sandbox. Codex permits workspace writes and keeps sandbox restrictions.
+- **YOLO** automatically approves tools and requests full native access where
+  supported. Claude uses its bypass permission mode; Codex uses full access.
+  Kiro and Pi use backend auto-approval and do not acquire an additional OS
+  sandbox from Michi, so Trust and YOLO have the same approval behavior there.
+
+Changes apply from the next turn. Returning to Ask clears Michi's always-allow
+chat grants. Approval remains enforced without a connected renderer. Local and
+remote Backends each own their permission settings; cloud settings are scoped
+to the authenticated owner. Agent Runs retain their separate permission policy.
+
+Kiro Crew is the backend for Michi chats. Setup includes required Michi MCP and
+`sessionApproval` consent; chats and Ask/Trust approvals are handled in Michi.
+The official grant also covers user-owned Crew chats, and Crew allowlists/global
+YOLO remain authoritative. Default installer users install directly from `~/.michi/crew-app`; later updates use `michi update` followed by Crew App **Sync**. Old generated sources and custom installs use the compatibility helper. Missing required setup or an outdated App blocks new work. See the
+[Crew setup guide](runtime/src/adapters/crew/README.md).
 
 ## Quick Start
 
@@ -147,7 +193,7 @@ Michi is runtime-agnostic. Configure any of these from Settings:
 |---|---|
 | **Claude Code** | Anthropic's Claude CLI. |
 | **Kiro-CLI** | Kiro agent runtime. |
-| **Kiro Crew** | Local official Crew Gateway with required App/MCP setup. See the [setup guide](backend/src/agents/crew/GETTING_STARTED.md). |
+| **Kiro Crew** | Local official Crew Gateway with required App/MCP setup. See the [setup guide](runtime/src/adapters/crew/GETTING_STARTED.md). |
 | **Codex** | Codex app-server runtime. |
 | **Pi** | Multi-provider — Anthropic, Gemini, DeepSeek via API keys. [Gemini 4 Argon](docs/features/pi-gemini-argon.md) supports streaming continuation. |
 | **Antigravity** | Antigravity agent runtime. |
@@ -206,10 +252,13 @@ does not need Python or native build tools just to run Michi Backend. Use
 Node.js 22.19 or newer.
 
 The generated token is reused from `~/.michi/remote.env` on later runs.
-Loopback binding is the default when the desktop app uses Michi's built-in SSH
-tunnel. Use `npm run remote:status`, `remote:restart`, or `remote:stop` for
-lifecycle management. The lower-level `remote:setup` / `remote:start` commands
-remain available for custom supervisors and foreground debugging.
+The remote Backend listens on loopback by default, `remote:start` included, and
+the desktop app reaches it through Michi's built-in SSH tunnel. To listen on a
+network interface, set `MICHI_BIND_HOST` explicitly or pass `--public` to
+`remote:launch`, and keep that port behind a firewall. Use `npm run remote:status`,
+`remote:restart`, or `remote:stop` for lifecycle management. The lower-level
+`remote:setup` / `remote:start` commands remain available for custom supervisors
+and foreground debugging.
 
 In the desktop app, open **Settings → Connections**, choose **SSH tunnel**, and
 enter the SSH host (or `~/.ssh/config` alias), optional SSH user/port, remote
@@ -220,10 +269,24 @@ Then choose that connection when creating a workspace. Remote workspace paths
 are paths on the server, for example `/home/me/project`.
 
 Direct URLs remain supported for Tailscale/private networks and HTTPS tunnel
-services. Local, direct-remote, and SSH-remote workspaces can coexist in the
-same sidebar. Closing the app stops the bundled local backend and local SSH
-tunnel processes only; the supervised remote backend and already-started
-remote turns keep running.
+services. Because the remote Backend listens on loopback by default, a direct
+URL needs `MICHI_BIND_HOST` set to the reachable interface's address (or
+`remote:launch -- --public`), behind a firewall; a reverse proxy on the same
+host can keep the loopback default. Local, direct-remote, and SSH-remote
+workspaces can coexist in the same sidebar. Closing the app stops the bundled
+local backend and local SSH tunnel processes only; the supervised remote
+backend and already-started remote turns keep running.
+
+Each remote connection owns its workspace and chat data. The renderer loads
+that content from the connection, keeps it in memory while available, and
+removes it when the connection becomes unavailable. Reconnecting fetches it
+again from the remote backend. Remote content is excluded from localStorage
+workspace caches and is never mirrored into the bundled Local database.
+Connection settings and small UI references can still be saved locally.
+Workspace, tree and node identities include their connection in the renderer, so
+Local and remote entities with the same server ID remain separate. Requests
+translate those identities back to the original server IDs and reject
+references belonging to another connection.
 
 See [docs/remote-backend.md](docs/remote-backend.md) for deployment and
 security details.
@@ -250,7 +313,7 @@ npm run remote:status         # inspect the background/service state
 npm run remote:restart        # restart while preserving the token
 npm run remote:stop           # stop the remote backend
 npm run remote:setup          # install/build only backend + shared (no Electron/node-pty)
-npm run remote:start          # foreground remote backend (requires MICHI_REMOTE_TOKEN)
+npm run remote:start          # foreground remote backend on loopback, for the SSH tunnel (requires MICHI_REMOTE_TOKEN)
 npm run server                # install, build artifact, then start
 npm run electron:build        # unsigned macOS arm64 dmg in dist-electron/
 npm run electron:install      # copy the built app into ~/Applications
@@ -343,6 +406,22 @@ MICHI_BIND_HOST=127.0.0.1
 MICHI_ENABLED_RUNTIMES=kiro,pi,claude,cursor,grok,antigravity
 MICHI_DEFAULT_RUNTIME=kiro
 
+# Optional CLI overrides
+KIRO_CLI_BIN=/absolute/path/to/kiro-cli
+CLAUDE_CLI_BIN=/absolute/path/to/claude
+CODEX_CLI_BIN=/absolute/path/to/codex
+
+# Optional hosted auth
+MICHI_REQUIRE_AUTH=false
+
+# Experimental: Custom Agents and Agent Runs (off unless exactly 1)
+MICHI_CUSTOM_AGENTS=0
+
+# Scheduled jobs (on unless 0; always off with MICHI_CLOUD=1)
+MICHI_SCHEDULED_JOBS=1
+# Extra renderer origins allowed to call the local API (comma-separated)
+MICHI_LOCAL_CONTROL_ORIGINS=
+
 # Diagnostics
 MICHI_METRICS=0
 MICHI_METRICS_RUN_ID=local-dev
@@ -353,6 +432,58 @@ MICHI_PERF=0
 Pi provider keys can be saved through Settings or supplied as environment
 variables such as `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, and
 `GEMINI_API_KEY`.
+
+### Scheduled jobs and the background service
+
+The **Scheduled** page runs a prompt in a workspace on a schedule: every N
+minutes/hours/days, daily/weekdays/weekly at a time, a 5-field cron expression
+with an optional IANA time zone, or once at a set time. Each run opens a new thread (or reuses one thread per
+job) through the same durable turn path as a chat, so the result appears in the
+sidebar and survives reloads. Jobs run with **Trust** permissions by default
+because nobody is watching; choose **Ask** to have tool approvals raise a
+notification instead. Missed occurrences collapse into one catch-up run, an
+overlapping occurrence is skipped, runs time out after 30 minutes by default,
+and a job pauses itself after 5 consecutive failures. Only one backend per data
+directory schedules jobs (`scheduler_lease` in `data.db`).
+
+Agents in a chat thread can manage the jobs of that thread's workspace with
+`list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`,
+`run_scheduled_job` and `delete_scheduled_job` (MCP for Kiro, Claude, Codex and
+Crew; built-in tools for Pi). Every change except pausing asks the user to
+approve that one change, and Trust/YOLO modes or "always allow" grants never
+approve it. The approval shows the schedule, permission mode and prompt that
+will be saved. The tools are not offered to Agent Runs and refuse to run inside
+a scheduled run.
+
+Internal integrations can opt a job into newly completed conversation turns
+with `conversationUpdates: true` on the existing job API. Progress uses two
+nullable columns and one mutable counter per workspace, with no separate change
+log. Empty batches skip the model. The shared HTTP/tool reader supports fixed
+upper bounds, counts and bounded original messages. Generic scheduled
+consumption confirms explicit no-change decisions. Native
+Pages maintenance has a separate managed writer that commits page/database
+operations and idempotent applied/proposed receipts before advancing progress.
+It uses Settings → Meta agent (Pi, Claude, Codex or Kiro; Crew is unsupported),
+with startup tool-catalog checks. See the
+[Pages maintenance guide](backend/src/docs/pages-maintenance.md) and
+[Conversation increments](docs/features/conversation-updates.md).
+
+Jobs only run while a backend is running. On macOS, **Settings → Background →
+Keep Michi running in the background** installs a per-user LaunchAgent
+(`~/Library/LaunchAgents/com.michi.backend.plist`, state in
+`~/.michi/service.json`) that runs the bundled backend on the same port,
+starts at login, and is restarted by launchd. Quitting or reopening the app
+then leaves the backend and its turns running. The service loads `~/.michi/.env`
+itself, so secrets are never written into the plist; logs go to
+`~/.michi/logs/service.{out,err}.log`. After an app update the service is
+restarted with the new build. Turning the setting off hands the backend back to
+the app. This mode is available only in packaged macOS builds.
+
+Finished runs send a system notification; clicking it opens Michi on the run's
+thread. The app receives notices from `/api/scheduled-jobs/notifications/stream`.
+When no app is connected, the background service starts Michi hidden (no window
+or Dock icon) to show the notification, and that hidden instance quits after
+15 idle minutes.
 
 Web search is deployment-gated and disabled by default. It is exposed only on
 Railway, detected from Railway's injected service identifiers. On Railway,
@@ -389,6 +520,7 @@ model. Logs and the remaining configuration have independent paths:
 |---|---|
 | SQLite databases and durable turns | `MICHI_DATA_DIR`; defaults to `~/.michi`, or `~/.michi-dev` for root dev commands. |
 | Runtime/model and UI preferences | `MICHI_CONFIG_DIR/config.json`; defaults to `~/.michi/config.json`, or to the development data directory for root dev commands. |
+| Saved backend connections | `MICHI_DATA_DIR/config.json`; independent of `MICHI_CONFIG_DIR`. |
 | Local provider keys and Bedrock credentials | `~/.michi/config.json`; these modules do not use `MICHI_CONFIG_DIR`. |
 | Backend and Electron logs | `MICHI_LOG_DIR`; defaults to `~/.michi/logs` independently of `MICHI_DATA_DIR`. |
 | Electron dev user data | `MICHI_ELECTRON_USER_DATA_DIR`; defaults to `<dev-data-dir>/electron-<checkout-instance>`. |
@@ -408,6 +540,25 @@ configuration. A disposable run that must avoid personal credentials or native
 CLI history also needs a separate user/home environment and runtime-specific
 credential directories.
 
+Backend JSON configuration writes use a private temporary file and atomic
+replacement, with a sibling `config.json.lock` serializing cooperating writers.
+The config helper reports `CONFIG_LOCKED` after at most 250 ms waiting for a
+busy writer; retry after the other writer finishes. Invalid JSON raises
+`CONFIG_CORRUPT` and is preserved for repair. Read/write permission and disk failures are reported separately;
+failed saves do not acknowledge success or replace the last saved file.
+
+A crash may leave an orphan lock. For the exact configuration path in the error,
+first stop **every backend using that file**. For `~/.michi/config.json`, this
+includes the installed app and development backends sharing provider/Bedrock
+credentials, even when their profile/data directories differ. Inspect the sibling
+`config.json.lock` (`pid` and random `token` only), verify its process is no longer
+running, and move that lock aside (for example,
+`config.json.lock` → `config.json.lock.orphaned-20261023`). Keep `config.json`
+untouched, then restart the backend and retry the save. The backend never removes
+unknown locks automatically, because PID reuse and an old timestamp do not prove
+that a writer is dead. Hand-edited or older clients that bypass this lock are not
+covered by its concurrency guarantee.
+
 ### Hosted auth configuration
 
 The [Dockerfile](Dockerfile) builds the frontend and bundled backend for a
@@ -416,14 +567,27 @@ Pi-only hosted deployment. Set these values in the deployment environment:
 | Variable | Purpose |
 |---|---|
 | `NODE_ENV=production` | Enables secure auth cookies; use an HTTPS origin. |
-| `MICHI_REQUIRE_AUTH=true` | Enables Better Auth session checks and Google sign-in. |
-| `MICHI_CLOUD=1` | Enables cloud owner scoping in runtime settings and workspace operations. |
+| `MICHI_REQUIRE_AUTH=true` | Enables Better Auth session checks and Google sign-in. Required in cloud mode. |
+| `MICHI_CLOUD=1` | Isolated multi-user hosting: owner-scoped workspaces, runtime settings, encrypted user keys and file sandboxes. The Docker image sets this and auth by default. |
+| `MICHI_LOCAL_AUTH_EMAIL` | Required when auth is enabled without cloud mode: one verified email with machine-wide desktop access. Other signed-in accounts are rejected. |
+| `MICHI_ADMIN_EMAILS` | Optional comma-separated verified admin emails. Empty means no admin access; applies to both authenticated modes. |
 | `BETTER_AUTH_URL` | Public backend origin, for example `https://michi.example.com`. |
 | `BETTER_AUTH_SECRET` | Stable random auth secret; generate with `openssl rand -hex 32`. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google OAuth client credentials. Register `<origin>/api/auth/callback/google` as an authorized redirect URI. |
 | `MICHI_ENCRYPTION_KEY` | Base64-encoded 32-byte key for the per-user API-key vault; generate with `openssl rand -base64 32`. |
 | `MICHI_DATA_DIR` | Persistent writable data directory, usually `/data` in a container. |
-| `MICHI_CORS_ORIGINS` | Comma-separated allowed origins; configure the actual hosted origins when using auth. |
+| `MICHI_CORS_ORIGINS` | Comma-separated allowed origins; configure the actual hosted origins when using auth. Without auth it also admits a UI origin that is neither the backend itself nor a Michi dev renderer (see below). |
+
+Without auth (desktop, `npm run dev`, remote access), the backend serves only
+Michi's own UI: the backend's host, `MICHI_RENDERER_URL`, and in a development
+build loopback port 3001. Requests that carry any other `Origin` are refused
+with 403 and logged once
+([localOrigins.ts](backend/src/services/localOrigins.ts)). Allow more with
+`MICHI_CORS_ORIGINS`, or every loopback port with
+`MICHI_ALLOW_LOOPBACK_ORIGINS=1`. Without remote access, the backend also
+refuses `Host` headers that name a DNS host other than localhost (DNS
+rebinding); IP addresses pass. List a LAN host name, local proxy or tunnel in
+`MICHI_ALLOWED_HOSTS`.
 
 Keep `MICHI_ENCRYPTION_KEY` stable alongside the persistent volume. Key rotation
 is not implemented; replacing or losing it makes stored user API keys
@@ -432,6 +596,27 @@ Better Auth uses `auth.sqlite`. Both need persistent storage. Authentication
 behavior is implemented in [auth.ts](backend/src/services/auth.ts), and key
 encoding/storage in [userKeys.ts](backend/src/services/userKeys.ts).
 
+Authentication and cloud isolation are separate choices. With both flags off,
+Michi retains its local desktop/origin-guard behavior. With auth on and cloud
+off, set exactly one `MICHI_LOCAL_AUTH_EMAIL`: that verified account owns access
+to the entire local installation, including legacy workspaces with no database
+owner. Local provider keys, local runtime configuration, native Agent identity
+and existing workspace directories retain their desktop behavior. This mode is
+for a personal installation, and must not be used to isolate multiple users.
+`MICHI_CLOUD=1` with auth off is rejected at startup. Auth on with neither cloud
+isolation nor an explicit local account is also rejected before runtime startup.
+
+When upgrading an authenticated deployment that previously omitted
+`MICHI_CLOUD`, choose its intended mode explicitly. For a personal desktop,
+set `MICHI_LOCAL_AUTH_EMAIL` to its owner's verified Google email. For hosted
+multi-user service, set `MICHI_CLOUD=1`; new Docker images already do this.
+Existing ownerless workspaces become invisible to normal cloud clients rather
+than being assigned to the next person who signs in. Follow the reviewed
+[owner migration procedure](docs/access-modes.md) before returning those
+workspaces to users. Keep the existing data directory, auth database,
+`BETTER_AUTH_SECRET` and `MICHI_ENCRYPTION_KEY`: existing per-user encrypted
+keys remain readable. Shared local keys and config are not automatically copied
+into user accounts; configure each user's provider/runtime settings explicitly.
 
 ### Metrics and startup profiling
 
@@ -475,9 +660,8 @@ Express API + ChatHub
         `-- runtime registry
               |-- Kiro         -> kiro-cli over ACP
               |-- Pi           -> provider APIs through pi-agent-core/pi-ai
-              |-- Claude       -> Claude Code CLI warm pool
-              |-- Cursor/Grok  -> shared ACP client and runtime profiles
-              |-- Antigravity  -> Antigravity runtime adapter
+              |-- Claude       -> Agent SDK + installed Claude CLI warm pool
+              |-- Codex        -> codex app-server JSON-RPC
 ```
 
 The `shared/` workspace owns protocol types and turn projection logic used by
@@ -506,9 +690,10 @@ Core backend areas:
 
 ```text
 backend/src/agents/          runtime interfaces, ChatHub, tools, permissions
-backend/src/agents/kiro/     ACP-backed Kiro runtime
+runtime/src/adapters/kiro/   ACP-backed Kiro runtime
 backend/src/agents/pi/       in-process multi-provider runtime
-backend/src/agents/claude/   Claude CLI runtime and warm pool
+runtime/src/adapters/claude/ Claude Agent SDK runtime and CLI warm pool
+runtime/src/adapters/codex/  Codex app-server client
 backend/src/routes/          HTTP/SSE route layer
 backend/src/services/        SQLite, MCP, config, search, export, persistence
 backend/src/db/migrations/   application SQL migrations
@@ -535,7 +720,7 @@ refreshed pane can continue observing it.
 
 Gateways advertise `streamTransport: websocket-v1` in the persistence capability
 probe. The renderer then carries chat, replay, background, artifact-watch,
-agent-run and digest SSE bytes over one WebSocket per gateway/window. Ordinary
+agent-run, workflow-run and digest SSE bytes over one WebSocket per gateway/window. Ordinary
 file, upload and history requests keep their own HTTP connections, avoiding
 HTTP/1.1 connection-slot starvation. Older gateways retain the HTTP SSE fallback.
 
@@ -548,6 +733,64 @@ only the explicit cancel API stops a durable turn. The adapter limits each socke
 to 256 simultaneous logical streams (excess opens receive 429), bounds buffers,
 and times out requests waiting for headers.
 
+Subagents report into a roster on the assistant message that spawned them:
+each entry carries the delegated task, an activity trail (tools with outputs
+and narration), the result or error, and usage. Runtime adapters (Claude
+Agent/Task, Kiro V2 crews and V3 subtasks, Codex collab agents, Crew) emit
+roster patches; `shared/src/subagents.ts` holds the one fold used by the
+durable turn projection and the renderer. The roster persists in message
+metadata, and agents that outlive their turn are recorded as running in the
+background and finish in a later turn.
+
+Workflow runs (Claude Code `Workflow`, Kiro CLI workflows) never enter the
+turn queue. `services/workflowRunHub.ts` folds each runtime's native workflow
+events into a `WorkflowRunDtoV1` snapshot, stores it in `workflow_runs`, and
+pushes it on `GET /api/workflow-runs/subscribe`. The renderer shows a card
+under the launching message and a `workflow-run` pane with the step tree,
+step messages, the report and the controls the runtime accepts (Claude: stop;
+Kiro: pause, resume, stop, retry). Tool approvals a workflow asks for while
+no chat turn is running are answered on its card or pane
+(`POST /api/workflow-runs/:id/approvals/:approvalId`), not by opening a turn.
+Kiro names the asking step. Claude does not say who asked, so its request
+shows on every running workflow of the chat. If they all complete before it
+is answered, it moves to the chat; if one that was running when it was asked
+was stopped or failed, it is denied, since its asker most likely ended with
+that run. Claude ends
+background workflows with the CLI process, so a chat Stop, a model switch or
+a switch into or out of YOLO also stops them. The composer's Stop, model and
+permission controls say so (Settings notes it for global permissions), the
+run records why, and an idle chat with a running workflow is not reclaimed
+for capacity. The subscribe snapshot carries at most 2 MB of run JSON (UTF-8):
+runs it trims are marked `partial` and the workflow pane fetches them whole.
+Open runs are sent first; if even trimmed runs do not fit, finished runs are
+left out from the first one that no longer fits, so the newest are kept.
+Approval details are never trimmed. Kiro workflows are opt-in per user under
+**Settings → Model → Workflows** and apply to chats opened or restored
+afterwards (not to Agent Runs). When a Kiro workflow finishes, Kiro wakes the
+launching chat and reports back in a turn of its own; Michi shows it as a
+self-initiated turn once it shows something, and Stop ends it. A message (or
+a queued parent continuation) that is on its way before that overtakes the
+wake: it is sent at once, as Kiro itself handles a prompt during a wake, and
+the wake is never shown. The workflow card keeps its result, and in both
+recordings (a prompt sent before and after the wake's model request) Kiro
+ended the wake and carried the report into the prompted turn. If that turn
+ends without prompting, or Kiro refuses its prompt, a wake that has lost
+nothing is shown after all; one that has is stopped. Once the wake is shown,
+new messages wait for it; compaction is refused while a wake is open. Stop on
+a message whose prompt is not out (or whose result is in) leaves the wake
+running. A wake nobody shows is cancelled, and one Kiro does not end after
+Stop leaves the session for recovery rather than for the next prompt. Its
+frames stay out of a prompt's stream, except untagged frames (Kiro tags only
+a wake's message chunks) of a wake that starts in the few frames between the
+prompt's own end and the moment Michi reads its result.
+Recovery does not restart a Kiro process while a workflow Michi tracks there
+is running or paused, and says so; resume or stop a paused workflow from its
+card to unblock it. A chat reloaded after its Kiro process
+crashed keeps workflows only where Michi restores the session's identity
+(local V3 chats); elsewhere they stay off until the chat's session is next
+loaded, since Michi could not attribute them. Runs left open by a previous backend process
+are marked interrupted; a Kiro run reopens if its workflow carries on.
+
 Reverse proxies in front of an upgraded gateway must pass WebSocket Upgrade for
 `/api/stream-transport` in addition to the existing HTTP routes. Do not silently
 retry a foreground POST through another transport after it may have started.
@@ -558,11 +801,20 @@ Runtime-specific notes:
   tools through per-session MCP HTTP slots.
 - **Pi** runs in-process against configured providers and exposes Michi plus
   sandboxed file tools directly.
-- **Claude** uses a warm CLI pool, native resume bindings, permissions, and live
-  Task-subagent tracking.
-- **Cursor and Grok** use the shared ACP client with runtime-specific handshake,
-  authentication, model, and tool translation profiles.
-- **Antigravity** retains its dedicated runtime adapter and model discovery.
+- **Claude** uses the pinned Agent SDK (`0.3.306`) with the installed Claude CLI,
+  retaining its authentication, history and warm pool. Native questions use
+  Michi's interaction UI; mandatory Run policy is enforced before tool execution,
+  including native auto-approval. Models and permissions switch through SDK
+  controls. Interrupt waits for both acknowledgment and the turn boundary, with
+  process retirement when confirmation fails. Titles come from the main
+  response's metadata, with a local user-message fallback.
+  The CommonJS backend ships the SDK's ESM modules in `dist/claude-sdk`.
+  See the [runtime documentation](runtime/README.md) for the in-repository layout.
+- **Codex** speaks app-server JSON-RPC, performs auth/version preflight, resumes
+  native threads, renders rich tool activity, and generates a first-turn title
+  in parallel. Chat branch-overview entries use the hidden `set_branch_overview`
+  tool by default; native resume and recovery refresh the metadata instructions.
+  Follow-ups retain their configured sentinel/Hook experiment mode.
 
 ### Tools and permissions
 
@@ -582,14 +834,20 @@ Shared Michi tools include:
 - graph and history: `spawn_branches`, `list_threads`, `search_messages`,
   `read_node`;
 - reusable material: `save_artifact`, `update_artifact`, `show_image`;
+- open a link for the user: `open_url` follows **Settings → Browser → Open links in**.
+  Requests are delivered once to a visible window in the owning workspace/tree
+  and expire after 30 seconds. Agents should use it instead of OS `open` or
+  `xdg-open` commands; web deployments fall back to the external browser.
 - structured interaction and metadata: Ask User, title, follow-ups, and branch
   overview;
 - workspace files: `read`, `ls`, `grep`, `find`, plus gated `write`, `edit`,
   and `bash` where the runtime supports them.
 
-The default policy allows read-only workspace and conversation lookup. Writes,
-edits, shell commands, and equivalent runtime operations ask the user unless a
-workspace grant or an explicit bypass mode applies.
+Ordinary chats use the backend's durable **Ask / Trust / YOLO** policy described
+in [Chat permissions](#chat-permissions). Ask allows read-only workspace and
+conversation lookup. Writes, edits, shell commands, and equivalent runtime
+operations ask the user unless a chat-specific grant or an explicit bypass
+mode applies. Agent Runs retain their separate permission policy.
 
 ### Frontend
 
@@ -601,6 +859,10 @@ The main UI lives under `frontend/src/components/terminal/`:
 - **Home**: large composer, first-run runtime/model setup, and recent threads.
 - **Dashboard**: a horizontally scrollable strip of resizable chat, digest, and
   artifact panes.
+- **Pages**: native documents and child pages, database views, Sources,
+  responsive grids and layout preferences; a retained Assistant with conversation
+  history and content-area fullscreen. Native media/renderers and generated
+  worker components have different capabilities; see the linked Pages guides.
 - **Overview**: centered branch navigation backed by an append-only per-turn
   summary journal.
 - **Map**: active-thread DAG navigation and selection actions.
@@ -629,7 +891,10 @@ render.
 
 `data.db` is the durable source of truth for workspaces, trees, nodes, edges,
 messages, turns, command receipts, artifacts, permission grants, runtime
-bindings, provider metadata, and drafts.
+bindings, provider metadata, and drafts. Native Pages, database rows/views,
+component versions, layout preferences and maintenance receipts also live in
+SQLite. Conversation/portable JSON exports do not contain the complete native
+Pages state; see [Data and backups](backend/src/docs/data-and-backups.md).
 
 Startup uses a hydration barrier:
 
@@ -639,7 +904,7 @@ Startup uses a hydration barrier:
 4. lazy-load other trees when opened;
 5. reconnect any node that was persisted as streaming.
 
-LocalStorage remains a scoped cache/fallback and stores small per-window UI
+LocalStorage remains a scoped cache/fallback for Local workspaces and stores small per-window UI
 state such as the active workspace. Durable workspace data is cleared from the
 mirror after a successful backend hydration. Preferences are also persisted
 through backend config storage.
@@ -650,13 +915,38 @@ Disabling it reconstructs cold chat sessions from the persisted ancestor chain
 and transcript; already-live sessions are not interrupted. Preferences are
 stored independently per runtime and, in cloud mode, per user.
 
-New ordinary branches use Kiro native rewind/fork or Claude `--resume --fork-session`
+New ordinary branches use Kiro native rewind/fork, Codex `thread/fork`, or Claude SDK native fork
 when the parent is idle, has native history, and belongs to the same runtime,
 workspace, tree, and owner. Each child has its own native identity. Unsupported
 or missing native history falls back to textual context; ambiguous runtime
 failures are surfaced rather than silently starting over. Pi, active
 parents, and custom-agent branches retain the existing context-based path.
 Native Fork is independent of the Native Resume preference.
+For Claude branches cut at a historical message, the backend maps that message
+to its persisted native UUID and forks only through that position. Missing
+positions fall back to the exact visible transcript prefix; they never inherit
+later parent turns. Conversation forks do not rewind working files.
+Settings > Model also has a per-runtime Native Fork switch for Kiro, Codex, and
+Claude, enabled by default. Turning it off uses context-based branching for
+new child sessions without changing existing branches or Native Resume.
+
+The opt-in `backend/test/nativeForkSmoke.test.ts` exercises real Codex/Claude
+history inheritance and child resume with disposable workspaces. Set
+`MICHI_NATIVE_FORK_SMOKE=codex,claude` when running it; it uses the installed
+CLIs' credentials and model quota. If a Claude wrapper changes its config
+directory, explicitly set the same `CLAUDE_CONFIG_DIR` for the test.
+
+`backend/test/claudeSdkLive.integration.test.ts` adds opt-in real SDK checks for
+historical forks, parent restoration, native questions, Run policy and interrupt.
+Set `MICHI_CLAUDE_SDK_SMOKE=1`, `CLAUDE_CLI_BIN`, and
+`MICHI_CLAUDE_SDK_LIVE_CONFIG_DIR` to run it. It copies provider settings to a
+disposable profile without copying user hooks, permissions, plugins or MCP
+configuration. For OAuth-only profiles, provide supported credentials through
+the environment or a provider helper; this probe does not copy credential files.
+After `npm run backend:build`, `node scripts/verify-claude-sdk-sidecar.mjs`
+checks SDK loading outside the checkout. Set `MICHI_SDK_VERIFY_ELECTRON` to an
+Electron executable to check the same ESM sidecar inside ASAR without installing
+or replacing an application.
 
 #### Kiro ACP Engines
 
@@ -670,8 +960,13 @@ verified with the installed `kiro-cli 2.24.0` (v3 KAS `0.66.8`).
   branches use stored native `logIndex` anchors, not UI message offsets.
 - v3 uses `session/fork` with native message anchors, dynamic `configOptions`
   for model/effort settings, CLI-mediated authentication, and v3 usage/MCP
-  notifications. Each chat/Run has an isolated ACP process so loading a child
-  cannot replace its parent's MCP connection.
+  notifications. Local chats in the same cwd share one ACP process and a stable
+  Michi MCP connection by default. Every turn includes the current native
+  SessionID in model context, and every Michi tool requires `session_id` to route
+  to that chat's callbacks. Warm sessions can be handed directly to new chats;
+  forked children receive their own current ID despite inherited history.
+  Agent Run Attempts and cloud chats retain isolated ACP processes and tool
+  profiles. See the [runtime documentation](runtime/README.md) for the adapter layout.
 - Both engines support native load, permission decisions, cancellation/steer
   queue cleanup, and compaction. The engine is part of durable session identity;
   legacy bindings are v2. Cross-engine history is never claimed as native resume.
@@ -683,7 +978,8 @@ Real CLI tests are opt-in and consume the installed account's model quota:
 
 ```bash
 cd backend
-MICHI_KIRO_SMOKE=v2,v3 node --require ts-node/register --test --test-timeout=420000 test/kiroDualEngineSmoke.test.ts
+MICHI_KIRO_SMOKE=v2,v3 node --require ts-node/register --require ./test/helpers/isolateUserDirs.cjs \
+  --test --test-timeout=420000 test/kiroDualEngineSmoke.test.ts
 ```
 
 After `npm run build`, run `MICHI_KIRO_UI_SMOKE=v2 node backend/scripts/kiro-ui-smoke.mjs`
@@ -703,15 +999,18 @@ regression coverage, and remaining boundaries.
 - fixes the GUI-launch PATH before runtime discovery;
 - runs a single app instance with multiple BrowserWindows (`Cmd/Ctrl+N`);
 - persists each window's size and uses a stable backend port;
-- forks one bundled backend, waits for `/api/health`, and loads the
+- forks one bundled backend (or, with the background service enabled, starts
+  or reuses the launchd service), waits for `/api/health`, and loads the
   backend-served frontend;
+- relays scheduled-run notices as clickable system notifications;
 - keeps background streaming unthrottled;
 - provides folder/file pickers, external-file artifact linking, file reads,
   path opening, markdown save, notifications, relaunch, and log helpers through
   the preload bridge;
 - opens external links in the system browser;
 - supports macOS native vibrancy and optional sleep prevention;
-- stops the backend cleanly when the app quits.
+- stops a forked backend cleanly when the app quits (the background service
+  keeps running).
 
 Packaged builds load `~/.michi/.env` before the backend starts. Set
 `preventSleep: true` in `~/.michi/config.json` to prevent application
@@ -792,6 +1091,9 @@ runs.
   create-and-stream flows depend on immediate reads.
 - Kiro ACP `session/new` MCP entries require `headers: []` even when no headers
   are needed.
+- The Codex app-server wire surface is hand-curated in
+  `runtime/src/adapters/codex/codexProtocol.ts`; no generated bindings are
+  checked in.
 - SQL migrations must be copied into the backend bundle. The existing build
   script handles this.
 - The live UI is terminal-native. Do not restore the archived React Flow canvas

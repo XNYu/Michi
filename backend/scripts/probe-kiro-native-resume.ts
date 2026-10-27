@@ -19,8 +19,11 @@ const { values } = parseArgs({ options: {
 
 async function serve() {
   const directory = values.fixture!;
-  const { AcpClient } = await import('../src/services/acpClient');
-  const { KiroRuntime } = await import('../src/agents/kiro/KiroRuntime');
+  const { AcpClient } = await import('michi-runtime/internal/adapters/kiro/acpClient');
+  const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+  const { resolveKiroEngine } = await import('michi-runtime/internal/adapters/kiro/kiroProtocol');
+  const { kiroEnvOptions } = await import('../src/agents/michiKiroOptions');
+  const { createMichiRuntimeHost } = await import('../src/agents/michiRuntimeHost');
   const { registerRuntime } = await import('../src/agents/registry');
   const { ChatManager } = await import('../src/services/chatManager');
   const { setupMichiRoutes } = await import('../src/routes/michi');
@@ -40,7 +43,9 @@ async function serve() {
   getDb().prepare("INSERT OR IGNORE INTO nodes (id,workspace_id,title,kind,status,minimized,spawned_by_agent,created_at,acp_session_id,runtime_id,model_id,current_mode_id) VALUES ('probe-node','probe-ws','Native resume probe','chat','idle',0,0,1,?,'kiro',?,'michi-cancel-probe')").run(original.checks.sessionId, values.model!);
   // A second node exercises switching to another native session and back.
   getDb().prepare("INSERT OR IGNORE INTO nodes (id,workspace_id,title,kind,status,minimized,spawned_by_agent,created_at,runtime_id,model_id) VALUES ('other-node','probe-ws','Other probe','chat','idle',0,0,1,'kiro',?)").run(values.model!);
-  const runtime = new KiroRuntime({} as any, undefined, 0, directory);
+  // As the Kiro factory builds it, without MCP slots.
+  const runtime = new KiroRuntime({ bridge: {} as any, defaultCwd: directory,
+    ...kiroEnvOptions(), engine: resolveKiroEngine(process.env.MICHI_KIRO_ENGINE), host: createMichiRuntimeHost() });
   registerRuntime(runtime);
   const app = express();
   app.use(express.json());

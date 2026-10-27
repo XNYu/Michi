@@ -1,4 +1,6 @@
+import { hostOwner } from '../ownerMapping';
 import { ChatApprovalState, chatApprovalOptions, approvalCoversTool } from '../chatApprovalState';
+import { chatNodeOf, chatOwner, isRunOwner } from '../ownerMapping';
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -12,6 +14,7 @@ import type {
     RuntimePermissionBroker,
     RuntimeSessionOwner,
     RuntimeToolProfile,
+    MaintenanceExecutionContext,
     SteerResult,
 } from "../types";
 import { imageMimeType, prepareAttachments, type ResolvedAttachment } from "../attachments";
@@ -31,17 +34,26 @@ import {
     type ThreadMessageApprovalRequest,
     type ThreadMessageApprovalResult,
 } from "../threadMessageTool";
+import {
+    scheduledJobApprovalPrompt,
+    type ScheduledJobApprovalRequest,
+    type ScheduledJobApprovalResult,
+} from "../scheduledJobTools";
 import { mapAgentEvent, type MapperContext } from "./eventMapper";
 import type { MinimalAgentMessage } from "./historyAdapter";
 import { makeTurnImageQuota, type TurnImageQuota } from "../tools/read";
 import { chatPermissionMode } from "../permissionPolicy";
+import { isAssistantProfile, piAssistantToolDecision } from "../../assistant/policy";
+import { isMaintenanceProfile, META_AGENT_MAINTENANCE_TOOL_NAMES, maintenancePromptPrefix } from '../maintenancePolicy';
+import { assertMetaAgentToolCatalog, isMetaAgentProfile } from '../metaAgentGuard';
+import { createMaintenanceTools } from '../../services/pages/maintenanceTools';
 import { followUpReminder } from "../preamble";
 import { normalizeWorkspaceCwd } from "../tools/pathSandbox";
 import { resolveBedrockCredentials } from "../../services/bedrockCredentials";
 import { refreshBedrockCredentialsIfNeeded, refreshOnAuthFailure, isBedrockAuthError } from "../../services/bedrockCredentialManager";
 import { McpClientManager } from "../../services/mcpClientManager";
 import { readPiMcpServers } from "../../services/piMcpConfig";
-import { buildMcpToolsForPi } from "./mcpToolBridge";
+import { buildMcpToolsForPi, mcpInputSchemaToTypebox } from "./mcpToolBridge";
 
 /**
  * pi-agent-core accepts images as `prompt(text, ImageContent[])` with
@@ -197,6 +209,7 @@ export class PiSession implements AgentSession {
      */
     private mcpManager: McpClientManager | undefined;
     private mcpInitialized = false;
+    private readonly mcpWarnings: NormalizedEvent[] = [];
     private mcpInitialization: Promise<any[]> | undefined;
     private mcpCleanup: Promise<void> | undefined;
     private pendingAssistantBuf: string[] | undefined;
@@ -208,6 +221,8 @@ export class PiSession implements AgentSession {
      */
     private activePush: ((ev: NormalizedEvent) => void) | undefined;
     private turnAbort: AbortController | undefined;
+    private activePageTurnAttribution: { turnId: string; assistantId: string } | null = null;
+    private activeMaintenanceExecutionContext: MaintenanceExecutionContext | null = null;
     private inFlightPrompt: Promise<void> | undefined;
     private recoveryError: Error | undefined;
     private recoveryWork: Promise<void> | undefined;
@@ -236,15 +251,15 @@ export class PiSession implements AgentSession {
         this.cwd = normalizeWorkspaceCwd(deps.cwd);
         this.bridge = deps.bridge;
         this.preamble = deps.preamble;
-        this.firstUserGlue = deps.firstUserGlue ?? "";
+        this.firstUserGlue = isAssistantProfile(deps.toolProfile) ? "" : deps.firstUserGlue ?? "";
         // Rehydrated sessions skip the first-user-message glue — there's no
         // "first" turn to remind once the conversation already has prior turns.
         this.firstUserPrimed = (deps.initialMessages?.length ?? 0) > 0;
-        this.enableFollowUps = deps.enableFollowUps;
+        this.enableFollowUps = deps.enableFollowUps && !isAssistantProfile(deps.toolProfile);
         this.parentChatId = deps.parentChatId;
         this.workspaceId = deps.workspaceId;
         this.ownerUserId = deps.ownerUserId;
-        this.owner = deps.owner ?? { kind: "chat_node", nodeId: id };
+        this.owner = deps.owner ?? chatOwner(id);
         this.runtimeProfileHash = deps.profileHash ?? null;
         this.toolProfile = deps.toolProfile;
         this.permissionBroker = deps.permissionBroker;
@@ -262,6 +277,8 @@ export class PiSession implements AgentSession {
         }
     }
 
+    getOwnerUserId(): string | null { return this.ownerUserId; }
+
     get currentModeId(): string | null {
         return null;
     }
@@ -272,6 +289,31 @@ export class PiSession implements AgentSession {
 
     getPendingAssistant(): string | undefined {
         return this.pendingAssistantBuf?.join("");
+    }
+
+    getActivePageTurnAttribution(): { turnId: string; assistantId: string } | null {
+        return hostOwner(this.owner).kind === 'chat_node' ? this.activePageTurnAttribution : null;
+    }
+
+    getActiveMaintenanceExecutionContext(): MaintenanceExecutionContext | null {
+        return this.activeMaintenanceExecutionContext;
+    }
+
+    private maintenanceContextForSend(input?: AgentTurnInput): MaintenanceExecutionContext | null {
+        if (!isMaintenanceProfile(this.toolProfile)) {
+            if (input?.maintenanceContext) throw new Error('Maintenance context supplied to a non-maintenance Pi session');
+            return null;
+        }
+        const context = input?.maintenanceContext;
+        if (!context || hostOwner(this.owner).kind !== 'chat_node' || !input?.turnId || !input.assistantMessageId
+            || context.workspaceId !== this.workspaceId
+            || context.ownerUserId !== (this.ownerUserId ?? 'local-user')
+            || !context.jobId || !context.runId || !context.claimedBy || !context.planId
+            || !Number.isSafeInteger(context.configRevision) || context.configRevision < 1
+            || !Array.isArray(context.sources)) {
+            throw new Error('Maintenance Pi send is missing a valid owner, workspace, or canonical turn binding');
+        }
+        return { ...context, execution: { nodeId: this.owner.key, turnId: input.turnId, assistantId: input.assistantMessageId, runId: context.runId } };
     }
 
     describeNativeState(): Record<string, unknown> {
@@ -287,18 +329,16 @@ export class PiSession implements AgentSession {
     }
 
     async *send(rawUserText: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
-        if (this.destroyed) {
-            yield { kind: "turn_end", stopReason: "error" };
-            return;
-        }
-
-        if (this.recoveryError) throw this.recoveryError;
+        this.assertAvailable();
         if (this.turnAbort || this.inFlightPrompt || this.mcpInitialization || this.mcpCleanup) {
             throw new Error('The previous Pi task is still stopping. Please retry after it finishes; no new request was sent.');
         }
+        const maintenanceContext = this.maintenanceContextForSend(input);
         this.turnPermissionMode = chatPermissionMode(this.owner, this.ownerUserId);
         const controller = new AbortController();
         this.turnAbort = controller;
+        const pageTurnAttribution = hostOwner(this.owner).kind === 'chat_node' && input?.turnId && input.assistantMessageId
+            ? { turnId: input.turnId, assistantId: input.assistantMessageId } : null;
 
         this.history.push({ role: "user", content: rawUserText });
 
@@ -306,6 +346,8 @@ export class PiSession implements AgentSession {
         this.pendingAssistantBuf = buf;
 
         try {
+            this.activePageTurnAttribution = pageTurnAttribution;
+            this.activeMaintenanceExecutionContext = maintenanceContext;
             for await (const ev of this.runTurn(rawUserText, controller.signal, input)) {
                 if (ev.kind === "chunk") buf.push(ev.text);
                 yield ev;
@@ -325,6 +367,8 @@ export class PiSession implements AgentSession {
         } finally {
             controller.abort();
             if (this.turnAbort === controller) this.turnAbort = undefined;
+            if (this.activePageTurnAttribution === pageTurnAttribution) this.activePageTurnAttribution = null;
+            if (this.activeMaintenanceExecutionContext === maintenanceContext) this.activeMaintenanceExecutionContext = null;
             if (buf.length > 0) {
                 this.history.push({ role: "assistant", content: buf.join("") });
             }
@@ -396,13 +440,23 @@ export class PiSession implements AgentSession {
         // Reset the per-turn image budget before each LLM-driven loop.
         this.imageQuota.usedBytes = 0;
 
+        // Retry only failed MCP setup on later turns. Connected servers remain
+        // session-scoped; a partial first catalog must not become permanent.
+        const mcpTools = isMetaAgentProfile(this.toolProfile) ? [] : await this.initMcpTools(Type, signal);
+        signal.throwIfAborted();
+        for (const warning of this.mcpWarnings.splice(0)) yield warning;
+        if (this.agent) {
+            this.agent.state.tools = [
+                ...this.agent.state.tools.filter((tool: { name: string }) => !tool.name.startsWith('mcp__')),
+                ...mcpTools.filter((tool) => this.isToolAllowed(tool.name)),
+            ];
+        }
+
         // Lazily build the Agent on the first turn (and reuse on subsequent turns).
         if (!this.agent) {
-            // Connect to configured MCP servers (lazy, once per session).
-            const mcpTools = await this.initMcpTools(Type, signal);
-            signal.throwIfAborted();
 
-            const tools = buildPiTools({
+            // Maintenance gets only its dedicated tools below, never the chat builtins.
+            const tools = isMaintenanceProfile(this.toolProfile) ? [] : buildPiTools({
                 bridge: this.bridge,
                 cwd: this.cwd,
                 // parentChatId here is the parent OF the spawned children (= this session),
@@ -418,27 +472,50 @@ export class PiSession implements AgentSession {
                 // each turn. show_image routes its inline image through here.
                 emitImage: (ev) => this.activePush?.(ev),
                 requestThreadMessageApproval: (request, signal) => this.requestThreadMessageApproval(request, signal),
+                requestScheduledJobApproval: (request, signal) => this.requestScheduledJobApproval(request, signal),
                 agentRunTools: resolveAgentRunToolsForSession(this.bridge, {
                     runtimeId: this.runtimeId,
                     sessionId: this.id,
                     owner: this.owner,
                     ownerUserId: this.ownerUserId,
                     workspaceId: this.workspaceId,
-                    nodeId: this.owner.kind === 'chat_node' ? this.owner.nodeId : null,
+                    nodeId: chatNodeOf(this.owner) ?? null,
                 }),
                 owner: this.owner,
                 toolProfile: this.toolProfile,
+                getActivePageTurnAttribution: () => this.getActivePageTurnAttribution(),
             }).filter((tool) => this.isToolAllowed(tool.name));
+
+            if (isMaintenanceProfile(this.toolProfile)) {
+                const maintenanceTools = createMaintenanceTools(() => this.getActiveMaintenanceExecutionContext(), {});
+                for (const tool of maintenanceTools) {
+                    if (!META_AGENT_MAINTENANCE_TOOL_NAMES.includes(tool.name) || !this.isToolAllowed(tool.name)) continue;
+                    const parameters = mcpInputSchemaToTypebox(tool.parameters as unknown as Record<string, unknown>, Type);
+                    tools.push({
+                        name: tool.name,
+                        label: tool.name.replaceAll('_', ' '),
+                        description: tool.description,
+                        parameters,
+                        execute: async (_id: string, args: Record<string, unknown>) => {
+                            const { __tool_use_purpose: _purpose, ...input } = args ?? {};
+                            return tool.execute(input);
+                        },
+                    });
+                }
+            }
 
             // Append tools from configured MCP servers.
             if (mcpTools.length > 0) {
                 tools.push(...mcpTools.filter((tool) => this.isToolAllowed(tool.name)));
             }
+            if (isMetaAgentProfile(this.toolProfile)) {
+                assertMetaAgentToolCatalog({ runtimeId: this.runtimeId, profile: this.toolProfile, observed: tools.map((tool: { name: string }) => tool.name) });
+            }
 
             // Per-workspace Instructions panel feeds the system prompt directly
             // here. Pi has no warm pool, so we can apply it at session creation
             // without violating any pool-key invariants.
-            const workspaceInstructions = this.workspaceId
+            const workspaceInstructions = !isMaintenanceProfile(this.toolProfile) && this.workspaceId
                 ? deps.historyStore.getWorkspaceInstructions(this.workspaceId)
                 : null;
             const systemPrompt = [this.preamble, workspaceInstructions]
@@ -469,6 +546,17 @@ export class PiSession implements AgentSession {
                     signal?: AbortSignal,
                 ): Promise<{ block: boolean; reason?: string } | undefined> => {
                     signal?.throwIfAborted();
+                    if (isAssistantProfile(this.toolProfile)) {
+                        // The assistant's tools enforce their own approvals; nothing else exists.
+                        return piAssistantToolDecision(bcCtx.toolCall.name) === "allow"
+                            ? undefined
+                            : { block: true, reason: "The Michi assistant does not edit files, run commands or use other tools" };
+                    }
+                    if (isMaintenanceProfile(this.toolProfile)) {
+                        return this.activeMaintenanceExecutionContext && this.isToolAllowed(bcCtx.toolCall.name)
+                            ? undefined
+                            : { block: true, reason: 'This Pi session may run only dedicated maintenance tools.' };
+                    }
                     if (!this.isToolAllowed(bcCtx.toolCall.name)) {
                         return { block: true, reason: "tool is not enabled for this Agent Run" };
                     }
@@ -580,7 +668,9 @@ export class PiSession implements AgentSession {
         const { images, promptNote } = prepareAttachments(input?.attachments);
         const imageBlocks = buildPiImageBlocks(images);
         const textWithReminder =
-            promptText + promptNote + followUpReminder(userTurnCount, this.enableFollowUps);
+            maintenancePromptPrefix(input?.maintenanceContext)
+            + (input?.pageContext ? `${input.pageContext}\n\n---\n\n` : '')
+            + promptText + promptNote + followUpReminder(userTurnCount, this.enableFollowUps);
 
         // Kick off the prompt; don't await it here — yield events as they arrive.
         signal.throwIfAborted();
@@ -666,7 +756,7 @@ export class PiSession implements AgentSession {
     ): Promise<string | null> {
         if (!this.activePush || signal?.aborted) return null;
         const requestId = this.nextRequestId++;
-        const options: PermissionOption[] = explicit?.options ?? (this.owner.kind === 'chat_node' ? chatApprovalOptions(toolName) : [
+        const options: PermissionOption[] = explicit?.options ?? (!isRunOwner(this.owner) ? chatApprovalOptions(toolName) : [
             { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
             { optionId: "reject_once", name: "Deny", kind: "reject_once" },
         ]);
@@ -703,7 +793,7 @@ export class PiSession implements AgentSession {
     }
 
     /**
-     * send_to_thread's own per-message approval. Independent of the chat's
+     * send_to_thread's optional, explicitly requested approval. Independent of the chat's
      * permission mode and grants: only an explicit "allow_once" approves, and
      * no grant or session trust is recorded.
      */
@@ -724,8 +814,29 @@ export class PiSession implements AgentSession {
         return { approved: false, reason: answer === null ? "no_answer" : "declined" };
     }
 
+    /**
+     * A scheduled job change's own approval. Like send_to_thread it ignores
+     * the chat's permission mode and grants: only "allow_once" approves.
+     */
+    private async requestScheduledJobApproval(
+        request: ScheduledJobApprovalRequest,
+        signal: AbortSignal | undefined,
+    ): Promise<ScheduledJobApprovalResult> {
+        const { title, detail } = scheduledJobApprovalPrompt(request);
+        const answer = await this.requestPermission(request.toolName, request, signal, {
+            title,
+            detail,
+            options: [
+                { optionId: "reject_once", name: "Cancel", kind: "reject_once" },
+                { optionId: "allow_once", name: request.approveLabel, kind: "allow_once" },
+            ],
+        });
+        if (answer === "allow_once") return { approved: true };
+        return { approved: false, reason: answer === null ? "no_answer" : "declined" };
+    }
+
     respondToPermission(requestId: number, optionId: string): void {
-        if (this.owner.kind === 'agent_run' && optionId === 'allow_session') throw new Error('Invalid permission option');
+        if (isRunOwner(this.owner) && optionId === 'allow_session') throw new Error('Invalid permission option');
         if (optionId !== 'allow_once' && optionId !== 'allow_always' && optionId !== 'allow_session' && optionId !== 'reject_once') throw new Error('Invalid permission option');
         const entry = this.pendingPermissions.get(requestId);
         if (!entry) return;
@@ -824,7 +935,15 @@ export class PiSession implements AgentSession {
         };
     }
 
-    destroy(): void {
+    destroy(): void { void this.dispose().catch(() => {}); }
+
+    assertAvailable(): void {
+        if (this.recoveryError) throw this.recoveryError;
+        if (this.destroyed) throw Object.assign(new Error('Pi session has been disposed'), { code: 'PI_SESSION_DISPOSED' });
+    }
+
+    /** Await native prompt/MCP retirement before the public id may be reused. */
+    async dispose(): Promise<void> {
         this.destroyed = true;
         this.cancel();
         for (const [, entry] of this.pendingPermissions) {
@@ -832,8 +951,14 @@ export class PiSession implements AgentSession {
             entry.resolve(null);
         }
         this.pendingPermissions.clear();
+        try {
+            await withDeadline(Promise.all([
+                this.inFlightPrompt,
+                this.mcpInitialization?.catch(() => {}),
+                this.disposeMcpManager(),
+            ]), 5_000, 'Pi resources did not stop in time');
+        } catch { throw this.markUnavailable('Pi resources could not be stopped within 5 seconds.'); }
         this.agent = undefined;
-        void this.disposeMcpManager().catch(() => {});
     }
 
     private markUnavailable(reason: string): Error {
@@ -864,10 +989,9 @@ export class PiSession implements AgentSession {
      * Lazily connect to configured MCP servers and convert their tools into
      * Pi-compatible AgentTool entries.
      *
-     * Called once per session on the first turn — subsequent turns reuse
-     * the already-connected manager and the cached tool array.
+     * Subsequent turns reuse connected servers and retry failed setup.
      *
-     * Errors are non-fatal: a failed MCP connection logs a warning but does
+     * Errors are non-fatal: a failed MCP connection emits a setup warning but does
      * not prevent the session from running (with built-in tools only).
      */
     private initMcpTools(Type: any, signal: AbortSignal): Promise<any[]> {
@@ -884,37 +1008,54 @@ export class PiSession implements AgentSession {
             return this.mcpManager ? buildMcpToolsForPi({ mcpManager: this.mcpManager, Type }) : [];
         }
 
+        // These are process-global desktop configs. A cloud session must not
+        // inherit another user's commands, environment.
+        // Until per-owner config exists, fail closed with an actionable warning.
+        if (process.env.MICHI_CLOUD === '1') {
+            this.mcpWarnings.push({ kind: 'warning', source: 'mcp', category: 'setup',
+                code: 'MCP_CLOUD_CONFIG_UNAVAILABLE',
+                message: 'External Pi MCP servers require per-user configuration in cloud mode and were not loaded.' });
+            this.mcpInitialized = true;
+            return [];
+        }
 
-        const configs = readPiMcpServers();
+        let configs: ReturnType<typeof readPiMcpServers>;
+        try { configs = readPiMcpServers(); }
+        catch (error) {
+            this.mcpWarnings.push({ kind: 'warning', source: 'mcp', category: 'setup',
+                code: 'MCP_CONFIG_INVALID', message: (error as Error).message });
+            return this.mcpManager ? buildMcpToolsForPi({ mcpManager: this.mcpManager, Type }) : [];
+        }
         if (configs.length === 0) {
             this.mcpInitialized = true;
             return [];
         }
 
         signal.throwIfAborted();
-        const manager = new McpClientManager();
+        const manager = this.mcpManager ?? new McpClientManager({ ownerUserId: this.ownerUserId });
         this.mcpManager = manager;
+        let failed = false;
         try {
             for (const cfg of configs) {
                 signal.throwIfAborted();
+                if (manager.connectedServers().includes(cfg.serverName)) continue;
                 try {
                     await abortable(manager.connect({ ...cfg, cwd: cfg.cwd ?? this.cwd }, signal), signal);
                 } catch (err) {
                     signal.throwIfAborted();
                     if ((err as { code?: string }).code === 'MCP_CLEANUP_TIMEOUT') throw err;
-                    console.warn(
-                        `[PiSession] MCP server "${cfg.serverName}" (${cfg.command}) failed to connect:`,
-                        (err as Error).message,
-                    );
+                    failed = true;
+                    this.mcpWarnings.push({ kind: 'warning', source: 'mcp', category: 'setup',
+                        serverName: cfg.serverName, message: (err as Error).message });
                 }
             }
             signal.throwIfAborted();
             if (manager.connectedServers().length === 0) {
                 await this.disposeMcpManager();
-                this.mcpInitialized = true;
+                this.mcpInitialized = !failed;
                 return [];
             }
-            this.mcpInitialized = true;
+            this.mcpInitialized = !failed;
             return buildMcpToolsForPi({ mcpManager: manager, Type });
         } catch (error) {
             await this.disposeMcpManager();

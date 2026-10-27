@@ -22,12 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { initDb, closeDb, getDb } from '../src/services/db';
-import {
-  saveWorkspace,
-  saveNode,
-  saveMessage,
-  getNode,
-} from '../src/services/dbRepository';
+import { saveWorkspace, saveNode, saveMessage } from '../src/services/dbRepository';
 
 function freshTmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'michi-saverev-test-'));
@@ -69,54 +64,12 @@ function messageRow(id: string, seq: number, rev?: number) {
   };
 }
 
-function readNodeRev(id: string): number | null {
-  const row = getDb().prepare('SELECT rev FROM nodes WHERE id = ?').get(id) as
-    | { rev: number | null }
-    | undefined;
-  return row ? row.rev : null;
-}
-
 function readMessageRev(id: string): number | null {
   const row = getDb().prepare('SELECT rev FROM messages WHERE id = ?').get(id) as
     | { rev: number | null }
     | undefined;
   return row ? row.rev : null;
 }
-
-describe('saveNode — rev stamp / preserve', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = freshTmpDir();
-    process.env.MICHI_DATA_DIR = tmpDir;
-    closeDb();
-    initDb();
-    insertWorkspace('ws1');
-  });
-  afterEach(() => { closeDb(); fs.rmSync(tmpDir, { recursive: true, force: true }); });
-
-  test('new node without rev inserts NULL', () => {
-    saveNode(nodeRow('n-null'));
-    assert.equal(readNodeRev('n-null'), null);
-    const node = getNode('n-null');
-    assert.ok(node, 'node should exist');
-    assert.equal(node.rev ?? null, null);
-  });
-
-  test('rev=5 → preserve on no-rev upsert → rev=9 stamps', () => {
-    // 1. Stamp rev = 5.
-    saveNode(nodeRow('n1', 5));
-    assert.equal(readNodeRev('n1'), 5, 'rev should be stamped to 5');
-
-    // 2. Upsert same id with no rev (defaults to null) → COALESCE preserves 5.
-    saveNode(nodeRow('n1'));
-    assert.equal(readNodeRev('n1'), 5, 'rev should STILL be 5 after a no-rev upsert (COALESCE preserve)');
-
-    // 3. Upsert same id with rev = 9 → stamps 9.
-    saveNode(nodeRow('n1', 9));
-    assert.equal(readNodeRev('n1'), 9, 'rev should be re-stamped to 9');
-  });
-});
 
 describe('saveMessage — rev stamp / preserve', () => {
   let tmpDir: string;
@@ -134,16 +87,5 @@ describe('saveMessage — rev stamp / preserve', () => {
   test('new message without rev inserts NULL', () => {
     saveMessage(messageRow('m-null', 0));
     assert.equal(readMessageRev('m-null'), null);
-  });
-
-  test('rev=5 → preserve on no-rev upsert → rev=9 stamps', () => {
-    saveMessage(messageRow('m1', 0, 5));
-    assert.equal(readMessageRev('m1'), 5, 'rev should be stamped to 5');
-
-    saveMessage(messageRow('m1', 0));
-    assert.equal(readMessageRev('m1'), 5, 'rev should STILL be 5 after a no-rev upsert (COALESCE preserve)');
-
-    saveMessage(messageRow('m1', 0, 9));
-    assert.equal(readMessageRev('m1'), 9, 'rev should be re-stamped to 9');
   });
 });

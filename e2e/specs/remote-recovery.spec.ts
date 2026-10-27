@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { openSettings, settingsMain } from '../fixtures/shell';
+
+const recoveryGraceMs = 5 * 60_000;
 
 const connection = { id: 'remote-c', name: 'build+', transport: 'ssh', sshHost: 'build+', remotePort: 4444, hasToken: true, createdAt: 1, updatedAt: 1 };
 const localStatus = (available: boolean) => ({ runtime: 'mock', label: 'Local Mock', hasRequiredKey: available,
@@ -32,12 +35,10 @@ for (const entry of ['settings', 'workspace']) {
       await page.getByRole('dialog', { name: 'New workspace' }).getByLabel('Backend connection').selectOption('__add_remote__');
     } else {
       await bootWithWorkspace(page);
-      await page.getByText('Settings', { exact: true }).last().click();
-      const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-      await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+      const settings = await openSettings(page, 'General');
       await settings.getByRole('button', { name: 'Connect remote', exact: true }).click();
     }
-    const dialog = page.getByRole('dialog', { name: entry === 'workspace' ? 'New workspace' : 'Settings', exact: true });
+    const dialog = entry === 'workspace' ? page.getByRole('dialog', { name: 'New workspace', exact: true }) : settingsMain(page);
     await dialog.getByLabel(/\S+ SSH host$/).fill('build+');
     await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
     await expect(dialog.getByText('Claude Code needs sign-in.', { exact: true })).toBeVisible();
@@ -59,8 +60,38 @@ for (const entry of ['settings', 'workspace']) {
   });
 }
 
+test('a remote that reconnects during startup never shows an unavailable indicator', async ({ page }, testInfo) => {
+  await page.clock.install();
+  let online = false;
+  let attempts = 0;
+  const localWorkspace = { workspace: { id: 'local-ws', name: 'Local project', created_at: 1 }, nodes: [], trees: [], edges: [], messages: [], artifacts: [] };
+  const remoteWorkspace = { ...localWorkspace, workspace: { id: 'remote-ws', name: 'Remote recovered', created_at: 2 } };
+  await installMockApi(page, { workspaces: [localWorkspace], custom: async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [connection] } }); return true; }
+    if (path.endsWith('/proxy/workspaces/all')) {
+      attempts++;
+      await route.fulfill(online ? { json: { workspaces: [remoteWorkspace] } } : { status: 502, json: { error: 'Starting remote Michi…' } });
+      return true;
+    }
+    return false;
+  } });
+  await page.goto('/');
+  await expect.poll(() => attempts).toBeGreaterThanOrEqual(2);
+  const indicator = page.getByRole('button', { name: /Remote connection details:/ });
+  await expect(indicator).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Remote connection issues' })).toHaveCount(0);
+  online = true;
+  await expect(page.getByRole('complementary').getByText('Remote recovered', { exact: true })).toBeVisible();
+  await page.clock.fastForward(recoveryGraceMs);
+  await expect(indicator).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Remote connections' })).toBeHidden();
+  await page.screenshot({ path: testInfo.outputPath('remote-startup-recovered.png') });
+});
+
 for (const hasLocalRuntime of [true, false]) {
   test(`background recovery shows persistent diagnostics and ${hasLocalRuntime ? 'local agent handoff' : 'copy fallback'}`, async ({ page }, testInfo) => {
+    await page.clock.install();
     await page.setViewportSize({ width: 980, height: 940 });
     await page.addInitScript(clipboard);
     let online = false;
@@ -82,9 +113,14 @@ for (const hasLocalRuntime of [true, false]) {
     await page.goto('/');
     await expect(page.getByRole('button', { name: 'Local project', exact: true }).first()).toBeVisible();
     const notice = page.getByRole('region', { name: 'Remote connection issues' });
-    await expect(notice.getByText('build+ is unavailable')).toBeVisible();
-    await expect(notice.getByText(/SSH authentication expired/)).toHaveCount(0);
-    await notice.getByRole('button', { name: 'Details', exact: true }).click();
+    await expect.poll(() => attempts).toBeGreaterThanOrEqual(2);
+    await expect(notice).toHaveCount(0);
+    const indicator = page.getByRole('button', { name: 'Remote connection details: build+ is unavailable' });
+    await expect(indicator).toHaveCount(0);
+    await page.clock.fastForward(recoveryGraceMs);
+    await expect(indicator).toBeVisible();
+    await expect(indicator).toHaveText('');
+    await indicator.click();
     const issue = page.getByRole('dialog', { name: 'Remote connections' });
     await issue.getByText('Connection details', { exact: true }).click();
     await expect(issue.getByText(/SSH authentication expired/).first()).toBeVisible();
@@ -119,7 +155,8 @@ for (const hasLocalRuntime of [true, false]) {
   });
 }
 
-test('multiple outages stay compact, dismiss without stopping retries, and reopen from the topbar', async ({ page }, testInfo) => {
+test('multiple outages stay quiet during startup, then show only an icon while retries continue', async ({ page }, testInfo) => {
+  await page.clock.install();
   await page.setViewportSize({ width: 1440, height: 960 });
   const connections = [connection, { ...connection, id: 'remote-d', name: 'build-' }];
   const attempts: Record<string, number> = {};
@@ -139,19 +176,23 @@ test('multiple outages stay compact, dismiss without stopping retries, and reope
   } });
   await page.goto('/');
   const notice = page.getByRole('region', { name: 'Remote connection issues' });
-  await expect(notice.getByText('2 remotes unavailable')).toBeVisible();
-  expect((await notice.boundingBox())!.height).toBeLessThanOrEqual(40);
-  await page.screenshot({ path: testInfo.outputPath('remote-notice-compact.png') });
-  const sidebar = page.getByRole('complementary');
-  const beforeDismiss = (await sidebar.boundingBox())!.y;
-  await notice.getByRole('button', { name: 'Dismiss remote connection notice' }).click();
-  await expect(notice).toHaveCount(0);
-  await expect.poll(async () => (await sidebar.boundingBox())!.y).toBeLessThan(beforeDismiss);
-  const afterDismiss = { ...attempts };
-  await expect.poll(() => attempts['remote-c']).toBeGreaterThan(afterDismiss['remote-c']);
-  await expect.poll(() => attempts['remote-d']).toBeGreaterThan(afterDismiss['remote-d']);
+  await expect.poll(() => Math.min(attempts['remote-c'] ?? 0, attempts['remote-d'] ?? 0)).toBeGreaterThanOrEqual(2);
   await expect(notice).toHaveCount(0);
   const indicator = page.getByRole('button', { name: 'Remote connection details: 2 remotes unavailable' });
+  await expect(indicator).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('remote-startup-quiet.png') });
+  const sidebar = page.getByRole('complementary');
+  const startupY = (await sidebar.boundingBox())!.y;
+  await page.clock.fastForward(recoveryGraceMs);
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveText('');
+  await expect(notice).toHaveCount(0);
+  expect((await sidebar.boundingBox())!.y).toBe(startupY);
+  await page.screenshot({ path: testInfo.outputPath('remote-icon-only.png') });
+  const previousAttempts = { ...attempts };
+  await expect.poll(() => attempts['remote-c']).toBeGreaterThan(previousAttempts['remote-c']);
+  await expect.poll(() => attempts['remote-d']).toBeGreaterThan(previousAttempts['remote-d']);
+  await expect(notice).toHaveCount(0);
   await indicator.click();
   const drawer = page.getByRole('dialog', { name: 'Remote connections' });
   await expect(drawer.getByRole('heading', { name: 'build+', exact: true })).toBeVisible();
@@ -163,7 +204,7 @@ test('multiple outages stay compact, dismiss without stopping retries, and reope
   await expect(drawer).toBeHidden();
   await expect(indicator).toBeFocused();
   await expect(page.locator('.drawer-shell-panel')).toHaveCount(0);
-  await page.screenshot({ path: testInfo.outputPath('remote-notice-dismissed.png') });
+  await page.screenshot({ path: testInfo.outputPath('remote-details-closed.png') });
   await indicator.click();
   recovered.add('remote-c');
   await drawer.getByRole('region', { name: 'Remote recovery: build+' }).getByRole('button', { name: 'Try again' }).click();
@@ -177,22 +218,24 @@ test('multiple outages stay compact, dismiss without stopping retries, and reope
 });
 
 test('long remote names and diagnostics fit a narrow dark window, with both close controls reachable', async ({ page }, testInfo) => {
+  await page.clock.install();
   await page.setViewportSize({ width: 620, height: 700 });
   const name = 'remote-development-'.repeat(8);
+  let attempts = 0;
   const localWorkspace = { workspace: { id: 'local-ws', name: 'Local project', created_at: 1 }, nodes: [], trees: [], edges: [], messages: [], artifacts: [] };
   await installMockApi(page, { workspaces: [localWorkspace], custom: async route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/prefs') { await route.fulfill({ json: { prefs: { onboardingCompletedAt: 1, terminalPalette: 'gruvbox' } } }); return true; }
     if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [{ ...connection, name }] } }); return true; }
-    if (path.endsWith('/proxy/workspaces/all')) { await route.fulfill({ status: 502, json: { error: 'Remote backend unavailable: ' + 'unbroken-error-'.repeat(30) } }); return true; }
+    if (path.endsWith('/proxy/workspaces/all')) { attempts++; await route.fulfill({ status: 502, json: { error: 'Remote backend unavailable: ' + 'unbroken-error-'.repeat(30) } }); return true; }
     return false;
   } });
   await page.goto('/');
   const notice = page.getByRole('region', { name: 'Remote connection issues' });
-  await expect(notice).toBeVisible();
-  expect((await notice.boundingBox())!.height).toBeLessThanOrEqual(40);
-  await expect.poll(() => notice.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
-  await notice.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect.poll(() => attempts).toBeGreaterThanOrEqual(2);
+  await page.clock.fastForward(recoveryGraceMs);
+  await expect(notice).toHaveCount(0);
+  await page.getByRole('button', { name: /Remote connection details:/ }).click();
   const drawer = page.getByRole('dialog', { name: 'Remote connections' });
   await drawer.getByText('Connection details', { exact: true }).click();
   await drawer.getByRole('button', { name: 'View logs' }).click();
@@ -202,7 +245,6 @@ test('long remote names and diagnostics fit a narrow dark window, with both clos
   await page.screenshot({ path: testInfo.outputPath('remote-details-narrow-dark.png') });
   await drawer.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.locator('.drawer-shell-panel')).toHaveCount(0);
-  await notice.getByRole('button', { name: 'Dismiss remote connection notice' }).click();
   await expect(notice).toHaveCount(0);
   await page.getByRole('button', { name: /Remote connection details:/ }).click();
   await expect(drawer).toBeVisible();

@@ -9,7 +9,10 @@ import { reduceProject } from './chatReducers';
 import { descendants } from './tree';
 import type { ChatAction, ChatNodeState, FolderEntry, Project } from './chatTypes';
 import type { Prefs } from './prefs';
-import { LOCAL_BACKEND_CONNECTION_ID } from '../config/backendConnections';
+import { backendConnectionIdForWorkspace, LOCAL_BACKEND_CONNECTION_ID } from '../config/backendConnections';
+import { backendEntityId } from '../config/backendIdentity';
+import { isSystemWorkspace } from './assistant/systemWorkspace';
+import { userWorkspaceToReturnTo } from './assistant/userWorkspace';
 
 type PaneUpdater<T> = T | ((prev: T) => T);
 type PaneSetter<T> = (updater: PaneUpdater<T>) => void;
@@ -35,12 +38,12 @@ export function useProjectActions({
 }: UseProjectActionsArgs) {
   const createProject = useCallback(
     async (name?: string, cwd?: string, initFolders?: FolderEntry[], backendConnectionId?: string) => {
-      const projectId = `p-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const connectionId = backendConnectionId || LOCAL_BACKEND_CONNECTION_ID;
+      const projectId = backendEntityId(connectionId, `p-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
       const finalName = (name && name.trim()) || nextUntitledName(projects);
       const now = Date.now();
 
       let resolvedCwd = cwd;
-      const connectionId = backendConnectionId || LOCAL_BACKEND_CONNECTION_ID;
       if (!resolvedCwd && connectionId === LOCAL_BACKEND_CONNECTION_ID) {
         const electron = getElectron();
         if (electron?.resolveSkipCwd) {
@@ -116,9 +119,19 @@ export function useProjectActions({
   const setProjectCwd = useCallback((projectId: string, cwd: string) => {
     const trimmed = cwd.trim();
     if (!trimmed) return;
-    setProjects((prev) => prev.map((p) => (
-      p.id === projectId && p.cwd !== trimmed ? { ...p, cwd: trimmed } : p
-    )));
+    setProjects((prev) => prev.map((p) => {
+      if (p.id !== projectId) return p;
+      const existing = p.folders ?? [];
+      if (p.cwd === trimmed && existing[0]?.path === trimmed) return p;
+      const selected = existing.find((folder) => folder.path === trimmed);
+      // The first folder is the workspace default. Selecting an existing
+      // secondary folder keeps both registrations; a new path replaces the
+      // previous default. Runtime bindings belong to nodes and stay intact.
+      const folders = selected
+        ? [selected, ...existing.filter((folder) => folder.id !== selected.id)]
+        : [{ id: Math.random().toString(36).slice(2, 10), path: trimmed, addedAt: Date.now() }, ...existing.slice(1)];
+      return { ...p, cwd: trimmed, folders };
+    }));
   }, [setProjects]);
 
   const addFolder = useCallback((projectId: string, folderPath: string, label?: string) => {
@@ -143,7 +156,7 @@ export function useProjectActions({
         label,
         addedAt: Date.now(),
       };
-      return { ...p, folders: [...existing, entry] };
+      return { ...p, cwd: existing[0]?.path ?? resolved, folders: [...existing, entry] };
     }));
   }, [setProjects]);
 
@@ -194,7 +207,7 @@ export function useProjectActions({
         );
         if (activeProjectId === projectId) {
           const live = next.find(
-            (p) => !p.deletedAt && !p.archivedAt && p.id !== projectId,
+            (p) => !p.deletedAt && !p.archivedAt && p.id !== projectId && !isSystemWorkspace(p),
           );
           setActiveProjectId(live?.id ?? null);
         }
@@ -222,7 +235,7 @@ export function useProjectActions({
         );
         if (activeProjectId === projectId) {
           const live = next.find(
-            (p) => !p.deletedAt && !p.archivedAt && p.id !== projectId,
+            (p) => !p.deletedAt && !p.archivedAt && p.id !== projectId && !isSystemWorkspace(p),
           );
           setActiveProjectId(live?.id ?? null);
         }
@@ -289,7 +302,8 @@ interface UseTreeActionsArgs {
   nodesRef: MutableRefObject<Record<string, ChatNodeState>>;
   cancelFns: MutableRefObject<Record<string, () => void>>;
   dispatch: (action: ChatAction) => void;
-  newNodeId: () => string;
+  /** Allocates a node id in `projectId`'s backend scope (default: the active workspace). */
+  newNodeId: (projectId?: string) => string;
   setProjects: Dispatch<SetStateAction<Project[]>>;
   setNodes: Dispatch<SetStateAction<Record<string, ChatNodeState>>>;
   setOpenPanes: PaneSetter<string[]>;
@@ -297,6 +311,8 @@ interface UseTreeActionsArgs {
   setPaneSlot: (projectId: string, treeId: string, panes: string[], focused: string | null) => void;
   ensurePaneSlot: (projectId: string, treeId: string, rootNodeId: string) => void;
   setFocusedNodeId: Dispatch<SetStateAction<string | null>>;
+  /** Switch the active workspace (createThread leaves the assistant's hidden one). */
+  selectProject?: (projectId: string) => void;
   setSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
   treeSelection: ReadonlySet<string>;
   setTreeSelection: Dispatch<SetStateAction<ReadonlySet<string>>>;
@@ -318,6 +334,7 @@ export function useTreeActions({
   setPaneSlot,
   ensurePaneSlot,
   setFocusedNodeId,
+  selectProject,
   setSelection,
   treeSelection,
   setTreeSelection,
@@ -325,32 +342,47 @@ export function useTreeActions({
   setSidebarExpanded,
 }: UseTreeActionsArgs) {
   const createThread = useCallback((modeId?: string) => {
-    if (!activeProjectId) return null;
-    const nodeId = newNodeId();
-    const treeId = `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    let projectId = activeProjectId;
+    if (!projectId) return null;
+    // The assistant's hidden workspace is active only while its pane is open;
+    // a thread started then goes to the user's workspace (the one they came
+    // from), never where no list shows it.
+    if (isSystemWorkspace(projects.find((p) => p.id === projectId))) {
+      const back = userWorkspaceToReturnTo(projects);
+      if (!back || !selectProject) return null;
+      selectProject(back);
+      projectId = back;
+    }
+    const targetId = projectId;
+    // Scoped to the target: when the hidden assistant workspace was active,
+    // the ref may not have caught up with the switch above yet.
+    const nodeId = newNodeId(targetId);
+    const treeId = backendEntityId(backendConnectionIdForWorkspace(targetId), `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
     const now = Date.now();
-    dispatch({ type: 'create', nodeId, projectId: activeProjectId, modeId });
+    dispatch({ type: 'create', nodeId, projectId: targetId, modeId });
     setProjects((prev) =>
       prev.map((p) =>
-        p.id === activeProjectId
+        p.id === targetId
           ? reduceProject(p, { type: 'create-tree', treeId, rootNodeId: nodeId, now })
           : p,
       ),
     );
-    setPaneSlot(activeProjectId, treeId, [nodeId], nodeId);
+    setPaneSlot(targetId, treeId, [nodeId], nodeId);
     setFocusedNodeId(nodeId);
-    if (sidebarExpanded.workspaces[activeProjectId] === false) {
+    if (sidebarExpanded.workspaces[targetId] === false) {
       setSidebarExpanded({
         ...sidebarExpanded,
         workspaces: {
           ...sidebarExpanded.workspaces,
-          [activeProjectId]: true,
+          [targetId]: true,
         },
       });
     }
     return nodeId;
   }, [
     activeProjectId,
+    projects,
+    selectProject,
     dispatch,
     newNodeId,
     setFocusedNodeId,

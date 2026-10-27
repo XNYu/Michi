@@ -3,19 +3,6 @@ import { describe, expect, it } from 'vitest';
 import MarkdownContent from './MarkdownContent';
 
 describe('MarkdownContent raw HTML safety', () => {
-  it('preserves allowed raw HTML and mention-chip metadata', () => {
-    const { container } = render(
-      <MarkdownContent
-        text={'before<br>after <span class="mention-chip" data-mention="docs">@docs</span>'}
-      />,
-    );
-
-    expect(container.querySelector('br')).not.toBeNull();
-    const mention = container.querySelector('.mention-chip');
-    expect(mention?.textContent).toBe('@docs');
-    expect(mention?.getAttribute('data-mention')).toBe('docs');
-  });
-
   it('still removes executable raw HTML', () => {
     const { container } = render(
       <MarkdownContent

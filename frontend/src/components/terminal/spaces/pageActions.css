@@ -1,0 +1,5 @@
+.page-action-form { display: flex; flex-direction: column; gap: 16px; padding: 16px; color: var(--term-fg); }
+.page-action-form label { display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-md); }
+.page-action-form p { margin: 0; font-size: var(--fs-lg); line-height: 1.5; }
+.page-action-form [role='alert'] { color: var(--term-danger-text); }
+.page-action-form footer { display: flex; justify-content: flex-end; gap: 8px; }

@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
+
+// Files copied unchanged from the upstream block renderer snapshot.
+const VENDOR_BLOCKS = 'src/components/terminal/content/page/vendor-blocks';
+const vendorVerbatim = JSON.parse(readFileSync(new URL(`./${VENDOR_BLOCKS}/manifest.json`, import.meta.url), 'utf8'))
+  .verbatim.filter((path) => /\.tsx?$/.test(path)).map((path) => `${VENDOR_BLOCKS}/${path}`);
 
 export default tseslint.config(
   {
@@ -77,6 +83,17 @@ export default tseslint.config(
           message: "Use a palette token, e.g. 'var(--term-fg)', not a hex colour.",
         },
       ],
+    },
+  },
+  {
+    // Agent Desk's block code, mirrored verbatim so Desk's diffs apply to it
+    // (desk/page/desk-src/README.md). It keeps Desk's style; the hooks and
+    // safety rules above still apply. Michi's own shims there are linted as usual.
+    files: vendorVerbatim,
+    rules: {
+      'prefer-const': 'off',
+      'no-restricted-syntax': 'off',
+      '@typescript-eslint/no-use-before-define': 'off',
     },
   },
 );

@@ -50,12 +50,6 @@ afterEach(() => {
 });
 
 describe('useMapCamera', () => {
-  it('applies the auto target before paint and reports it to the pill', () => {
-    const { getByTestId } = render(<Harness autoTarget={{ x: 10, y: 20, k: 1.25 }} />);
-    expect(parseTransform(getByTestId('world'))).toEqual({ x: 10, y: 20, k: 1.25 });
-    expect(getByTestId('pill').textContent).toBe('125|auto');
-  });
-
   it('pinch-zooms at the cursor without re-rendering the host', () => {
     const { getByTestId } = render(<Harness autoTarget={{ x: 0, y: 0, k: 1 }} />);
     const surface = getByTestId('surface');

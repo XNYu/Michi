@@ -1,3 +1,5 @@
+import { encodeNodeMentionToken } from '../lib/nodeMentionTokens';
+
 export interface MentionRecord {
   /** Inclusive: index of the leading '@' in the textarea value. */
   start: number;
@@ -46,7 +48,7 @@ export function reanchorMentions(
 /**
  * Convert a draft `(value, mentions)` into the wire string sent to the agent.
  * Context mentions are kept as `@<name>` (already in the value), node mentions
- * are rewritten to `@node:<id>`.
+ * are rewritten to `@node:<encoded-id>`. MentionRecord.refId stays unchanged.
  *
  * Assumes mentions are sorted by `start` and non-overlapping.
  */
@@ -59,7 +61,7 @@ export function expandMentions(value: string, mentions: MentionRecord[]): string
     if (m.kind === 'context') {
       out += `@${m.label}`;
     } else {
-      out += `@node:${m.refId}`;
+      out += encodeNodeMentionToken(m.refId);
     }
     cursor = m.end;
   }

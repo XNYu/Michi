@@ -1,3 +1,4 @@
+import { createSseObserver } from "../services/httpSse";
 import express from "express";
 import path from "path";
 import fs from "fs";
@@ -54,21 +55,14 @@ export function setupDigestRoutes(chatManager: ChatManager) {
         res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders?.();
 
-        let aborted = false;
-        const onClose = () => {
-            if (!aborted && !res.writableEnded) aborted = true;
-        };
-        res.on("close", onClose);
-
+        const observer = createSseObserver(res);
         const send = (event: string, data: unknown) => {
-            if (aborted || res.writableEnded) return;
-            res.write(`event: ${event}\n`);
-            res.write(`data: ${JSON.stringify(data)}\n\n`);
+            observer.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
 
         try {
             for await (const ev of streamDigestGeneration(chatManager, body)) {
-                if (aborted) break;
+                // Drain the producer after observer disconnect; do not cancel its turn.
                 if (ev.kind === "chunk" || ev.kind === "thought" || ev.kind === "status") {
                     send(ev.kind, { text: ev.text });
                 } else if (ev.kind === "done") {
@@ -80,8 +74,8 @@ export function setupDigestRoutes(chatManager: ChatManager) {
             console.error("Digest streaming failed:", err);
             send("error", { message: (err as Error).message });
         } finally {
-            res.off("close", onClose);
-            res.end();
+            observer.close();
+            if (!res.destroyed && !res.writableEnded) res.end();
         }
     });
 

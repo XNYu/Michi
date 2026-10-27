@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
+import { openThreadFromSidebar } from '../fixtures/shell';
 
 const questions = [
   'Where in the Michi source is the completion marker in the set_branch_overview result generated?',
@@ -56,7 +57,7 @@ async function boot(page: Page, palette = 'monokai') {
   }, prefs);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
-  await page.getByText('Tool results', { exact: true }).last().click();
+  await openThreadFromSidebar(page, 'Tool results');
   const pane = page.locator('.terminal-pane[data-node-id="root"]');
   await expect(pane.locator('.t-followup-row')).toHaveCount(3);
   await page.evaluate(() => document.fonts.ready);

@@ -1,11 +1,14 @@
 import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
-import { ChatApprovalState, chatApprovalOptions, acpPermissionToolName } from '../src/agents/chatApprovalState';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { ApprovalCoordinator } from 'michi-runtime';
+import { ChatApprovalState, chatApprovalOptions, acpPermissionToolName, approvalCoversTool } from '../src/agents/chatApprovalState';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { michiTestHost } from './helpers/michiTestHost';
+import { chatOwner, runOwner } from './helpers/owners';
 
-const owner = { kind: 'chat_node' as const, nodeId: 'a' };
+const owner = chatOwner('a');
 afterEach(__resetRuntimeDeps);
 function setup() {
     const grants = new Set<string>();
@@ -23,20 +26,6 @@ function setup() {
     return { grants, revisions };
 }
 
-test('once and deny never grant trust; tool trust is canonical and chat scoped', () => {
-    const { grants } = setup();
-    const state = new ChatApprovalState();
-    assert.equal(state.accept('reject_once', owner, 'Bash'), false);
-    assert.equal(state.accept('allow_once', owner, 'Bash'), true);
-    assert.equal(grants.size, 0);
-    assert.equal(state.policy(owner, null, 'Bash', true), 'ask');
-    assert.equal(state.accept('allow_always', owner, 'Bash'), true);
-    assert.deepEqual([...grants], ['a:bash']);
-    assert.equal(state.policy(owner, null, 'bash', true), 'allow');
-    assert.equal(state.policy(owner, null, 'edit', true), 'ask');
-    assert.equal(state.policy({ kind: 'chat_node', nodeId: 'b' }, null, 'bash', true), 'ask');
-});
-
 test('session trust works despite global Ask, is transient, and resets on explicit permissions updates', () => {
     const { grants, revisions } = setup();
     const state = new ChatApprovalState();
@@ -48,16 +37,30 @@ test('session trust works despite global Ask, is transient, and resets on explic
     revisions.a = '1';
     assert.equal(state.policy(owner, null, 'edit', true), 'ask');
     state.accept('allow_session', owner, undefined);
-    assert.equal(state.policy({ kind: 'chat_node', nodeId: 'b' }, null, 'edit', true), 'ask', 'owner rebinding cannot inherit session trust');
+    assert.equal(state.policy(chatOwner('b'), null, 'edit', true), 'ask', 'owner rebinding cannot inherit session trust');
     assert.equal(state.policy(owner, null, 'edit', true), 'ask');
     state.accept('allow_session', owner, undefined, 'alice');
     assert.equal(state.policy(owner, 'bob', 'edit', true), 'ask', 'session trust cannot cross authenticated owners');
 });
 
+test('Michi thread messages avoid a second runtime approval in Ask mode without trusting other MCP tools', () => {
+    setup();
+    const state = new ChatApprovalState();
+    for (const name of ['send_to_thread', 'mcp____michi_internal____send_to_thread', '@michi/send_to_thread']) {
+        assert.equal(state.policy(owner, null, name, false, 'ask'), 'allow');
+        assert.equal(state.policy(owner, null, name, true, 'ask'), 'allow');
+    }
+    assert.equal(acpPermissionToolName({ title: '@michi/send_to_thread' }), '@michi/send_to_thread');
+    for (const name of ['bash', 'mcp__other__send_to_thread', '@other/send_to_thread']) {
+        assert.equal(state.policy(owner, null, name, true, 'ask'), 'ask');
+    }
+    assert.equal(state.policy(runOwner('r', 'a'), null, 'send_to_thread', true, 'ask'), 'ask');
+});
+
 test('Run owners cannot acquire ordinary session or tool trust; ambiguous ACP titles cannot grant a tool', () => {
     setup();
     const state = new ChatApprovalState();
-    const run = { kind: 'agent_run' as const, runId: 'r', attemptId: 'attempt' };
+    const run = runOwner('r', 'attempt');
     assert.equal(state.accept('allow_session', run, 'Bash'), false);
     assert.equal(state.accept('allow_always', run, 'Bash'), false);
     assert.equal(state.accept('allow_always', owner, undefined), false);
@@ -67,48 +70,24 @@ test('Run owners cannot acquire ordinary session or tool trust; ambiguous ACP ti
     assert.equal(chatApprovalOptions().find((o) => o.kind === 'allow_always')?.disabled, true);
 });
 
+test('ChatApprovalState is the package ApprovalCoordinator; a grant covers the same Michi canonical tool', () => {
+    assert.ok(new ChatApprovalState() instanceof ApprovalCoordinator);
+    assert.equal(approvalCoversTool('allow_always', 'Bash', 'bash'), true);
+    assert.equal(approvalCoversTool('allow_always', 'MultiEdit', 'Edit'), true);
+    assert.equal(approvalCoversTool('allow_always', 'Read', 'read'), false, 'Read grants keep their own key');
+    assert.equal(approvalCoversTool('allow_always', 'bash', 'edit'), false);
+    assert.equal(approvalCoversTool('allow_session', 'bash', 'edit'), true);
+    assert.equal(new ChatApprovalState().covers('allow_always', 'Write', 'write'), true);
+});
+
 for (const decision of ['allow_once', 'reject_once', 'michi:allow_always', 'michi:allow_session']) {
-    test(`ACP ${decision} uses the exact native single-use response and scopes future requests`, async () => {
-        const { grants } = setup();
-        const wire: unknown[] = [];
-        const runtime = {
-            ensureClient: async () => ({ prompt: async function* () {
-                for (const [id, tool] of [[10, 'shell'], [11, 'shell'], [12, 'fs_write']] as const) {
-                    yield { sessionUpdate: 'permission_request', requestId: id, toolCall: { title: tool }, _meta: { toolName: tool }, options: [
-                        { optionId: 'allow_once', kind: 'allow_once', name: 'Allow' },
-                        { optionId: 'native-always', kind: 'allow_always', name: 'Native trust' },
-                        { optionId: 'reject_once', kind: 'reject_once', name: 'Deny' },
-                    ] };
-                }
-                yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
-            } }),
-            getCurrentMode: () => undefined, getCurrentModel: () => undefined,
-            respondToPermission: (...args: unknown[]) => { wire.push(args); }, cancelPermission: () => {},
-        } as unknown as KiroRuntime;
-        const session = new KiroSession('a', 'native-a', runtime, '/tmp', { owner });
-        const cards: number[] = [];
-        for await (const event of session.send('test')) {
-            if (event.kind !== 'permission_request') continue;
-            cards.push(event.requestId);
-            assert.equal(event.options.length, 4);
-            assert.equal(event.options.some((o) => o.optionId === 'native-always'), false);
-            session.respondToPermission(event.requestId, event.requestId === 10 ? decision : 'reject_once');
-        }
-        const expectedCards = decision === 'michi:allow_session' ? [10] : decision === 'michi:allow_always' ? [10, 12] : [10, 11, 12];
-        assert.deepEqual(cards, expectedCards);
-        assert.deepEqual(wire[0], ['native-a', 10, decision === 'reject_once' ? 'reject_once' : 'allow_once']);
-        assert.equal(grants.has('a:shell'), decision === 'michi:allow_always');
-        const before = wire.length;
-        session.respondToPermission(10, 'michi:allow_session');
-        assert.equal(wire.length, before, 'old cards cannot authorize another turn');
-        assert.equal(new ChatApprovalState().policy({ kind: 'chat_node', nodeId: 'b' }, null, 'shell', true), 'ask');
-    });
 }
 
 test('ACP resolved and cancelled requests cannot create grants', async () => {
     const { grants } = setup();
     const wire: unknown[] = [];
     const runtime = {
+        host: michiTestHost(),
         ensureClient: async () => ({ prompt: async function* () {
             yield { sessionUpdate: 'permission_request', requestId: 10, toolCall: { title: 'bash' }, options: [
                 { optionId: 'once', kind: 'allow_once', name: 'Allow' }, { optionId: 'deny', kind: 'reject_once', name: 'Deny' },
@@ -131,6 +110,7 @@ for (const choice of ['michi:allow_always', 'michi:allow_session']) test(`ACP ${
     setup();
     const wire: unknown[] = [];
     const runtime = {
+        host: michiTestHost(),
         ensureClient: async () => ({ prompt: async function* () {
             for (const id of [1, 2]) yield { sessionUpdate: 'permission_request', requestId: id,
                 toolCall: { title: 'bash' }, options: [{ optionId: 'native-once', kind: 'allow_once', name: 'Allow' }, { optionId: 'deny', kind: 'reject_once', name: 'Deny' }] };

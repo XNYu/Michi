@@ -1,6 +1,6 @@
 # Runtime capabilities in Michi
 
-Applies to: registered Kiro CLI, Crew, Pi, Claude and Codex integrations. Source checked: 2026-10-16 against runtime factories, capability descriptors and attachment adapters. This is an integration reference, not a claim that every upstream version/model has passed live acceptance.
+Applies to: registered Kiro CLI, Crew, Pi, Claude and Codex integrations. Source checked: 2026-10-16; Claude SDK integration updated 2026-10-22. This is an integration reference, not a claim that every upstream version/model has passed live acceptance.
 
 ## Read this table
 
@@ -8,7 +8,7 @@ Native means Michi connects to a runtime facility. Michi-managed means the appli
 
 | Capability | Kiro CLI | Kiro Crew | Pi | Claude | Codex |
 | --- | --- | --- | --- | --- | --- |
-| Connection | CLI over ACP | Bundled ACP adapter → official local Gateway | Provider APIs in process | CLI stream-json | CLI app-server JSON-RPC |
+| Connection | CLI over ACP | Bundled ACP adapter → official local Gateway | Provider APIs in process | Agent SDK with installed CLI | CLI app-server JSON-RPC |
 | Model selection | CLI-discovered; engine dependent | Gateway models | Provider/model catalog | CLI catalog | app-server catalog |
 | Reasoning control | Engine/model dependent | Gateway/model dependent | Provider/model dependent | Model dependent | Model dependent |
 | Ordinary chat permission modes | Ask / Trust | Ask / Trust | Ask / Trust | Ask / Trust / YOLO | Ask / Trust / YOLO |
@@ -19,7 +19,7 @@ Native means Michi connects to a runtime facility. Michi-managed means the appli
 | Same-turn steer | Native; engine dependent | Unavailable to official App callers | Native at assistant boundary | Unavailable in this integration | Native |
 | Busy-input fallback | Michi queue where applicable | Next-turn queue | Michi queue where applicable | Next-turn queue | Michi queue where applicable |
 | Native resume | Conditional native load | Gateway session load | Text/context reconstruction | Native resume | Native thread resume |
-| Branch/fork | Native for compatible idle parents; text fallback | Independent Gateway transcript fork with context replay | Michi context-based branch | Native for compatible idle parents; text fallback | Native for compatible idle parents; text fallback |
+| Branch/fork | Native for compatible idle parents; text fallback | Independent Gateway transcript fork with context replay | Michi context-based branch | Native historical fork when a saved message position exists; exact text fallback | Native for compatible idle parents; text fallback |
 | Manual compact from Michi | Connected; engine/version dependent | Unavailable; Crew manages automatic compaction | Unavailable | Unavailable | Connected |
 | Dedicated Crew Memory controls | Not applicable | Read & learn / Read only / Off | Not applicable | Not applicable | Not applicable |
 | Native subagent visibility | Experimental/version dependent | Dedicated updates not connected | No native roster | Inferred from tool activity | Native child discovery with projected events |
@@ -30,6 +30,12 @@ Native means Michi connects to a runtime facility. Michi-managed means the appli
 Workspace history, panes, branches, Artifacts, source references, search, digests, ordinary queues and durable turn replay belong to Michi. They do not imply identical native runtime state or filesystem isolation. A native subagent roster, a Michi conversation branch and an Agent Run are different objects.
 
 Tool availability also depends on configuration and capability allowlists. A selected template may omit tools. Trust cannot expose a missing tool; native provider authentication is independent of Michi permission mode.
+
+## Pages Assistant and automatic maintenance
+
+Source checked for this section: 2026-10-26. The restricted Meta agent profile supports Pi, Claude, Codex and Kiro; Crew is not supported for this profile. The Assistant and background maintenance use **Settings → Meta agent**, independently of ordinary chat settings. Every session must pass a runtime tool-catalog check; a configured runtime can still fail startup or provider authentication.
+
+The current Pages/Meta agent interface supports only the local backend. Ordinary workspace Page tools, the Assistant catalog and maintenance tools are separate capabilities; Agent Runs do not automatically inherit them. See `pages-and-components` and `pages-maintenance`.
 
 ## Kiro engines and Crew
 

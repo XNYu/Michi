@@ -1,6 +1,7 @@
 import { subscribeBackground } from '../services/api';
 import type { BackgroundDisconnect } from '../services/api';
 import type { StreamHandlers } from '../services/chatStreamEvents';
+import type { ScheduledJobRunEvent, ScheduledJobsChangedEvent } from 'michi-shared';
 
 /**
  * One reconnecting SSE feed per ChatProvider. Unlike the retired pane
@@ -16,6 +17,8 @@ export function createBackgroundTurnTransport(opts: {
     gap: { chatId: string; nodeId?: string; turnId: string; seq: number },
     signal: AbortSignal,
   ) => void | Promise<void>;
+  onScheduledJobRun?: (event: ScheduledJobRunEvent) => void;
+  onScheduledJobsChanged?: (event: ScheduledJobsChangedEvent) => void;
   reconnectDelayMs?: number;
   maxReconnectDelayMs?: number;
   random?: () => number;
@@ -34,6 +37,8 @@ export function createBackgroundTurnTransport(opts: {
     cancel = subscribeBackground(opts.handlersForChat, {
       cursors: opts.cursorSnapshot?.() ?? {},
       onReplayGap: opts.onReplayGap,
+      onScheduledJobRun: opts.onScheduledJobRun,
+      onScheduledJobsChanged: opts.onScheduledJobsChanged,
       onOpen: () => {
         if (healthyTimer) clearTimeout(healthyTimer);
         // Do not erase backoff merely because HTTP headers arrived. A replay

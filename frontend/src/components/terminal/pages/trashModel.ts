@@ -1,6 +1,8 @@
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
 import { chatLabel } from '../../../state/chatStore';
 import { isArchiveGroupId } from '../../../state/trashActions';
+import type { PageTrashEntry } from '../../../services/api/pages';
+import { isVisibleConversationNode } from '../../../state/conversationVisibility';
 
 export interface TrashGroup {
   id: string;
@@ -20,17 +22,18 @@ export interface TrashSection {
 
 export type TrashEntry =
   | { kind: 'thread'; project: Project; group: TrashGroup }
-  | { kind: 'workspace'; project: Project; groups: TrashGroup[] };
+  | { kind: 'workspace'; project: Project; groups: TrashGroup[] }
+  | { kind: 'page'; project: Project; page: PageTrashEntry };
 
-export const entryKey = (entry: TrashEntry) => entry.kind === 'thread' ? `thread:${entry.group.id}` : `workspace:${entry.project.id}`;
-export const entryTitle = (entry: TrashEntry) => entry.kind === 'thread' ? entry.group.title : entry.project.name;
-export const entryDeletedAt = (entry: TrashEntry) => entry.kind === 'thread' ? entry.group.deletedAt : entry.project.deletedAt ?? 0;
+export const entryKey = (entry: TrashEntry) => entry.kind === 'thread' ? `thread:${entry.group.id}` : entry.kind === 'page' ? `page:${entry.page.deletionGroupId}` : `workspace:${entry.project.id}`;
+export const entryTitle = (entry: TrashEntry) => entry.kind === 'thread' ? entry.group.title : entry.kind === 'page' ? entry.page.root.title : entry.project.name;
+export const entryDeletedAt = (entry: TrashEntry) => entry.kind === 'thread' ? entry.group.deletedAt : entry.kind === 'page' ? entry.page.deletedAt : entry.project.deletedAt ?? 0;
 export const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 
 export function buildTrashSections(projects: Project[], nodes: Record<string, ChatNodeState>): TrashSection[] {
   const byGroup = new Map<string, ChatNodeState[]>();
   for (const node of Object.values(nodes)) {
-    if (!node.deletionGroupId || isArchiveGroupId(node.deletionGroupId)) continue;
+    if (!node.deletionGroupId || isArchiveGroupId(node.deletionGroupId) || !isVisibleConversationNode(node)) continue;
     const key = `${node.projectId}:${node.deletionGroupId}`;
     const members = byGroup.get(key) ?? [];
     members.push(node);
@@ -77,6 +80,10 @@ export function filterTrashSections(sections: TrashSection[], query: string, old
 
 export function trashItemCount(sections: TrashSection[]) {
   return sections.reduce((sum, section) => sum + (section.project.deletedAt ? 1 : section.groups.length), 0);
+}
+
+export function buildPageTrashEntries(projects: readonly Project[], pagesByWorkspace: ReadonlyMap<string, PageTrashEntry[]>): Extract<TrashEntry, { kind: 'page' }>[] {
+  return projects.flatMap(project => (pagesByWorkspace.get(project.id) ?? []).map(page => ({ kind: 'page' as const, project, page })));
 }
 
 export function remainingDays(group: TrashGroup, ttl: number, now: number): number | null {

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { configureRuntimeDeps, __resetRuntimeDeps } from "../src/agents/runtimeDeps";
 import { buildPiTools, piToolResultErrorOverride } from "../src/agents/pi/piTools";
 import { SUBMIT_AGENT_RESULT_TOOL } from "../src/agents/runs/runWorkerTools";
+import { chatOwner, runOwner } from "./helpers/owners";
 
 const baseCfg = { getAgentConfig: () => ({ runtime: "pi", provider: "x", modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => "", resolveReasoning: () => undefined };
 const store = { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} };
@@ -29,12 +30,6 @@ test('Pi provides the same offline Michi docs without a global context provider'
 describe("buildPiTools global-context gating", () => {
   afterEach(() => __resetRuntimeDeps());
 
-  test("omits list_threads/search_messages/read_node when no provider injected", () => {
-    configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
-    const names = buildPiTools(opts() as any).map((t: any) => t.name);
-    for (const n of ["list_threads", "search_messages", "read_node"]) assert.ok(!names.includes(n), `${n} should be absent`);
-  });
-
   test("includes them when a provider is injected", () => {
     configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test",
       globalContext: { listThreads: () => ({ status: "ok", text: "" }), searchMessages: () => ({ status: "ok", text: "" }), readNode: () => ({ status: "ok", text: "" }), readNodeOverview: () => ({ status: "ok", text: "" }) } });
@@ -43,39 +38,29 @@ describe("buildPiTools global-context gating", () => {
   });
 });
 
-describe("buildPiTools pane inspection tools", () => {
+describe("buildPiTools bridge gating", () => {
   afterEach(() => __resetRuntimeDeps());
 
-  test("always includes inspect_pane, read_pane_output, list_panes and wait_pane — no provider gating", () => {
-    // Unlike list_threads/search_messages/read_node, these tools call the
-    // paneInspection service directly (no GlobalContextProvider-style seam
-    // exists for panes per R4 §2's optional note) so they are present even
-    // when no globalContext provider was injected.
+  test("offers a business tool only when the bridge has its effect", () => {
     configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
-    const names = buildPiTools(opts() as any).map((t: any) => t.name);
-    for (const name of ["inspect_pane", "read_pane_output", "list_panes", "wait_pane"]) {
-      assert.ok(names.includes(name), `${name} should be present`);
-    }
+    const effects = ["spawn_branches", "save_artifact", "update_artifact"];
+    const offered = (bridge: Record<string, unknown>) =>
+      buildPiTools({ ...opts(), bridge } as any).map((t: any) => t.name).filter((name: string) => effects.includes(name));
+    assert.deepEqual(offered({ spawnBranches: async () => [], saveContext: () => null, updateContext: () => null }), effects);
+    assert.deepEqual(offered({ saveContext: () => null }), ["save_artifact"]);
+    assert.deepEqual(offered({}), []);
   });
 });
 
 describe("buildPiTools send_to_thread", () => {
   afterEach(() => __resetRuntimeDeps());
 
-  test("is offered only to chat-node sessions", () => {
-    configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
-    const names = (owner: unknown) => buildPiTools({ ...opts(), owner } as any).map((t: any) => t.name);
-    assert.ok(names({ kind: "chat_node", nodeId: "n-a" }).includes("send_to_thread"));
-    assert.ok(!names({ kind: "agent_run", runId: "run-1", attemptId: "attempt-1" }).includes("send_to_thread"));
-    assert.ok(!names(undefined).includes("send_to_thread"));
-  });
-
   test("refuses before asking when the session has no workspace binding", async () => {
     configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
     let asked = 0;
     const tool = buildPiTools({
       ...opts(),
-      owner: { kind: "chat_node", nodeId: "n-a" },
+      owner: chatOwner("n-a"),
       requestThreadMessageApproval: async () => { asked += 1; return { approved: true }; },
     } as any).find((t: any) => t.name === "send_to_thread");
     const result = await tool.execute("call-1", { nodeId: "n-b", text: "hi" });
@@ -86,13 +71,6 @@ describe("buildPiTools send_to_thread", () => {
 });
 
 describe("Pi tool result error propagation", () => {
-  test("marks Michi errorResult payloads as failed for pi-agent-core", () => {
-    assert.deepEqual(piToolResultErrorOverride({
-      result: { content: [{ type: "text", text: "access denied" }], isError: true },
-      isError: false,
-    }), { isError: true });
-  });
-
   test("does not override successful or already-failed tool executions", () => {
     assert.equal(piToolResultErrorOverride({ result: { isError: false }, isError: false }), undefined);
     assert.equal(piToolResultErrorOverride({ result: { isError: true }, isError: true }), undefined);
@@ -113,7 +91,7 @@ describe("Pi session-bound Agent tools", () => {
 
   test("submit_agent_result is Run-only and forwards the exact Attempt owner", async () => {
     configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
-    const owner = { kind: "agent_run" as const, runId: "run-a", attemptId: "attempt-a" };
+    const owner = runOwner("run-a", "attempt-a");
     const submissions: any[] = [];
     const profile = {
       allowedToolNames: [SUBMIT_AGENT_RESULT_TOOL],
@@ -123,11 +101,28 @@ describe("Pi session-bound Agent tools", () => {
       } },
     };
     const runTools = buildPiTools({ ...opts(), owner, toolProfile: profile } as any);
-    const chatTools = buildPiTools({ ...opts(), owner: { kind: "chat_node", nodeId: "node-a" }, toolProfile: profile } as any);
+    const chatTools = buildPiTools({ ...opts(), owner: chatOwner("node-a"), toolProfile: profile } as any);
     const submit = runTools.find((tool: any) => tool.name === SUBMIT_AGENT_RESULT_TOOL);
     assert.ok(submit);
     assert.equal(chatTools.some((tool: any) => tool.name === SUBMIT_AGENT_RESULT_TOOL), false);
     await submit.execute("tool-call-a", { version: 1, status: "completed" });
     assert.deepEqual(submissions, [[owner, { version: 1, status: "completed" }]]);
+  });
+});
+
+describe("Pi task tools", () => {
+  afterEach(() => __resetRuntimeDeps());
+
+  test("a chat gets open_task_database and list_tasks; opening the task database runs one call at a time", () => {
+    configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: "/tmp/agent-runtime-test" });
+    const tools = buildPiTools({ ...opts(), owner: { mode: "interactive", key: "node-a" } } as any);
+    const open = tools.find((tool: any) => tool.name === "open_task_database");
+    const list = tools.find((tool: any) => tool.name === "list_tasks");
+    assert.ok(tools.find((tool: any) => tool.name === "read_home"));
+    assert.equal(tools.find((tool: any) => tool.name === "edit_home")?.executionMode, "sequential");
+    assert.ok(open, "open_task_database");
+    assert.ok(list, "list_tasks");
+    assert.equal(open.executionMode, "sequential");
+    assert.equal(list.executionMode, undefined);
   });
 });

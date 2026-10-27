@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { isCrewMemoryMode } from 'michi-shared';
-import { defaultCrewMemory, saveDefaultCrewMemory } from '../agents/crew/crewMemory';
+import { defaultCrewMemory, saveDefaultCrewMemory } from '../services/crewMemory';
 import { getNode, getWorkspace } from '../services/dbRepository';
-import { crewIntegrationStatus } from '../agents/crew/crewLaunch';
+import { crewIntegrationStatus } from 'michi-runtime/internal/adapters/crew/crewLaunch';
+import { crewEnvOptions } from '../agents/michiKiroOptions';
 
 export function crewRoutes(): Router {
     const router = Router();
@@ -10,7 +11,7 @@ export function crewRoutes(): Router {
         if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'Authentication required' });
         next();
     });
-    router.get('/crew/status', (_req, res) => res.json(crewIntegrationStatus()));
+    router.get('/crew/status', (_req, res) => res.json(crewIntegrationStatus(crewEnvOptions())));
     router.get('/crew/memory', (req, res) => {
         const nodeId = req.query.nodeId;
         let mode = null;

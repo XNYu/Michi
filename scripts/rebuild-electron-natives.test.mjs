@@ -4,7 +4,59 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { nodePtyPaths, rebuildNativeModules } from './rebuild-electron-natives.mjs';
+import { nativeBuildEnvironment, nodePtyPaths, rebuildNativeModules } from './rebuild-electron-natives.mjs';
+
+test('macOS rebuilds use the selected SDK without mutating the parent environment', () => {
+  const env = Object.freeze({ DEVELOPER_DIR: '/custom/Xcode.app/Contents/Developer', CXX: 'clang++' });
+  const sdkRoot = '/custom/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk';
+  const result = nativeBuildEnvironment({
+    env,
+    platform: 'darwin',
+    resolveSdk: (buildEnv) => {
+      assert.equal(buildEnv, env);
+      return `${sdkRoot}\n`;
+    },
+    warn: () => assert.fail('no warning expected'),
+  });
+
+  assert.deepEqual(result, { ...env, SDKROOT: sdkRoot });
+  assert.equal(env.SDKROOT, undefined);
+});
+
+test('an explicit SDKROOT takes precedence over automatic discovery', () => {
+  const env = { SDKROOT: '/chosen/MacOSX.sdk' };
+  assert.equal(nativeBuildEnvironment({
+    env,
+    platform: 'darwin',
+    resolveSdk: () => assert.fail('must preserve the chosen SDK'),
+  }), env);
+});
+
+test('non-macOS rebuilds do not discover an Apple SDK', () => {
+  for (const platform of ['win32', 'linux']) {
+    const env = { PATH: '/tools' };
+    assert.equal(nativeBuildEnvironment({
+      env,
+      platform,
+      resolveSdk: () => assert.fail('must not run xcrun'),
+    }), env);
+  }
+});
+
+test('failed SDK discovery leaves rebuild and prebuild fallback available', () => {
+  for (const resolveSdk of [() => { throw new Error('no developer tools'); }, () => '\n']) {
+    const env = { PATH: '/tools' };
+    const warnings = [];
+    assert.equal(nativeBuildEnvironment({
+      env,
+      platform: 'darwin',
+      resolveSdk,
+      warn: (message) => warnings.push(message),
+    }), env);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Could not resolve the macOS SDK/);
+  }
+});
 
 async function fixture(t, { platform, arch = 'arm64', prebuild = true, partialBuild = true }) {
   const root = await mkdtemp(join(tmpdir(), 'michi-native-test-'));

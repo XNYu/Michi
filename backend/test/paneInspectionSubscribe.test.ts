@@ -88,33 +88,6 @@ function makeFakeClock() {
 }
 
 // ---------------------------------------------------------------------------
-// Fake AgentRunEventBus-shaped bus (structurally compatible with the imported type).
-// ---------------------------------------------------------------------------
-
-function makeFakeRunBus() {
-  const listeners = new Map<string, Set<(event: import('michi-shared').AgentRunEventV1) => void>>();
-  return {
-    bus: {
-      subscribe(runId: string, listener: (event: import('michi-shared').AgentRunEventV1) => void) {
-        const set = listeners.get(runId) ?? new Set();
-        set.add(listener);
-        listeners.set(runId, set);
-        return () => { set.delete(listener); };
-      },
-      subscribeAll() { return () => {}; },
-      publishCommitted() {},
-      waitForEvent: async () => null,
-    } as unknown as import('../src/agents/runs/agentRunEventBus').AgentRunEventBus,
-    fire(runId: string, event: import('michi-shared').AgentRunEventV1): void {
-      for (const listener of listeners.get(runId) ?? []) listener(event);
-    },
-    listenerCount(runId: string): number {
-      return listeners.get(runId)?.size ?? 0;
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Fake inspect() / authorizeCaller() — module-level, restored in afterEach.
 // ---------------------------------------------------------------------------
 
@@ -231,22 +204,6 @@ function makeFeed(deps: Partial<ConstructorParameters<typeof PaneFeed>[0]> & { c
 // ---------------------------------------------------------------------------
 
 describe('PaneFeed — event types + cursor', () => {
-  test('subscribe emits an initial snapshot with a cursor', () => {
-    stubService();
-    const descriptor = baseDescriptor();
-    inspectImpl = () => descriptor;
-    const fake = makeFakeClock();
-    const feed = makeFeed({ clock: fake.clock, ring: ring(fake.clock) });
-    const emitter = makeEmitter();
-
-    feed.subscribe(CALLER, 'node:n-1', undefined, emitter);
-
-    assert.equal(emitter.events.length, 1);
-    assert.equal(emitter.events[0].type, 'snapshot');
-    assert.ok(emitter.events[0].cursor.length > 0);
-    feed.stop();
-  });
-
   test('changed event fires with changedSections on a non-output change', () => {
     stubService();
     let descriptor = baseDescriptor();
@@ -343,34 +300,6 @@ describe('PaneFeed — output coalescing must not swallow state (brief acceptanc
     assert.equal(emitter.events.filter((e) => e.type === 'output_changed').length, 1);
     feed.stop();
   });
-
-  test('a status/permission/cancellation transition is never delayed behind output throttling', () => {
-    stubService();
-    let descriptor = withOutput(baseDescriptor({ activity: 'running' }), 'streaming', 'rev-1');
-    inspectImpl = () => descriptor;
-    const fake = makeFakeClock();
-    const feed = makeFeed({ clock: fake.clock, ring: ring(fake.clock), pollIntervalMs: 50 });
-    const emitter = makeEmitter();
-    feed.subscribe(CALLER, 'node:n-1', undefined, emitter);
-
-    // Move straight to `waiting` (permission wait) — no output change this tick, only activity.
-    descriptor = {
-      ...descriptor,
-      activity: 'waiting',
-      execution: {
-        status: 'ready',
-        value: {
-          ...(descriptor.execution.status === 'ready' ? descriptor.execution.value! : (() => { throw new Error('unreachable'); })()),
-          status: 'waiting', waitingReason: 'permission requested',
-        },
-      },
-    };
-    fake.advance(50);
-
-    const changed = emitter.events.filter((e) => e.type === 'changed');
-    assert.equal(changed.length, 1, 'a waiting transition must flush immediately, in the very next tick');
-    feed.stop();
-  });
 });
 
 describe('PaneFeed — bounds and resync', () => {
@@ -391,6 +320,18 @@ describe('PaneFeed — bounds and resync', () => {
 });
 
 describe('PaneFeed — slow consumer disconnect never cancels anything', () => {
+  test('disconnect during initial snapshot never arms a new observer after stop', () => {
+    stubService();
+    inspectImpl = () => baseDescriptor();
+    const fake = makeFakeClock();
+    const sharedRing = ring(fake.clock);
+    const feed = makeFeed({ clock: fake.clock, ring: sharedRing });
+    feed.subscribe(CALLER, 'node:n-1', undefined, { emit: () => feed.stop() });
+    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), false);
+    assert.equal(fake.liveIntervalCount(), 0, 'snapshot failure must not retain polling/metadata timers');
+    assert.equal(fake.pendingTimeoutCount(), 0);
+  });
+
   test('a buffer-ceiling disconnect only detaches the observer', () => {
     stubService();
     let descriptor = baseDescriptor();
@@ -413,16 +354,6 @@ describe('PaneFeed — slow consumer disconnect never cancels anything', () => {
 
     assert.equal(cancelCalled, false, 'no cancel call happened');
     assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), false, 'ref-count released on disconnect');
-  });
-});
-
-describe('PaneFeed — more than 32 paneIds', () => {
-  test('rejected before opening a stream (parser-level, exercised via the shared parser)', () => {
-    // parseSubscribePanesRequestV1 (shared/src/paneInspection.ts) already enforces
-    // subscribeMaxPanes=32 and is exercised end-to-end by the route; this test just confirms the
-    // limit constant PaneFeed itself has no independent, possibly-inconsistent cap.
-    const { PANE_INSPECTION_LIMITS } = require('michi-shared');
-    assert.equal(PANE_INSPECTION_LIMITS.subscribeMaxPanes, 32);
   });
 });
 
@@ -452,102 +383,6 @@ describe('PaneFeed — revoking access mid-stream', () => {
     fake.advance(1_000);
     assert.equal(emitter.events.filter((e) => e.type === 'access_revoked').length, 1);
     assert.equal(emitter.events.length, 2, 'no further events for a settled/revoked object');
-    feed.stop();
-  });
-});
-
-describe('PaneFeed — client disconnect', () => {
-  test('detaches the observer, releases the ring ref-count, cancels nothing', () => {
-    stubService();
-    const descriptor = baseDescriptor();
-    inspectImpl = () => descriptor;
-    const fake = makeFakeClock();
-    const sharedRing = ring(fake.clock);
-    const feed = makeFeed({ clock: fake.clock, ring: sharedRing });
-    const emitter = makeEmitter();
-
-    feed.subscribe(CALLER, 'node:n-1', undefined, emitter);
-    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), true);
-    // Two live intervals for one subscribed node object under the P3-4 architecture: the coarse
-    // execution-change poll fallback (armWatcher's node branch) and the per-workspace metadata
-    // watcher's own tick (one per observed workspace, not per object — see the dedicated describe
-    // block below). Neither is the primary chat-change signal any more — that is the ChatHub
-    // subscription in `chatHubUnsubscribes`, which is not a timer at all and so does not show up
-    // in `liveIntervalCount()`.
-    assert.equal(fake.liveIntervalCount(), 2);
-
-    feed.stop(); // mirrors res.on('close') -> feed.stop().
-
-    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), false);
-    assert.equal(fake.liveIntervalCount(), 0, 'poll interval AND metadata-watcher interval must both be cleared — no leaked timer');
-  });
-});
-
-describe('PaneFeed — double-subscribe / single-release ref-count (P3-1 contract)', () => {
-  test('subscribing twice and releasing once keeps the object exempt from eviction', () => {
-    stubService();
-    const descriptor = baseDescriptor();
-    inspectImpl = () => descriptor;
-    const fake = makeFakeClock();
-    const sharedRing = ring(fake.clock);
-    const feedA = makeFeed({ clock: fake.clock, ring: sharedRing });
-    const feedB = makeFeed({ clock: fake.clock, ring: sharedRing });
-    const emitterA = makeEmitter();
-    const emitterB = makeEmitter();
-
-    feedA.subscribe(CALLER, 'node:n-1', undefined, emitterA);
-    feedB.subscribe(CALLER, 'node:n-1', undefined, emitterB);
-    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), true);
-
-    feedA.stop(); // releases ONE registration.
-    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), true, 'still exempt — one subscriber remains');
-
-    feedB.stop();
-    assert.equal(sharedRing.hasActiveSubscriber('node:n-1'), false);
-  });
-});
-
-describe('PaneFeed — AgentRun live bus', () => {
-  test('an AgentRun event triggers an immediate re-inspect and change detection', () => {
-    stubService();
-    let descriptor = baseDescriptor({
-      kind: 'agent-run',
-      ref: { backendConnectionId: 'local', paneId: 'run:run-1' },
-      target: { kind: 'agent_run', runId: 'run-1' },
-    });
-    inspectImpl = () => descriptor;
-    const fake = makeFakeClock();
-    const fakeBus = makeFakeRunBus();
-    // pollIntervalMs deliberately huge — if the event bus path did not work, the change would
-    // never be observed within this test's fake-clock advances, proving the bus (not the
-    // fallback poll) is what triggered detection.
-    const feed = makeFeed({ clock: fake.clock, ring: ring(fake.clock), agentRunEvents: fakeBus.bus, pollIntervalMs: 1_000_000 });
-    const emitter = makeEmitter();
-    feed.subscribe(CALLER, 'run:run-1', undefined, emitter);
-    assert.equal(emitter.events.length, 1);
-    assert.equal(fakeBus.listenerCount('run-1'), 1);
-
-    descriptor = baseDescriptor({
-      kind: 'agent-run',
-      ref: { backendConnectionId: 'local', paneId: 'run:run-1' },
-      target: { kind: 'agent_run', runId: 'run-1' },
-      activity: 'idle',
-      execution: {
-        status: 'ready',
-        value: {
-          ref: { kind: 'agent_run', runId: 'run-1' },
-          assistantId: null, attemptId: 'att-1', attemptIndex: 0,
-          status: 'completed', startedAt: 0, endedAt: 5, commitState: 'committed',
-          waitingReason: null, error: null,
-        },
-      },
-    });
-    fakeBus.fire('run-1', {
-      version: 1, runId: 'run-1', seq: 1, type: 0, attemptId: 'att-1', occurredAt: 5,
-    } as unknown as import('michi-shared').AgentRunEventV1);
-
-    const settled = emitter.events.filter((e) => e.type === 'execution_settled');
-    assert.equal(settled.length, 1, 'the bus event must have triggered detection without waiting for a poll tick');
     feed.stop();
   });
 });

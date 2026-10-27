@@ -6,7 +6,14 @@ import path from 'node:path';
 import { initDb, closeDb } from '../src/services/db';
 import { saveWorkspace, saveNode, getNode, updateNodeResumeBinding, setNodeExternalSessionId } from '../src/services/dbRepository';
 import { dbWorker, initDbWorker, shutdownDbWorker } from '../src/services/dbWorkerClient';
-import { nativeResumeId } from '../src/services/nativeResume';
+import { nativeResumeIdFor } from '../src/services/nativeResume';
+import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
+import { ClaudeRuntime } from 'michi-runtime/internal/adapters/claude/ClaudeRuntime';
+
+/** A Codex binding resolves through Codex's own rule, as the app's callers do. */
+const codex = { id: 'codex' as const, resumeTokenFromBinding: CodexRuntime.prototype.resumeTokenFromBinding };
+/** Claude's, through ClaudeRuntime's. */
+const claude = { id: 'claude' as const, resumeTokenFromBinding: ClaudeRuntime.resumeTokenFromBinding };
 
 for (const worker of [false, true]) {
   test(`${worker ? 'worker' : 'sync'} binding commits native identity with its full settings`, async (t) => {
@@ -36,7 +43,7 @@ for (const worker of [false, true]) {
       const row = getNode('node')!;
       assert.equal(row.acp_session_id, `native-${runtime}`);
       assert.equal(row.external_session_id, `native-${runtime}`);
-      assert.equal(nativeResumeId(runtime, row), `native-${runtime}`);
+      assert.equal(nativeResumeIdFor(runtime === 'codex' ? codex : claude, row), `native-${runtime}`);
       assert.equal(row.runtime_id, runtime);
       assert.equal(row.model_id, 'chosen-model');
       assert.equal(row.reasoning, 'high');
@@ -46,14 +53,14 @@ for (const worker of [false, true]) {
     }
     await persist('claude', 'node');
     assert.equal(getNode('node')?.external_session_id, null);
-    assert.equal(nativeResumeId('claude', getNode('node')), null);
+    assert.equal(nativeResumeIdFor(claude, getNode('node')), null);
     setNodeExternalSessionId('node', 'claude-init');
     assert.equal(getNode('node')?.external_session_id, 'claude-init');
     assert.equal(getNode('node')?.acp_session_id, 'claude-init');
     await persist('kiro', 'native-kiro');
     saveNode({ ...node, external_session_id: 'stale-claude' } as any);
     assert.equal(getNode('node')?.external_session_id, null);
-    assert.equal(nativeResumeId('kiro', getNode('node')), 'native-kiro');
+    assert.equal(nativeResumeIdFor({ id: 'kiro' }, getNode('node')), 'native-kiro');
     await assert.rejects(persist('codex', 'native', 'missing'), /does not exist/);
     assert.throws(() => setNodeExternalSessionId('missing', 'native'), /does not exist/);
   });

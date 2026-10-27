@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import { build, context } from "esbuild";
+import { michiBuildInfo } from "../../scripts/build-info.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = resolve(root, "dist");
@@ -48,6 +50,14 @@ mkdirSync(dist, { recursive: true });
 // live at dist/db/... . Without this, runMigrations' readdirSync hits ENOENT
 // and (per its catch) silently no-ops — every schema change stays unapplied.
 function copyAssets() {
+  // Keep the SDK's native ESM entry and sibling modules beside the CJS bundle.
+  // Claude itself remains the user's installed CLI, selected by the runtime.
+  const sdkRoot = dirname(createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk'));
+  for (const name of readdirSync(sdkRoot)) {
+    if (/\.(mjs|js|json)$/.test(name) || name === 'LICENSE.md' || name === 'README.md') {
+      copyTree(join(sdkRoot, name), join(dist, 'claude-sdk', name));
+    }
+  }
   // Keep Agent help available offline in source installs and packaged Electron.
   const docs = JSON.parse(readFileSync(resolve(root, "src/docs/catalog.json"), "utf8"));
   for (const doc of docs) {
@@ -57,8 +67,9 @@ function copyAssets() {
   writeFileSync(resolve(dist, "crew-node.json"), JSON.stringify({ schemaVersion: 1, node: process.execPath, nodeVersion: process.versions.node }) + "\n");
   copyTree(resolve(root, "src/db/migrations"), resolve(dist, "db/migrations"));
   copyTree(resolve(root, "src/db/auditMigrations"), resolve(dist, "db/auditMigrations"));
+  // The Codex adapter finds its runner beside the bundle (codexFollowUpsHookPoc).
   copyTree(
-    resolve(root, "src/agents/codex/codexStopHookRunner.cjs"),
+    resolve(root, "../runtime/src/adapters/codex/assets/codexStopHookRunner.cjs"),
     resolve(dist, "codexStopHookRunner.cjs"),
   );
 }
@@ -76,9 +87,11 @@ const buildOptions = {
   legalComments: "none",
   define: {
     __MICHIBUNDLE__: "true",
+    ...(WATCH ? {} : { __MICHI_BUILD_INFO__: JSON.stringify(michiBuildInfo(resolve(root, '..'))) }),
   },
   external: [
     "node:*",
+    "@anthropic-ai/claude-agent-sdk", // source execution; bundles load dist/claude-sdk
   ],
 };
 
@@ -102,16 +115,16 @@ const workerBuildOptions = {
 };
 
 // Crew ACP adapter — its own process, launched by the `crew` runtime as
-// `node dist/crewAcp.js acp ...` (see src/agents/crew/crewLaunch.ts).
+// `node dist/crewAcp.js acp ...` (see runtime/src/adapters/crew/crewLaunch.ts).
 const crewAcpBuildOptions = {
   ...workerBuildOptions,
-  entryPoints: [resolve(root, "src/agents/crew/acp/main.ts")],
+  entryPoints: [resolve(root, "../runtime/src/adapters/crew/acp/main.ts")],
   outfile: resolve(dist, "crewAcp.js"),
 };
 
 const crewMcpBuildOptions = {
   ...workerBuildOptions,
-  entryPoints: [resolve(root, "src/agents/crew/crewMcpMain.ts")],
+  entryPoints: [resolve(root, "../runtime/src/adapters/crew/crewMcpMain.ts")],
   outfile: resolve(dist, "crewMcp.js"),
   write: false,
   plugins: [{ name: "atomic-crew-relay", setup(pluginBuild) {
@@ -131,7 +144,7 @@ const crewMcpBuildOptions = {
 
 const crewMcpHostBuildOptions = {
   ...workerBuildOptions,
-  entryPoints: [resolve(root, "src/agents/crew/crewMcpHost.ts")],
+  entryPoints: [resolve(root, "../runtime/src/adapters/crew/crewMcpHost.ts")],
   outfile: resolve(dist, "crewMcpHost.js"),
 };
 
@@ -147,6 +160,12 @@ if (WATCH) {
   // `detached` so it leads its OWN process group, then signal the whole group
   // with kill(-pid). That reliably takes down the server AND any subprocesses
   // it spawned (ACP/kiro/claude), which a bare child.kill() would orphan.
+  try {
+    checkRuntimeBoundary({ watch: true });
+  } catch (err) {
+    console.warn("[backend] runtime boundary check could not run:", err);
+  }
+
   let child = null;
   let shuttingDown = false;
 
@@ -188,7 +207,9 @@ if (WATCH) {
     if (shuttingDown) return;
     const c = spawn(process.execPath, [outfile], {
       stdio: "inherit",
-      env: process.env,      // inherit MICHI_DATA_DIR / PORT / etc
+      // MICHI_DEV_RENDERER: trust `npm run dev`'s Vite renderer on loopback
+      // :3001 (services/localOrigins.ts). Only this watch build sets it.
+      env: { ...process.env, NODE_ENV: 'development', MICHI_DEV_RENDERER: '1' },
       detached: process.platform !== "win32",
       windowsHide: true,
     });
@@ -260,8 +281,30 @@ if (WATCH) {
   if (unresolvedRuntimeImport?.test(bundled)) {
     throw new Error("Backend bundle still contains unresolved runtime dependency imports");
   }
+
+  checkRuntimeBoundary({ watch: false });
 }
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Runtime package boundary ratchet (scripts/runtimeBoundary.cjs; see AGENTS.md).
+// New runtime-layer imports of app code, process.env reads in runtime files, or
+// runtime-id comparisons outside adapter directories fail a normal build; the
+// --watch dev loop only warns so a work-in-progress edit never blocks it.
+function checkRuntimeBoundary({ watch }) {
+  const { runCheck } = createRequire(import.meta.url)("./runtimeBoundary.cjs");
+  const result = runCheck();
+  if (!result.hasAdded) {
+    console.log(`[backend] ${result.summary}`);
+    return;
+  }
+  if (watch) {
+    const rule = "!".repeat(78);
+    console.warn(`\n${rule}\n[backend] WARNING: new runtime boundary entries; \`npm run build\` will fail on these.\n\n${result.failure}\n${rule}\n`);
+    return;
+  }
+  console.error(`[backend] ${result.summary}\n\n${result.failure}`);
+  process.exit(1);
 }

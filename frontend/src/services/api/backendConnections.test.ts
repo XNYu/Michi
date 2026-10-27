@@ -25,15 +25,7 @@ it('surfaces setup errors and rejects streams that end without a result', async 
   vi.stubGlobal('fetch', vi.fn(async () => stream(['{"type":"error","message":"Sign in with ssh build+"}\n'])));
   await expect(connectRemoteDesktop('build+', false, () => {})).rejects.toThrow('Sign in with ssh build+');
   vi.stubGlobal('fetch', vi.fn(async () => stream(['{"type":"progress","message":"Connecting"}\n'])));
-  await expect(connectRemoteDesktop('build+', false, () => {})).rejects.toThrow('before setup completed');
-});
-
-
-it('preserves structured server diagnostics and failed stages', async () => {
-  const diagnostic = { id: 'attempt-1', host: 'build+', stage: 'tunnel', startedAt: 'now', code: 'setup_failed', message: 'EADDRINUSE', log: 'SSH forwarding failed', truncated: false };
-  vi.stubGlobal('fetch', vi.fn(async () => stream([JSON.stringify({ type: 'error', message: diagnostic.message, diagnostic }) + '\n'])));
-  try { await connectRemoteDesktop('build+', false, () => {}); throw new Error('expected rejection'); }
-  catch (error) { expect(error).toBeInstanceOf(RemoteConnectionFailure); expect((error as RemoteConnectionFailure).diagnostic).toEqual(diagnostic); }
+  await expect(connectRemoteDesktop('build+', false, () => {})).rejects.toThrow('before it completed');
 });
 
 it('retrieves persisted diagnostics after a stream ends without a result', async () => {

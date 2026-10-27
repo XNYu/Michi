@@ -6,7 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import express from 'express';
-import { remoteCredentialCheckPython, remoteCredentialExpiredWarning, type RemoteCredentialProvider } from 'michi-shared';
+import { remoteCredentialCheckPython, remoteCredentialExpiredWarning, type RemoteCredentialProvider, type RemoteServiceRecoveryStatus } from 'michi-shared';
 import { RemoteDesktopSetup, RemoteDesktopError, buildRemoteRecoveryScript } from '../src/services/remoteDesktopSetup';
 import { RemoteServiceRecovery } from '../src/services/remoteServiceRecovery';
 import { getBackendConnection, saveBackendConnection } from '../src/services/backendConnections';
@@ -140,9 +140,37 @@ test('startup is single-flight, bounded by cooldown and exposes the correct loca
 
 test('remote credential failure directs authentication to the remote host', async () => {
   class Setup extends RemoteDesktopSetup { override async recover() { throw new RemoteDesktopError('remote_credentials', 'Remote sign-in expired'); } }
-  const recovery = new RemoteServiceRecovery(new Setup()); recovery.start(saved().id);
+  const recovery = new RemoteServiceRecovery(new Setup()); const id = saved().id; recovery.start(id);
   await waitUntil(() => recovery.statuses()[0].phase === 'error');
   assert.equal(recovery.statuses()[0].authentication?.scope, 'remote');
+  // A reachable service does not prove that remote sign-in was refreshed.
+  recovery.markReachable(id, recovery.currentFailure(id));
+  assert.equal(recovery.statuses()[0].phase, 'error');
+});
+
+test('only a request that began after a settled failure can clear it', async () => {
+  let fail!: (error: Error) => void;
+  class Setup extends RemoteDesktopSetup { override async recover() { await new Promise<void>((_resolve, reject) => { fail = reject; }); } }
+  const recovery = new RemoteServiceRecovery(new Setup()); const id = saved().id;
+  recovery.start(id);
+  const duringAttempt = recovery.currentFailure(id);
+  assert.equal(duringAttempt, undefined);
+  recovery.markReachable(id, duringAttempt);
+  assert.equal(recovery.statuses()[0].phase, 'starting');
+  fail(new RemoteDesktopError('ssh_auth', 'SSH authentication needs attention.'));
+  await waitUntil(() => recovery.statuses()[0].phase === 'error');
+  // A late success from a request that began before the failure proves nothing.
+  recovery.markReachable(id, duringAttempt);
+  assert.equal(recovery.statuses()[0].phase, 'error');
+  const settled = recovery.currentFailure(id);
+  recovery.markReachable(id, settled);
+  assert.deepEqual(recovery.statuses(), [{ connectionId: id, phase: 'ready', message: 'Remote Michi is reachable again.' }]);
+  recovery.start(id, true);
+  fail(new RemoteDesktopError('ssh_network', 'SSH could not reach the remote machine.'));
+  await waitUntil(() => recovery.statuses()[0].phase === 'error');
+  recovery.markReachable(id, settled);
+  assert.equal(recovery.statuses()[0].phase, 'error');
+  recovery.stop(id);
 });
 
 test('deadline settles a stuck recovery, captures the actual stage and permits a new attempt', async () => {
@@ -174,6 +202,33 @@ test('deadline settles a stuck recovery, captures the actual stage and permits a
   recovery.start(id, true); recovery.stop(id); release();
 });
 
+test('default recovery budget covers successive cold proxy handshakes and stays bounded', async (t) => {
+  let signal!: AbortSignal;
+  class Setup extends RemoteDesktopSetup {
+    override async recover(_id: string, abort?: AbortSignal) {
+      signal = abort!;
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    }
+  }
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+  const recovery = new RemoteServiceRecovery(new Setup());
+  const id = saved().id;
+  recovery.start(id);
+  try {
+    t.mock.timers.tick(90_000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(recovery.statuses()[0].phase, 'starting');
+    assert.equal(signal.aborted, false);
+    t.mock.timers.tick(30_000);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(signal.aborted, true);
+    assert.equal(recovery.statuses()[0].diagnostic?.code, 'recovery_timeout');
+    assert.match(recovery.statuses()[0].message, /after 120 seconds/);
+  } finally { recovery.stop(id); }
+});
+
 test('proxy starts recovery after transport failure, never replays a write and excludes direct connections', async () => {
   let calls = 0;
   class Setup extends RemoteDesktopSetup { override async recover() { calls++; } }
@@ -192,4 +247,32 @@ test('proxy starts recovery after transport failure, never replays a write and e
     assert.equal((await fetch(`${base}/${direct.id}/proxy/health`)).status, 502); assert.equal(calls, 1);
     assert.equal((await fetch(`${base}/${id}/recover`, { method: 'POST', headers: { Origin: 'https://untrusted.example' } })).status, 403);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('a successful proxied response clears a stale SSH recovery failure, while an error response keeps it', async () => {
+  const remote = express();
+  remote.get('/api/ok', (_req, res) => { res.json({ ok: true }); });
+  remote.get('/api/broken', (_req, res) => { res.status(500).json({ error: 'broken' }); });
+  const upstream = remote.listen(0, '127.0.0.1'); await new Promise<void>(resolve => upstream.once('listening', resolve));
+  const upstreamAddress = upstream.address(); assert.ok(upstreamAddress && typeof upstreamAddress !== 'string');
+  class Setup extends RemoteDesktopSetup { override async recover(): Promise<void> { throw new RemoteDesktopError('ssh_network', 'SSH could not reach the remote machine.'); } }
+  class Tunnel extends SshTunnelManager { override async apiUrl() { return `http://127.0.0.1:${(upstreamAddress as { port: number }).port}/api`; } override stop() {} }
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: new Setup(), tunnelManager: new Tunnel() }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}/api/backend-connections`;
+  const recoveries = async () => (await fetch(base + '/recovery').then(response => response.json()) as { recoveries: RemoteServiceRecoveryStatus[] }).recoveries;
+  try {
+    const id = saved().id;
+    assert.equal((await fetch(`${base}/${id}/recover`, { method: 'POST' })).status, 202);
+    for (let i = 0; i < 100 && (await recoveries())[0]?.phase !== 'error'; i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal((await recoveries())[0].diagnostic?.code, 'ssh_network');
+    assert.equal((await fetch(`${base}/${id}/proxy/broken`)).status, 500);
+    assert.equal((await recoveries())[0].phase, 'error');
+    assert.equal((await fetch(`${base}/${id}/proxy/ok`)).status, 200);
+    assert.deepEqual(await recoveries(), [{ connectionId: id, phase: 'ready', message: 'Remote Michi is reachable again.' }]);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
+  }
 });

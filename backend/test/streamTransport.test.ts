@@ -124,6 +124,8 @@ test('requires authenticated one-use tickets bound to the renderer origin', asyn
   const f = await fixture(t);
   assert.equal((await fetch(`${f.base}/api/stream-transport`, { method: 'POST' })).status, 401);
   assert.equal((await fetch(`${f.base}/api/stream-transport`, { method: 'POST', headers: { ...f.headers, origin: 'https://untrusted.example' } })).status, 403);
+  // Sandboxed iframes on any site send `null`.
+  assert.equal((await fetch(`${f.base}/api/stream-transport`, { method: 'POST', headers: { ...f.headers, origin: 'null' } })).status, 403);
   const token = await f.ticket();
   await f.connect(token);
   const reused = new WebSocket(`${f.base.replace('http:', 'ws:')}/api/stream-transport?token=${token}`, { origin: f.base });

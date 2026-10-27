@@ -1,12 +1,13 @@
 import type { AgentSessionState } from 'michi-shared';
 import type { AgentSession } from '../agents/types';
+import { isRunOwner } from '../agents/ownerMapping';
 import { getDb } from './db';
 import { getNode, getWorkspace } from './dbRepository';
 
 /** Persist settings only for the currently bound native chat. Never write a
  * stale worker's state over a replacement session or an Agent Run profile. */
 export function persistSessionState(session: AgentSession, ownerUserId: string | null, state: AgentSessionState): void {
-    if (session.owner?.kind === 'agent_run' || state.runtimeId !== session.runtimeId) return;
+    if (isRunOwner(session.owner) || state.runtimeId !== session.runtimeId) return;
     const node = getNode(session.id);
     if (!node || node.acp_session_id !== session.nativeSessionId || node.runtime_id !== session.runtimeId
         || (node.runtime_engine ?? 'v2') !== (session.nativeEngine ?? 'v2')) return;

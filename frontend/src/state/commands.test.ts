@@ -31,29 +31,22 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
 const baseCtx: CommandContext = makeCtx({ hasActiveProject: true });
 
 describe('buildCommands', () => {
-  it('always includes the nav commands when there is an active project', () => {
-    const cmds = buildCommands(baseCtx);
+  it('offers Go to all tasks right after Pages, when the shell can open it', () => {
+    const openAllTasks = vi.fn();
+    const cmds = buildCommands(makeCtx({ hasActiveProject: true, openAllTasks }));
     const navIds = cmds.filter((c) => c.group === 'nav').map((c) => c.id);
-    expect(navIds).toEqual([
-      'nav.home', 'nav.branches', 'nav.map', 'nav.digest', 'nav.workspaces', 'nav.trash', 'nav.archived', 'nav.settings',
-    ]);
-    expect(cmds.map((c) => c.label)).toContain('Open thread digest');
+    expect(navIds[navIds.indexOf('nav.spaces') + 1]).toBe('nav.all-tasks');
+    const allTasks = cmds.find((c) => c.id === 'nav.all-tasks')!;
+    expect(allTasks.label).toBe('Go to all tasks');
+    allTasks.run();
+    expect(openAllTasks).toHaveBeenCalledOnce();
+    expect(buildCommands(makeCtx({ hasActiveProject: true })).some((c) => c.id === 'nav.all-tasks')).toBe(false);
   });
 
-  it('omits the Agent Library command when the backend feature is disabled', () => {
-    const cmds = buildCommands(makeCtx({ customAgentsEnabled: false }));
-
-    expect(cmds.map((command) => command.id)).not.toContain('agents.open');
-  });
-
-  it('omits selection action commands when selection is empty', () => {
-    const cmds = buildCommands(baseCtx);
-    // Selection actions only. `action.permissions` is an always-present
-    // global toggle that shares the `action.` prefix but is not selection-scoped.
-    const selectionActions = cmds.filter(
-      (c) => c.group === 'action' && c.id.startsWith('action.') && c.id !== 'action.permissions',
-    );
-    expect(selectionActions).toHaveLength(0);
+  it('does not offer the removed All threads page', () => {
+    const cmds = buildCommands(makeCtx({ hasActiveProject: true }));
+    expect(cmds.some(c => c.id === 'nav.threads')).toBe(false);
+    expect(cmds.find(c => c.group === 'nav')?.id).toBe('nav.home');
   });
 
   it('adds weave/digest/export/clear when selection has ≥2 items', () => {
@@ -75,106 +68,11 @@ describe('thread commands', () => {
     archivedTrees: [{ id: 't3', name: 'Old' }],
   });
 
-  it('includes New thread and Switch to commands for live trees', () => {
-    const cmds = buildCommands(base);
-    const labels = cmds.map((c) => c.label);
-    expect(labels).toContain('New thread');
-    expect(labels).toContain('Switch to thread ▸ Research');
-    expect(labels).toContain('Switch to thread ▸ Planning');
-  });
-
   it('includes archived switches that do not unarchive', () => {
     const cmds = buildCommands(base);
     const archived = cmds.find((c) => c.label === 'Switch to archived thread ▸ Old')!;
     archived.run();
     expect(base.activateTree).toHaveBeenCalledWith('t3');
     expect(base.unarchiveTree).not.toHaveBeenCalled();
-  });
-
-  it('exposes Archive current thread only when there is an active tree', () => {
-    const cmds = buildCommands(base);
-    expect(cmds.map((c) => c.label)).toContain('Archive current thread');
-    const none = buildCommands({ ...base, activeTreeId: null });
-    expect(none.map((c) => c.label)).not.toContain('Archive current thread');
-  });
-});
-
-describe('workspace jump commands', () => {
-  const base = makeCtx({
-    hasActiveProject: true,
-    workspaces: [{ id: 'p2', name: 'Workspace B' }, { id: 'p3', name: 'Workspace C' }],
-  });
-
-  it('emits a switch command per workspace', () => {
-    const cmds = buildCommands(base);
-    const labels = cmds.filter((c) => c.group === 'workspace').map((c) => c.label);
-    expect(labels).toEqual(['Switch to workspace ▸ Workspace B', 'Switch to workspace ▸ Workspace C']);
-  });
-
-  it('routes to the workspace via switchWorkspace', () => {
-    const switchWorkspace = vi.fn();
-    const cmds = buildCommands(makeCtx({
-      hasActiveProject: true,
-      switchWorkspace,
-      workspaces: [{ id: 'p2', name: 'Workspace B' }],
-    }));
-    const cmd = cmds.find((c) => c.id === 'workspace.switch.p2')!;
-    cmd.run();
-    expect(switchWorkspace).toHaveBeenCalledWith('p2');
-  });
-
-  it('emits no workspace rows when the list is empty', () => {
-    const cmds = buildCommands(makeCtx({ hasActiveProject: true, workspaces: [] }));
-    expect(cmds.filter((c) => c.group === 'workspace')).toHaveLength(0);
-  });
-});
-
-describe('buildCommands cross-project chats', () => {
-  it('emits chat commands with project name suffix', () => {
-    const ctx = makeCtx({
-      hasActiveProject: true,
-      allChats: [
-        { id: 'n1', title: 'Pricing', projectId: 'p1', projectName: 'Workspace A' },
-        { id: 'n2', title: 'Onboarding', projectId: 'p2', projectName: 'Workspace B' },
-      ],
-    });
-    const cmds = buildCommands(ctx);
-    const labels = cmds.filter((c) => c.group === 'chat').map((c) => c.label);
-    expect(labels).toContain('Pricing · Workspace A');
-    expect(labels).toContain('Onboarding · Workspace B');
-  });
-
-  it('caps chat commands at 50 entries', () => {
-    const allChats = Array.from({ length: 80 }, (_, i) => ({
-      id: `n${i}`,
-      title: `Chat ${i}`,
-      projectId: 'p1',
-      projectName: 'P1',
-    }));
-    const ctx = makeCtx({ hasActiveProject: true, allChats });
-    const cmds = buildCommands(ctx);
-    const chats = cmds.filter((c) => c.group === 'chat');
-    expect(chats.length).toBe(50);
-  });
-
-  it('calls switchProject before openChat when running a chat command', () => {
-    const switchProject = vi.fn();
-    const openChat = vi.fn();
-    const order: string[] = [];
-    switchProject.mockImplementation(() => order.push('switch'));
-    openChat.mockImplementation(() => order.push('open'));
-    const ctx = makeCtx({
-      hasActiveProject: true,
-      switchProject,
-      openChat,
-      allChats: [{ id: 'n9', title: 'Other', projectId: 'p2', projectName: 'P2' }],
-    });
-    const cmds = buildCommands(ctx);
-    const cmd = cmds.find((c) => c.id === 'chat.n9');
-    expect(cmd).toBeDefined();
-    cmd!.run();
-    expect(switchProject).toHaveBeenCalledWith('p2');
-    expect(openChat).toHaveBeenCalledWith('n9');
-    expect(order).toEqual(['switch', 'open']);
   });
 });

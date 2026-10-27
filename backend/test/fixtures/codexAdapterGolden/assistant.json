@@ -1,0 +1,128 @@
+{
+  "nativeSessionId": "thread-1",
+  "recordedNativeSessionIds": [],
+  "turnEvents": [
+    [
+      "usage_summary",
+      "turn_end"
+    ]
+  ],
+  "slots": [
+    {
+      "parentChatId": "assistant",
+      "cwd": "/tmp/michi-codex-golden",
+      "ownerUserId": null,
+      "opts": {
+        "nodeId": "assistant",
+        "workspaceId": "ws-golden"
+      },
+      "callbacks": [
+        "getActivePageTurnAttribution",
+        "onAskUser",
+        "onSaveArtifact",
+        "onShowImage",
+        "onSpawnBranches",
+        "onUpdateArtifact"
+      ],
+      "restricted": true,
+      "exposedToolNames": [
+        "list_threads",
+        "read_node"
+      ],
+      "owner": {
+        "kind": "chat_node",
+        "nodeId": "assistant"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "method": "model/list",
+      "params": {}
+    },
+    {
+      "method": "config/read",
+      "params": {
+        "cwd": "/tmp/michi-codex-golden"
+      }
+    },
+    {
+      "method": "thread/start",
+      "params": {
+        "model": "gpt-golden",
+        "cwd": "/tmp/michi-codex-golden",
+        "developerInstructions": "You are Michi, the assistant for the user's Spaces.\nHelp the user understand their work and keep their pages useful. Ground answers in the page or conversations relevant to their request, and make only the page changes they asked for.\nReply directly in the user's language with concise, natural prose. Let the request determine the answer's shape; do not add routine closing questions or describe internal bookkeeping.\n\nCapabilities — your tools are the Michi assistant's own, described in this conversation's opening instructions.\nYou have no file, shell or web tools, and none for artifacts, branching, scheduling, images or Agent Runs: do not offer or attempt them.\n\nTool override — AskUserQuestion:\nDo NOT use the built-in AskUserQuestion tool. It does not work in this environment.\nInstead, use the MCP tool ____michi_internal____ask_user to ask the user structured\nquestions with selectable options. The schema is identical: questions[] with question,\nheader, options[{label, description}], and multiSelect. The tool blocks until the user\nresponds in the UI.",
+        "approvalPolicy": "on-request",
+        "approvalsReviewer": "user",
+        "sandbox": "read-only",
+        "config": {
+          "mcp_servers": {
+            "user-server": {
+              "enabled": false
+            },
+            "__michi_internal__": {
+              "url": "http://127.0.0.1:3001/api/mcp/fake-slot-1",
+              "headers": [],
+              "default_tools_approval_mode": "approve"
+            }
+          },
+          "features": {
+            "shell_tool": false,
+            "unified_exec": false,
+            "js_repl": false,
+            "js_repl_tools_only": false,
+            "code_mode": false,
+            "code_mode_only": false,
+            "code_mode_host": false,
+            "apply_patch_freeform": false,
+            "plugins": false,
+            "apps": false,
+            "browser_use": false,
+            "browser_use_external": false,
+            "computer_use": false,
+            "in_app_browser": false,
+            "image_generation": false,
+            "multi_agent": false,
+            "multi_agent_v2": false,
+            "tool_suggest": false,
+            "skill_mcp_dependency_install": false
+          },
+          "web_search": "disabled"
+        },
+        "reasoningEffort": "xhigh"
+      }
+    },
+    {
+      "method": "mcpServerStatus/list",
+      "params": {
+        "threadId": "thread-1",
+        "detail": "toolsAndAuthOnly"
+      }
+    },
+    {
+      "method": "turn/start",
+      "params": {
+        "approvalPolicy": "on-request",
+        "sandboxPolicy": {
+          "type": "readOnly",
+          "networkAccess": false
+        },
+        "threadId": "thread-1",
+        "input": [
+          {
+            "type": "text",
+            "text": "Workspace instructions (these apply to every reply in this conversation — treat as if part of the system prompt):\n\nAnswer in haiku when asked about weather.\n\nYou are the golden assistant.\n\n---\n\nAssistant question"
+          }
+        ],
+        "effort": "xhigh",
+        "summary": "detailed"
+      }
+    },
+    {
+      "method": "thread/unsubscribe",
+      "params": {
+        "threadId": "thread-1"
+      }
+    }
+  ]
+}

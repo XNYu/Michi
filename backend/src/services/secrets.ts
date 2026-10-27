@@ -1,11 +1,9 @@
-import fs from "fs";
-import path from "path";
-import os from "os";
+import { readJsonConfig, updateJsonConfig } from "./jsonConfigStore";
+import { getMichiCredentialConfigPaths } from "./configPaths";
 import type { ProviderEnvBinding } from "../agents/types";
 import { getUserProviderKey } from "./userKeys";
 
-const CONFIG_DIR = path.join(os.homedir(), ".michi");
-const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+const { configPath: CONFIG_PATH } = getMichiCredentialConfigPaths();
 
 let envBindings: ProviderEnvBinding[] = [];
 const SERVER_MANAGED_PROVIDER_IDS = new Set(["openrouter-free"]);
@@ -24,11 +22,7 @@ export function setProviderEnvBindings(bindings: ProviderEnvBinding[]): void {
 }
 
 function readDiskFile(): Record<string, any> | null {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-  } catch {
-    return null;
-  }
+  return readJsonConfig(CONFIG_PATH);
 }
 
 function parseDiskKeys(disk: Record<string, any> | null): Record<string, string> {
@@ -95,20 +89,18 @@ export function listProviderKeyPresence(providers: string[]): Record<string, boo
 }
 
 export function setProviderApiKey(provider: string, key: string | null): void {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  const disk = readDiskFile() ?? {};
-  const keys = (disk.providerApiKeys && typeof disk.providerApiKeys === "object")
-    ? { ...disk.providerApiKeys }
-    : {};
-  if (key) keys[provider] = key;
-  else delete keys[provider];
-  // Also clear the legacy deepseek slot when deepseek changes
-  if (provider === "deepseek") {
-    if (key) disk.deepseekApiKey = key;
-    else delete disk.deepseekApiKey;
-  }
-  const next = { ...disk, providerApiKeys: keys };
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), { mode: 0o600 });
+  const next = updateJsonConfig(CONFIG_PATH, (disk) => {
+    const keys = (disk.providerApiKeys && typeof disk.providerApiKeys === "object" && !Array.isArray(disk.providerApiKeys))
+      ? { ...disk.providerApiKeys } : {};
+    if (key) keys[provider] = key;
+    else delete keys[provider];
+    // Preserve the legacy deepseek slot's migration contract.
+    if (provider === "deepseek") {
+      if (key) disk.deepseekApiKey = key;
+      else delete disk.deepseekApiKey;
+    }
+    return { ...disk, providerApiKeys: keys };
+  });
   // Invalidate cache so next read picks up the new keys from disk.
   diskKeysCache = parseDiskKeys(next);
 }

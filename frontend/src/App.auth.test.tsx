@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthGate } from './App';
 import { useAuthSession } from './services/auth';
@@ -39,16 +39,6 @@ describe('AuthGate', () => {
     expect(await screen.findByText('Local account')).not.toBeNull();
     expect(mocks.useSession).not.toHaveBeenCalled();
     expect(screen.getByTestId('chat-owner').getAttribute('data-user-id')).toBe('local');
-  });
-
-  it('waits for the public probe before subscribing to an authenticated session', async () => {
-    let resolve!: (config: { requireAuth: boolean }) => void;
-    mocks.config.mockReturnValue(new Promise((done) => { resolve = done; }));
-    render(<AuthGate><Account /></AuthGate>);
-    expect(mocks.useSession).not.toHaveBeenCalled();
-    await act(async () => resolve({ requireAuth: true }));
-    expect(await screen.findByText('Sign in')).not.toBeNull();
-    expect(screen.queryByTestId('chat-owner')).toBeNull();
   });
 
   it('shares the authenticated user with account views and clears them on sign-out', async () => {

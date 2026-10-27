@@ -1,5 +1,4 @@
-import type { AgentRuntime, RuntimeId, RuntimeSessionOwner } from '../types';
-import { assertOwner } from '../types';
+import type { AgentRuntime, RuntimeId } from '../types';
 
 // ---------------------------------------------------------------------------
 // Runtime Run Adapter — shared contract for all durable Agent Run runtimes
@@ -115,23 +114,6 @@ export interface RuntimeRunAdapter {
 // Release ownership guard
 // ---------------------------------------------------------------------------
 
-/**
- * Validates ownership before releasing a runtime session. Every
- * `AgentRuntime.releaseSession()` implementation MUST call this (or an
- * equivalent owner check) when `expectedOwner` is provided.
- *
- * A stale Attempt MUST NOT release a session that has been rebound to a new
- * chat or another Run's session. When ownership does not match, this function
- * throws and the session is left intact for its real owner.
- *
- * @param sessionOwner  The owner currently bound to the session.
- * @param expectedOwner The owner the caller claims. When provided, must match.
- */
-export function assertReleaseOwnership(
-  sessionOwner: RuntimeSessionOwner,
-  expectedOwner: RuntimeSessionOwner | undefined,
-): void {
-  if (expectedOwner !== undefined) {
-    assertOwner(sessionOwner, expectedOwner);
-  }
-}
+// Moved to michi-runtime (runtime/src/core/release.ts); re-exported so
+// importers of this module keep the same function object.
+export { assertReleaseOwnership } from 'michi-runtime/internal/core/release';

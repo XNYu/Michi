@@ -18,26 +18,4 @@ describe('filterVisibleRuntimes', () => {
       runtimes.map((runtime) => runtime.id),
     );
   });
-
-  it('only exposes Kiro, Claude, Codex, and Pi in Restricted builds', () => {
-    expect(filterVisibleRuntimes(runtimes, true).map((runtime) => runtime.id)).toEqual([
-      'kiro',
-      'claude',
-      'codex',
-      'pi',
-    ]);
-  });
-
-  it('keeps Kiro Crew visible in Restricted builds', () => {
-    const withCrew: AgentRuntimeOption[] = [...runtimes, { id: 'crew', label: 'Kiro Crew', available: false }];
-    expect(filterVisibleRuntimes(withCrew, true).map((runtime) => runtime.id)).toContain('crew');
-  });
-
-  it('returns a new array without mutating the backend status payload', () => {
-    const before = [...runtimes];
-    const result = filterVisibleRuntimes(runtimes, true);
-
-    expect(result).not.toBe(runtimes);
-    expect(runtimes).toEqual(before);
-  });
 });

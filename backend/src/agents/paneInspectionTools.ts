@@ -49,7 +49,9 @@ import {
   parseReadOutputLimitBytes,
   parseWaitPaneRequestV1,
 } from "michi-shared";
-import { inspect, type PaneInspectionCaller } from "../services/paneInspection";
+import { inspect, paneTargetWorkspaceId, resolvePaneTarget, type PaneInspectionCaller } from "../services/paneInspection";
+import { getWorkspace } from "../services/dbRepository";
+import { workspaceIdKindHint } from "../services/idKindHint";
 import { readOutput, type ReadPaneOutputResult } from "../services/paneInspectionOutput";
 import { list, type ListPanesResult } from "../services/paneInspectionList";
 import { waitPane } from "../services/paneInspectionWait";
@@ -76,6 +78,10 @@ export interface PaneInspectionToolBinding {
   /** Routing identity for `PaneRef.backendConnectionId` (design §4.1). Not a model-supplied
    *  value — the registration site passes its own slot/session id (e.g. the MCP slotId). */
   backendConnectionId: string;
+  /** The Michi assistant's session (backend/src/assistant). Each call is scoped to the TARGET's
+   *  workspace (same owner) instead of the session's, and skips the AI-navigation gate. Set only
+   *  by the assistant's tool layer from its session binding — never for chats or Agent Runs. */
+  assistant?: boolean;
 }
 
 /**
@@ -103,7 +109,34 @@ export function buildPaneInspectionCaller(binding: PaneInspectionToolBinding): P
     workspaceId: binding.workspaceId,
     backendConnectionId: binding.backendConnectionId,
     runOwner: binding.runOwnerRunId ? { runId: binding.runOwnerRunId } : null,
+    ...(isAssistantBinding(binding) ? { assistant: true } : {}),
   };
+}
+
+function isAssistantBinding(binding: PaneInspectionToolBinding): boolean {
+  return binding.assistant === true && !binding.runOwnerRunId;
+}
+
+/**
+ * The caller for one call. Ordinary callers keep their own workspace. The Michi assistant reads
+ * across workspaces: the target's own workspace becomes its scope, so every downstream check
+ * (ownership, cursors, waits) runs exactly as it would for a chat in that workspace. A target
+ * that does not resolve keeps the session's workspace and fails NOT_FOUND as usual.
+ */
+function scopedToTarget(binding: PaneInspectionToolBinding, caller: PaneInspectionCaller, locator: PaneLocator): PaneInspectionCaller {
+  if (!isAssistantBinding(binding)) return caller;
+  const workspaceId = paneTargetWorkspaceId(caller.ownerUserId, resolvePaneTarget(locator));
+  return workspaceId ? { ...caller, workspaceId } : caller;
+}
+
+/** The assistant's caller re-scoped to `workspaceId`, for list_panes (which takes no locator). */
+function assistantListCaller(caller: PaneInspectionCaller, workspaceId: unknown): PaneInspectionCaller {
+  if (typeof workspaceId !== "string" || !workspaceId.trim()) {
+    throw new PaneInspectionError("INVALID_ARGUMENT", "list", "workspaceId is required; get one from list_workspaces.");
+  }
+  const workspace = getWorkspace(workspaceId.trim(), caller.ownerUserId);
+  if (!workspace || workspace.deleted_at != null) throw new PaneInspectionError("NOT_FOUND", "list", `workspace not found.${workspaceIdKindHint(workspaceId)} Get workspace ids from list_workspaces.`);
+  return { ...caller, workspaceId: workspace.id };
 }
 
 // ---------------------------------------------------------------------------
@@ -137,8 +170,12 @@ export interface ReadPaneOutputToolArgs {
  * default is the calling workspace, never scanning other backends or workspaces"), so
  * `workspaceId` is deliberately NOT a tool-facing argument; `buildPaneInspectionCaller`'s binding
  * supplies it, exactly as it does for `inspect_pane`/`read_pane_output`'s ownerUserId/workspaceId.
+ * The one exception is the Michi assistant, whose binding has no project workspace of its own: its
+ * `workspaceId` names the owner's workspace to list and is ignored for every other caller.
  */
 export interface ListPanesToolArgs {
+  /** Michi assistant only. */
+  workspaceId?: unknown;
   treeId?: string;
   kind?: unknown;
   parentNodeId?: string;
@@ -350,8 +387,9 @@ export function inspectPaneTool(
   args: InspectPaneToolArgs,
 ): PaneInspectionToolResult {
   try {
-    const caller = buildPaneInspectionCaller(binding);
+    const sessionCaller = buildPaneInspectionCaller(binding);
     const { locator, executionRef } = targetFromArgs(args);
+    const caller = scopedToTarget(binding, sessionCaller, locator);
     const descriptor = inspect(caller, { locator, executionRef });
     return { content: [{ type: "text", text: renderDescriptor(descriptor) }] };
   } catch (error) {
@@ -368,11 +406,12 @@ export function readPaneOutputTool(
   args: ReadPaneOutputToolArgs,
 ): PaneInspectionToolResult {
   try {
-    const caller = buildPaneInspectionCaller(binding);
+    const sessionCaller = buildPaneInspectionCaller(binding);
     const selection: ExecutionSelection = args.selection !== undefined
       ? parseExecutionSelection(args.selection)
       : "latest";
     const { locator, executionRef } = targetFromArgs(args);
+    const caller = scopedToTarget(binding, sessionCaller, locator);
     const limitBytes = args.limitBytes !== undefined
       ? parseReadOutputLimitBytes(args.limitBytes)
       : PANE_INSPECTION_LIMITS.readOutputDefaultBytes;
@@ -399,11 +438,13 @@ export function listPanesTool(
   args: ListPanesToolArgs,
 ): PaneInspectionToolResult {
   try {
-    const caller = buildPaneInspectionCaller(binding);
+    const sessionCaller = buildPaneInspectionCaller(binding);
     // list_panes has no locator; the request's workspaceId comes from the CALLER binding, never
     // from a tool argument — mirrors the security invariant `buildPaneInspectionCaller` already
     // enforces for ownerUserId/workspaceId on the other two tools (this module's own security
-    // core note at the top of the file).
+    // core note at the top of the file). Only the Michi assistant names the workspace, and only
+    // one its owner owns.
+    const caller = isAssistantBinding(binding) ? assistantListCaller(sessionCaller, args.workspaceId) : sessionCaller;
     const request: ListPanesRequestV1 = parseListPanesRequestV1({
       workspaceId: caller.workspaceId,
       treeId: args.treeId,
@@ -438,7 +479,7 @@ export async function waitPaneTool(
   args: WaitPaneToolArgs,
 ): Promise<PaneInspectionToolResult> {
   try {
-    const caller = buildPaneInspectionCaller(binding);
+    const sessionCaller = buildPaneInspectionCaller(binding);
     const parsed = parseWaitPaneRequestV1({
       paneId: args.paneId,
       nodeId: args.nodeId,
@@ -448,6 +489,7 @@ export async function waitPaneTool(
       executionRef: args.executionRef,
       timeoutMs: args.timeoutMs,
     });
+    const caller = scopedToTarget(binding, sessionCaller, parsed.locator);
     const result = await waitPane(caller, {
       locator: parsed.locator,
       until: parsed.until,

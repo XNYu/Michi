@@ -50,6 +50,7 @@ export function ComposerModelPicker({
   const savingFocusRef = useRef<HTMLElement | null>(null);
   const mountedRef = useRef(true);
   const [position, setPosition] = useState({ left: anchor.x, top: anchor.y, maxHeight: 240 });
+  const side = useRef<'above' | 'below' | null>(null);
   const caps = catalogCapabilities ?? (resolvedBinding.runtime === agentStatus?.runtime ? agentStatus.capabilities : null);
   const hasModels = !!(caps?.models || caps?.providerModels || resolvedBinding.model);
   const searchable = page === 'model' && providerModels.length > 7;
@@ -116,10 +117,27 @@ export function ComposerModelPicker({
       const width = viewport?.width ?? window.innerWidth;
       const aboveSpace = aboveEdge === undefined ? 0 : aboveEdge - viewportTop - 8;
       const belowSpace = viewportTop + height - belowEdge - 8;
-      const above = aboveSpace >= Math.min(240, height / 2) || aboveSpace > belowSpace;
+      const frame = getComputedStyle(surface);
       // The exported cap belongs to the scrolling list, not its search/back chrome.
-      const listHeight = parseFloat(getComputedStyle(surface).getPropertyValue('--m-maxHeight')) || 240;
-      const chromeHeight = surface.offsetHeight - (contentRef.current?.offsetHeight ?? surface.offsetHeight);
+      const listHeight = parseFloat(frame.getPropertyValue('--m-maxHeight')) || 240;
+      const content = contentRef.current;
+      // Measured down to the list's top edge: the search page reserves height
+      // under its list, and counting that as chrome would grow it each pass.
+      const chromeHeight = content
+        ? content.getBoundingClientRect().top - surface.getBoundingClientRect().top
+          + (parseFloat(frame.paddingBottom) || 0) + (parseFloat(frame.borderBottomWidth) || 0)
+        : 0;
+      // The summary page picks the side: above when all of it fits there,
+      // else below when it fits there, else the roomier side. Its sub-pages
+      // keep that side so moving between them never flips the surface.
+      let above: boolean;
+      if (page === 'overview' || side.current === null) {
+        const wanted = chromeHeight + (searchable || !content ? listHeight : Math.min(listHeight, content.scrollHeight));
+        above = aboveSpace >= wanted || (belowSpace < wanted && aboveSpace > belowSpace);
+        side.current = above ? 'above' : 'below';
+      } else {
+        above = side.current === 'above';
+      }
       const maxHeight = Math.max(80, Math.min(listHeight + chromeHeight, above ? aboveSpace : belowSpace, height - 16));
       const rect = surface.getBoundingClientRect();
       const top = above && aboveEdge !== undefined ? aboveEdge - Math.min(rect.height, maxHeight) : belowEdge;

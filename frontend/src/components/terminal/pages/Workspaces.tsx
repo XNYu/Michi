@@ -16,6 +16,8 @@ import { Search, X } from 'lucide-react';
 import { Button } from '../../ui/controls';
 import { WorkspaceLocation, workspaceMachineLabel } from '../../WorkspaceLocation';
 import { useBackendConnections } from '../../../state/useBackendConnections';
+import { isSystemWorkspace } from '../../../state/assistant/systemWorkspace';
+import { isVisibleConversationNode } from '../../../state/conversationVisibility';
 
 function formatRelative(ts: number): string {
   if (!ts) return '—';
@@ -52,13 +54,14 @@ interface WorkspaceCardData {
   models: string[];
 }
 
-function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, streamingIds: Set<string>, activeProjectId: string | null): WorkspaceCardData {
-  const liveIds = p.chatIds.filter((id) => !snapshot[id]?.deletedAt);
+export function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, streamingIds: Set<string>, activeProjectId: string | null): WorkspaceCardData {
+  // Page helpers and Meta agent maintenance runs are not the user's conversations.
+  const liveIds = p.chatIds.filter((id) => !snapshot[id]?.deletedAt && isVisibleConversationNode(snapshot[id]));
   const liveCount = liveIds.length;
   const streaming = liveIds.filter((id) => streamingIds.has(id)).length;
   const digests = liveIds.filter((id) => snapshot[id]?.kind === 'digest').length;
 
-  const liveTrees = p.trees.filter((t) => !t.archivedAt);
+  const liveTrees = p.trees.filter((t) => !t.archivedAt && isVisibleConversationNode(snapshot[t.rootNodeId]));
   const sortedTrees = [...liveTrees].sort((a, b) => (b.lastActiveAt || 0) - (a.lastActiveAt || 0));
   const threads: ThreadPreview[] = sortedTrees.slice(0, 3).map((t) => {
     const root = snapshot[t.rootNodeId];
@@ -67,9 +70,9 @@ function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, streamin
       || (root?.messages?.[0]?.text || '').slice(0, 60)
       || '(untitled)';
     let branches = 0;
-    for (const id of p.chatIds) {
+    for (const id of liveIds) {
       const n = snapshot[id];
-      if (!n || n.deletedAt) continue;
+      if (!n) continue;
       if (n.parentNodeId && treeContains(p, snapshot, t.rootNodeId, id)) branches++;
     }
     return {
@@ -339,7 +342,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
 
   const allCards = React.useMemo(() => {
     return projects
-      .filter((p) => !p.deletedAt && !p.archivedAt)
+      .filter((p) => !p.deletedAt && !p.archivedAt && !isSystemWorkspace(p))
       .map((p) => buildCard(p, nodesSnapshot, streamingIds, activeProjectId))
       .sort((a, b) => b.lastTs - a.lastTs);
   }, [projects, nodesSnapshot, streamingIds, activeProjectId]);
@@ -386,11 +389,11 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
 
   return (
     <div
-      className="term-scrollbar"
+      className="term-scrollbar michi-workspaces"
       style={{
         flex: 1,
         overflowY: 'auto',
-        padding: '40px 48px 56px',
+        padding: 'var(--mobile-workspace-padding, 40px 48px 56px)',
         background: 'var(--term-bg)',
       }}
     >
@@ -412,8 +415,8 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
               style={{
                 margin: 0,
                 fontFamily: 'var(--ui-font)',
-                fontSize: 'var(--fs-4xl)',
-                fontWeight: 700,
+                fontSize: 'var(--mobile-workspace-heading-size, var(--fs-4xl))',
+                fontWeight: 'var(--mobile-workspace-heading-weight, 700)',
                 letterSpacing: 'var(--ls-tight)',
                 color: 'var(--term-fg)',
               }}
@@ -429,10 +432,10 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, justifyContent: 'flex-end' }}>
+          <div className="michi-workspaces__actions" style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, justifyContent: 'flex-end' }}>
             {/* The shared page-search field and primary Button — the same
                 controls the Trash page's header uses. */}
-            <label className="ui-search" style={{ minWidth: 220, maxWidth: 320, flex: '0 1 280px' }}>
+            <label className="ui-search" style={{ minWidth: 'var(--mobile-workspace-search-min, 220px)', maxWidth: 320, flex: '0 1 280px' }}>
               <Search size={14} aria-hidden="true" />
               <input
                 ref={searchRef}
@@ -510,7 +513,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
         // One row per workspace, so twenty of them fit a screen and each column
         // can be read straight down. Scrolls sideways rather than collapsing
         // columns when the pane is too narrow for them.
-        <div style={{ overflowX: 'auto' }}>
+        <div className="michi-workspaces__table" role="region" aria-label="Workspaces" tabIndex={0} style={{ overflowX: 'auto' }}>
           <table
             style={{
               width: '100%',

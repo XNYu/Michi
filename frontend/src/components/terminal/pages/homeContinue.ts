@@ -1,5 +1,6 @@
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
 import { buildBranchChildrenOf, isNodeUnread } from '../../../state/sidebarSelectors';
+import { isVisibleConversationNode } from '../../../state/conversationVisibility';
 
 /** What a thread is doing right now, in the order the row's status dot cares
  *  about: a live stream outranks an unread reply. */
@@ -36,7 +37,7 @@ export function buildContinueItems(
     if (project.deletedAt || project.archivedAt) continue;
     for (const tree of project.trees) {
       if (tree.archivedAt) continue;
-      if (nodes[tree.rootNodeId]?.deletedAt) continue;
+      if (nodes[tree.rootNodeId]?.deletedAt || !isVisibleConversationNode(nodes[tree.rootNodeId])) continue;
       candidates.push({
         project,
         treeId: tree.id,
@@ -67,7 +68,7 @@ export function buildContinueItems(
       if (seen.has(id)) continue;
       seen.add(id);
       const node = nodes[id];
-      if (node?.deletedAt) continue;
+      if (node?.deletedAt || !isVisibleConversationNode(node)) continue;
       if (id !== c.rootNodeId) branches++;
       if (node) {
         if (node.status === 'streaming') streaming = true;

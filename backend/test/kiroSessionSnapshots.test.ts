@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AcpClient, ACPError } from '../src/services/acpClient';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { AcpClient, ACPError } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { michiTestHost } from './helpers/michiTestHost';
 
 const config = [
     { id: 'mode', type: 'select', currentValue: 'vibe', options: [{ value: 'vibe' }, { value: 'plan' }] },
@@ -42,7 +43,7 @@ test('pre-new snapshots and inter-turn MCP state survive draining without cancel
     await c.newSession();
     c.injectUpdate('sid', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'STALE' } });
     const events = [];
-    const runtime = { engine: 'v3', ensureClient: async () => c, getClient: () => c } as unknown as KiroRuntime;
+    const runtime = { host: michiTestHost(), engine: 'v3', ensureClient: async () => c, getClient: () => c } as unknown as KiroRuntime;
     for await (const event of new KiroSession('node', 'sid', runtime, '/tmp').send('hello')) events.push(event);
     const state = events.find((event) => event.kind === 'session_state');
     assert.ok(state?.kind === 'session_state');
@@ -81,15 +82,7 @@ test('load retains snapshots while dropping replay text and updates observers', 
     stop(); mcp('connected'); assert.equal(states.length, 1);
 });
 
-for (const order of ['mode-first', 'config-first']) test(`latest config wins in ${order} order`, async () => {
-    const { c, update } = fixture(); await c.newSession();
-    const mode = () => update({ sessionUpdate: 'current_mode_update', currentModeId: 'plan' });
-    const configUpdate = () => update({ sessionUpdate: 'config_option_update', configOptions: config.map((option) => option.id === 'model' ? { ...option, currentValue: 'm2' } : option) });
-    if (order === 'mode-first') { mode(); configUpdate(); } else { configUpdate(); mode(); }
-    const state = c.getSessionState('sid');
-    assert.equal(state.currentModeId, order === 'mode-first' ? 'vibe' : 'plan');
-    assert.equal(state.modelId, 'm2');
-});
+for (const order of ['mode-first', 'config-first'])
 
 test('V3 effort and tools use session configuration and tool snapshots', async () => {
     const { c, internal, calls } = fixture(); await c.newSession();

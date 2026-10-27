@@ -1,0 +1,258 @@
+/* Spaces Home, workspace homes and Space pages share a broad document
+   column. Blocks use Michi's document styles, with theme tokens throughout. */
+
+.area-settings.spaces-home .spaces-home__doc {
+  display: flex; flex-direction: column; gap: 22px;
+  width: 100%; max-width: 1552px; padding: 44px clamp(24px, 4%, 56px) 120px;
+  /* Keep select / add / drag controls inside the page, clear of the sidebar resize handle. */
+  padding-inline-start: 72px;
+}
+.spaces-home__head { display: flex; flex-direction: column; gap: 8px; }
+.spaces-home__head .area-settings__kicker { margin: 0; }
+.spaces-home__title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.spaces-home__title {
+  margin: 0;
+  color: var(--term-fg);
+  font-size: var(--fs-5xl);
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: var(--ls-tight);
+  overflow-wrap: anywhere;
+}
+.spaces-home__updated { margin: 0; color: var(--term-muted); font-size: var(--fs-md); line-height: 1.5; }
+.spaces-home__date { margin-left: 6px; color: var(--term-muted); font-size: var(--fs-lg); }
+.spaces-home__update { gap: 6px; }
+.spaces-home-spacer { flex: 1; }
+.spaces-home-muted { margin: 0; color: var(--term-muted); font-size: var(--fs-md); }
+.spaces-home-accent { color: var(--term-accent); }
+.spaces-home-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--term-line-s);
+  text-underline-offset: 3px;
+}
+.spaces-home-link:hover { color: var(--term-fg); }
+.spaces-home-link:focus-visible { outline: 1px solid var(--term-accent); outline-offset: 2px; }
+
+/* Meta agent status line */
+.spaces-home-status { display: flex; flex-direction: column; gap: 8px; color: var(--term-mid); font-size: var(--fs-lg); }
+.spaces-home-status__line { display: flex; align-items: flex-start; gap: 8px; line-height: 1.45; }
+/* A wrapped status line keeps the mock's 8px between its lines; one line stays 1.45 tall. */
+.spaces-home-status__text { min-width: 0; margin: -0.275em 0; line-height: 2; }
+.spaces-home-status__sep { margin: 0 6px; }
+.spaces-home-status__line > .spaces-home-status__dot { margin-top: calc((1lh - 7px) / 2); }
+.spaces-home-status__line > .spaces-home-status__spin { margin-top: calc((1lh - 10px) / 2); }
+.spaces-home-status__line b { color: var(--term-fg); font-weight: 600; }
+.spaces-home-status__dot { width: 7px; height: 7px; flex: none; border-radius: var(--ui-radius-pill); background: var(--term-digest); }
+.spaces-home-status__dot[data-tone='off'] { background: var(--term-line-s); }
+.spaces-home-status__dot[data-tone='warn'] { background: var(--term-select); }
+.spaces-home-status__error { color: var(--term-danger); }
+.spaces-home-status__bar { max-width: 520px; height: 4px; overflow: hidden; border-radius: var(--ui-radius-pill); background: var(--term-alt); }
+.spaces-home-status__bar > i { display: block; height: 100%; background: var(--term-accent); transition: width var(--t-quick) ease; }
+.spaces-home-status__list {
+  display: flex; flex-direction: column; gap: 6px; max-width: 620px; margin: 2px 0 0; padding: 10px 14px; list-style: none;
+  border: 1px solid var(--term-line); border-radius: var(--ui-radius-lg); background: var(--term-surface);
+}
+.spaces-home-status__list li { display: grid; grid-template-columns: 16px 130px 1fr auto; gap: 8px; align-items: center; color: var(--term-fg); font-size: var(--fs-lg); line-height: 1.45; }
+.spaces-home-status__list li.is-dim { color: var(--term-faint); }
+/* A written row carries its check and Open link a little taller, as in the mock. */
+.spaces-home-status__list li[data-state='done'] { min-height: 1.6em; }
+.spaces-home-status__list li.is-dim .spaces-home-status__mono { color: var(--term-faint); }
+.spaces-home-status__list li.spaces-home-status__note { margin-top: 8px; }
+.spaces-home-status__note > span:last-child { grid-column: 2 / 4; font-size: var(--fs-sm); line-height: 1.5; }
+.spaces-home-status__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spaces-home-status__mono { min-width: 0; color: var(--term-muted); font-family: var(--font-mono); font-size: var(--fs-sm); }
+.spaces-home-status__ok { color: var(--term-digest); }
+.spaces-home-status__bad { color: var(--term-danger); }
+.spaces-home-status__queued { color: var(--term-faint); text-align: center; }
+.spaces-home .meta-set__alert { font-size: var(--fs-lg); }
+
+/* Section headers: glyph, title, total, note, View all */
+.spaces-home-h2 { margin: 0; color: var(--term-fg); font-size: var(--fs-2xl); font-weight: 600; line-height: 1.3; }
+.spaces-home-section { display: flex; flex-direction: column; padding: 10px 0; }
+.spaces-home-section__head { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 10px; }
+.spaces-home-section__all { margin-left: auto; }
+.spaces-home-section__note { margin-left: auto; color: var(--term-muted); font-size: var(--fs-md); }
+.spaces-home-count { color: var(--term-muted); font-family: var(--font-mono); font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
+.spaces-home-dot { width: 8px; height: 8px; flex: none; border-radius: var(--ui-radius-pill); background: var(--term-accent); }
+.spaces-home-tag[data-tone='hint'] { color: var(--term-muted); border-color: var(--term-line-s); border-style: dashed; }
+.spaces-home-tag[data-tone='agent'] {
+  color: var(--term-muted);
+  border-color: var(--term-line);
+  background: transparent;
+}
+
+/* Counted rows */
+.spaces-home-rows { display: flex; flex-direction: column; border-top: 1px solid var(--term-line); }
+.spaces-home-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 16px;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--term-line);
+}
+.spaces-home-row__where { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; color: var(--term-muted); font-size: var(--fs-md); line-height: 1.45; }
+.spaces-home-row__where .michi-tag { margin-left: 6px; }
+.spaces-home-row__age { color: var(--term-select); }
+.spaces-home-row__ws { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.spaces-home-row__ws:hover { color: var(--term-fg); text-decoration: underline; text-underline-offset: 2px; }
+.spaces-home-row__ws:focus-visible { outline: 1px solid var(--term-accent); outline-offset: 1px; }
+/* A table row naming a workspace opens that workspace's home. */
+.spaces-home tr[data-home-workspace] { cursor: pointer; }
+.spaces-home tr[data-home-workspace]:hover td:first-child { text-decoration: underline; text-underline-offset: 2px; }
+/* Its first cell starts with the workspace's dot from the Spaces sidebar (.area-side__dot, same tones). */
+.spaces-home tr[data-home-tone] > td:first-child { font-weight: 500; }
+.spaces-home tr[data-home-tone] > td:first-child::before {
+  content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 8px 1px 0; border-radius: 50%;
+  background: var(--term-line-s); vertical-align: middle;
+}
+.spaces-home tr[data-home-tone='waiting'] > td:first-child::before { background: var(--term-accent); }
+.spaces-home tr[data-home-tone='stalled'] > td:first-child::before {
+  background: linear-gradient(90deg, var(--term-mauve) 50%, var(--term-mauve-f) 50%);
+  box-shadow: inset 0 0 0 1px var(--term-mauve);
+}
+/* Conversation text reads at the message body size, as it does in the conversation itself. */
+.spaces-home-row__what { grid-column: 1; color: var(--term-fg); font-size: var(--message-body-size-base); line-height: 1.5; overflow-wrap: anywhere; }
+.spaces-home-row__act { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 430px; grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.spaces-home-section .ui-btn--sm { min-height: 30px; padding: 5px 10px; }
+/* Remind tomorrow / No longer needs attention: square icon buttons after Continue. */
+.spaces-home-row__more { display: inline-flex; gap: 2px; }
+.spaces-home-row__more .ui-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px 7px; }
+/* With a pointer they appear on the row's hover or focus; the space stays reserved so Continue does not shift. */
+@media (hover: hover) {
+  .spaces-home-row__more { opacity: 0; transition: opacity 120ms ease; }
+  .spaces-home-row:hover .spaces-home-row__more,
+  .spaces-home-row:focus-within .spaces-home-row__more { opacity: 1; }
+}
+.spaces-home-row[data-claim='true'] { border-bottom-style: dashed; }
+
+/* Space activity */
+.spaces-home-feed { display: flex; flex-direction: column; border-top: 1px solid var(--term-line); }
+.spaces-home-feed__row {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 0;
+  border: 0; border-bottom: 1px solid var(--term-line); background: transparent;
+  color: var(--term-fg); font: inherit; font-size: var(--fs-xl); text-align: left; cursor: pointer;
+}
+.spaces-home-feed__row > svg { flex: none; color: var(--term-accent); }
+.spaces-home-feed__row:hover { background: color-mix(in srgb, var(--term-alt) 50%, transparent); }
+/* Fresh activity keeps its source icon and timestamp without tinting the whole row. */
+.spaces-home-feed__row[data-fresh] {
+  background: transparent;
+}
+.spaces-home-feed__row:focus-visible { outline: 1px solid var(--term-accent); outline-offset: -1px; }
+.spaces-home-feed__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spaces-home-feed__text b { font-weight: 600; }
+.spaces-home-feed__age { margin-left: auto; flex: none; color: var(--term-muted); font-size: var(--fs-md); white-space: nowrap; }
+
+/* Page blocks inside a home: the lead paragraph reads as the page's summary */
+.spaces-home-blocks { display: contents; }
+.spaces-home .michi-doc-blocks { gap: 22px; }
+/* The lead is read, not chrome: its frame's padding is taken back so it sits on the page's rhythm.
+   20px is Michi's level-1 page heading (.michi-doc-h2[data-level='1']); the type scale has no step there. */
+.spaces-home [data-segment='lead'] > .michi-doc-blocks { margin: -10px 0; }
+.spaces-home [data-segment='lead'] .michi-doc-block:first-child [data-michi-block='markdown'] :is(p, li) {
+  color: var(--term-fg);
+  font-size: 20px;
+  line-height: 1.55;
+}
+/* A home is read like a conversation: its block text uses the message body size, paragraphs in full colour.
+   List items are entries (a step, an event), so they sit closer inside and further apart. */
+.spaces-home .michi-doc-block [data-michi-block='markdown'] :is(p, li),
+.spaces-home .michi-doc-callout p { font-size: var(--message-body-size-base); line-height: 1.7; }
+.spaces-home .michi-doc-block [data-michi-block='markdown'] p { color: var(--term-fg); }
+.spaces-home .michi-doc-block [data-michi-block='markdown'] li { line-height: 1.5; }
+.spaces-home .michi-doc-block [data-michi-block='markdown'] li + li { margin-top: 14px; }
+/* Notes follow the document rhythm without a repeated edge marker. */
+.spaces-home .michi-doc-callout {
+  gap: 8px; padding: 4px 0; border: 0;
+  border-radius: 0; background: transparent;
+}
+.spaces-home .michi-doc-callout[data-tone] { background: transparent; border-color: var(--tone, var(--term-line-s)); }
+.spaces-home .michi-doc-callout > .michi-doc-caption {
+  position: static; margin: 0; color: var(--term-fg); font-size: var(--fs-2xl);
+  font-weight: 600; line-height: 1.4; letter-spacing: normal; text-transform: none;
+}
+/* Titles inside a home's blocks match the home's own section titles. */
+.spaces-home .michi-doc-block [data-michi-block='markdown'] :is(h2, h3, h4) {
+  margin: 0 0 6px;
+  color: var(--term-fg);
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.spaces-ws-home [data-segment='lead'] > .michi-doc-blocks { margin-top: -24px; }
+.spaces-ws-home [data-segment='lead'] .michi-doc-block:first-child [data-michi-block='markdown'] :is(p, li) {
+  font-size: var(--fs-3xl);
+  line-height: 1.5;
+}
+/* Today's agenda stays one line here; the full list is in Michi. The title row already says which day it is. */
+.spaces-home .michi-home-agenda { flex-wrap: nowrap; padding: 0; overflow: hidden; }
+.spaces-home .michi-home-agenda > .michi-home-agenda__glyph,
+.spaces-home .michi-home-agenda > .michi-home-caption { display: none; }
+.spaces-home .michi-home-agenda__entry:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@keyframes spaces-home-flash {
+  0%, 30% { background: var(--term-accent-f); }
+  100% { background: transparent; }
+}
+.michi-doc-block[data-home-flash] { animation: spaces-home-flash 1.4s ease-out; }
+
+/* Not written yet */
+.spaces-home-placeholder {
+  display: flex; flex-direction: column; gap: 9px; margin: 0 -14px; padding: 10px 14px;
+  border-left: 2px solid var(--term-line);
+}
+.spaces-home-placeholder > .spaces-home-h2 { margin-bottom: 1px; }
+.spaces-home-placeholder > .spaces-home-muted { line-height: 1.4; }
+.spaces-home-placeholder__line { display: block; width: 76%; height: 16px; background: var(--term-alt); border-radius: var(--ui-radius-sm); }
+.spaces-home-placeholder__line--short { width: 52%; }
+.spaces-home-pending { display: flex; flex-direction: column; gap: 14px; padding-top: 10px; }
+.spaces-home-pending__msg { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--term-mid); font-size: var(--fs-xl); }
+.spaces-home-pending .michi-doc-skeleton { min-height: 0; }
+.spaces-home-pending__cards { display: flex; gap: 24px; margin: 14px 0 18px; }
+.spaces-home-pending .spaces-home-pending__cards > span { display: block; width: 150px; height: 44px; background: var(--term-alt); }
+
+/* Workspace home */
+.spaces-home-lead { margin: 0; color: var(--term-fg); font-size: var(--fs-3xl); line-height: 1.5; }
+.spaces-home-empty-ws { display: flex; flex-direction: column; gap: 14px; }
+.spaces-home-source { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: -14px; color: var(--term-muted); font-size: var(--fs-md); }
+.spaces-home-source > svg { flex: none; }
+.spaces-home-space-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.spaces-home-space-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px 14px;
+  border: 0; border-bottom: 1px solid var(--term-line); border-radius: 0; background: transparent;
+  color: var(--term-fg); font: inherit; text-align: left; cursor: pointer;
+}
+.spaces-home-space-card:hover { border-color: var(--term-line-s); }
+.spaces-home-space-card:focus-visible { outline: 1px solid var(--term-accent); outline-offset: 1px; }
+.spaces-home-space-card__title { display: flex; align-items: center; gap: 7px; font-size: var(--fs-xl); font-weight: 600; }
+.spaces-home-space-card__title > svg { color: var(--term-faint); }
+.spaces-home-space-card__sub { color: var(--term-muted); font-size: var(--fs-md); }
+.spaces-home-space-card--add { flex-direction: row; align-items: center; justify-content: flex-start; color: var(--term-muted); }
+.spaces-home-threads { display: flex; flex-direction: column; border-top: 1px solid var(--term-line); }
+.spaces-home-threads__row {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 0;
+  border: 0; border-bottom: 1px solid var(--term-line); background: transparent;
+  color: var(--term-fg); font: inherit; font-size: var(--fs-xl); text-align: left; cursor: pointer;
+}
+.spaces-home-threads__row > svg { flex: none; color: var(--term-faint); }
+.spaces-home-threads__row:hover { background: color-mix(in srgb, var(--term-alt) 50%, transparent); }
+.spaces-home-threads__row:focus-visible { outline: 1px solid var(--term-accent); outline-offset: -1px; }
+.spaces-home-threads__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spaces-home-threads__runtime { color: var(--term-mid); border-color: var(--term-line); }
+
+/* All threads as Spaces opens it: the filter chip sits in the page column. */
+.spaces-threads .michi-db-chips { padding: 0; border-bottom: 0; }
+.spaces-threads__more { margin-top: 10px; }
+
+@media (max-width: 640px) {
+  .spaces-home-section__head { flex-wrap: wrap; }
+  .spaces-home-section__note { flex-basis: 100%; margin-left: 0; }
+  .spaces-home-status__list li { grid-template-columns: 16px minmax(70px, 1fr) minmax(0, 1fr) auto; }
+  .spaces-home-row { grid-template-columns: minmax(0, 1fr); }
+  .spaces-home-row__act { justify-content: flex-start; grid-column: 1; grid-row: auto; justify-self: start; }
+}

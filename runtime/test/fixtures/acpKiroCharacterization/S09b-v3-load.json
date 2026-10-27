@@ -1,0 +1,570 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "<undefined>",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v3",
+          "--auth-method",
+          "cli"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "load before initialize",
+    "=loadEarly": [
+      {
+        "error": "ACPError",
+        "message": "This Kiro server cannot verify native session history; original binding retained"
+      }
+    ]
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "load",
+    "=load": [
+      {
+        "configOptions": [
+          {
+            "id": "model",
+            "type": "select",
+            "category": "model",
+            "currentValue": "m1",
+            "options": [
+              {
+                "value": "m1",
+                "name": "Model one"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "select",
+            "category": "mode",
+            "currentValue": "agent",
+            "options": [
+              {
+                "value": "agent",
+                "name": "Agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          {
+            "id": "effortLevel",
+            "type": "select",
+            "currentValue": "low",
+            "options": [
+              {
+                "group": "Effort",
+                "options": [
+                  {
+                    "value": "low"
+                  },
+                  {
+                    "value": "high"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "models": {
+          "currentModelId": "m1",
+          "availableModels": [
+            {
+              "value": "m1",
+              "name": "Model one",
+              "modelId": "m1"
+            },
+            {
+              "value": "m2",
+              "name": "Model two",
+              "_meta": {
+                "kiro": {
+                  "hasEffort": true,
+                  "effortLevels": [
+                    "low",
+                    "high"
+                  ],
+                  "defaultEffortLevel": "low"
+                }
+              },
+              "modelId": "m2"
+            }
+          ]
+        },
+        "modes": {
+          "currentModeId": "agent",
+          "availableModes": [
+            {
+              "value": "agent",
+              "name": "Agent",
+              "id": "agent"
+            },
+            {
+              "value": "planner",
+              "name": "Planner",
+              "id": "planner"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_load",
+        {
+          "cwd": "/work",
+          "sessionId": "L3"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/list",
+        "params": {
+          "cwd": "/work",
+          "_meta": {
+            "kiro": {
+              "scope": "workspace",
+              "source": "local"
+            }
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/list",
+        "params": {
+          "cwd": "/work",
+          "cursor": "page2",
+          "_meta": {
+            "kiro": {
+              "scope": "workspace",
+              "source": "local"
+            }
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/load",
+        "params": {
+          "sessionId": "L3",
+          "cwd": "/work",
+          "mcpServers": [],
+          "_meta": {
+            "kiro": {
+              "modelId": "m2",
+              "settings": {
+                "workflows": {
+                  "enabled": true
+                }
+              }
+            },
+            "chatId": "c"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "state",
+    "state": [
+      {
+        "sessionId": "L3",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "configOptions": [
+            {
+              "id": "model",
+              "type": "select",
+              "category": "model",
+              "currentValue": "m1",
+              "options": [
+                {
+                  "value": "m1",
+                  "name": "Model one"
+                },
+                {
+                  "value": "m2",
+                  "name": "Model two",
+                  "_meta": {
+                    "kiro": {
+                      "hasEffort": true,
+                      "effortLevels": [
+                        "low",
+                        "high"
+                      ],
+                      "defaultEffortLevel": "low"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mode",
+              "type": "select",
+              "category": "mode",
+              "currentValue": "agent",
+              "options": [
+                {
+                  "value": "agent",
+                  "name": "Agent"
+                },
+                {
+                  "value": "planner",
+                  "name": "Planner"
+                }
+              ]
+            },
+            {
+              "id": "effortLevel",
+              "type": "select",
+              "currentValue": "low",
+              "options": [
+                {
+                  "group": "Effort",
+                  "options": [
+                    {
+                      "value": "low"
+                    },
+                    {
+                      "value": "high"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "models": {
+            "currentModelId": "m1",
+            "availableModels": [
+              {
+                "value": "m1",
+                "name": "Model one",
+                "modelId": "m1"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                },
+                "modelId": "m2"
+              }
+            ]
+          },
+          "modes": {
+            "currentModeId": "agent",
+            "availableModes": [
+              {
+                "value": "agent",
+                "name": "Agent",
+                "id": "agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner",
+                "id": "planner"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "nativeEngine": "v3",
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "missing session",
+    "=loadMissing": [
+      {
+        "error": "ACPNativeSessionMissingError",
+        "message": "Kiro native session is no longer available",
+        "method": "session/load",
+        "sessionId": "L4"
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/list",
+        "params": {
+          "cwd": "/work",
+          "_meta": {
+            "kiro": {
+              "scope": "workspace",
+              "source": "local"
+            }
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "session/list",
+        "params": {
+          "cwd": "/work",
+          "cursor": "page2",
+          "_meta": {
+            "kiro": {
+              "scope": "workspace",
+              "source": "local"
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "state",
+    "state": [
+      {
+        "sessionId": "L4",
+        "alive": true,
+        "hasSession": false,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": "<undefined>",
+        "sessionState": {
+          "runtimeId": "kiro",
+          "nativeEngine": "v3",
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "incomplete catalog",
+    "=loadIncomplete": [
+      {
+        "error": "Error",
+        "message": "Kiro returned an incomplete session catalog"
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "session/list",
+        "params": {
+          "cwd": "/work",
+          "_meta": {
+            "kiro": {
+              "scope": "workspace",
+              "source": "local"
+            }
+          }
+        }
+      }
+    ]
+  }
+]

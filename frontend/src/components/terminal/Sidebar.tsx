@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SidebarContentPrefsProvider, usePrefs } from '../../state/prefs';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
 import { Row } from './primitives';
@@ -6,23 +6,30 @@ import WorkspaceTree from './WorkspaceTree';
 import ActivityView from './ActivityView';
 import TreeSelectionBar from './TreeSelectionBar';
 import ResizeHandle from '../ResizeHandle';
-import { rowGeom, rowPadding, type RowGeom } from './sidebarRowStyle';
+import { rowGeom, rowPadding, spinePadding, WORKSPACE_ICON_SIZE, WORKSPACE_ICON_GAP, type RowGeom } from './sidebarRowStyle';
+import './sidebar.css';
 import {
   AgentIcon,
   HomeIcon,
   WorkspacesIcon,
-  SettingsIcon,
   UserIcon,
-
 } from './icons';
 import type { PageId } from '../../state/commands';
+import { AREA_RAIL_WIDTH } from './rail/AreaRail';
 
-// Min must cover the Topbar Zone 1 button cluster so drag-resizing can't
-// push the sidebar narrower than its header icons.  ZONE1_WIDTH (topbar.tsx)
-// is TRAFFIC_LIGHT_PAD(96) + 6×26 + 5×4 + RIGHT_PAD(8) = 280px.
-const MIN_SIDEBAR_WIDTH = 280;
+// Rail + sidebar must cover the Topbar Zone 1 button cluster so drag-resizing
+// can't push the left chrome narrower than its header icons. ZONE1_WIDTH
+// (Topbar.tsx) is TRAFFIC_LIGHT_PAD(96) + 6×26 + 5×4 + RIGHT_PAD(8) = 280px.
+const MIN_SIDEBAR_WIDTH = 280 - AREA_RAIL_WIDTH;
 const MAX_SIDEBAR_WIDTH = 400;
-const DEFAULT_SIDEBAR_WIDTH = 280;
+const DEFAULT_SIDEBAR_WIDTH = 252;
+
+/** Sidebar scrollbars appear on pointer/focus entry, then linger this long. */
+const SCROLLBAR_LINGER_MS = 2000;
+/** Fallback settle if the width transitionend never fires (reduced motion,
+ *  an interrupted transition, or a browser that skips the event). The
+ *  authoritative clock is the transition itself (`--t-enter`, 180ms). */
+const SIDEBAR_SETTLE_FALLBACK_MS = 260;
 
 /** Sidebar row density → the `--sb-*` CSS vars consumed by WorkspaceRow /
  *  ThreadRow / BranchRow / merge rows / BottomNav. `compact` reproduces the
@@ -41,8 +48,7 @@ export default function TerminalSidebar({
   workspaceReady = true,
   customAgentsEnabled = false,
   onNav,
-  onOpenPalette,
-  onNewThread,
+  areaContent,
   narrowMode = false,
   narrowOverlayOpen = false,
   onCloseOverlay,
@@ -51,8 +57,12 @@ export default function TerminalSidebar({
   workspaceReady?: boolean;
   customAgentsEnabled?: boolean;
   onNav: (p: PageId) => void;
-  onOpenPalette: () => void;
-  onNewThread: () => void;
+  /** @deprecated The area rail owns these entry points now; kept for existing callers. */
+  onOpenPalette?: () => void;
+  /** @deprecated See onOpenPalette. */
+  onNewThread?: () => void;
+  /** Sidebar body for the Spaces, Scheduled and Settings areas; the conversation tree when omitted. */
+  areaContent?: React.ReactNode;
   narrowMode?: boolean;
   narrowOverlayOpen?: boolean;
   onCloseOverlay?: () => void;
@@ -60,17 +70,40 @@ export default function TerminalSidebar({
   const { prefs, setPref } = usePrefs();
   const asideRef = useRef<HTMLElement>(null);
   const [isResizing, setIsResizing] = useState(false);
+  // Scrollbars are a pointer affordance: quiet while the pointer is elsewhere,
+  // visible on entry, and held for a short linger after leaving so crossing the
+  // sidebar edge (or a portalled menu) does not make the bar blink.
+  const [scrollbarsQuiet, setScrollbarsQuiet] = useState(true);
+  const scrollbarTimer = useRef<number | undefined>(undefined);
+  const showScrollbars = useCallback(() => {
+    if (scrollbarTimer.current !== undefined) {
+      window.clearTimeout(scrollbarTimer.current);
+      scrollbarTimer.current = undefined;
+    }
+    setScrollbarsQuiet(false);
+  }, []);
+  const quietScrollbarsSoon = useCallback(() => {
+    if (scrollbarTimer.current !== undefined) window.clearTimeout(scrollbarTimer.current);
+    scrollbarTimer.current = window.setTimeout(() => {
+      scrollbarTimer.current = undefined;
+      setScrollbarsQuiet(true);
+    }, SCROLLBAR_LINGER_MS);
+  }, []);
+  useEffect(() => () => {
+    if (scrollbarTimer.current !== undefined) window.clearTimeout(scrollbarTimer.current);
+  }, []);
   const contents = useMemo(
-    () => <SidebarContents activePage={activePage} workspaceReady={workspaceReady} customAgentsEnabled={customAgentsEnabled} onNav={onNav} />,
-    [activePage, workspaceReady, customAgentsEnabled, onNav],
+    () => areaContent ?? <SidebarContents activePage={activePage} workspaceReady={workspaceReady} customAgentsEnabled={customAgentsEnabled} onNav={onNav} />,
+    [areaContent, activePage, workspaceReady, customAgentsEnabled, onNav],
   );
 
   // Clamp persisted width to current MIN so legacy narrower values auto-correct.
   const effectiveWidth = Math.max(prefs.terminalSidebarWidth, MIN_SIDEBAR_WIDTH);
   useEffect(() => {
+    // The Topbar's Zone 1 spans the area rail and the sidebar.
     document.documentElement.style.setProperty(
       '--term-sidebar-width',
-      `${effectiveWidth}px`,
+      `${effectiveWidth + AREA_RAIL_WIDTH}px`,
     );
     // Persist the correction so we don't recompute every render.
     if (prefs.terminalSidebarWidth < MIN_SIDEBAR_WIDTH) {
@@ -78,22 +111,35 @@ export default function TerminalSidebar({
     }
   }, [effectiveWidth, prefs.terminalSidebarWidth, setPref]);
 
-  // Broadcast a window of "sidebar is animating its width" so panes can pause
-  // ResizeObserver-driven reflows for the duration of the toggle and resume
-  // once it settles. Skip the very first render so we don't fire on mount.
+  // Broadcast the width animation window so panes can pause ResizeObserver
+  // reflows. The width transition itself is the clock; a fallback timer only
+  // covers a skipped transitionend. Skip the very first render so mount does
+  // not look like a toggle.
   const firstRunRef = useRef(true);
   useEffect(() => {
     if (firstRunRef.current) { firstRunRef.current = false; return; }
     if (narrowMode) return; // overlay slides in via CSS keyframes; panes don't reflow
-    window.dispatchEvent(
-      new CustomEvent('michi:sidebar-animating', { detail: { animating: true } }),
-    );
-    const id = window.setTimeout(() => {
+    const el = asideRef.current;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
       window.dispatchEvent(
         new CustomEvent('michi:sidebar-animating', { detail: { animating: false } }),
       );
-    }, 220);
-    return () => window.clearTimeout(id);
+    };
+    window.dispatchEvent(
+      new CustomEvent('michi:sidebar-animating', { detail: { animating: true } }),
+    );
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.target === el && event.propertyName === 'width') finish();
+    };
+    el?.addEventListener('transitionend', onTransitionEnd);
+    const fallback = window.setTimeout(finish, SIDEBAR_SETTLE_FALLBACK_MS);
+    return () => {
+      el?.removeEventListener('transitionend', onTransitionEnd);
+      window.clearTimeout(fallback);
+    };
   }, [prefs.sidebarCollapsed, narrowMode]);
 
   // In narrow mode, when the overlay is closed, render nothing — no sliver, no
@@ -114,6 +160,23 @@ export default function TerminalSidebar({
     '--sb-ws-gap': `${d.wsGap}px`,
     '--sb-ts-fs': d.tsFs,
     '--sb-nav-py': `${d.navPy}px`,
+    // Area sidebars use the same text/icon columns and density as Chat.
+    '--sb-icon-size': `${WORKSPACE_ICON_SIZE}px`,
+    '--sb-icon-gap': `${WORKSPACE_ICON_GAP}px`,
+    '--sb-area-left': geom.isCard ? rowPadding(geom).paddingLeft : `calc(6px + var(--sb-inset))`,
+    '--sb-area-right': geom.isCard ? rowPadding(geom).paddingRight : `calc(10px + var(--sb-inset))`,
+    '--sb-row-pb': geom.isCard ? 'calc(var(--sb-row-py) + 1px)' : 'var(--sb-row-py)',
+    '--sb-indent-step': `${geom.indentStep}px`,
+    '--sb-workspace-weight': geom.workspaceAsHeader ? 500 : 450,
+    '--sb-nav-left': geom.isCard ? rowPadding(geom).paddingLeft : 'calc(12px + var(--sb-inset))',
+    '--sb-nav-right': geom.isCard ? rowPadding(geom).paddingRight : 'calc(12px + var(--sb-inset))',
+    '--sb-nav-gap': geom.isCard ? '9px' : '11px',
+    '--sb-nav-weight': geom.isCard ? 500 : 400,
+    '--sb-section-padding': geom.isCard
+      ? `0 ${spinePadding(geom, geom.rightGap)} 5px ${spinePadding(geom, geom.titleX)}`
+      : 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
+    '--sb-section-top': geom.isCard ? '18px' : '8px',
+    '--sb-section-tracking': geom.isCard ? 'var(--ls-caps)' : 'var(--ls-wide)',
     // Horizontal gutter between sidebar content and its edges. Applied as
     // padding on the scrollable tree + bottom nav (below), so it stacks on
     // top of each row's own left/right padding. 0 = flush (original look).
@@ -134,55 +197,61 @@ export default function TerminalSidebar({
       ref={asideRef}
       className="terminal-sidebar"
       data-row-style={geom.style}
-      aria-hidden={collapsed || undefined}
+      // The narrow overlay closes on any Esc: a layer under the ⌘J panel
+      // ("shell"), which its Esc yields to when the page has focus.
+      data-escape-layer={overlayMode ? 'shell' : undefined}
+      data-scrollbars={scrollbarsQuiet ? 'quiet' : 'visible'}
+      data-collapsed={collapsed || undefined}
       style={{
         ...densityVars,
         width: overlayMode ? effectiveWidth : (collapsed ? 0 : effectiveWidth),
         flexShrink: 0,
-        background: 'var(--term-sidebar-bg, var(--term-surface))',
+        background: 'var(--term-sidebar-body-bg, var(--term-sidebar-bg, var(--term-surface)))',
         border: 'var(--term-sidebar-outline, none)',
         borderRight: overlayMode
           ? '1px solid var(--term-line)'
-          : (collapsed ? 'none' : '1px solid color-mix(in srgb, var(--term-line) 50%, transparent)'),
+          : 'var(--term-sidebar-edge, 1px solid color-mix(in srgb, var(--term-line) 50%, transparent))',
         borderRadius: 'var(--term-sidebar-radius, 0px)',
         display: 'flex',
         flexDirection: 'column',
         fontFamily: 'var(--ui-font)',
         color: 'var(--term-fg)',
         position: overlayMode ? 'absolute' : 'relative',
-        left: overlayMode ? 0 : undefined,
+        left: overlayMode ? AREA_RAIL_WIDTH : undefined,
         top: overlayMode ? 0 : undefined,
         bottom: overlayMode ? 0 : undefined,
         // z-index 1 in non-overlay mode lifts the sidebar (and its right-edge
         // box-shadow) above sibling pane content, which otherwise paints its
         // own surface bg over the 8px shadow extension and hides the glow.
-        zIndex: overlayMode ? 'var(--z-sidebar-overlay)' : (collapsed ? undefined : 'var(--z-raised)'),
+        zIndex: overlayMode ? 'var(--z-sidebar-overlay)' : 'var(--z-raised)',
         boxShadow: overlayMode
           ? '4px 0 24px rgba(0,0,0,0.18)'
-          : (collapsed
-              ? undefined
-              : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.025))'),
+          : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.025))',
         // Clip the box-shadow's upward feather (top: 0) so it doesn't bleed
         // into the Topbar Zone 1 spacer above and create a visible horizontal
         // joint. Right/bottom are extended past the element so the right glow
         // and bottom feather still render. Overlay mode keeps its own halo.
-        clipPath: overlayMode || collapsed ? undefined : 'inset(0 -8px -8px 0)',
+        clipPath: overlayMode ? undefined : 'inset(0 -8px -8px 0)',
         height: '100%',
         userSelect: 'none',
         WebkitUserSelect: 'none',
         overflow: 'hidden',
-        opacity: collapsed ? 0 : 1,
-        pointerEvents: collapsed ? 'none' : undefined,
         transition: overlayMode || isResizing
           ? 'none'
           : collapsed
-            ? 'width var(--t-enter) cubic-bezier(.4,0,1,1), opacity var(--t-soft) ease-in'
-            : 'width var(--t-enter) cubic-bezier(0,0,.2,1), opacity var(--t-soft) ease-out',
+            ? 'width var(--t-enter) cubic-bezier(.4,0,1,1)'
+            : 'width var(--t-enter) cubic-bezier(0,0,.2,1)',
         animation: overlayMode ? 'slideInLeft var(--t-enter) ease-out' : undefined,
       }}
+      onPointerEnter={showScrollbars}
+      onPointerLeave={quietScrollbarsSoon}
+      onFocusCapture={showScrollbars}
+      onBlurCapture={quietScrollbarsSoon}
     >
       <div
         className="terminal-sidebar-content"
+        aria-hidden={collapsed || undefined}
+        inert={collapsed}
         style={{
           // Only the shell changes width during a toggle; rows never squeeze.
           width: effectiveWidth,
@@ -267,6 +336,130 @@ function SidebarContents({ activePage, workspaceReady, customAgentsEnabled, onNa
   </>;
 }
 
+interface BottomNavItemProps {
+  activePage: PageId;
+  onNav: (p: PageId) => void;
+  geom: RowGeom;
+  /** Page this row navigates to. Omit for action rows (drawers) that use onClick. */
+  id?: PageId;
+  glyph: React.ReactNode;
+  label: string;
+  kbd?: string;
+  badge?: number;
+  /** `pill` is the filled count chip; `count` / `accent` are bare mono numbers (Michi totals). */
+  badgeVariant?: 'pill' | 'count' | 'accent';
+  /** Overrides page-nav; used by drawer toggles (e.g. Artifacts). */
+  onClick?: () => void;
+}
+
+/** One BottomNav row. Module-scoped so rows keep their identity across re-renders. */
+function BottomNavItem({
+  activePage,
+  onNav,
+  geom,
+  id,
+  glyph,
+  label,
+  kbd,
+  badge,
+  badgeVariant = 'pill',
+  onClick,
+}: BottomNavItemProps) {
+  const active = id !== undefined && activePage === id;
+  const go = () => (onClick ? onClick() : id !== undefined && onNav(id));
+  return (
+    // A button to the keyboard and screen readers (Tab, Enter, Space), with the row's look.
+    <Row
+      role="button"
+      tabIndex={0}
+      aria-current={active ? 'page' : undefined}
+      className="t-row-focus"
+      onClick={go}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey) return;
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        go();
+      }}
+      active={active}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: geom.isCard ? 9 : 11,
+        // Classic: text/icons indent by --sb-inset while the row box stays
+        // full-bleed (its negative margin cancels the container padding), so
+        // the active background reads as a full-width highlight. See index.css.
+        // Card modes: geometry comes from rowGeom so the glyph lands on the
+        // same icon column the thread rows use.
+        padding: geom.isCard
+          ? `var(--sb-nav-py, 6px) ${rowPadding(geom).paddingRight} var(--sb-nav-py, 6px) ${rowPadding(geom).paddingLeft}`
+          : 'var(--sb-nav-py, 6px) calc(12px + var(--sb-inset, 0px))',
+        color: active ? 'var(--term-fg)' : 'var(--term-mid)',
+        background: active ? 'var(--term-alt)' : 'transparent',
+        fontSize: geom.isCard ? 'var(--sb-fs, var(--fs-xl))' : 14,
+        fontWeight: geom.isCard ? 500 : undefined,
+        fontFamily: 'var(--ui-font)',
+      }}
+    >
+      <span
+        style={{
+          width: 16,
+          height: 16,
+          color: active ? 'var(--term-accent)' : 'var(--term-muted)',
+          position: 'relative',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        {glyph}
+      </span>
+      <span style={{ flex: 1 }}>{label}</span>
+      {badge !== undefined && badge > 0 && badgeVariant !== 'pill' && (
+        <span
+          data-badge={badgeVariant}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 'var(--fs-sm)',
+            fontVariantNumeric: 'tabular-nums',
+            color: badgeVariant === 'accent' ? 'var(--term-accent)' : 'var(--term-muted)',
+          }}
+        >
+          {badge}
+        </span>
+      )}
+      {badge !== undefined && badge > 0 && badgeVariant === 'pill' && (
+        <span
+          style={{
+            fontFamily: 'var(--ui-font)',
+            fontSize: 'var(--fs-sm)',
+            color: 'var(--term-surface)',
+            background: 'var(--term-muted)',
+            padding: '0 5px',
+            minWidth: 16,
+            textAlign: 'center',
+            fontWeight: 700,
+          }}
+        >
+          {badge}
+        </span>
+      )}
+      {kbd && (
+        <span
+          style={{
+            fontFamily: 'var(--ui-font)',
+            fontSize: 'var(--fs-sm)',
+            color: 'var(--term-muted)',
+          }}
+        >
+          {kbd}
+        </span>
+      )}
+    </Row>
+  );
+}
+
 function BottomNav({
   activePage,
   customAgentsEnabled,
@@ -278,92 +471,8 @@ function BottomNav({
   onNav: (p: PageId) => void;
   geom: RowGeom;
 }) {
-  const Item = ({
-    id,
-    glyph,
-    label,
-    kbd,
-    badge,
-    onClick,
-  }: {
-    /** Page this row navigates to. Omit for action rows (drawers) that use onClick. */
-    id?: PageId;
-    glyph: React.ReactNode;
-    label: string;
-    kbd?: string;
-    badge?: number;
-    /** Overrides page-nav; used by drawer toggles (e.g. Artifacts). */
-    onClick?: () => void;
-  }) => {
-    const active = id !== undefined && activePage === id;
-    return (
-      <Row
-        onClick={() => (onClick ? onClick() : id !== undefined && onNav(id))}
-        active={active}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: geom.isCard ? 9 : 11,
-          // Classic: text/icons indent by --sb-inset while the row box stays
-          // full-bleed (its negative margin cancels the container padding), so
-          // the active background reads as a full-width highlight. See index.css.
-          // Card modes: geometry comes from rowGeom so the glyph lands on the
-          // same icon column the thread rows use.
-          padding: geom.isCard
-            ? `var(--sb-nav-py, 6px) ${rowPadding(geom).paddingRight} var(--sb-nav-py, 6px) ${rowPadding(geom).paddingLeft}`
-            : 'var(--sb-nav-py, 6px) calc(12px + var(--sb-inset, 0px))',
-          color: active ? 'var(--term-fg)' : 'var(--term-mid)',
-          background: active ? 'var(--term-alt)' : 'transparent',
-          fontSize: geom.isCard ? 'var(--sb-fs, var(--fs-xl))' : 14,
-          fontWeight: geom.isCard ? 500 : undefined,
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        <span
-          style={{
-            width: 16,
-            height: 16,
-            color: active ? 'var(--term-accent)' : 'var(--term-muted)',
-            position: 'relative',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-        >
-          {glyph}
-        </span>
-        <span style={{ flex: 1 }}>{label}</span>
-        {badge !== undefined && badge > 0 && (
-          <span
-            style={{
-              fontFamily: 'var(--ui-font)',
-              fontSize: 'var(--fs-sm)',
-              color: 'var(--term-surface)',
-              background: 'var(--term-muted)',
-              padding: '0 5px',
-              minWidth: 16,
-              textAlign: 'center',
-              fontWeight: 700,
-            }}
-          >
-            {badge}
-          </span>
-        )}
-        {kbd && (
-          <span
-            style={{
-              fontFamily: 'var(--ui-font)',
-              fontSize: 'var(--fs-sm)',
-              color: 'var(--term-muted)',
-            }}
-          >
-            {kbd}
-          </span>
-        )}
-      </Row>
-    );
-  };
+  // While Michi is unreachable but was answering, the sidebar keeps what it last said.
+  const nav = { activePage, onNav, geom };
 
   return (
     <div
@@ -372,14 +481,13 @@ function BottomNav({
         flexShrink: 0,
       }}
     >
-      <Item id="workspaces" glyph={<WorkspacesIcon size={15} />} label="Workspaces" />
+      <BottomNavItem {...nav} id="home" glyph={<HomeIcon size={15} />} label="Home" />
+      <BottomNavItem {...nav} id="workspaces" glyph={<WorkspacesIcon size={15} />} label="Workspaces" />
       {customAgentsEnabled && (
-        <Item id="agents" glyph={<AgentIcon size={15} />} label="Agents" />
+        <BottomNavItem {...nav} id="agents" glyph={<AgentIcon size={15} />} label="Agents" />
       )}
-      <Item id="home" glyph={<HomeIcon size={15} />} label="Home" />
-      <Item id="settings" glyph={<SettingsIcon size={15} />} label="Settings" />
       {PROFILE_PAGE_ENABLED && (
-        <Item id="profile" glyph={<UserIcon size={15} />} label="Profile" />
+        <BottomNavItem {...nav} id="profile" glyph={<UserIcon size={15} />} label="Profile" />
       )}
     </div>
   );

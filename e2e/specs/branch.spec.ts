@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { installMockApi, bootWithWorkspace } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 test.describe('branch', () => {
   test('clicking branch button after typing creates a child chat', async ({ page }) => {
@@ -18,7 +19,7 @@ test.describe('branch', () => {
     await bootWithWorkspace(page);
 
     // First turn — sends on the root node, opens chat 1.
-    const composer = page.locator('[contenteditable="true"]').first();
+    const composer = page.locator(COMPOSER_EDITOR).first();
     await composer.fill('first message');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
     await expect(page.getByText('Hello from mock kiro.').first()).toBeVisible({ timeout: 5_000 });

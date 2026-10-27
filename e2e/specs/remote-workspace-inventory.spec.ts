@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
+import { leaveSettings, openSettings } from '../fixtures/shell';
 
 test('Connections reads live remote membership, clears it on failure, and rereads when reopened', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1100, height: 850 });
@@ -43,9 +44,7 @@ test('Connections reads live remote membership, clears it on failure, and reread
   } });
   await page.goto('/');
   await expect(page.getByRole('complementary').getByText('Old hydrated workspace', { exact: true })).toBeVisible();
-  await page.getByRole('complementary').getByText('Settings', { exact: true }).click();
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-  await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+  const settings = await openSettings(page, 'General');
   const desktop = settings.getByRole('listitem', { name: 'Build box', exact: true });
   const build = settings.getByRole('listitem', { name: 'Build server', exact: true });
   await expect(desktop.getByText('Created from another device', { exact: true })).toBeVisible();
@@ -76,12 +75,13 @@ test('Connections reads live remote membership, clears it on failure, and reread
 
   // Switching away unmounts Connections: opening it again must read the remote.
   inventory = [{ id: 'newer', name: 'Created while pane was closed', cwd: '/srv/newer' }];
-  await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await openSettings(page, 'Appearance');
   const previousReads = inventoryReads;
-  await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+  await openSettings(page, 'General');
   await expect(desktop.getByText('Created while pane was closed', { exact: true })).toBeVisible();
   expect(inventoryReads).toBeGreaterThan(previousReads);
   // A display refresh must not replace hydrated workspaces or live chat state.
+  await leaveSettings(page);
   await expect(page.getByRole('complementary').getByText('Old hydrated workspace', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });

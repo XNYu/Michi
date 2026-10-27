@@ -2,6 +2,11 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import net from 'node:net';
 import type { BackendConnectionRecord } from './backendConnections';
 
+// ProxyCommand transports (such as WSSH) can take over ten seconds to
+// establish a cold connection after the desktop backend hands over to launchd.
+export const SSH_CONNECT_TIMEOUT_SECONDS = 30;
+const FORWARD_READY_TIMEOUT_MS = (SSH_CONNECT_TIMEOUT_SECONDS + 5) * 1000;
+
 export type SshTunnelPhase = 'disconnected' | 'connecting' | 'connected' | 'error';
 
 export interface SshTunnelStatus {
@@ -49,7 +54,7 @@ export function buildSshTunnelArgs(connection: BackendConnectionRecord, localPor
     '-o', 'ExitOnForwardFailure=yes',
     '-o', 'ServerAliveInterval=30',
     '-o', 'ServerAliveCountMax=3',
-    '-o', 'ConnectTimeout=8',
+    '-o', `ConnectTimeout=${SSH_CONNECT_TIMEOUT_SECONDS}`,
     '-o', 'StrictHostKeyChecking=yes',
     '-L', `127.0.0.1:${localPort}:127.0.0.1:${connection.remotePort ?? 3000}`,
   ];
@@ -76,7 +81,7 @@ async function allocateLoopbackPort(): Promise<number> {
 }
 
 async function waitForLoopbackPort(port: number, process: ChildProcess): Promise<void> {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + FORWARD_READY_TIMEOUT_MS;
   for (;;) {
     if (process.exitCode !== null) throw new Error(`SSH exited with code ${process.exitCode}`);
     const connected = await new Promise<boolean>((resolve) => {

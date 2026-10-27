@@ -24,7 +24,7 @@ interface Options {
 }
 
 /** Final text widths are committed once; only the pane surfaces move. */
-export function usePaneLayout(ref: RefObject<HTMLDivElement>, options: Options) {
+export function usePaneLayout(ref: RefObject<HTMLDivElement | null>, options: Options) {
   const { paneIds, customWidths, mode = 'adaptive', defaultPaneWidth, enabled, scope, exitingIds = NO_EXITS, motion, appReduceMotion, onExitStart, onExitComplete } = options;
   const [geometry, setGeometry] = useState({ width: 0, gap: 0, padding: 0 });
   const [settledVersion, setSettledVersion] = useState(0);

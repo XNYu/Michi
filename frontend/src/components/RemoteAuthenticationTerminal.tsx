@@ -106,7 +106,7 @@ export default function AuthenticationTerminal({ request }: { request: RemoteAut
         : `Credentials on ${request.target.host} need attention. Sign in on that machine, then reconnect.`}</p>
     {native ? <>
       <p>Enter credentials directly in the terminal and complete any security-key or browser prompts. Closing this window stops sign-in.</p>
-      <div ref={host} className="remote-auth__terminal" aria-label="Sign-in terminal" />
+      <div className="remote-auth__terminal"><div ref={host} className="remote-auth__terminal-host" aria-label="Sign-in terminal" /></div>
       <p role="status">{status}</p>
       <div className="remote-auth__actions">{failed && <Button onClick={() => setGeneration(value => value + 1)}>Try sign-in again</Button>}
         <Button variant="secondary" onClick={closeRemoteAuthentication}>{finished ? 'Done' : 'Cancel'}</Button></div>

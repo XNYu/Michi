@@ -2,6 +2,8 @@
 
 Applies to: desktop/web and local/remote backends. Source checked: 2026-10-16. The entries are diagnostic paths, not proof of the cause on your machine. Use actual runtime, backend, timestamp and first failing error.
 
+Pages-related sections checked against source on 2026-10-26; other topics retain the review scope above.
+
 ## Find your symptom
 
 | Symptom / search phrase | Section below | Related reference |
@@ -20,6 +22,7 @@ Applies to: desktop/web and local/remote backends. Source checked: 2026-10-16. T
 | Crew setup required, Sync, command changed | Crew | `crew` |
 | Remote unreachable, SSH / token error | Remote connection | `remote-backend` |
 | Agents page absent, Run waiting/failed | Custom Agents | `custom-agents` |
+| Page not updating, preference conflict, component mismatch, remote Pages unavailable | Pages | `pages-and-components`, `pages-maintenance`, `page-component-design` |
 
 ## Startup: app/backend will not start or exits
 
@@ -120,6 +123,16 @@ A tunnel and the remote service have different lifetimes. Reopening Michi can re
 Custom Agents are off unless the backend starts with `MICHI_CUSTOM_AGENTS=1`. No Settings switch enables them. Existing definitions remain stored while disabled.
 
 For a Run, inspect its capability snapshot, effective permissions, environment, pending interactions and attempt error. Recovery/fallback is bounded and may wait after uncertain side effects. See `custom-agents`; do not bypass a worker's allowlist or repeat external actions blindly.
+
+## Pages, maintenance and generated components
+
+- **Remote page unavailable:** the current Pages/Meta agent interface supports the local backend only. The unavailable message is a product limitation, not a reason to reset the connection or database.
+- **Page not updated:** check workspace maintenance enablement, page-tree exclusion, backend/scheduler availability, Settings → Meta agent, and whether the input was an eligible new completion. Inspect Needs attention, pending suggestions and Open job; Up to date can include explicit no-change decisions or unaccepted proposals. See `pages-maintenance`.
+- **Preferences did not rearrange content:** they apply on the next relevant update. They are per-page and do not override section limits. On a revision conflict, Use latest discards the draft; Keep my draft retains it against the new base and still requires Save preferences.
+- **Per-item Sources missing:** old or uncited content has no inferred mapping, and complex Markdown may use whole-block Sources. Text edits remove stale mappings. Never manufacture message IDs to make the control appear.
+- **Component saved but absent:** a new library component needs attachment to a Page block/custom database view. Check enabled state, pinned/active version, host access and error UI. Already attached unpinned hosts can update on save; saving is not draft-only.
+- **Component looks different or loses input focus:** the sandbox inherits colors/font family and basic controls, not React/Mantine or the complete native size/tooltip system. Its tree renderer does not promise input-state preservation. Use native blocks where appropriate and see `page-component-design`; do not weaken isolation as a workaround.
+- **Replacement failed:** an open host can retain the last successful frame with Retry update. This does not roll back the saved library version, and read-only/disabled/deleted hosts still stop executable rendering.
 
 ## Logs and a useful problem report
 

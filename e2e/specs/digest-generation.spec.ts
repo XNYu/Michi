@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 declare global {
   interface Window {
@@ -28,7 +29,7 @@ test('digest streams temporary thoughts, clears them on completion, and uses edi
     };
   });
   await bootWithWorkspace(page, 'Digest regression');
-  await page.locator('[contenteditable="true"]').first().fill('Summarize our decisions');
+  await page.locator(COMPOSER_EDITOR).first().fill('Summarize our decisions');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await expect(page.getByText('Hello from mock kiro.')).toBeVisible();
   await page.getByRole('button', { name: 'Digest', exact: true }).click();

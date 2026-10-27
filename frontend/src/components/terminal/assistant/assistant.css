@@ -1,0 +1,246 @@
+/* The ⌘J assistant. Palette tokens only (--term-*), so every palette reads. */
+
+/* ── Floating panel ──────────────────────────────────────────── */
+.assistant-panel {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  /* Under drawers (peek, Settings) and menus; over panes and pages. */
+  z-index: calc(var(--z-drawer-scrim) - 2);
+  width: min(420px, calc(100% - 32px));
+  height: min(560px, calc(100% - 32px));
+  display: flex;
+  flex-direction: column;
+  background: var(--term-surface);
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+  box-shadow: var(--ui-popover-shadow);
+  overflow: hidden;
+  animation: fadeIn var(--t-enter) ease-out;
+}
+.assistant-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 6px 6px 14px;
+  border-bottom: 1px solid var(--term-line);
+}
+.assistant-panel__head .michi-section-label {
+  flex: 1;
+  min-width: 0;
+}
+.assistant-panel__head .michi-section-label__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.assistant-panel__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-muted);
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.assistant-panel__btn:hover {
+  background: var(--term-alt);
+  color: var(--term-fg);
+}
+.assistant-panel__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.assistant-panel__body > .terminal-pane {
+  flex: 1;
+  height: auto;
+  border-right: 0;
+}
+.assistant-panel__status {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 14px;
+}
+.assistant-panel__line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.assistant-skeleton {
+  height: 10px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-alt);
+  animation: tpulse var(--t-loop) ease-in-out infinite;
+}
+
+/* ── Attachments above the composer ──────────────────────────── */
+.assistant-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 12px 0;
+}
+.assistant-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  min-width: 0;
+  padding: 2px 2px 2px 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-alt);
+  color: var(--term-mid);
+  font-family: var(--ui-font);
+  font-size: 11px;
+  line-height: 18px;
+}
+.assistant-attach--more {
+  padding-right: 8px;
+  cursor: pointer;
+}
+.assistant-attach--more:hover {
+  color: var(--term-fg);
+}
+.assistant-attach__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--term-muted);
+}
+.assistant-attach__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant-attach__x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+.assistant-attach__x:hover {
+  color: var(--term-fg);
+}
+
+/* ── Chips for links in answers ──────────────────────────────── */
+.assistant-cite {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 6px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-mid);
+  font-family: var(--ui-font);
+  font-size: 11px;
+  line-height: 18px;
+  text-decoration: none;
+  vertical-align: 1px;
+  cursor: pointer;
+}
+.assistant-cite:hover {
+  border-color: var(--term-line-s);
+  color: var(--term-fg);
+}
+.assistant-cite__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--term-muted);
+}
+.assistant-cite__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant-cite[aria-disabled='true'] {
+  border-style: dashed;
+  color: var(--term-muted);
+  cursor: default;
+}
+.assistant-cite[aria-disabled='true']:hover {
+  border-color: var(--term-line);
+  color: var(--term-muted);
+}
+.assistant-cite[aria-busy='true'] {
+  cursor: progress;
+}
+.assistant-cite__note {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--term-faint);
+}
+
+/* ── Receipt for a Michi write, under its tool call ───────────── */
+.assistant-receipt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 14px;
+  padding: 7px 8px 7px 10px;
+  border: 1px solid var(--term-line);
+  font-family: var(--ui-font);
+  font-size: 12px;
+  color: var(--term-fg);
+}
+.assistant-receipt__glyph {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--term-digest);
+}
+.assistant-receipt.is-undone .assistant-receipt__glyph {
+  color: var(--term-muted);
+}
+.assistant-receipt__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.assistant-receipt.is-undone .assistant-receipt__label {
+  color: var(--term-muted);
+  text-decoration: line-through;
+}
+.assistant-receipt__btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+.assistant-receipt__btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.assistant-receipt__error {
+  flex-shrink: 0;
+  color: var(--term-muted);
+  font-size: 11px;
+}

@@ -1,5 +1,5 @@
 import type { ChatNodeState } from './chatTypes';
-import { assistantPersistenceContent } from './assistantBlocks';
+import { digestSourceSnapshot } from '../lib/digestSource';
 
 export interface DigestState {
   /** Chat node ids whose transcripts feed the digest. */
@@ -30,18 +30,10 @@ export interface DigestState {
   };
 }
 
-/**
- * A source's fingerprint is a deterministic hash of its *assistant* message
- * trail. User messages don't factor in — digests summarize what kiro said.
- * We use a fast, non-cryptographic rolling hash (FNV-1a 32-bit) so the
- * output is stable across runs and cheap to compute repeatedly.
- */
+/** Fingerprint exactly the source DTO sent to generation, excluding transient UI activity.
+ * The version prefix makes older assistant-only watermarks stale once. */
 export function computeSourceFingerprint(node: ChatNodeState): string {
-  const trail = node.messages
-    .filter((m) => m.role === 'assistant')
-    .map((m) => assistantPersistenceContent(m))
-    .join(' ');
-  return fnv1a32(trail);
+  return `v2:${fnv1a32(JSON.stringify(digestSourceSnapshot(node)))}`;
 }
 
 function fnv1a32(str: string): string {
@@ -65,7 +57,7 @@ export function staleSources(
   const out: string[] = [];
   for (const sid of digest.sources) {
     const node = nodes[sid];
-    if (!node) {
+    if (!node || node.kind !== 'chat' || node.deletedAt) {
       out.push(sid);
       continue;
     }

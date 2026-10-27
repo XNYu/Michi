@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
 import { KIRO_DESCRIPTOR } from '../../backend/src/agents/capabilityDescriptors';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 for (const accepted of [true, false]) {
   test(`Kiro native Steer ${accepted ? 'keeps accepted input as a Steered message' : 'retains rejected input'} without a second turn`, async ({ page }, info) => {
@@ -56,7 +57,7 @@ for (const accepted of [true, false]) {
       };
     });
     await bootWithWorkspace(page, 'Kiro ACP validation');
-    const editor = page.locator('[contenteditable="true"]').first();
+    const editor = page.locator(COMPOSER_EDITOR).first();
     await editor.fill('Start a Kiro turn');
     await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
     await expect(page.getByText('Kiro is working on the current turn.').first()).toBeVisible();
@@ -150,7 +151,7 @@ for (const status of [200, 403, 409]) {
       return false;
     } });
     await bootWithWorkspace(page, 'Kiro compact authorization');
-    const editor = page.locator('[contenteditable="true"]').first();
+    const editor = page.locator(COMPOSER_EDITOR).first();
     await editor.fill('Start a Kiro turn');
     await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
     await expect(page.getByText(/Hello from mock kiro/).first()).toBeVisible();

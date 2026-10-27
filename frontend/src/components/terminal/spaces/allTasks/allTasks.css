@@ -1,0 +1,10 @@
+/* All tasks: a page column wide enough for a board of every workspace's tasks. */
+.area-settings.spaces-home .all-tasks__doc { max-width: 1240px; }
+.all-tasks__count { color: var(--term-muted); font-size: var(--fs-lg); }
+.all-tasks .spaces-home__updated,
+.all-tasks__hint {
+  margin: 0;
+  color: var(--term-mid);
+  font-size: var(--fs-xl);
+  line-height: 1.6;
+}

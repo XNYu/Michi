@@ -67,6 +67,7 @@ const MarkdownBlock = React.memo(MarkdownBlockInner, (prev, next) =>
   prev.last === next.last &&
   prev.revealTailChars === next.revealTailChars &&
   prev.appendStreamingTail === next.appendStreamingTail &&
+  prev.previousBlockKind === next.previousBlockKind &&
   prev.size === next.size &&
   prev.family === next.family &&
   prev.leading === next.leading &&
@@ -203,6 +204,14 @@ export default function StreamingMarkdownContent({
     committedStateRef.current = state;
   }, [state]);
   const blocks = state.blocks;
+  const previousBlockKinds = useMemo(() => {
+    let previous: StreamingMarkdownBlock['kind'] | undefined;
+    return blocks.map(block => {
+      const before = previous;
+      if (block.kind !== 'space') previous = block.kind;
+      return before;
+    });
+  }, [blocks]);
   const unfinishedBlock = blocks.length > 0 ? blocks[blocks.length - 1] : undefined;
   const tailRemend: TailRemendResult | null = useMemo(
     () => (
@@ -222,6 +231,7 @@ export default function StreamingMarkdownContent({
             key={block.index}
             {...markdownProps}
             block={block}
+            previousBlockKind={previousBlockKinds[block.index]}
             first={block.index === 0}
             last={block.index === blocks.length - 1}
             revealTailChars={revealTailCharsForBlock(block, renderedText.length, revealTailChars)}
@@ -248,6 +258,7 @@ export default function StreamingMarkdownContent({
           key={block.index}
           {...markdownProps}
           block={block}
+          previousBlockKind={previousBlockKinds[block.index]}
           first={block.index === 0}
           last={false}
         />
@@ -266,6 +277,7 @@ export default function StreamingMarkdownContent({
             block={tailRemend
               ? { ...unfinishedBlock, text: tailRemend.displayText }
               : unfinishedBlock}
+            previousBlockKind={previousBlockKinds[unfinishedBlock.index]}
             first={unfinishedBlock.index === 0}
             last
           />

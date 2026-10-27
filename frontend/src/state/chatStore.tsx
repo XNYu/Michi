@@ -1,36 +1,42 @@
+import { formatQuotedSelectionContext } from '../lib/quoteFormat';
+import { isFileFeedbackTargetValid, type FileFeedbackTarget } from './fileFeedback';
+import type { QuoteSource } from '../lib/quoteFormat';
+import { backendFetch } from '../services/api/backendRequest';
 import { parseChatCommand, nextQueuedBatch, executeComposerCommand } from './chatCommands';
-import type { SteerMessageOptions } from 'michi-shared';
+import type { ScheduledJobRunEvent, SteerMessageOptions } from 'michi-shared';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, warmCwd, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
+import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
 import { bindPendingPrimaryAgent, type AgentStatus } from '../services/api';
 import { findTreeIdForNode } from './tree';
 import { usePrefs } from './prefs';
 import { DARK_PALETTES } from '../components/terminal/tokens';
 import { resolveAtMentions, resolveAtNodeMentions, buildNodeTranscriptBlock, stripNodeMentionTokens, rewriteNodeMentionsForDisplay } from './contextBudget';
 import { runChatStream, type TurnEndReason } from './chatStreamRunner';
+import { inspectOriginalTurn, turnErrorAction } from './turnErrorRecovery';
 import { createBackgroundTurnBinding } from './observeChatStream';
 import { createBackgroundTurnTransport } from './backgroundTurnTransport';
 import { compactChat } from '../services/api/stream';
 import { visibleMessageText } from './assistantBlocks';
 import * as perf from '../services/perf';
-import { startupMark, startupMarkOnce } from '../services/startupTrace';
+import { startupMarkOnce } from '../services/startupTrace';
 import { TreePrefetchContext } from './treePrefetch';
 import { buildFlushPayload } from './queueFlush';
 import { expandMentions } from '../components/mentions';
 import { appendAttachmentsSentinel } from '../lib/composerAttachments';
-import { joinMessageParts } from '../lib/commentFormat';
+import { formatCommentsBlock, joinMessageParts, joinMessageQuotes } from '../lib/commentFormat';
 import { useDigestOrchestration } from './digestOrchestration';
 import { buildSubtreeContextBlocks } from './mergePreamble';
 import { usePaneState } from './paneState';
 import { WINDOW_ID } from '../config/windowIdentity';
 export { WINDOW_ID } from '../config/windowIdentity';
 import { usePanePresenceIntegration } from './usePanePresenceIntegration';
-import { agentRunPaneId, normalizeBrowserUrl, parseSourceLocation, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
+import { agentRunPaneId, pagePaneId, normalizeBrowserUrl, parseSourceLocation, singletonPaneId, uniquePaneId, type PaneItem, type PaneLauncherChoice } from './paneItems';
 import type { AgentResourceIdentity } from './agentIdentity';
 import { getElectron } from '../lib/electronBridge';
 import { useNavHistory, type NavEntry } from './navHistory';
 import { navigateToNode } from './navigateToNode';
 import { useAgentModeCatalog } from '../hooks/useAgentModeCatalog';
+import { useWorkspacePrewarm } from '../hooks/useWorkspacePrewarm';
 import { useArtifactWatch } from '../hooks/useArtifactWatch';
 import { NODE_ACTIVITY_ACTIONS, reduceNodes, reduceProject } from './chatReducers';
 import {
@@ -42,6 +48,12 @@ import {
   writeActiveProjectId,
 } from './workspacePersistence';
 import { useLazyTreeMessages } from './useLazyTreeMessages';
+import { backendInstalledEntities, mergeWorkspaceSnapshot } from './assistant/workspaceSnapshot';
+import { isSystemWorkspace } from './assistant/systemWorkspace';
+import { isVisibleConversationNode } from './conversationVisibility';
+import { rememberUserWorkspace, userWorkspaceToReturnTo } from './assistant/userWorkspace';
+import { isShownInAssistantPanel, openAssistantPanel } from './assistant/assistantStore';
+import { quoteSourceOf } from './assistant/assistantContext';
 import { useContextActions } from './contextActions';
 import { useProjectActions, useTreeActions } from './projectTreeActions';
 import { useExtractNodeTree } from './extractNodeTree';
@@ -49,6 +61,7 @@ import { useTrashActions } from './trashActions';
 import { notify } from '../services/notifications';
 import {
   indexBackendProjects,
+  backendConnectionIdForWorkspace,
   LOCAL_BACKEND_CONNECTION_ID,
   nodeBackendApiBase,
   setActiveBackendConnectionId,
@@ -57,9 +70,11 @@ import { toast } from 'sonner';
 import type { ChatAction, ChatActionsValue, ChatContextValue, ChatNodeState, ChatPaneValue, ChatProjectsValue, ComposerDraft, MessageAttachment, PendingQueuedMessage, Project, ProjectEdge, SendBindingMeta, Theme, UserSendMeta } from './chatTypes';
 import { computeSurvivingMessageIds, cleanupOrphanedAnchors } from './branchAnchors';
 import { sleep } from '../utils/sleep';
-import { reconcileBackgroundWorkspaceSnapshot } from './backgroundGapReconcile';
+import { installBackendWorkspaceNode, reconcileBackgroundWorkspaceSnapshot } from './backgroundGapReconcile';
+import { describeScheduledRunNotice } from './scheduledRunNotice';
 import type { StreamHandlers } from '../services/chatStreamEvents';
 import type { CreateChildChatOptions } from './chatTypes';
+import { backendEntityId, serverEntityId, remoteEntityIdentity } from '../config/backendIdentity';
 
 /**
  * Construct a branch edge with provenance fields stamped at fork time.
@@ -103,6 +118,7 @@ export function durableNodePrerequisite(project: Project, node: ChatNodeState): 
       settings: {
         ...(project.instructions ? { instructions: project.instructions } : {}),
         ...(project.aiGlobalContext === false ? { aiGlobalContext: false } : {}),
+        ...(project.system ? { system: project.system } : {}),
       },
     },
     ...(tree ? {
@@ -127,7 +143,7 @@ export function durableNodePrerequisite(project: Project, node: ChatNodeState): 
       createdAt: node.messages[0]?.createdAt ?? project.createdAt ?? Date.now(),
     },
     edges: graphEdges.map((edge) => ({
-      id: `${edge.kind || 'branch'}-${edge.source}-${edge.target}`,
+      id: `${edge.kind || 'branch'}-${serverEntityId(edge.source)}-${serverEntityId(edge.target)}`,
       sourceNodeId: edge.source,
       targetNodeId: edge.target,
       kind: edge.kind || 'branch',
@@ -182,10 +198,24 @@ export const HIGH_FREQ_ACTIONS: ReadonlySet<ChatAction['type']> = new Set([
 
 interface AgentRunPaneActions {
   openAgentRunPane: (identity: AgentResourceIdentity, workspaceId: string, title?: string) => string;
+  openPagePane: (page: { pageId: string; workspaceId: string; backendConnectionId: string; title?: string }) => string;
+  /** Open a thread the backend created (scheduled run); false if it cannot be found. */
+  revealBackendNode: (workspaceId: string, nodeId: string) => Promise<boolean>;
+}
+
+interface WorkspaceSnapshotActions {
+  /**
+   * Install a backend workspace snapshot the store doesn't hold yet (or its
+   * missing nodes) — the ⌘J assistant's system workspace is provisioned after
+   * hydration. Nodes already in the store are left untouched. False when the
+   * snapshot isn't a workspace. `readStartedAt` (Date.now() when its read
+   * began) lets removals confirmed before then count as seen by it.
+   */
+  installWorkspaceSnapshot: (rawWorkspace: unknown, readStartedAt?: number) => boolean;
 }
 
 type ExtendedChatContextValue = ChatContextValue & AgentRunPaneActions;
-type ExtendedChatActionsValue = ChatActionsValue & AgentRunPaneActions;
+type ExtendedChatActionsValue = ChatActionsValue & AgentRunPaneActions & WorkspaceSnapshotActions;
 
 const ChatContext = createContext<ExtendedChatContextValue | null>(null);
 
@@ -273,9 +303,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // from the previous render's tree list.
   const projectsRef = useRef(projects);
   const setProjects = useCallback<React.Dispatch<React.SetStateAction<Project[]>>>((update) => {
-    const next = typeof update === 'function'
+    const updated = typeof update === 'function'
       ? (update as (prev: Project[]) => Project[])(projectsRef.current)
       : update;
+    const next = updated.map(project => {
+      const identity = remoteEntityIdentity(project.id);
+      return identity && !project.backendConnectionId ? { ...project, backendConnectionId: identity.connectionId } : project;
+    });
     projectsRef.current = next;
     indexBackendProjects(next);
     setProjectsState(next);
@@ -295,8 +329,11 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const activeBackendConnectionId = projects.find((project) => project.id === activeProjectId)?.backendConnectionId
     ?? LOCAL_BACKEND_CONNECTION_ID;
   setActiveBackendConnectionId(activeBackendConnectionId);
+  const { prefs, setPref } = usePrefs();
   const {
     openPanes,
+    tabPanes,
+    pagePane,
     focusedPane,
     focusNonce,
     paneItems,
@@ -320,7 +357,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     openPaneInTree,
     appendPaneInTree,
     prunePaneIds,
-  } = usePaneState({ projects, activeProjectId });
+  } = usePaneState({ projects, activeProjectId, singlePage: prefs.singlePageMode });
   // Latest active workspace id, read synchronously by the back/forward nav
   // callbacks (which must stay referentially stable for the actions context).
   const activeProjectIdRef = useRef(activeProjectId);
@@ -347,8 +384,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const agentStatusRef = useRef(agentStatus);
   agentStatusRef.current = agentStatus;
+  const activeWarmProject = projects.find((project) => project.id === activeProjectId);
   const { availableModes, defaultModeId, agentModesLoading, agentModesError, retryAgentModes } =
-    useAgentModeCatalog(activeProjectId, activeBackendConnectionId, agentStatus);
+    useAgentModeCatalog(activeProjectId, activeBackendConnectionId, agentStatus, activeWarmProject?.cwd);
   const [warmFailedError, setWarmFailedError] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -549,7 +587,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     prunePaneIds(new Set(deletedIdsKey.split(',')));
   }, [deletedIdsKey, prunePaneIds]);
 
-  const { prefs, setPref } = usePrefs();
   const theme: Theme = DARK_PALETTES.has(prefs.terminalPalette) ? 'dark' : 'light';
 
   const cancelFns = useRef<Record<string, () => void>>({});
@@ -572,13 +609,23 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // tearing down) the whole foreground-replay effect.
   const reconnectStreamingNodeRef = useRef<(nodeId: string) => void>(() => {});
   const backgroundGapReconciliationsRef = useRef<Map<string, Promise<void>>>(new Map());
-  const sharedStreamHandlersRef = useRef<(nodeId: string) => Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError'>>(() => ({}));
+  const sharedStreamHandlersRef = useRef<(nodeId: string) => Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError' | 'onErrorPayload'>>(() => ({}));
   const turnEndHandlerRef = useRef<(reason: TurnEndReason, nodeId: string) => void>(() => {});
   const streamCompleteHandlerRef = useRef<(nodeId: string) => void>(() => {});
   // Navigates to a node's pane (switching workspace / thread when needed) and
   // lands on the Dashboard. Assigned below, once the nav actions exist; held in
   // a ref because the stream handlers are built earlier in this component.
   const revealNodeRef = useRef<(nodeId: string) => void>(() => {});
+  // Threads created by scheduled runs. In the desktop app their notifications
+  // come from Electron main (with click-to-open), so per-turn renderer
+  // notifications for them are suppressed to avoid duplicates.
+  const scheduledNodeIdsRef = useRef(new Set<string>());
+  const scheduledJobRunHandlerRef = useRef<(event: ScheduledJobRunEvent) => void>(() => {});
+  const backendNodeInstallsRef = useRef(new Map<string, Promise<boolean>>());
+  const backendNodeInstallRequestsRef = useRef(new Map<string, symbol>());
+  useEffect(() => () => { backendNodeInstallRequestsRef.current.clear(); }, []);
+  const desktopOwnsScheduledNotice = (nodeId: string): boolean =>
+    scheduledNodeIdsRef.current.has(nodeId) && !!getElectron()?.onScheduledNotice;
   const commandsInFlightRef = useRef(new Set<string>());
   const sendMessageRef = useRef<(nodeId: string, text: string, meta?: UserSendMeta) => void>(() => {});
 
@@ -713,6 +760,17 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     if (focusedNodeId === paneId) {
       setFocusedNodeIdState(nextFocusedPane && nodesRef.current[nextFocusedPane] ? nextFocusedPane : null);
     }
+    // The assistant's hidden workspace is active only while its conversation
+    // is open as a pane: closing that pane (×, ⌘W, ⌘J back to the panel)
+    // returns to the user's workspace rather than leaving an empty one no
+    // list shows.
+    if (remaining.length === 0) {
+      const projectsNow = projectsRef.current;
+      if (isSystemWorkspace(projectsNow.find((p) => p.id === activeProjectIdRef.current))) {
+        const back = userWorkspaceToReturnTo(projectsNow);
+        if (back) setActiveProjectId(back);
+      }
+    }
   }, [closePaneState, focusedNodeId, focusedPane, openPanes, removePaneItem]);
 
   // `dispatch` keeps nodesRef.current up-to-date synchronously for the
@@ -746,7 +804,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     }
   }, [nodes, notifyChangedNodeSubscribers]);
 
-  const { runWorkspaceMutation } = useWorkspacePersistence({
+  const { runWorkspaceMutation, noteBackendInstalled, pendingBackendDeletes } = useWorkspacePersistence({
     projects,
     activeProjectId,
     nodes,
@@ -784,78 +842,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     writeActiveProjectId(activeProjectBaseKey, WINDOW_ID, activeProjectId);
   }, [hydrated, activeProjectId, activeProjectBaseKey]);
 
-  // Pre-warm the active workspace's runtime session pool once hydration
-  // discovers its cwd. On desktop startup this can run before the backend is
-  // listening, so retry briefly instead of treating the first connection
-  // refusal as a permanent miss.
-  const warmedTargetsRef = React.useRef<Set<string>>(new Set());
-  const warmingTargetsRef = React.useRef<Set<string>>(new Set());
-  const warmRetryStatesRef = React.useRef<Map<string, { cancelled: boolean }>>(new Map());
-  const activeWarmTargetRef = React.useRef<string | null>(null);
-  React.useEffect(() => {
-    if (!hydrated || !activeProjectId) return;
-    const p = projects.find((proj) => proj.id === activeProjectId);
-    if (!p?.cwd) return;
-    if (!agentStatus?.runtime) return;
-    const cwd = p.cwd;
-    const projectId = p.id;
-    const runtime = agentStatus.runtime;
-    const model = agentStatus.model ?? '';
-    const warmTarget = `${p.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID}\u0000${runtime}\u0000${model}\u0000${cwd}`;
-    const previousTarget = activeWarmTargetRef.current;
-    if (previousTarget !== warmTarget) {
-      activeWarmTargetRef.current = warmTarget;
-      if (previousTarget) warmedTargetsRef.current.delete(previousTarget);
-    }
-    if (warmedTargetsRef.current.has(warmTarget) || warmingTargetsRef.current.has(warmTarget)) return;
-
-    const retryState = { cancelled: false };
-    const startedAt = Date.now();
-    const retryDelayMs = 250;
-    const maxAttempts = 120;
-    warmingTargetsRef.current.add(warmTarget);
-    warmRetryStatesRef.current.set(warmTarget, retryState);
-    startupMark('workspace_warm_start', { cwd, projectId, runtime, model });
-
-    const run = async () => {
-      let attempts = 0;
-      try {
-        while (!retryState.cancelled && attempts < maxAttempts) {
-          attempts += 1;
-          try {
-            if (p.backendConnectionId) await warmCwd(cwd, p.backendConnectionId);
-            else await warmCwd(cwd);
-            if (retryState.cancelled) return;
-            if (activeWarmTargetRef.current === warmTarget) {
-              warmedTargetsRef.current.add(warmTarget);
-            }
-            startupMark('workspace_warm_done', { cwd, projectId, runtime, model, attempts, durMs: Date.now() - startedAt });
-            return;
-          } catch (err) {
-            if (retryState.cancelled) return;
-            startupMark('workspace_warm_attempt_failed', {
-              cwd,
-              projectId,
-              runtime,
-              model,
-              attempts,
-              error: (err as Error).message,
-            });
-            await sleep(retryDelayMs);
-          }
-        }
-        if (!retryState.cancelled) {
-          startupMark('workspace_warm_gave_up', { cwd, projectId, runtime, model, attempts, durMs: Date.now() - startedAt });
-        }
-      } finally {
-        if (warmRetryStatesRef.current.get(warmTarget) === retryState) {
-          warmRetryStatesRef.current.delete(warmTarget);
-          warmingTargetsRef.current.delete(warmTarget);
-        }
-      }
-    };
-    void run();
-  }, [hydrated, activeProjectId, agentStatus?.runtime, agentStatus?.model, projects]);
+  useWorkspacePrewarm(hydrated, activeWarmProject, agentStatus);
 
   const rafPending = React.useRef(false);
 
@@ -985,6 +972,26 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     return reconciliation;
   }, [setProjects]);
 
+  const installWorkspaceSnapshot = useCallback((rawWorkspace: unknown, readStartedAt?: number): boolean => {
+    // A snapshot read before one of this window's removals reached the
+    // backend must not bring the removed trees and edges back.
+    const merged = mergeWorkspaceSnapshot(projectsRef.current, nodesRef.current, rawWorkspace, {
+      pendingDeletes: pendingBackendDeletes,
+      readStartedAt,
+    });
+    if (!merged) return false;
+    // The backend already holds what the snapshot brings in: never written back.
+    const installed = backendInstalledEntities(projectsRef.current, nodesRef.current, merged);
+    if (installed) noteBackendInstalled(installed);
+    if (merged.projects !== projectsRef.current) setProjects(merged.projects);
+    if (merged.nodes !== nodesRef.current) {
+      nodesRef.current = merged.nodes;
+      structureVersionRef.current += 1;
+      setNodes(merged.nodes);
+    }
+    return true;
+  }, [noteBackendInstalled, pendingBackendDeletes, setProjects]);
+
   const backgroundConnectionIdsKey = useMemo(
     () => Array.from(new Set([
       LOCAL_BACKEND_CONNECTION_ID,
@@ -1014,6 +1021,14 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           return cursors;
         },
         onReplayGap: reconcileBackgroundGap,
+        // Scheduling is local-only; remote feeds never carry these frames.
+        onScheduledJobRun: connectionId === LOCAL_BACKEND_CONNECTION_ID
+          ? (event) => scheduledJobRunHandlerRef.current(event)
+          : undefined,
+        // The Scheduled page refreshes on this (see scheduledNav.ts).
+        onScheduledJobsChanged: connectionId === LOCAL_BACKEND_CONNECTION_ID
+          ? (event) => window.dispatchEvent(new CustomEvent('michi:scheduled-jobs-changed', { detail: event }))
+          : undefined,
         handlersForChat: (chatId, envelopeNodeId) => {
           const byEnvelope = envelopeNodeId ? nodesRef.current[envelopeNodeId] : undefined;
           const node = byEnvelope?.chatId === chatId && belongsToConnection(byEnvelope)
@@ -1195,12 +1210,17 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const newNodeId = useCallback(
-    () => allocateNodeIdsLocal(1)[0],
+    (projectId = activeProjectIdRef.current) => backendEntityId(
+      projectId ? remoteEntityIdentity(projectId)?.connectionId
+        ?? projectsRef.current.find(project => project.id === projectId)?.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID
+        : LOCAL_BACKEND_CONNECTION_ID,
+      allocateNodeIdsLocal(1)[0],
+    ),
     [],
   );
 
   /** Feature side effects shared by foreground and runtime self-turn streams. */
-  const createSharedStreamHandlers = useCallback((nodeId: string): Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError'> => ({
+  const createSharedStreamHandlers = useCallback((nodeId: string): Omit<Partial<StreamHandlers>, 'onEnvelope' | 'onTurnStart' | 'onDone' | 'onError' | 'onErrorPayload'> => ({
     onArtifactSaved: (name, filePath, size, contextId) => {
       const projectId = nodesRef.current[nodeId]?.projectId;
       if (!projectId) return;
@@ -1271,7 +1291,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     onPermissionResolved: (data) => dispatch({ type: 'permission-resolved', nodeId, requestId: data.requestId }),
     onPermissionRequest: (data) => {
       dispatch({ type: 'permission-request', nodeId, permission: data });
-      if (prefsRef.current.notifications !== 'off' && !document.hasFocus()) {
+      if (prefsRef.current.notifications !== 'off' && !document.hasFocus() && !desktopOwnsScheduledNotice(nodeId)) {
         notify({ title: 'Tool approval needed', body: data.title });
       }
     },
@@ -1279,7 +1299,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       dispatch({
         type: 'user-input-request',
         nodeId,
-        userInput: { requestId: data.requestId, questions: data.questions, answers: [] },
+        assistantId: data.assistantId,
+        userInput: { requestId: data.requestId, interactionId: data.interactionId, questions: data.questions, answers: [] },
       });
       // Unlike stream-complete / tool-approval, this notifies even while the
       // window is focused: the ask card renders inline in ONE pane's
@@ -1289,8 +1310,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       // focused AND that pane focused. (`notify` keeps the OS-level
       // notification unfocused-only, so a focused window only gets a toast;
       // the AskUserAlertBar carries the reminder from then on.)
-      const alreadyInView = document.hasFocus() && focusedPaneRef.current === nodeId;
-      if (prefsRef.current.notifications !== 'off' && !alreadyInView) {
+      // The ⌘J panel showing this conversation counts as in front of the user.
+      const alreadyInView = document.hasFocus()
+        && (focusedPaneRef.current === nodeId || isShownInAssistantPanel(nodeId));
+      if (prefsRef.current.notifications !== 'off' && !alreadyInView && !desktopOwnsScheduledNotice(nodeId)) {
         notify({
           title: 'Agent needs your input',
           body: data.questions[0]?.question ?? 'Please answer',
@@ -1298,7 +1321,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         });
       }
     },
-    onUserInputResolved: () => dispatch({ type: 'user-input-resolved', nodeId }),
+    onUserInputResolved: (data) => dispatch({ type: 'user-input-resolved', nodeId, requestId: data.requestId, interactionId: data.interactionId, answers: data.answers, outcome: data.outcome }),
   }), [dispatch, openPaneInTree, setProjects]);
   sharedStreamHandlersRef.current = createSharedStreamHandlers;
 
@@ -1325,19 +1348,40 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       .map((entry) => entry.commentBlock)
       .filter((block): block is string => !!block);
     const combinedComments = commentBlocks.length > 0 ? commentBlocks.join('\n\n') : null;
-    const firstQuote = queue.find((entry) => entry.quotedText)?.quotedText ?? null;
+    const legacyComments = queue.filter(entry => !entry.comments?.length).map(entry => entry.commentBlock).filter(Boolean).join('\n\n') || null;
+    // Every queued quote goes along, each framed by where it came from.
+    const quotes = queue.flatMap((entry) => (entry.quotedText?.trim()
+      ? [{ text: entry.quotedText, source: entry.quoteSource }]
+      : []));
+    const combinedQuote = quotes.length > 0 ? quotes.map((quote) => quote.text).join('\n\n') : null;
     const expandedValue = expandMentions(payload.value, payload.mentions);
     const expandedText = appendAttachmentsSentinel(
-      joinMessageParts(combinedComments, firstQuote, expandedValue),
+      joinMessageQuotes(combinedComments, quotes, expandedValue),
       payload.attachments,
     );
+    const restoredBlocks = [combinedComments, ...(quotes.length > 1 ? quotes.map(quote => formatQuotedSelectionContext(quote.text, quote.source)) : [])].filter(Boolean);
+    const restoredQuotePrefix = restoredBlocks.length ? restoredBlocks.join('\n\n') + '\n\n' : '';
     const meta: UserSendMeta = {
-      rejectedDraft: { value: payload.value, mentions: payload.mentions, quotedText: firstQuote ?? undefined },
-      quotedText: firstQuote ?? undefined,
+      rejectedDraft: {
+        value: restoredQuotePrefix + payload.value,
+        mentions: payload.mentions.map(mention => ({ ...mention, start: mention.start + restoredQuotePrefix.length, end: mention.end + restoredQuotePrefix.length })),
+        ...(quotes.length === 1 ? { quotedText: quotes[0].text, quoteSource: quotes[0].source } : {}),
+      },
+      // A single quote has one structured source. Multiple independently
+      // sourced quotes are saved with their framing in the message body so
+      // reload/retry cannot mislabel the aggregate as an assistant selection.
+      quotedText: quotes.length === 1 ? combinedQuote ?? undefined : undefined,
+      comments: queue.flatMap(entry => entry.comments ?? []),
+      ...(quotes.length === 1 && quotes[0].source ? { quoteSource: quotes[0].source } : {}),
       attachments: payload.attachments.length > 0
         ? payload.attachments.map((attachment) => ({ ...attachment }))
         : undefined,
-      displayText: joinMessageParts(combinedComments, null, expandedValue),
+      displayText: quotes.length > 1
+        ? joinMessageQuotes(legacyComments, quotes, expandedValue)
+        : joinMessageParts(legacyComments, null, expandedValue),
+      // A queued send left the composer when it was queued; what the user
+      // has typed since stays.
+      keepDraft: true,
     };
     setTimeout(() => sendMessageRef.current(endedNodeId, expandedText, meta), 0);
   }, [dispatch]);
@@ -1363,23 +1407,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         return;
       }
       const command = parseChatCommand(text, meta?.runtimeId ?? n.runtimeId ?? agentStatusRef.current?.runtime, n.sessionState?.nativeEngine);
-      if (command) {
-        commandsInFlightRef.current.add(nodeId);
-        dispatch({ type: 'command-result', nodeId, result: { command: command.name, status: 'running', message: 'Running…' } });
-        void executeComposerCommand(nodeId, command).then((result) => {
-          if (result.sessionState) dispatch({ type: 'session-state', nodeId, state: result.sessionState });
-          dispatch({ type: 'command-result', nodeId, result: { command: command.name,
-            status: result.success ? 'completed' : 'error', message: result.message } });
-          commandsInFlightRef.current.delete(nodeId);
-          turnEndHandlerRef.current(result.success ? 'done' : 'error', nodeId);
-        }).catch((error) => {
-          dispatch({ type: 'command-result', nodeId, result: { command: command.name, status: 'error',
-            message: String(error instanceof Error ? error.message : error) } });
-          commandsInFlightRef.current.delete(nodeId);
-          turnEndHandlerRef.current('error', nodeId);
-        });
-        return;
-      }
       const priorMessagesForResume = n.chatId && boundSessionsRef.current.has(nodeId)
         ? undefined
         : n.messages
@@ -1388,26 +1415,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
             role: m.role,
             text: visibleMessageText(m),
           }));
-
-      // Create assistant message synchronously first so status flips to 'streaming'
-      // immediately, blocking concurrent submits on the same node.
-      const assistantId = `a-${nodeId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-      // Rewrite @node:xxx tokens to @<title> for display so the chip the user
-      // typed survives in the transcript. Raw tokens are resolved later and
-      // injected as context into the outgoing prompt.
-      const baseDisplay = meta?.displayText ?? text;
-      const displayText = rewriteNodeMentionsForDisplay(baseDisplay, nodesRef.current);
-      dispatch({
-        type: 'user-send',
-        nodeId,
-        userText: displayText,
-        assistantId,
-        quotedText: meta?.quotedText,
-        attachments: meta?.attachments,
-        comments: meta?.comments,
-        mentions: meta?.mentions,
-      });
-      assistantTextBufs.current[assistantId] = '';
 
       // Gather linked peers whose context hasn't been injected yet, so we
       // can bridge them into this node's session.
@@ -1463,6 +1470,87 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         ? (owningProject!.artifacts!).map(c => ({ name: c.name, filePath: c.filePath, url: c.url, kind: c.kind }))
         : undefined;
 
+      const ensureRuntimeSession = async (signal?: AbortSignal) => {
+        if (!owningProject) throw new Error('workspace not found for node');
+        return ensureSession({
+          nodeId,
+          chatId: n.chatId,
+          cwd,
+          workspaceId: owningProject?.id,
+          parentChatId,
+          mergeContexts: mergeContexts.length > 0 ? mergeContexts : undefined,
+          extraContexts,
+          enableFollowUps: prefsRef.current.enableFollowUps,
+          contextManifest,
+          priorMessages: priorMessagesForResume,
+          runtimeId: meta?.runtimeId ?? n.runtimeId,
+          providerId: meta?.providerId ?? n.providerId,
+          modelId: meta?.modelId ?? n.modelId,
+          reasoning: meta?.reasoning !== undefined ? meta.reasoning : n.reasoning,
+          // Desired agent for a brand-new thread (Home composer pre-selection).
+          // Applied server-side after the fresh session is created, before this
+          // first prompt streams. Ignored on resume (node already has a chatId).
+          permissionMode: meta?.permissionMode ?? n.permissionMode,
+          crewMemoryMode: meta?.crewMemoryMode,
+          modeId: n.chatId ? undefined : n.currentModeId ?? undefined,
+          graphPrerequisite: durableNodePrerequisite(owningProject, nodesRef.current[nodeId] ?? n),
+          signal,
+        });
+      };
+
+      if (command) {
+        commandsInFlightRef.current.add(nodeId);
+        dispatch({ type: 'command-result', nodeId, result: { command: command.name, status: 'running', message: 'Running…' } });
+        void (async () => {
+          // Host commands may be the first action after startup, or the first
+          // action in an anchored blank branch. Resolve the same durable
+          // session as a prompt before asking the SDK for its command result.
+          if ((meta?.runtimeId ?? n.runtimeId ?? agentStatusRef.current?.runtime) === 'claude') {
+            const ensured = await ensureRuntimeSession();
+            dispatch({ type: 'bind-chat', nodeId, currentModeId: ensured.currentModeId,
+              runtimeId: ensured.runtimeId, providerId: ensured.providerId,
+              modelId: ensured.modelId, reasoning: ensured.reasoning });
+            if (ensured.sessionState) dispatch({ type: 'session-state', nodeId, state: ensured.sessionState });
+            boundSessionsRef.current.add(nodeId);
+            if (ensured.lastUsedUpdated) refreshAgentStatus();
+          }
+          return executeComposerCommand(nodeId, command);
+        })().then((result) => {
+          if (result.sessionState) dispatch({ type: 'session-state', nodeId, state: result.sessionState });
+          dispatch({ type: 'command-result', nodeId, result: { command: command.name,
+            status: result.success ? 'completed' : 'error', message: result.message } });
+          commandsInFlightRef.current.delete(nodeId);
+          turnEndHandlerRef.current(result.success ? 'done' : 'error', nodeId);
+        }).catch((error) => {
+          dispatch({ type: 'command-result', nodeId, result: { command: command.name, status: 'error',
+            message: String(error instanceof Error ? error.message : error) } });
+          commandsInFlightRef.current.delete(nodeId);
+          turnEndHandlerRef.current('error', nodeId);
+        });
+        return;
+      }
+      // Create assistant message synchronously first so status flips to 'streaming'
+      // immediately, blocking concurrent submits on the same node.
+      const assistantId = `a-${nodeId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      // Rewrite @node:xxx tokens to @<title> for display so the chip the user
+      // typed survives in the transcript. Raw tokens are resolved later and
+      // injected as context into the outgoing prompt.
+      const baseDisplay = meta?.displayText ?? text;
+      const displayText = rewriteNodeMentionsForDisplay(baseDisplay, nodesRef.current);
+      dispatch({
+        type: 'user-send',
+        nodeId,
+        userText: displayText,
+        assistantId,
+        quotedText: meta?.quotedText,
+        attachments: meta?.attachments,
+        comments: meta?.comments,
+        mentions: meta?.mentions,
+        ...(meta?.keepDraft ? { keepDraft: true } : {}),
+        ...(meta?.quoteSource ? { quoteSource: meta.quoteSource } : {}),
+      });
+      assistantTextBufs.current[assistantId] = '';
+
       let chatId = n.chatId;
       let outgoingText = text;
       const tEnsureStart = perf.now();
@@ -1483,30 +1571,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       try {
         if (!owningProject) throw new Error('workspace not found for node');
         if (meta?.permissionMode && !n.permissionMode) dispatch({ type: 'set-permission-mode', nodeId, mode: meta.permissionMode });
-        const ensured = await ensureSession({
-          nodeId,
-          signal: setupController.signal,
-          chatId,
-          cwd,
-          workspaceId: owningProject?.id,
-          parentChatId,
-          mergeContexts: mergeContexts.length > 0 ? mergeContexts : undefined,
-          extraContexts,
-          enableFollowUps: prefsRef.current.enableFollowUps,
-          contextManifest,
-          priorMessages: priorMessagesForResume,
-          runtimeId: meta?.runtimeId ?? n.runtimeId,
-          providerId: meta?.providerId ?? n.providerId,
-          modelId: meta?.modelId ?? n.modelId,
-          reasoning: meta?.reasoning !== undefined ? meta.reasoning : n.reasoning,
-          // Desired agent for a brand-new thread (Home composer pre-selection).
-          // Applied server-side after the fresh session is created, before this
-          // first prompt streams. Ignored on resume (node already has a chatId).
-          permissionMode: meta?.permissionMode ?? n.permissionMode,
-          crewMemoryMode: meta?.crewMemoryMode,
-          modeId: n.chatId ? undefined : n.currentModeId ?? undefined,
-          graphPrerequisite: durableNodePrerequisite(owningProject, nodesRef.current[nodeId] ?? n),
-        });
+        const ensured = await ensureRuntimeSession(setupController.signal);
         // Aborting the HTTP wait does not undo the server's native binding.
         // A late response must never send the cancelled prompt or bind over a newer turn.
         if (setupCancelled) return;
@@ -1579,22 +1644,27 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       }
 
       // Resolve @node:xxx mentions — inject referenced node transcripts.
-      const mentionedNodes = resolveAtNodeMentions(outgoingText, nodesRef.current);
+      const nodeMentionScope = { workspaceId: n.projectId, backendConnectionId: backendConnectionIdForWorkspace(n.projectId) };
+      const mentionedNodes = resolveAtNodeMentions(outgoingText, nodesRef.current, nodeMentionScope);
+      const cleanNodeMentionText = stripNodeMentionTokens(outgoingText);
       if (mentionedNodes.length > 0) {
-        const nodeBlocks = mentionedNodes.map(mn => buildNodeTranscriptBlock(mn));
-        const cleanText = stripNodeMentionTokens(outgoingText);
+        const nodeBlocks = mentionedNodes.map(mn => buildNodeTranscriptBlock(mn, nodeMentionScope));
+        const cleanText = cleanNodeMentionText;
         outgoingText =
           `The user referenced the following chat nodes. Short conversations are ` +
           `included in full; for longer ones, use read_node or read_node_overview ` +
           `to retrieve full content when needed:\n\n` +
           nodeBlocks.join('\n\n') +
           `\n\n---\n\n${cleanText}`;
+      } else {
+        outgoingText = cleanNodeMentionText;
       }
 
       const cancel = runChatStream({
         prompt: outgoingText,
         nodeId,
         assistantId,
+        workspaceId: n.projectId,
         dispatch,
         assistantTextBufs,
         cancelFns,
@@ -1604,6 +1674,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         enableKiroSidecarTitle: prefsRef.current.enableKiroSidecarTitles,
         userMetadata: {
           quotedText: meta?.quotedText,
+          quoteSource: meta?.quoteSource,
           attachments: meta?.attachments,
           comments: meta?.comments as Array<Record<string, unknown>> | undefined,
         },
@@ -1695,7 +1766,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           branchParentNodeId = tree.rootNodeId;
         }
       }
-      const nodeId = newNodeId();
+      const nodeId = newNodeId(projectId);
       if (opts?.primaryAgent) {
         bindPendingPrimaryAgent(nodeId, { workspaceId: projectId, ...opts.primaryAgent });
       }
@@ -1749,7 +1820,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       const parent = nodesRef.current[parentNodeId];
       if (!parent) throw new Error('unknown parent node');
       const projectId = parent.projectId;
-      const nodeId = newNodeId();
+      const nodeId = newNodeId(projectId);
       dispatch({ type: 'create', nodeId, projectId, parentNodeId });
       const createdAt = Date.now();
       setProjects((prev) =>
@@ -1811,8 +1882,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           throw new Error('cross-workspace merge');
         }
       }
-      const nodeId = newNodeId();
-      const treeId = `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const nodeId = newNodeId(projectId);
+      const treeId = backendEntityId(backendConnectionIdForWorkspace(projectId), `t-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
       const now = Date.now();
       dispatch({
         type: 'create',
@@ -1874,10 +1945,49 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
   sendMessageRef.current = sendMessage;
 
+  const turnInspections = useRef(new Map<string, () => void>());
+  useEffect(() => () => {
+    for (const detach of turnInspections.current.values()) detach();
+    turnInspections.current.clear();
+  }, []);
+
   const retryLastTurn = useCallback(
-    (nodeId: string, fromIndex?: number, binding?: SendBindingMeta) => {
+    (nodeId: string, fromIndex?: number, binding?: SendBindingMeta, explicitRerun = false) => {
       const n = nodesRef.current[nodeId];
-      if (!n) return;
+      if (!n || n.status === 'streaming') return;
+      const uncertain = turnErrorAction(n.errorKind) === 'inspect-existing-turn';
+      if (uncertain && !explicitRerun) {
+        if (n.errorRecovery === 'checking') return;
+        const turnId = n.errorTurnId;
+        const assistantId = [...n.messages].reverse().find((m) => m.role === 'assistant')?.id;
+        if (!n.chatId || !turnId || !assistantId) {
+          dispatch({ type: 'error-recovery', nodeId, state: 'unavailable' });
+          return;
+        }
+        turnInspections.current.get(nodeId)?.();
+        dispatch({ type: 'error-recovery', nodeId, state: 'checking' });
+        const detach = inspectOriginalTurn({
+          chatId: n.chatId,
+          turnId,
+          assistant: n.messages.find((m) => m.id === assistantId)!,
+          workspaceId: n.projectId,
+          onResult: ({ persisted, completedAt, assistant, lastSeq }) => {
+            turnInspections.current.delete(nodeId);
+            const current = nodesRef.current[nodeId];
+            // An old read must never finish or overwrite a newer execution.
+            if (!current || current.status !== 'error' || current.errorTurnId !== turnId) return;
+            dispatch({ type: 'error-recovery', nodeId, state: persisted ? undefined : 'unavailable' });
+            if (persisted && assistant && typeof lastSeq === 'number') {
+              dispatch({ type: 'recover-original-result', nodeId, turnId, assistantId, assistant, lastSeq, cursor: n.lastAppliedBackgroundTurnId === turnId && n.lastAppliedTurnId !== turnId ? 'background' : 'foreground' });
+              dispatch({ type: 'done', nodeId, assistantId: assistant.id, completedAt });
+            }
+          },
+        });
+        turnInspections.current.set(nodeId, detach);
+        return;
+      }
+      turnInspections.current.get(nodeId)?.();
+      turnInspections.current.delete(nodeId);
       let sourceMsg: typeof n.messages[number] | undefined;
       if (fromIndex != null) {
         // Find the user message at or just before fromIndex.
@@ -1892,14 +2002,16 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       // Compute surviving ids BEFORE dispatch — deterministic mirror of the
       // reducer's trim logic so we know which anchors become orphaned.
       const survivingIds = computeSurvivingMessageIds(n.messages, fromIndex);
-      dispatch({ type: 'retry-trim', nodeId, fromIndex });
-      setProjects((prev) =>
-        prev.map((p) => {
-          if (p.id !== n.projectId) return p;
-          const edges = cleanupOrphanedAnchors(p.edges, nodeId, survivingIds);
-          return edges === p.edges ? p : { ...p, edges };
-        }),
-      );
+      if (!(uncertain && explicitRerun)) {
+        dispatch({ type: 'retry-trim', nodeId, fromIndex });
+        setProjects((prev) =>
+          prev.map((p) => {
+            if (p.id !== n.projectId) return p;
+            const edges = cleanupOrphanedAnchors(p.edges, nodeId, survivingIds);
+            return edges === p.edges ? p : { ...p, edges };
+          }),
+        );
+      }
       // For retries, the stored text is already the wire-flattened payload
       // (quote prefix + attachment sentinel are baked in for old messages).
       // For new messages with structured fields, m.text is bare prose, so we
@@ -1909,11 +2021,17 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       const reQuote = sourceMsg.quotedText;
       const reAttach = sourceMsg.attachments ?? [];
       const reComments = sourceMsg.comments;
-      const flattened = reQuote
-        ? appendAttachmentsSentinel(joinMessageParts(null, reQuote, reText), reAttach)
-        : appendAttachmentsSentinel(reText, reAttach);
+      // The quote keeps the framing it was sent with. A message read back
+      // after a reload has lost it; in the assistant's conversation its
+      // attached context is recognised by how that block opens.
+      const reSource = sourceMsg.quoteSource
+        ?? (isSystemWorkspace(projectsRef.current.find((p) => p.id === n.projectId)) ? quoteSourceOf(reQuote) : undefined);
+      const flattened = appendAttachmentsSentinel(
+        joinMessageParts(formatCommentsBlock(reComments ?? []), reQuote ?? null, reText, reSource), reAttach,
+      );
       void startStream(nodeId, flattened, undefined, {
         quotedText: reQuote,
+        ...(reQuote && reSource ? { quoteSource: reSource } : {}),
         attachments: reAttach.length > 0 ? reAttach.map(a => ({ ...a })) : undefined,
         comments: reComments,
         displayText: reText,
@@ -1923,6 +2041,13 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       });
     },
     [dispatch, setProjects, startStream],
+  );
+
+  // An explicit rerun of an uncertain execution appends a new attempt, keeping
+  // its existing output and anchors available for reference.
+  const rerunLastTurn = useCallback(
+    (nodeId: string, fromIndex?: number, binding?: SendBindingMeta) => retryLastTurn(nodeId, fromIndex, binding, true),
+    [retryLastTurn],
   );
 
   const editAndResend = useCallback(
@@ -1998,7 +2123,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     const node = nodesRef.current[nodeId];
     const project = projectsRef.current.find((candidate) => candidate.id === node?.projectId);
     if (!node || !project) throw new Error('Chat not found');
-    const res = await fetch(`${nodeBackendApiBase(nodeId)}/nodes/${encodeURIComponent(nodeId)}/permissions`, {
+    const res = await backendFetch(`${nodeBackendApiBase(nodeId)}/nodes/${encodeURIComponent(nodeId)}/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode, graphPrerequisite: durableNodePrerequisite(project, node) }),
     });
@@ -2032,17 +2157,19 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const resolveUserInputRequest = useCallback((nodeId: string, answers: Array<{ question: string; answer: string }>) => {
     const node = nodesRef.current[nodeId];
     if (!node?.chatId || !node.pendingUserInput) return;
-    respondToUserInput(node.chatId, node.pendingUserInput.requestId, answers)
+    const { requestId, interactionId } = node.pendingUserInput;
+    void respondToUserInput(node.chatId, requestId, answers, interactionId)
+      .then(() => dispatch({ type: 'user-input-resolved', nodeId, requestId, interactionId, answers, outcome: 'answered' }))
       .catch(() => toast.error('Failed to send user input response'));
-    dispatch({ type: 'user-input-resolved', nodeId, answers });
   }, [dispatch]);
 
   const skipUserInputRequest = useCallback((nodeId: string) => {
     const node = nodesRef.current[nodeId];
     if (!node?.chatId || !node.pendingUserInput) return;
-    skipUserInput(node.chatId, node.pendingUserInput.requestId)
+    const { requestId, interactionId } = node.pendingUserInput;
+    void skipUserInput(node.chatId, requestId, interactionId)
+      .then(() => dispatch({ type: 'user-input-resolved', nodeId, requestId, interactionId, answers: [], outcome: 'skipped' }))
       .catch(() => toast.error('Failed to skip user input'));
-    dispatch({ type: 'user-input-resolved', nodeId, answers: [] });
   }, [dispatch]);
 
   const setMinimized = useCallback(
@@ -2061,12 +2188,17 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const addPendingComment = useCallback(
-    (nodeId: string, quotedText: string, body: string, source?: { type: 'artifact'; name?: string; filePath: string; selector?: import('../lib/textSelector').TextSelector }) => {
+    (nodeId: string, quotedText: string, body: string, source?: QuoteSource, context?: FileFeedbackTarget): boolean => {
+      if (context && (context.nodeId !== nodeId || !isFileFeedbackTargetValid(context, projectsRef.current, nodesRef.current))) return false;
+      const snapshot = source?.snapshot;
+      if (context && snapshot && (snapshot.backendConnectionId !== context.backendConnectionId
+        || snapshot.projectId !== context.projectId
+        || (snapshot.treeId != null && snapshot.treeId !== context.treeId))) return false;
       const trimmedQuote = quotedText.trim();
       const trimmedBody = body.trim();
       // Guard against empty entries: a comment needs at least the body text,
       // since a quote-only entry is what Quote reply already covers.
-      if (!trimmedBody) return;
+      if (!trimmedBody) return false;
       dispatch({
         type: 'add-comment',
         nodeId,
@@ -2081,6 +2213,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           ...(source ? { source } : {}),
         },
       });
+      return true;
     },
     [dispatch],
   );
@@ -2238,7 +2371,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
       // Pre-generate ids locally, add all structural updates in one pass so
       // views see the new nodes appear together. No network round-trip needed.
-      const newIds = allocateNodeIdsLocal(cleaned.length);
+      const newIds = cleaned.map(() => newNodeId(projectId));
       newIds.forEach((nid) => {
         dispatch({ type: 'create', nodeId: nid, projectId, parentNodeId });
       });
@@ -2274,7 +2407,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       });
       return newIds;
     },
-    [dispatch, setFocusedPane, setOpenPanes, startStream],
+    [dispatch, newNodeId, setFocusedPane, setOpenPanes, startStream],
   );
 
   const { createDigest, refreshDigest, setDigestPrompt, markDigestViewed, deleteDigest } = useDigestOrchestration({
@@ -2322,6 +2455,28 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     return id;
   }, [openPaneInTree, registerPaneItem, selectProject]);
 
+  const openPagePane = useCallback((page: { pageId: string; workspaceId: string; backendConnectionId: string; title?: string }): string => {
+    const host = projectsRef.current.find((candidate) => candidate.id === activeProjectIdRef.current && !candidate.deletedAt);
+    if (!host) throw new Error('No active workspace for the Page pane');
+    const id = pagePaneId(page.backendConnectionId, page.workspaceId, page.pageId);
+    const item: PaneItem = {
+      id,
+      kind: 'page',
+      projectId: host.id,
+      treeId: host.activeTreeId,
+      title: page.title?.trim() || 'Page',
+      createdAt: Date.now(),
+      backendConnectionId: page.backendConnectionId,
+      workspaceId: page.workspaceId,
+      pageId: page.pageId,
+    };
+    registerPaneItem(item);
+    openPaneInTree(host.id, host.activeTreeId, id);
+    setFocusedNodeIdState(null);
+    window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
+    return id;
+  }, [openPaneInTree, registerPaneItem]);
+
   const openFilePane = useCallback((filePath: string, options?: { parseSourceLocation?: boolean }): string => {
     if (!activeProjectId) throw new Error('No active project');
     const raw = filePath.trim();
@@ -2334,6 +2489,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     const isMarkdown = /\.(?:md|mdx|markdown)$/i.test(cleanPath);
     const activeTreeId = projectsRef.current.find((project) => project.id === activeProjectId)?.activeTreeId ?? 'none';
     const paneTreeId = activeTreeId === 'none' ? null : activeTreeId;
+    const originTarget = paneTreeId && focusedNodeId ? {
+      backendConnectionId: projectsRef.current.find(project => project.id === activeProjectId)?.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID,
+      projectId: activeProjectId, treeId: paneTreeId, nodeId: focusedNodeId,
+    } : null;
+    const originChatNodeId = originTarget && isFileFeedbackTargetValid(originTarget, projectsRef.current, nodesRef.current)
+      ? originTarget.nodeId : undefined;
     const identityPath = sourceReferencePath ? `source\0${cleanPath}` : cleanPath;
     const id = singletonPaneId('file', `${activeProjectId}:${activeTreeId}`, identityPath);
     const exactPane = paneItemsRef.current[id];
@@ -2342,6 +2503,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       const previousBasename = existing.filePath.split(/[\\/]/).filter(Boolean).pop() ?? existing.filePath;
       const cleanTitle = cleanPath.split(/[\\/]/).filter(Boolean).pop() ?? cleanPath;
       updatePaneItem(existing.id, {
+        originChatNodeId,
         filePath: cleanPath,
         title: existing.title === previousBasename ? cleanTitle : existing.title,
         sourceLocation,
@@ -2356,6 +2518,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     return revealPane({
       id,
       kind: 'file',
+      originChatNodeId,
       projectId: activeProjectId,
       treeId: paneTreeId,
       title,
@@ -2365,7 +2528,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       sourceLocation,
       sourceReferencePath,
     });
-  }, [activeProjectId, openPane, revealPane, updatePaneItem]);
+  }, [activeProjectId, focusedNodeId, openPane, revealPane, updatePaneItem]);
 
   const openDiffPane = useCallback((filePath: string): string => {
     if (!activeProjectId) throw new Error('No active project');
@@ -2613,6 +2776,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     setPaneSlot,
     ensurePaneSlot,
     setFocusedNodeId: setFocusedNodeIdState,
+    selectProject,
     setSelection: setSelectionState,
     treeSelection,
     setTreeSelection,
@@ -2620,11 +2784,21 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     setSidebarExpanded: setSidebarExpandedPref,
   });
 
+  // The user's workspace to come back to while the assistant's hidden one is
+  // active (New thread, Home and the thread views return there).
+  useEffect(() => {
+    rememberUserWorkspace(projects.find((p) => p.id === activeProjectId));
+  }, [activeProjectId, projects]);
+
   /** Focus the window, open `nodeId`'s pane wherever it lives, land on the
    *  Dashboard. Shared by every notification whose click should take the user
    *  to the node that produced it. */
   const revealNode = useCallback((nodeId: string) => {
     window.focus();
+    // The assistant's conversation lives in its hidden workspace: it shows in
+    // the ⌘J panel, never by switching to that workspace.
+    const owner = projectsRef.current.find((p) => p.chatIds.includes(nodeId));
+    if (isSystemWorkspace(owner) && openAssistantPanel()) return;
     navigateToNode(
       {
         projects: projectsRef.current,
@@ -2644,6 +2818,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const handleStreamComplete = useCallback((nodeId: string) => {
     if (prefsRef.current.notifications !== 'all') return;
     if (focusedPaneRef.current === nodeId) return;
+    if (document.hasFocus() && isShownInAssistantPanel(nodeId)) return;
+    // A scheduled run reports its own completion (with the job's name).
+    if (scheduledNodeIdsRef.current.has(nodeId)) return;
     const node = nodesRef.current[nodeId];
     notify({
       title: node?.title ?? 'Branch complete',
@@ -2652,6 +2829,95 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     });
   }, [revealNode]);
   streamCompleteHandlerRef.current = handleStreamComplete;
+
+  /**
+   * Install (or refresh) a thread the backend created without this renderer,
+   * e.g. a scheduled run. Resolves false when its workspace is not loaded.
+   */
+  const installBackendNode = useCallback((workspaceId: string, nodeId: string, refresh: boolean): Promise<boolean> => {
+    const key = `${workspaceId}\u0000${nodeId}\u0000${refresh ? 'refresh' : 'install'}`;
+    if (!refresh) {
+      const finalRefresh = backendNodeInstallsRef.current.get(`${workspaceId}\u0000${nodeId}\u0000refresh`);
+      if (finalRefresh) return finalRefresh;
+    }
+    const pending = backendNodeInstallsRef.current.get(key);
+    if (pending) return pending;
+    const requestKey = `${workspaceId}\u0000${nodeId}`;
+    const request = Symbol();
+    backendNodeInstallRequestsRef.current.set(requestKey, request);
+    const isCurrentRequest = () => backendNodeInstallRequestsRef.current.get(requestKey) === request;
+    const work = (async () => {
+      if (nodesRef.current[nodeId] && !refresh) return true;
+      while (isCurrentRequest()) {
+        const projectBefore = projectsRef.current.find((candidate) => candidate.id === workspaceId && !candidate.deletedAt);
+        if (!projectBefore || projectBefore.backendConnectionId) return false;
+        // A foreground turn or host command owns its live state. Wait rather
+        // than dropping the final refresh while that operation is pending.
+        if (cancelFns.current[nodeId] || commandsInFlightRef.current.has(nodeId)) {
+          await sleep(50);
+          continue;
+        }
+        const nodeBefore = nodesRef.current[nodeId];
+        const rawWorkspace = await fetchWorkspace(workspaceId);
+        // A finished notification supersedes its earlier start fetch even if
+        // that older response arrives last. A local change during this fetch
+        // needs a fresh snapshot, as in background replay-gap reconciliation.
+        if (!isCurrentRequest()) return false;
+        if (cancelFns.current[nodeId] || commandsInFlightRef.current.has(nodeId)
+          || nodesRef.current[nodeId] !== nodeBefore
+          || projectsRef.current.find((candidate) => candidate.id === workspaceId) !== projectBefore) continue;
+        const result = installBackendWorkspaceNode({
+          currentProjects: projectsRef.current,
+          currentNodes: nodesRef.current,
+          rawWorkspace,
+          nodeId,
+        });
+        if (!result) return false;
+        setProjects(result.projects);
+        nodesRef.current = result.nodes;
+        structureVersionRef.current += 1;
+        setNodes(result.nodes);
+        return true;
+      }
+      return false;
+    })().finally(() => {
+      if (backendNodeInstallsRef.current.get(key) === work) backendNodeInstallsRef.current.delete(key);
+      if (isCurrentRequest()) backendNodeInstallRequestsRef.current.delete(requestKey);
+    });
+    backendNodeInstallsRef.current.set(key, work);
+    return work;
+  }, [setProjects]);
+
+  /** Open a backend-created thread (from a notification), installing it first if needed. */
+  const revealBackendNode = useCallback(async (workspaceId: string, nodeId: string): Promise<boolean> => {
+    if (!nodesRef.current[nodeId]) {
+      const installed = await installBackendNode(workspaceId, nodeId, false).catch(() => false);
+      if (!installed || !nodesRef.current[nodeId]) return false;
+    }
+    revealNode(nodeId);
+    return true;
+  }, [installBackendNode, revealNode]);
+
+  const handleScheduledJobRun = useCallback((event: ScheduledJobRunEvent) => {
+    if (event.nodeId) scheduledNodeIdsRef.current.add(event.nodeId);
+    // The Scheduled page listens to refresh its list (see scheduledNav.ts).
+    window.dispatchEvent(new CustomEvent('michi:scheduled-job-run', { detail: event }));
+    if (!event.nodeId) return;
+    const nodeId = event.nodeId;
+    // Install on start so the run streams live; refresh on finish so the
+    // final transcript is exact even if early frames arrived before install.
+    void installBackendNode(event.workspaceId, nodeId, event.phase === 'finished').catch(() => {});
+    // Without Electron main (browser), this window is the notifier.
+    if (getElectron()?.onScheduledNotice || prefsRef.current.notifications === 'off') return;
+    const notice = describeScheduledRunNotice(event);
+    if (!notice) return;
+    notify({
+      title: `${notice.title} · ${notice.subtitle}`,
+      body: notice.body,
+      onClick: () => { void revealBackendNode(event.workspaceId, nodeId); },
+    });
+  }, [installBackendNode, revealBackendNode]);
+  scheduledJobRunHandlerRef.current = handleScheduledJobRun;
 
   const {
     createContext,
@@ -2893,12 +3159,14 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const paneValue = useMemo<ChatPaneValue>(
     () => ({
       openPanes,
+      tabPanes,
+      pagePane,
       paneItems,
       focusedPane,
       focusNonce,
       viewMode,
     }),
-    [openPanes, paneItems, focusedPane, focusNonce, viewMode],
+    [openPanes, tabPanes, pagePane, paneItems, focusedPane, focusNonce, viewMode],
   );
 
   const value = useMemo<ExtendedChatContextValue>(
@@ -2932,6 +3200,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       sendMessage,
       setChatPermissionMode,
       retryLastTurn,
+      rerunLastTurn,
       editAndResend,
       createChildChat,
       createBlankChild,
@@ -2978,6 +3247,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openTerminalPane,
       openBrowserPane,
       openAgentRunPane,
+      openPagePane,
+      revealBackendNode,
       updatePaneItem,
       paneItems,
       openPanes,
@@ -3068,6 +3339,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       sendMessage,
       setChatPermissionMode,
       retryLastTurn,
+      rerunLastTurn,
       editAndResend,
       createChildChat,
       createBlankChild,
@@ -3114,6 +3386,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openTerminalPane,
       openBrowserPane,
       openAgentRunPane,
+      openPagePane,
+      revealBackendNode,
       updatePaneItem,
       paneItems,
       openPanes,
@@ -3195,6 +3469,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       sendMessage,
       setChatPermissionMode,
       retryLastTurn,
+      rerunLastTurn,
       editAndResend,
       createChildChat,
       createBlankChild,
@@ -3257,6 +3532,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openTerminalPane,
       openBrowserPane,
       openAgentRunPane,
+      openPagePane,
+      revealBackendNode,
       updatePaneItem,
       setUnreadFilterOn,
       markAllRead,
@@ -3266,8 +3543,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       navBack,
       navForward,
       dispatch,
+      installWorkspaceSnapshot,
     }),
     [
+      installWorkspaceSnapshot,
       createProject,
       enterChatsWorkspace,
       selectProject,
@@ -3278,6 +3557,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       sendMessage,
       setChatPermissionMode,
       retryLastTurn,
+      rerunLastTurn,
       editAndResend,
       createChildChat,
       createBlankChild,
@@ -3340,6 +3620,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       openTerminalPane,
       openBrowserPane,
       openAgentRunPane,
+      openPagePane,
+      revealBackendNode,
       updatePaneItem,
       setUnreadFilterOn,
       markAllRead,
@@ -3373,16 +3655,26 @@ export function useChatStore(): ExtendedChatContextValue {
   return v;
 }
 
+export function useOptionalChatActions(): ExtendedChatActionsValue | null {
+  return useContext(ChatActionsContext);
+}
+
 export function useChatActions(): ExtendedChatActionsValue {
-  const v = useContext(ChatActionsContext);
+  const v = useOptionalChatActions();
   if (!v) throw new Error('useChatActions must be used within ChatProvider');
   return v;
 }
+
 
 export function useChatProjects(): ChatProjectsValue {
   const v = useContext(ChatProjectsContext);
   if (!v) throw new Error('useChatProjects must be used within ChatProvider');
   return v;
+}
+
+/** Optional workspace slice for components that also render in isolated/provider-free contexts. */
+export function useOptionalChatProjects(): ChatProjectsValue | null {
+  return useContext(ChatProjectsContext);
 }
 
 /**
@@ -3431,6 +3723,17 @@ export function useChatNode(nodeId: string): ChatNodeState | undefined {
     [store, nodeId],
   );
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * Reads a node as the store holds it at call time (each dispatch updates it
+ * synchronously), without subscribing: for decisions made in event handlers
+ * and store listeners that must see an edit the last render hasn't shown.
+ */
+export function useChatNodeReader(): (nodeId: string) => ChatNodeState | undefined {
+  const store = useContext(ChatNodeStoreContext);
+  if (!store) throw new Error('useChatNodeReader must be used within ChatProvider');
+  return store.getNode;
 }
 
 export function useChatNodesSnapshot(): Record<string, ChatNodeState> {
@@ -3587,7 +3890,7 @@ export function selectAllChats(state: {
     for (const chatId of project.chatIds) {
       const node = state.nodes[chatId];
       if (!node) continue;
-      if (node.deletedAt) continue;
+      if (node.deletedAt || !isVisibleConversationNode(node)) continue;
       out.push({
         id: chatId,
         title: node.title?.trim() || chatLabel(node),

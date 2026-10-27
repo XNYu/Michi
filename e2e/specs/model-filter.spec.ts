@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { installMockApi, bootWithWorkspace } from '../fixtures/mockApi';
+import { openSettings } from '../fixtures/shell';
 
 test('Pi model picker filters the live provider catalog', async ({ page }, testInfo) => {
   await installMockApi(page, {
@@ -66,8 +67,7 @@ test('Pi model picker filters the live provider catalog', async ({ page }, testI
   });
   await bootWithWorkspace(page, 'Model Filter Workspace');
 
-  await page.getByText('Settings', { exact: true }).last().click();
-  await page.getByText('Model', { exact: true }).click();
+  await openSettings(page, 'Runtime (global)');
 
   const filter = page.getByRole('searchbox', { name: 'Filter models' });
   await expect(filter).toBeVisible();

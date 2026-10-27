@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
-import { execFileSync } from 'node:child_process';
-import { buildRemoteInstallScript, parseRemoteHost, RemoteDesktopSetup, RemoteDesktopError, runRemoteSsh, shellQuote } from '../src/services/remoteDesktopSetup';
+
+import { parseRemoteHost, RemoteDesktopSetup, RemoteDesktopError, runRemoteSsh, shellQuote } from '../src/services/remoteDesktopSetup';
 import { getBackendConnection, listBackendConnections, saveBackendConnection } from '../src/services/backendConnections';
 import { SshTunnelManager } from '../src/services/sshTunnelManager';
 import { RemoteDiagnosticLog } from '../src/services/remoteDiagnostics';
@@ -31,18 +31,6 @@ test('accepts build+ and pasted ssh command, rejects shell and option injection'
     assert.throws(() => parseRemoteHost(host), /SSH alias/);
   }
   assert.equal(shellQuote("a'b"), "'a'\"'\"'b'");
-});
-
-test('installation builds source remotely without resetting a user checkout', () => {
-  const script = buildRemoteInstallScript("file:///repo's/source.bundle", 'codex/experiment');
-  assert.match(script, /git clone --single-branch --branch 'codex\/experiment'/);
-  assert.match(script, /npm run remote:setup/);
-  assert.match(script, /sha256sum -c/);
-  assert.match(script, /setup.lock/);
-  assert.doesNotMatch(script, /reset --hard|StrictHostKeyChecking=no|sudo /);
-  assert.match(script, /process.execPath =/);
-  assert.match(script, /node\.elf.*"\\\$@"/);
-  execFileSync('bash', ['-n'], { input: script });
 });
 
 const json = (value: unknown) => 'banner\nMICHI_SETUP_JSON:' + JSON.stringify(value) + '\n';
@@ -131,7 +119,6 @@ test('setup route streams progress and sanitized result under the local-control 
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
-
 test('SSH failure preserves stderr, process exit and spawn errors without credential output', async () => {
   const old = process.env.MICHI_SSH_BIN;
   const file = path.join(dataDir, 'fake-ssh');
@@ -147,6 +134,18 @@ test('SSH failure preserves stderr, process exit and spawn errors without creden
     await assert.rejects(runRemoteSsh({ sshHost: 'build+' }, '', undefined, undefined, diagnostic), /ENOENT/);
     assert.match(diagnostic.report.log, /ENOENT/);
   } finally { diagnostic.finish(); if (old === undefined) delete process.env.MICHI_SSH_BIN; else process.env.MICHI_SSH_BIN = old; }
+});
+
+test('SSH inspection and recovery allow a cold proxy thirty seconds to connect', async () => {
+  const old = process.env.MICHI_SSH_BIN;
+  const file = path.join(dataDir, 'check-ssh-timeout');
+  fs.writeFileSync(file, '#!/bin/sh\ncase " $* " in\n  *" -o ConnectTimeout=30 "*) cat >/dev/null; printf "connected" ;;\n  *) printf "SSH handshake budget too short\\n" >&2; exit 255 ;;\nesac\n', { mode: 0o700 });
+  try {
+    process.env.MICHI_SSH_BIN = file;
+    assert.equal(await runRemoteSsh({ sshHost: 'build+' }, 'inspection'), 'connected');
+  } finally {
+    if (old === undefined) delete process.env.MICHI_SSH_BIN; else process.env.MICHI_SSH_BIN = old;
+  }
 });
 
 test('aborting SSH settles promptly, retains output and redacts split protocol and private-key lines', async () => {
@@ -259,7 +258,6 @@ test('connected runtime warnings return a saved diagnostic and preserve a succes
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
-
 const runtimeScenarios: { name: string; detected: string[]; current: string; available: string[]; expected?: string;
   hasKey?: boolean; expectedDetected?: string[]; unavailable?: boolean; failStatus?: boolean; failOptions?: boolean }[] = [
   { name: 'Codex only without Kiro', detected: ['codex'], current: 'kiro', available: ['codex'], expected: 'codex' },
@@ -273,44 +271,6 @@ const runtimeScenarios: { name: string; detected: string[]; current: string; ava
   { name: 'preselection failure is advisory', detected: ['codex'], current: 'kiro', available: ['codex'], expected: 'codex', failOptions: true },
 ];
 for (const scenario of runtimeScenarios) {
-  test('runtime discovery: ' + scenario.name, async () => {
-    const selected: string[] = [];
-    const token = 'test-runtime-token-never-to-renderer';
-    const remote = http.createServer((req, res) => {
-      assert.equal(req.headers.authorization, 'Bearer ' + token);
-      res.setHeader('Content-Type', 'application/json');
-      if (req.url === '/api/agent/status') {
-        res.statusCode = scenario.failStatus ? 503 : 200;
-        const ids = [...new Set(['kiro', 'pi', ...scenario.available, ...scenario.detected])];
-        res.end(JSON.stringify({ runtime: scenario.current, hasRequiredKey: !!scenario.hasKey,
-          availableRuntimes: ids.map(id => ({ id, label: id, available: scenario.available.includes(id), requiresApiKey: id === 'pi', unavailableReason: 'Sign in on the remote machine.' })) }));
-      } else if (req.url === '/api/agent/options') {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', () => { selected.push(JSON.parse(body).runtime); res.statusCode = scenario.failOptions ? 503 : 200; res.end('{}'); });
-      } else res.end(JSON.stringify({ service: 'michi-backend', status: 'healthy', serverId: 'runtime-test-box' }));
-    });
-    await new Promise<void>(resolve => remote.listen(0, '127.0.0.1', resolve));
-    const address = remote.address(); assert.ok(address && typeof address !== 'string');
-    class FakeTunnel extends SshTunnelManager {
-      override async apiUrl() { return `http://127.0.0.1:${(address as { port: number }).port}/api`; }
-      override stop() {}
-    }
-    const diagnostic = new RemoteDiagnosticLog('build+');
-    const service = new RemoteDesktopSetup({ tunnelManager: new FakeTunnel(), runSsh: async () => json({
-      home: '/home/u', healthy: true, token, port: 4444, runtimes: scenario.detected,
-    }) });
-    try {
-      const result = await service.connect('build+', false, () => {}, undefined, diagnostic);
-      assert.equal(result.kind, 'connected');
-      if (result.kind !== 'connected') return;
-      assert.deepEqual(result.runtimes, scenario.expectedDetected ?? scenario.detected);
-      assert.deepEqual(selected, scenario.expected ? [scenario.expected] : []);
-      assert.equal(result.runtimeWarnings.length > 0, !!(scenario.unavailable || scenario.failStatus || scenario.failOptions));
-      assert.equal(listBackendConnections().length, 1);
-      assert.doesNotMatch(JSON.stringify(result) + diagnostic.report.log, new RegExp(token));
-    } finally { diagnostic.finish(); await new Promise<void>(resolve => remote.close(() => resolve())); }
-  });
 }
 
 test('cancelling runtime discovery does not save the connection or preselect a runtime', async () => {

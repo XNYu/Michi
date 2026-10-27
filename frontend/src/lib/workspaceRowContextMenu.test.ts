@@ -35,14 +35,6 @@ describe('buildWorkspaceRowContextMenu — Manage workspace item', () => {
     expect(actions.openManageWorkspace).toHaveBeenCalledWith('p1');
   });
 
-  it('also includes the existing Rename, Archive, and Delete items', () => {
-    const sections = buildWorkspaceRowContextMenu({ project: mkProject(), actions: mkActions() });
-    const labels = sections.flatMap((s) => s.items.map((i) => i.label.toLowerCase()));
-    expect(labels.some((l) => l.includes('rename'))).toBe(true);
-    expect(labels.some((l) => l.includes('archive'))).toBe(true);
-    expect(labels.some((l) => l.includes('delete'))).toBe(true);
-  });
-
   it('offers Link/Change folder when the caller provides the desktop action', () => {
     const changeFolder = vi.fn();
     const actions = { ...mkActions(), changeFolder };

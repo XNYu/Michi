@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { KiroSteeringParser } from '../../shared/src/kiroSteering';
 import { installMockApi, bootWithWorkspace, sseBody } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 const report = { messageId: 'steer-c3999cf6ce9f462cb72019fcc3fb5368', text: 'Changed the recommendation from blue to cobalt after the additional constraint.', complete: true };
 const marker = `[STEERING ${report.messageId}: ${report.text}]`;
@@ -22,7 +23,7 @@ test('streamed Kiro reports render as model notes, never raw markers, on desktop
     };
   });
   await bootWithWorkspace(page, 'Kiro steering notes');
-  await page.locator('[contenteditable="true"]').first().fill('Compare the colors and consider my added constraint.');
+  await page.locator(COMPOSER_EDITOR).first().fill('Compare the colors and consider my added constraint.');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
   await expect.poll(() => page.evaluate(() => typeof (window as any).__steeringFrame)).toBe('function');
   const parser = new KiroSteeringParser();

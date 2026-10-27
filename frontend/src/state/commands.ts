@@ -9,7 +9,7 @@ export type CommandGroup = 'nav' | 'action' | 'workspace' | 'chat' | 'search-res
 export type CommandIcon =
   | 'agent' | 'home' | 'branches' | 'map' | 'digest' | 'workspace' | 'trash'
   | 'archive' | 'settings' | 'profile' | 'plus' | 'shield' | 'shield-off'
-  | 'thread' | 'weave' | 'export' | 'close' | 'chat';
+  | 'thread' | 'weave' | 'export' | 'close' | 'chat' | 'threads' | 'clock';
 
 export interface Command {
   id: string;
@@ -34,7 +34,11 @@ export type PageId =
   | 'archived'
   | 'profile'
   | 'agents'
-  | 'agent-manage';
+  | 'agent-manage'
+  | 'threads'
+  | 'spaces'
+  | 'space'
+  | 'scheduled';
 
 export interface CommandContext {
   activePage: PageId;
@@ -65,6 +69,10 @@ export interface CommandContext {
   liveTrees: Array<{ id: string; name: string }>;
   archivedTrees: Array<{ id: string; name: string }>;
   customAgentsEnabled: boolean;
+  /** Opens the ⌘J assistant; absent when this backend has none. */
+  openAssistant?: () => void;
+  /** Opens All tasks in Pages; absent where nothing answers it. */
+  openAllTasks?: () => void;
 }
 
 export function buildCommands(ctx: CommandContext): Command[] {
@@ -74,13 +82,19 @@ export function buildCommands(ctx: CommandContext): Command[] {
   if (ctx.customAgentsEnabled) {
     out.push({ id: 'agents.open', group: 'action', icon: 'agent', label: 'Open Agent Library', run: () => ctx.setPage('agents') });
   }
+  if (ctx.openAssistant) {
+    out.push({ id: 'assistant.open', group: 'action', icon: 'chat', label: 'Ask the assistant', keys: kbd('mod', 'J'), run: ctx.openAssistant });
+  }
   if (ctx.hasActiveProject) {
+    out.push({ id: 'nav.home', group: 'nav', icon: 'home', label: 'Go to home', keys: kbd('mod', '0'), run: () => ctx.setPage('home') });
     out.push(
-      { id: 'nav.home',       group: 'nav', icon: 'home', label: 'Go to home',            keys: kbd('mod', '0'), run: () => ctx.setPage('home') },
       { id: 'nav.branches',   group: 'nav', icon: 'branches', label: 'Open branch overview',  run: () => ctx.setPage('branches') },
       { id: 'nav.map',        group: 'nav', icon: 'map', label: 'Open map',              keys: kbd('mod', 'M'), run: () => ctx.setPage('map') },
       { id: 'nav.digest',     group: 'nav', icon: 'digest', label: 'Open thread digest',    keys: kbd('mod', 'D'), run: () => ctx.setPage('digest') },
       { id: 'nav.workspaces', group: 'nav', icon: 'workspace', label: 'Switch workspace…',     keys: kbd('mod', 'O'), run: () => ctx.setPage('workspaces') },
+      { id: 'nav.spaces', group: 'nav', icon: 'digest', label: 'Open Pages', run: () => ctx.setPage('spaces') },
+      ...(ctx.openAllTasks ? [{ id: 'nav.all-tasks', group: 'nav', icon: 'threads', label: 'Go to all tasks', run: ctx.openAllTasks } satisfies Command] : []),
+      { id: 'nav.scheduled',  group: 'nav', icon: 'clock', label: 'Open scheduled jobs',   run: () => ctx.setPage('scheduled') },
       { id: 'nav.trash',      group: 'nav', icon: 'trash', label: 'Open trash',            run: () => ctx.setPage('trash') },
       { id: 'nav.archived',   group: 'nav', icon: 'archive', label: 'Open archived nodes',    run: () => ctx.setPage('archived') },
       { id: 'nav.settings',   group: 'nav', icon: 'settings', label: 'Open settings',         keys: kbd('mod', ','), run: () => ctx.setPage('settings') },

@@ -8,4 +8,4 @@ Crew resolves the manifest's bare Python command. The stdlib launcher finds the 
 
 Custom installations and existing generated sources use `backend/scripts/crew-setup.cjs`. Do not copy generated custom manifests over this canonical directory.
 
-Read the [complete setup guide](../backend/src/agents/crew/GETTING_STARTED.md) before granting the official sessionApproval and MCP permissions.
+Read the [complete setup guide](../runtime/src/adapters/crew/GETTING_STARTED.md) before granting the official sessionApproval and MCP permissions.

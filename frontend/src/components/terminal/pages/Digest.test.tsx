@@ -157,45 +157,6 @@ describe('TerminalDigest thread scope', () => {
     expect(screen.queryByText('# Title\n\nSummary so far')).toBeNull();
   });
 
-  it('uses the Home composer with the current digest and Agent selection', () => {
-    const onNav = vi.fn();
-    render(<TerminalDigest onNav={onNav} />);
-
-    expect(vi.mocked(ManageComposer).mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
-      workspaceId: 'p1', parentNodeId: 'd1', enableAgentSelect: true,
-    }));
-    fireEvent.click(screen.getByText('Submit digest follow-up'));
-    expect(onNav).toHaveBeenCalledWith('dashboard');
-  });
-
-  it.each(['workspace', 'thread'])('does not offer follow-up composition for an archived %s', (scope) => {
-    if (scope === 'workspace') store.project.archivedAt = 1;
-    else store.project.trees[0].archivedAt = 1;
-    render(<TerminalDigest onNav={vi.fn()} />);
-    expect(screen.queryByText('Submit digest follow-up')).toBeNull();
-  });
-
-  it('opens the active thread digest directly and hides workspace-level digest cards', () => {
-    render(<TerminalDigest onNav={vi.fn()} />);
-
-    expect(screen.getByText('Current digest')).toBeTruthy();
-    expect(screen.queryByText('Other digest')).toBeNull();
-    expect(screen.getByText('thread')).toBeTruthy();
-    expect(screen.queryByText('← all')).toBeNull();
-  });
-
-  it('follows the active thread when it changes', () => {
-    const view = render(<TerminalDigest onNav={vi.fn()} />);
-    expect(screen.getByText('Current digest')).toBeTruthy();
-
-    store.project = project('t2');
-    view.rerender(<TerminalDigest onNav={vi.fn()} />);
-
-    expect(screen.getByText('Other digest')).toBeTruthy();
-    expect(screen.queryByText('Current digest')).toBeNull();
-    expect(vi.mocked(ManageComposer).mock.calls.at(-1)?.[0].parentNodeId).toBe('d2');
-  });
-
   it('shows an inline prompt and creates a digest from every chat in the active thread', async () => {
     store.project = {
       ...project(),

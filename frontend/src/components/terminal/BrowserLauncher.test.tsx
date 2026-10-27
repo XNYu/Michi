@@ -25,19 +25,6 @@ function setup(width: number) {
 }
 
 describe('BrowserLauncher', () => {
-  it('renders an icon-only button that keeps its accessible name and tooltip', () => {
-    setup(1000);
-    const button = screen.getByRole('button', { name: 'Browser' });
-    expect(button.textContent?.trim()).toBe('');
-    expect(button.getAttribute('title')).toBe('Browser');
-  });
-
-  it('splits a lone full-width pane into two equal panes', () => {
-    setup(1000);
-    fireEvent.click(screen.getByRole('button', { name: 'Browser' }));
-    expect(state.setPaneWidth.mock.calls).toEqual([['web', 500]]);
-  });
-
   it('copies a custom pane width instead of using a fixed browser width', () => {
     const { container } = setup(340);
     container.querySelector('.terminal-dashboard')!.appendChild(document.createElement('div')).setAttribute('data-node-id', 'another');

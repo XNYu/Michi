@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { setupAgentRoutes } from '../src/routes/agent';
@@ -13,7 +14,7 @@ let directory: string;
 let server: ReturnType<typeof express.application.listen>;
 let base: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-web-search-routes-'));
   process.env.MICHI_DATA_DIR = directory;
   process.env.MICHI_CLOUD = '1';
@@ -29,7 +30,7 @@ beforeEach(() => {
     next();
   });
   app.use('/api', setupAgentRoutes());
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
 });
 

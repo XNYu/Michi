@@ -1,11 +1,14 @@
 import type { AgentRuntime } from '../types';
+import { CLAUDE_RUN } from 'michi-runtime/internal/adapters/claude/claudeDescriptor';
 import type { NativeToolMode, RuntimeRunAdapter, SteeringStrategy } from './runtimeRunAdapter';
 
+/** Run behavior comes from the Claude descriptor's run facet. */
 export class ClaudeRunAdapter implements RuntimeRunAdapter {
   readonly runtimeId = 'claude';
-  readonly supportsNativeResume = true;
-  readonly nativeToolMode: NativeToolMode = 'allowlist';
-  readonly steering: SteeringStrategy = 'native';
+  readonly supportsNativeResume = CLAUDE_RUN.supportsNativeResume;
+  readonly nativeToolMode: NativeToolMode = CLAUDE_RUN.toolMode;
+  readonly steering: SteeringStrategy = CLAUDE_RUN.steering;
+  // No immediateSteering: it only qualifies native steering, which Claude does not use.
 
   assertCompatible(runtime: AgentRuntime): void {
     if (runtime.id !== this.runtimeId) throw new Error(`Claude Run adapter cannot execute runtime ${runtime.id}`);

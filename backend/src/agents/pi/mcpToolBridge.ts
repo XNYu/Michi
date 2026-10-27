@@ -9,7 +9,7 @@
  * tools are exposed to the model (important for weak models that can't
  * handle 30+ tool schemas without hallucinating).
  */
-import type { McpClientManager, McpToolInfo } from "../../services/mcpClientManager";
+import type { McpClientManager, McpToolResult } from "../../services/mcpClientManager";
 
 /** Options for building MCP tool wrappers. */
 export interface McpToolBridgeOpts {
@@ -25,99 +25,38 @@ export interface McpToolBridgeOpts {
     allowedTools?: ReadonlySet<string>;
 }
 
-/**
- * Convert a JSON Schema property definition into a TypeBox schema.
- * Handles string, number, integer, boolean, array, and object types.
- * Falls back to Type.Unknown() for unrecognized shapes.
- */
-function jsonSchemaPropertyToTypebox(prop: Record<string, unknown>, Type: any): any {
-    const type = prop.type as string | undefined;
-    const description = prop.description as string | undefined;
-
-    let schema: any;
-
-    switch (type) {
-        case "string":
-            if (Array.isArray(prop.enum)) {
-                schema = prop.enum.length > 0
-                    ? Type.Union(prop.enum.map((v: unknown) => Type.Literal(v)))
-                    : Type.String();
-            } else {
-                schema = Type.String();
-            }
-            break;
-        case "number":
-        case "integer":
-            schema = Type.Number();
-            break;
-        case "boolean":
-            schema = Type.Boolean();
-            break;
-        case "array":
-            schema = Type.Array(
-                prop.items && typeof prop.items === "object"
-                    ? jsonSchemaPropertyToTypebox(prop.items as Record<string, unknown>, Type)
-                    : Type.Unknown(),
-            );
-            break;
-        case "object": {
-            const properties = prop.properties as Record<string, unknown> | undefined;
-            const required = new Set(Array.isArray(prop.required) ? prop.required : []);
-            if (properties && typeof properties === "object") {
-                const shape: Record<string, any> = {};
-                for (const [k, v] of Object.entries(properties)) {
-                    if (v && typeof v === "object") {
-                        const inner = jsonSchemaPropertyToTypebox(v as Record<string, unknown>, Type);
-                        shape[k] = required.has(k) ? inner : Type.Optional(inner);
-                    }
-                }
-                schema = Type.Object(shape);
-            } else {
-                // Generic object — accept anything
-                schema = Type.Object({}, { additionalProperties: true });
-            }
-            break;
-        }
-        default:
-            schema = Type.Unknown();
-    }
-
-    if (description && schema) {
-        schema = { ...schema, description };
-    }
-    return schema;
+/** Preserve external JSON Schema verbatim. Adding a purpose property changes
+ * arbitrary objects, additionalProperties:false, refs and conditional schemas.
+ * Type.Unsafe is the Pi/TypeBox escape hatch for an existing JSON Schema. */
+export function mcpInputSchemaToTypebox(inputSchema: Record<string, unknown>, Type: any): any {
+    return Type.Unsafe(inputSchema);
 }
 
-/**
- * Convert an MCP tool's inputSchema (JSON Schema) into a TypeBox Object.
- */
-function mcpInputSchemaToTypebox(inputSchema: Record<string, unknown>, Type: any): any {
-    const properties = inputSchema.properties as Record<string, unknown> | undefined;
-    const required = new Set(Array.isArray(inputSchema.required) ? inputSchema.required : []);
-
-    if (!properties || typeof properties !== "object") {
-        // No properties — just pass a __tool_use_purpose field
-        return Type.Object({
-            __tool_use_purpose: {
-                ...Type.String(),
-                description: "One short sentence stating why you're calling this tool.",
-            },
-        });
-    }
-
-    const shape: Record<string, any> = {
-        __tool_use_purpose: {
-            ...Type.String(),
-            description: "One short sentence stating why you're calling this tool.",
-        },
-    };
-    for (const [k, v] of Object.entries(properties)) {
-        if (v && typeof v === "object") {
-            const inner = jsonSchemaPropertyToTypebox(v as Record<string, unknown>, Type);
-            shape[k] = required.has(k) ? inner : Type.Optional(inner);
+/** Pi natively accepts text and images. Other MCP content stays in details and
+ * receives an explicit textual projection so a successful resource/structured
+ * result never appears empty to the model. */
+function projectMcpResult(result: McpToolResult): any[] {
+    const content: any[] = [];
+    for (const block of result.content) {
+        if (block.type === "text") content.push({ type: "text", text: block.text });
+        else if (block.type === "image") content.push({ type: "image", data: block.data, mimeType: block.mimeType });
+        else if (block.type === "resource" && "text" in block.resource) {
+            content.push({ type: "text", text: `Resource ${block.resource.uri}:\n${block.resource.text}` });
+        } else if (block.type === "resource_link") {
+            content.push({ type: "text", text: `Resource link: ${JSON.stringify(block)}` });
+        } else {
+            // Binary audio/resources are unsupported by Pi tool messages. Do not
+            // dump base64 into model text; preserve it losslessly in mcpResult.
+            const { data: _data, ...metadata } = block as Record<string, unknown>;
+            if (metadata.resource && typeof metadata.resource === 'object') {
+                const { blob: _blob, ...resource } = metadata.resource as Record<string, unknown>;
+                metadata.resource = resource;
+            }
+            content.push({ type: "text", text: `MCP ${block.type} content (binary retained in tool details): ${JSON.stringify(metadata)}` });
         }
     }
-    return Type.Object(shape);
+    if (result.structuredContent !== undefined) content.push({ type: "text", text: `Structured result: ${JSON.stringify(result.structuredContent)}` });
+    return content.length ? content : [{ type: "text", text: "(no text content; MCP returned no content)" }];
 }
 
 /**
@@ -149,6 +88,8 @@ export function buildMcpToolsForPi(opts: McpToolBridgeOpts): any[] {
     for (const serverName of mcpManager.connectedServers()) {
         const mcpTools = mcpManager.listTools(serverName);
         for (const mcpTool of mcpTools) {
+            // Pi's regular tool executor cannot own MCP task streams.
+            if (mcpTool.execution?.taskSupport === 'required') continue;
             // Apply allowlist filter
             if (allowedTools && !allowedTools.has(mcpTool.name)) continue;
 
@@ -162,16 +103,10 @@ export function buildMcpToolsForPi(opts: McpToolBridgeOpts): any[] {
                 parameters,
                 execute: async (_id: string, args: Record<string, unknown>, signal?: AbortSignal) => {
                     signal?.throwIfAborted();
-                    // Strip the __tool_use_purpose field before forwarding
-                    const { __tool_use_purpose, ...cleanArgs } = args;
-                    const result = await mcpManager.callTool(serverName, mcpTool.name, cleanArgs, signal);
-                    // Flatten text content into a single string for the model
-                    const textParts = result.content
-                        .filter((c) => c.type === "text" && typeof c.text === "string")
-                        .map((c) => c.text!);
+                    const result = await mcpManager.callTool(serverName, mcpTool.name, args, signal);
                     return {
-                        content: [{ type: "text", text: textParts.join("\n") || "(no text content)" }],
-                        details: { serverName, toolName: mcpTool.name, isError: result.isError },
+                        content: projectMcpResult(result),
+                        details: { serverName, toolName: mcpTool.name, isError: result.isError, mcpResult: result },
                         isError: result.isError,
                     };
                 },

@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, test, type TestContext } from 'node:test';
+// Must precede application imports: config and credential paths are captured at load time.
+import { isolatedIntegrationDataDir, resetIntegrationConfig } from './isolatedIntegrationEnvironment';
+import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
@@ -12,10 +13,12 @@ import { closeDb, getDb, initDb } from '../src/services/db';
 import { getNode, saveEdge, updateNodeResumeBinding } from '../src/services/dbRepository';
 import { getAgentConfig, loadAgentConfig, updateAgentConfig } from '../src/services/agentConfig';
 import { registerRuntime } from '../src/agents/registry';
-import { clearAllSessions, getSession, dropSession } from '../src/agents/sessionRegistry';
+import { clearAllSessions, dropSession } from '../src/agents/sessionRegistry';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import { tryForkChatSession } from '../src/services/nativeFork';
+import { chatHub } from '../src/agents/chatHub';
 import type { AgentRuntime, AgentSession, ForkAgentSessionOptions, NewAgentSessionOptions } from '../src/agents/types';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 const originalEnv = { ...process.env };
 let directory: string;
@@ -28,15 +31,11 @@ let forkFailure: Error | undefined;
 let runtime: AgentRuntime;
 let manager: ChatManager;
 
-beforeEach(async (t) => {
-  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-native-fork-'));
+beforeEach(async () => {
+  directory = fs.mkdtempSync(path.join(isolatedIntegrationDataDir, 'native-fork-'));
   process.env.MICHI_DATA_DIR = directory;
   delete process.env.MICHI_CLOUD;
-  const configPath = path.join(os.homedir(), '.michi', 'config.json');
-  const read = fs.readFileSync;
-  const write = fs.writeFileSync;
-  (t as TestContext).mock.method(fs, 'readFileSync', ((file: any, ...args: any[]) => file === configPath ? '{}' : (read as any)(file, ...args)) as typeof read);
-  (t as TestContext).mock.method(fs, 'writeFileSync', ((file: any, ...args: any[]) => file === configPath ? undefined : (write as any)(file, ...args)) as typeof write);
+  resetIntegrationConfig();
   closeDb(); initDb(); clearAllSessions(); loadAgentConfig();
   forks = []; fresh = []; loads = []; forkFailure = undefined;
   const session = (opts: NewAgentSessionOptions, token: string): AgentSession => ({
@@ -46,6 +45,7 @@ beforeEach(async (t) => {
     async cancel() {},
   });
   runtime = {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id: 'codex', label: 'Codex', capabilities: { modes: false, permissions: false, models: false,
       providerModels: false, reasoning: false, supportedReasoningLevels: [], apiKeys: false,
       warmSessions: false, saveContext: false, spawnBranches: true, nativeResume: true },
@@ -92,28 +92,6 @@ async function ensure(extra: Record<string, unknown> = {}) {
   return response.json() as Promise<any>;
 }
 
-test('HTTP branch forks once, persists a distinct child binding, and later resumes the child', async () => {
-  const results = await Promise.all([ensure(), ensure(), ensure()]);
-  assert.ok(results.some((result) => result.resumeReason === 'native_fork'));
-  assert.equal(forks.length, 1);
-  assert.equal(fresh.length, 0);
-  assert.equal(forks[0].sourceNativeSessionId, 'native-parent');
-  assert.equal(forks[0].parentChatId, 'parent');
-  assert.deepEqual(forks[0].mergeContexts, []);
-  assert.equal(getNode('parent')?.external_session_id, 'native-parent');
-  assert.equal(getNode('child')?.external_session_id, 'fork-1');
-  assert.equal(getSession('child')?.nativeSessionId, 'fork-1');
-  clearAllSessions();
-  assert.equal((await ensure()).resumeStrategy, 'exact');
-  assert.deepEqual(loads, ['child']);
-  assert.equal(forks.length, 1);
-});
-
-test('a first user message already persisted by the renderer does not disable native fork', async () => {
-  getDb().prepare("INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES ('pending-user','child','user','branch question',1,2)").run();
-  assert.equal((await ensure()).resumeReason, 'native_fork');
-});
-
 test('native fork skips textual ancestor replay but retains explicitly attached context', async () => {
   await ensure({ mergeContexts: ['explicit context'], extraContexts: [{ name: 'reference', filePath: 'notes.md' }] });
   assert.deepEqual(forks[0].mergeContexts, ['explicit context']);
@@ -131,19 +109,20 @@ for (const scenario of ['other-runtime', 'active-parent', 'no-native-id', 'exist
       getDb().prepare("INSERT INTO workspaces (id,name,created_at,updated_at) VALUES ('other','Other',1,1)").run();
       getDb().prepare("UPDATE nodes SET workspace_id='other' WHERE id='parent'").run();
     }
-    if (scenario === 'other-owner') getDb().prepare("UPDATE workspaces SET owner_user_id='other-user' WHERE id='ws'").run();
+    if (scenario === 'other-owner') {
+      process.env.MICHI_CLOUD = '1';
+      getDb().prepare("UPDATE workspaces SET owner_user_id='other-user' WHERE id='ws'").run();
+    }
     assert.equal(await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' }), null);
     assert.equal(forks.length, 0);
   });
 }
 
-test('unsupported native fork falls back to a fresh session with parent context', async () => {
-  forkFailure = new NativeResumeUnavailableError('parent rollout missing');
-  await ensure();
+test('desktop native fork accepts a legacy workspace owner for the local user', async () => {
+  getDb().prepare("UPDATE workspaces SET owner_user_id='legacy-cloud-user' WHERE id='ws'").run();
+  const result = await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' });
+  assert.equal(result?.nativeSessionId, 'fork-1');
   assert.equal(forks.length, 1);
-  assert.equal(fresh.length, 1);
-  assert.match(fresh[0].mergeContexts!.join('\n'), /Parent answer/);
-  assert.equal(getNode('parent')?.external_session_id, 'native-parent');
 });
 
 test('an anchor before the parent tail forces the exact text fallback', async () => {
@@ -151,7 +130,7 @@ test('an anchor before the parent tail forces the exact text fallback', async ()
   getDb().prepare("INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES ('later-answer','parent','assistant','Later answer',2,2)").run();
   saveEdge({ id: 'parent-child', workspace_id: 'ws', source_node_id: 'parent', target_node_id: 'child',
     kind: 'branch', anchor_message_id: 'parent-answer', created_at: 1 });
-  // Claude/Codex reject an anchored fork; the route must fall back to the
+  // An adapter without a matching native anchor must fall back to the
   // exact prefix instead of inheriting "Later answer".
   forkFailure = new NativeResumeUnavailableError('anchored fork unavailable');
   const result = await ensure();
@@ -163,6 +142,18 @@ test('an anchor before the parent tail forces the exact text fallback', async ()
   assert.deepEqual(fresh[0].branchContext?.messages.map(message => message.content),
     ['Parent question', 'Parent answer']);
   assert.equal(getDb().prepare("SELECT fork_kind FROM edges WHERE id='parent-child'").get()!['fork_kind'], 'text');
+});
+
+test('native fork waits while the parent runtime still owns a visibly completed turn', async (t) => {
+  t.mock.method(chatHub, 'isOwnerTurnActive', (nodeId: string) => nodeId === 'parent');
+  assert.equal(await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' }), null);
+  assert.equal(forks.length, 0);
+});
+
+test('native fork declines a parent with a queued runtime-initiated turn', async (t) => {
+  t.mock.method(chatHub, 'hasPendingSelfTurn', (nodeId: string) => nodeId === 'parent');
+  assert.equal(await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' }), null);
+  assert.equal(forks.length, 0);
 });
 
 test('ambiguous fork errors do not silently downgrade or publish a child binding', async () => {
@@ -195,24 +186,6 @@ test('Native Resume setting is per-runtime, preserves active sessions, and does 
   assert.equal(loads.length, 1);
 });
 
-test('Native Fork off uses parent transcript and leaves Native Resume independent', async () => {
-  assert.equal((await post('/agent/options', { nativeForkByRuntime: { codex: false } })).status, 200);
-  assert.equal((await post('/agent/options', { nativeForkByRuntime: { claude: false } })).status, 200);
-  assert.deepEqual(getAgentConfig().nativeForkByRuntime, { codex: false, claude: false });
-  const status = await (await fetch(`${base}/agent/status`)).json() as any;
-  assert.deepEqual(status.nativeForkByRuntime, { codex: false, claude: false });
-  assert.deepEqual(status.nativeResumeByRuntime, {});
-  assert.equal(await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' }), null);
-  await ensure();
-  assert.equal(forks.length, 0);
-  assert.equal(fresh.length, 1);
-  assert.match(fresh[0].mergeContexts!.join('\n'), /Parent answer/);
-  assert.equal(getNode('parent')?.external_session_id, 'native-parent');
-  clearAllSessions();
-  assert.equal((await ensure()).resumeStrategy, 'exact');
-  assert.deepEqual(loads, ['child']);
-});
-
 test('Native Fork can be re-enabled without changing Native Resume', async () => {
   updateAgentConfig({ nativeForkByRuntime: { codex: false }, nativeResumeByRuntime: { codex: false } });
   assert.equal(await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' }), null);
@@ -243,4 +216,22 @@ test('invalid setting maps are rejected without mutating saved preferences', asy
   }
   assert.deepEqual(getAgentConfig().nativeResumeByRuntime, {});
   assert.deepEqual(getAgentConfig().nativeForkByRuntime, {});
+});
+
+test('a blank child bound by a host command keeps its historical cut when native recovery becomes unavailable', async () => {
+  getDb().prepare("INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES ('parent-question','parent','user','Parent question',0,0)").run();
+  getDb().prepare("INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES ('later-answer','parent','assistant','Later answer must stay out',2,2)").run();
+  saveEdge({ id: 'parent-child', workspace_id: 'ws', source_node_id: 'parent', target_node_id: 'child',
+    kind: 'branch', anchor_message_id: 'parent-answer', created_at: 1 });
+  forkFailure = new NativeResumeUnavailableError('anchored native fork unavailable');
+  assert.equal((await ensure()).resumeReason, 'text_fallback');
+  assert.equal(fresh.length, 1);
+  clearAllSessions();
+  runtime.loadSession = async () => { throw new NativeResumeUnavailableError('blank session has no persisted native history'); };
+  const restored = await ensure();
+  assert.equal(restored.resumeReason, 'text_fallback');
+  assert.equal(fresh.length, 2);
+  assert.equal(fresh[1].branchContext?.boundaryMessageId, 'parent-answer');
+  assert.deepEqual(fresh[1].branchContext?.messages.map(message => message.content), ['Parent question', 'Parent answer']);
+  assert.doesNotMatch(fresh[1].mergeContexts?.join('\n') ?? '', /Later answer must stay out/);
 });

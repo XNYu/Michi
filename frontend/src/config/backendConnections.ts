@@ -1,4 +1,5 @@
 import { API_BASE_URL } from './env';
+import { remoteEntityIdentity } from './backendIdentity';
 
 export const LOCAL_BACKEND_CONNECTION_ID = 'local';
 
@@ -51,7 +52,12 @@ export function subscribeBackendConnections(listener: () => void): () => void {
 }
 
 export function setActiveBackendConnectionId(connectionId: string | undefined): void {
-  activeConnectionId = connectionId || LOCAL_BACKEND_CONNECTION_ID;
+  const next = connectionId || LOCAL_BACKEND_CONNECTION_ID;
+  if (activeConnectionId === next) return;
+  activeConnectionId = next;
+  // ChatProvider records the active identity during render. Notify after that
+  // render so subscribed pickers do not update another component mid-render.
+  queueMicrotask(() => connectionListeners.forEach(listener => listener()));
 }
 
 export function indexBackendProjects(
@@ -60,18 +66,26 @@ export function indexBackendProjects(
   workspaceConnections.clear();
   nodeConnections.clear();
   for (const project of projects) {
-    const connectionId = project.backendConnectionId || LOCAL_BACKEND_CONNECTION_ID;
+    const identity = remoteEntityIdentity(project.id);
+    if (identity && project.backendConnectionId && identity.connectionId !== project.backendConnectionId) {
+      throw new Error('Workspace belongs to a different backend connection');
+    }
+    const connectionId = identity?.connectionId ?? project.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID;
     workspaceConnections.set(project.id, connectionId);
-    for (const nodeId of project.chatIds) nodeConnections.set(nodeId, connectionId);
+    for (const nodeId of project.chatIds) {
+      const nodeIdentity = remoteEntityIdentity(nodeId);
+      if (nodeIdentity && nodeIdentity.connectionId !== connectionId) throw new Error('Node belongs to a different backend connection');
+      nodeConnections.set(nodeId, connectionId);
+    }
   }
 }
 
 export function backendConnectionIdForWorkspace(workspaceId: string): string {
-  return workspaceConnections.get(workspaceId) ?? LOCAL_BACKEND_CONNECTION_ID;
+  return remoteEntityIdentity(workspaceId)?.connectionId ?? workspaceConnections.get(workspaceId) ?? LOCAL_BACKEND_CONNECTION_ID;
 }
 
 export function backendConnectionIdForNode(nodeId: string): string {
-  return nodeConnections.get(nodeId) ?? LOCAL_BACKEND_CONNECTION_ID;
+  return remoteEntityIdentity(nodeId)?.connectionId ?? nodeConnections.get(nodeId) ?? LOCAL_BACKEND_CONNECTION_ID;
 }
 
 export function backendApiBase(connectionId = LOCAL_BACKEND_CONNECTION_ID): string {

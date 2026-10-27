@@ -1,8 +1,10 @@
 import type { Project } from '../../../state/chatTypes';
+import { isVisibleConversationNode } from '../../../state/conversationVisibility';
 
 type MapNodeVisibilityState = {
   deletedAt?: number;
   kind?: 'chat' | 'digest' | 'artifact';
+  pageId?: string | null;
   mergeSources?: string[];
 };
 
@@ -13,7 +15,7 @@ export function visibleMapNodeIds(
   if (!project?.activeTreeId) return [];
   const activeTree = project.trees.find((tree) => tree.id === project.activeTreeId);
   const rootNode = activeTree ? nodes[activeTree.rootNodeId] : undefined;
-  if (!activeTree || activeTree.archivedAt || !rootNode || rootNode.deletedAt) return [];
+  if (!activeTree || activeTree.archivedAt || !rootNode || rootNode.deletedAt || !isVisibleConversationNode(rootNode)) return [];
 
   const children = new Map<string, string[]>();
   const branchParent = new Map<string, string>();
@@ -49,7 +51,7 @@ export function visibleMapNodeIds(
     const id = queue.shift()!;
     if (reachable.has(id)) continue;
     const node = nodes[id];
-    if (!node || node.deletedAt || node.kind === 'digest' || node.kind === 'artifact') continue;
+    if (!node || node.deletedAt || !isVisibleConversationNode(node) || node.kind === 'digest' || node.kind === 'artifact') continue;
     reachable.add(id);
     for (const childId of children.get(id) ?? []) queue.push(childId);
   }

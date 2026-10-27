@@ -1,3 +1,6 @@
+import { DomainError, serializeDomainError } from './domainErrors';
+import { assertNodePlacement } from './nodePlacement';
+import { assertGraphNodeInput, requiredGraphId as requiredId } from './graphCommandValidation';
 /**
  * Database Worker Thread
  *
@@ -14,6 +17,7 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { DatabaseSync, type StatementSync, type SQLInputValue } from 'node:sqlite';
 import {
+  mergeServerOwnedSettings,
   type DurableTurnSnapshot,
 } from 'michi-shared';
 // turnPersistence.recipes imports are now consumed via turnPersistence.core
@@ -116,11 +120,6 @@ function isNodeTombstoned(nodeId: string): boolean {
 
 // ── Graph prerequisite (ensureDurableGraphNode) ────────────────────────────
 
-function requiredId(value: string, label: string): string {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 160) throw new Error(`${label} must be a non-empty id <=160 chars`);
-  return trimmed;
-}
 
 interface SaveWorkspaceInput {
   id: string;
@@ -139,7 +138,8 @@ interface SaveWorkspaceInput {
 }
 
 function saveWorkspace(ws: SaveWorkspaceInput): void {
-  const existing = getRow('SELECT purged_at FROM workspaces WHERE id = ?', ws.id) as { purged_at: number | null } | undefined;
+  const existing = getRow('SELECT purged_at, settings FROM workspaces WHERE id = ?', ws.id) as
+    { purged_at: number | null; settings: string | null } | undefined;
   if (existing && existing.purged_at !== null) return;
   const params: Record<string, SQLInputValue> = {
     id: ws.id,
@@ -148,7 +148,8 @@ function saveWorkspace(ws: SaveWorkspaceInput): void {
     active_tree_id: ws.active_tree_id ?? null,
     created_at: ws.created_at,
     updated_at: ws.updated_at,
-    settings: ws.settings ?? null,
+    // Same rule as dbRepository.saveWorkspace: server-owned settings keys come only from the stored row.
+    settings: mergeServerOwnedSettings(existing?.settings, ws.settings),
     deleted_at: ws.deleted_at ?? null,
     archived_at: ws.archived_at ?? null,
     pinned_at: ws.pinned_at ?? null,
@@ -211,11 +212,12 @@ function saveEdge(edge: Record<string, SQLInputValue>, _userId?: string): void {
 }
 
 function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, SQLInputValue | null | Row | Row[]> {
+  assertGraphNodeInput(input);
   return runInTransaction(() => {
     const workspace = input.workspace as Record<string, unknown>;
     const node = input.node as Record<string, unknown>;
     const tree = input.tree as Record<string, unknown> | undefined;
-    const edges = input.edges as Array<Record<string, unknown>>;
+    const edges = input.edges;
     const ownerUserId = (input.ownerUserId as string) ?? null;
     const isCloud = process.env.MICHI_CLOUD === '1';
 
@@ -224,7 +226,7 @@ function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, 
 
     const existingWorkspace = getRow('SELECT * FROM workspaces WHERE id = ? AND purged_at IS NULL', workspaceId) as Row | undefined;
     if (isCloud && existingWorkspace && existingWorkspace.owner_user_id !== ownerUserId) {
-      throw new Error('workspace not found');
+      throw new DomainError('not_found', 'workspace_not_found', 'workspace not found');
     }
 
     saveWorkspace({
@@ -244,22 +246,23 @@ function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, 
       pinned_at: (existingWorkspace?.pinned_at as number) ?? null,
       backend: (existingWorkspace?.backend as string) ?? 'kiro',
       owner_user_id: ownerUserId ?? (existingWorkspace?.owner_user_id as string) ?? null,
+      folders: (existingWorkspace?.folders as string) ?? null,
     });
 
     let treeRow: Row | null = null;
     if (tree) {
       const treeId = requiredId(tree.id as string, 'tree.id');
       if (node.treeId && node.treeId !== treeId) {
-        throw new Error('node.treeId must match tree.id');
+        throw new DomainError('conflict', 'node_tree_mismatch', 'node.treeId must match tree.id');
       }
       const existingTree = getRow(
         'SELECT workspace_id, root_node_id FROM trees WHERE id = ?', treeId,
       );
       if (existingTree?.workspace_id !== undefined && existingTree.workspace_id !== workspaceId) {
-        throw new Error(`tree ${treeId} belongs to a different workspace`);
+        throw new DomainError('conflict', 'tree_workspace_mismatch', `tree ${treeId} belongs to a different workspace`);
       }
       if (existingTree && existingTree.root_node_id !== tree.rootNodeId) {
-        throw new Error(`tree ${treeId} was replayed with a different root`);
+        throw new DomainError('conflict', 'tree_identity_mismatch', `tree ${treeId} was replayed with a different root`);
       }
       saveTree({
         id: treeId,
@@ -275,19 +278,10 @@ function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, 
       treeRow = trees.find((t) => t.id === treeId) ?? null;
     }
 
-    if (node.treeId) {
-      const nodeTree = getRow('SELECT workspace_id FROM trees WHERE id = ?', asValue(node.treeId));
-      if (!nodeTree || nodeTree.workspace_id !== workspaceId) {
-        throw new Error('node tree must belong to the same workspace');
-      }
-    }
-
-    if (node.parentNodeId) {
-      const parent = getRow('SELECT * FROM nodes WHERE id = ?', asValue(node.parentNodeId));
-      if (!parent || parent.workspace_id !== workspaceId) {
-        throw new Error('branch parent and child must belong to the same workspace');
-      }
-    }
+    assertNodePlacement(workspaceId, (node.treeId as string) ?? null, (node.parentNodeId as string) ?? null, {
+      getTree: (id) => getRow('SELECT workspace_id FROM trees WHERE id = ?', id) as { workspace_id: string } | undefined,
+      getNode: (id) => getRow('SELECT workspace_id, tree_id FROM nodes WHERE id = ? AND purged_at IS NULL', id) as { workspace_id: string; tree_id: string | null } | undefined,
+    });
 
     const existingNode = getRow('SELECT * FROM nodes WHERE id = ?', nodeId);
     if (existingNode) {
@@ -296,7 +290,7 @@ function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, 
         || (existingNode.tree_id ?? null) !== ((node.treeId as string) ?? null)
         || (existingNode.parent_node_id ?? null) !== ((node.parentNodeId as string) ?? null)
       ) {
-        throw new Error(`node ${nodeId} was replayed with different graph identity`);
+        throw new DomainError('conflict', 'node_identity_mismatch', `node ${nodeId} was replayed with different graph identity`);
       }
     } else {
       saveNode({
@@ -318,7 +312,7 @@ function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, 
     if (tree) {
       const root = getRow('SELECT * FROM nodes WHERE id = ?', asValue(tree.rootNodeId));
       if (!root || root.workspace_id !== workspaceId || root.tree_id !== tree.id) {
-        throw new Error(`tree ${tree.id} root must belong to the same workspace and tree`);
+        throw new DomainError('conflict', 'tree_root_mismatch', `tree ${tree.id} root must belong to the same workspace and tree`);
       }
     }
 
@@ -326,28 +320,28 @@ function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, 
     if (ws?.active_tree_id) {
       const trees = allRows('SELECT id FROM trees WHERE workspace_id = ?', workspaceId);
       if (!trees.some((t) => t.id === ws.active_tree_id)) {
-        throw new Error('active tree must belong to the same workspace');
+        throw new DomainError('conflict', 'active_tree_workspace_mismatch', 'active tree must belong to the same workspace');
       }
     }
 
     for (const edge of edges) {
       if (edge.targetNodeId !== nodeId) {
-        throw new Error('graph prerequisite edges must target the ensured node');
+        throw new DomainError('conflict', 'edge_target_mismatch', 'graph prerequisite edges must target the ensured node');
       }
       const source = getRow('SELECT * FROM nodes WHERE id = ?', asValue(edge.sourceNodeId));
       const target = getRow('SELECT * FROM nodes WHERE id = ?', asValue(edge.targetNodeId));
       if (!source || !target || source.workspace_id !== workspaceId || target.workspace_id !== workspaceId) {
-        throw new Error('edge endpoints must belong to the same workspace');
+        throw new DomainError('conflict', 'edge_workspace_mismatch', 'edge endpoints must belong to the same workspace');
       }
       if (edge.kind === 'branch' && source.tree_id !== target.tree_id) {
-        throw new Error('branch edge endpoints must belong to the same tree');
+        throw new DomainError('conflict', 'edge_tree_mismatch', 'branch edge endpoints must belong to the same tree');
       }
       const existingEdge = getRow(
         'SELECT workspace_id, source_node_id, target_node_id, kind FROM edges WHERE id = ?',
         asValue(edge.id),
       );
       if (existingEdge && existingEdge.workspace_id !== workspaceId) {
-        throw new Error(`edge ${edge.id} belongs to a different workspace`);
+        throw new DomainError('conflict', 'edge_workspace_mismatch', `edge ${edge.id} belongs to a different workspace`);
       }
       if (
         existingEdge
@@ -357,7 +351,7 @@ function ensureDurableGraphNode(input: Record<string, unknown>): Record<string, 
           || existingEdge.kind !== edge.kind
         )
       ) {
-        throw new Error(`edge ${edge.id} was replayed with different graph identity`);
+        throw new DomainError('conflict', 'edge_identity_mismatch', `edge ${edge.id} was replayed with different graph identity`);
       }
       saveEdge({
         id: requiredId(edge.id as string, 'edge.id'),
@@ -506,7 +500,7 @@ parentPort.on('message', (msg: { id: number; command: string; args: unknown }) =
     }
     parentPort!.postMessage({ id, result });
   } catch (err) {
-    parentPort!.postMessage({ id, error: (err as Error).message });
+    parentPort!.postMessage({ id, error: (err as Error).message, domainError: serializeDomainError(err) });
   }
 });
 

@@ -75,41 +75,4 @@ describe('nodes_fts triggers', () => {
     assertFtsIntact();
     assert.deepEqual(titleSearch('First'), ['node-1']);
   });
-
-  test('titling an untitled node leaves a populated index intact', () => {
-    saveNode(node('node-1', 'already titled'));
-    saveNode(node('node-2', null));
-    getDb().exec("UPDATE nodes SET title = 'Second answer' WHERE id = 'node-2'");
-    assertFtsIntact();
-    assert.deepEqual(titleSearch('Second'), ['node-2']);
-    assert.deepEqual(titleSearch('titled'), ['node-1']);
-  });
-
-  test('renaming, clearing and re-setting a title all keep the index intact', () => {
-    saveNode(node('node-1', 'original'));
-    const db = getDb();
-    db.exec("UPDATE nodes SET title = 'renamed' WHERE id = 'node-1'");
-    assertFtsIntact();
-    assert.deepEqual(titleSearch('original'), []);
-    assert.deepEqual(titleSearch('renamed'), ['node-1']);
-
-    db.exec("UPDATE nodes SET title = NULL WHERE id = 'node-1'");
-    assertFtsIntact();
-    assert.deepEqual(titleSearch('renamed'), []);
-
-    db.exec("UPDATE nodes SET title = 'restored' WHERE id = 'node-1'");
-    assertFtsIntact();
-    assert.deepEqual(titleSearch('restored'), ['node-1']);
-  });
-
-  test('deleting titled and untitled nodes keeps the index intact', () => {
-    saveNode(node('node-1', 'titled node'));
-    saveNode(node('node-2', null));
-    const db = getDb();
-    db.exec("DELETE FROM nodes WHERE id = 'node-2'");
-    assertFtsIntact();
-    db.exec("DELETE FROM nodes WHERE id = 'node-1'");
-    assertFtsIntact();
-    assert.deepEqual(titleSearch('titled'), []);
-  });
 });

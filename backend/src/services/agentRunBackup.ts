@@ -462,7 +462,7 @@ export function importAgentRunBackup(options: ImportAgentRunBackupOptions): Impo
       ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`)
         .run(attemptId, importedRunId, attempt.attemptIndex, attempt.profileIndex,
           JSON.stringify(portableJson(attempt.runtimeProfile)), converted ? 'failed' : attempt.status,
-          `import-session-${attemptId}`, attempt.recoveryEnvelope ? JSON.stringify(portableJson(attempt.recoveryEnvelope)) : null,
+          attemptId, attempt.recoveryEnvelope ? JSON.stringify(portableJson(attempt.recoveryEnvelope)) : null,
           attempt.startedAt, attempt.checkpointAt, converted ? now : attempt.completedAt,
           converted ? JSON.stringify(error) : attempt.error ? JSON.stringify(portableJson(attempt.error)) : null);
       attemptsByRun.set(attempt.runId, Math.max(attemptsByRun.get(attempt.runId) ?? 0, attempt.attemptIndex + 1));
@@ -479,7 +479,7 @@ export function importAgentRunBackup(options: ImportAgentRunBackupOptions): Impo
         native_resume_token, recovery_envelope, started_at, completed_at, error
       ) VALUES (?, ?, 0, 0, ?, 'failed', ?, NULL, NULL, ?, ?, ?)`)
         .run(attemptId, importedRunId, JSON.stringify(portableJson(source.effectiveDefinition.runtimeProfile)),
-          `import-session-${attemptId}`, source.startedAt ?? source.createdAt, now, JSON.stringify(error));
+          attemptId, source.startedAt ?? source.createdAt, now, JSON.stringify(error));
       attemptsByRun.set(sourceRunId, 1);
     }
     for (const source of importableRuns) {

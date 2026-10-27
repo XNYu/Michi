@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR, CONVERSATION_COMPOSER } from '../fixtures/shell';
 
 const markdown = '# Release decisions\n\nShip the editor improvements with focused regression coverage.\n\n## Next steps\n\nVerify attachments, context references, and first-turn Agent selection.';
 
@@ -23,12 +24,17 @@ async function bootDigest(page: Page) {
         await json({ ok: true });
         return true;
       }
-      if (path === '/modes') {
+      if (path === '/modes' || /^\/workspaces\/[^/]+\/modes$/.test(path)) {
         await json({ availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }] });
         return true;
       }
-      if (path === '/agent/models') {
-        await json({ models: [{ id: 'fast', label: 'Fast' }, { id: 'deep', label: 'Deep' }], sanitizedModel: null });
+      if (path === '/agent/models' || path === '/agent/runtime-catalog') {
+        await json({
+          models: [{ id: 'fast', label: 'Fast' }, { id: 'deep', label: 'Deep' }],
+          providers: [],
+          capabilities: status.capabilities,
+          sanitizedModel: null,
+        });
         return true;
       }
       if (path === '/digests/stream') {
@@ -53,13 +59,13 @@ async function bootDigest(page: Page) {
     },
   });
   await bootWithWorkspace(page, 'Digest composer checks');
-  await page.locator('[contenteditable="true"]').fill('Review the release decisions');
+  await page.locator(COMPOSER_EDITOR).fill('Review the release decisions');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
   await expect(page.getByText('Hello from mock kiro.').first()).toBeVisible();
   await page.getByRole('button', { name: 'Digest', exact: true }).click();
   await page.getByRole('button', { name: 'Create digest', exact: true }).click();
   await expect(page.getByText('Release decisions', { exact: true }).first()).toBeVisible();
-  await expect(page.locator('.terminal-composer [contenteditable="true"]')).toBeVisible();
+  await expect(page.locator(`${CONVERSATION_COMPOSER} ${COMPOSER_EDITOR}`)).toBeVisible();
   return { ensures, messages };
 }
 
@@ -67,7 +73,7 @@ test('Digest uses the Home editor, uploads files, selects an Agent/model and sen
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   const { ensures, messages } = await bootDigest(page);
-  const editor = page.locator('.terminal-composer [contenteditable="true"]');
+  const editor = page.locator(`${CONVERSATION_COMPOSER} ${COMPOSER_EDITOR}`);
 
   await page.getByTitle('Mention context or node', { exact: true }).click();
   await expect(editor).toHaveText('@');
@@ -98,7 +104,7 @@ test('Digest uses the Home editor, uploads files, selects an Agent/model and sen
   await page.keyboard.press('Escape');
 
   await page.screenshot({ path: process.env.DIGEST_SCREENSHOT ?? testInfo.outputPath('digest-composer-desktop.png'), fullPage: true });
-  await page.locator('.terminal-composer').screenshot({
+  await page.locator(CONVERSATION_COMPOSER).screenshot({
     path: process.env.DIGEST_COMPOSER_SCREENSHOT ?? testInfo.outputPath('digest-composer.png'),
   });
   await editor.press('Enter');
@@ -115,7 +121,7 @@ test('Digest uses the Home editor, uploads files, selects an Agent/model and sen
 
 test('Digest drafts remain separate from Home and the composer stays usable in a narrow viewport', async ({ page }, testInfo) => {
   await bootDigest(page);
-  const editor = page.locator('.terminal-composer [contenteditable="true"]');
+  const editor = page.locator(`${CONVERSATION_COMPOSER} ${COMPOSER_EDITOR}`);
   await editor.fill('Digest-only draft');
   await page.getByRole('button', { name: 'Go home', exact: true }).click();
   await expect(editor).toHaveText('');
@@ -125,7 +131,7 @@ test('Digest drafts remain separate from Home and the composer stays usable in a
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(editor).toBeVisible();
-  const composer = page.locator('.terminal-composer');
+  const composer = page.locator(CONVERSATION_COMPOSER);
   const frame = await composer.boundingBox();
   const send = await page.getByRole('button', { name: 'Send (Enter)', exact: true }).boundingBox();
   expect(frame).not.toBeNull();

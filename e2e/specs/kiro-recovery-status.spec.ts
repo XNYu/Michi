@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { installMockApi, bootWithWorkspace } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 for (const runtime of ['Kiro', 'Codex', 'Claude']) {
 for (const outcome of ['failure', 'success']) {
@@ -28,7 +29,7 @@ test(`${runtime} native recovery is visible before the first token and ${outcome
     };
   }, runtime);
   await bootWithWorkspace(page);
-  const composer = page.locator('[contenteditable="true"]').first();
+  const composer = page.locator(COMPOSER_EDITOR).first();
   await composer.fill('Continue with the original session');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   const status = page.getByRole('status', { name: new RegExp(`Restoring original ${runtime} session`) });

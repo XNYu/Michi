@@ -13,6 +13,7 @@
 
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { claudeTestOptions } from './helpers/claudeTestOptions';
 import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
@@ -43,8 +44,8 @@ function runSmokeTests(): void {
     typeof import('../src/services/mcpServer');
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { ClaudeRuntime } = require('../src/agents/claude/ClaudeRuntime') as
-    typeof import('../src/agents/claude/ClaudeRuntime');
+  const { ClaudeRuntime } = require('michi-runtime/internal/adapters/claude/ClaudeRuntime') as
+    typeof import('michi-runtime/internal/adapters/claude/ClaudeRuntime');
 
   // Helper: cast an AgentSession to the concrete ClaudeSession shape so we
   // can call dispose() and read child.pid without TypeScript errors.
@@ -93,8 +94,9 @@ function runSmokeTests(): void {
       backend: 'claude',
     });
 
-    // Build a minimal Express app + mount MCP
-    mcpRegistry = new McpSlotRegistry();
+    // Build a minimal Express app + mount MCP. The registry reads the port
+    // the server binds below, the same one the runtime gets.
+    mcpRegistry = new McpSlotRegistry({ mcpPort: () => mcpPort });
 
     const app = express();
     app.use(express.json());
@@ -123,7 +125,7 @@ function runSmokeTests(): void {
       },
     };
 
-    runtime = new ClaudeRuntime(bridge as never, mcpRegistry, mcpPort);
+    runtime = new ClaudeRuntime({ ...claudeTestOptions(), bridge: bridge as never, mcpSlots: mcpRegistry });
   });
 
   after(async () => {

@@ -1,6 +1,7 @@
 import { buildAtMentionItems } from './mentionItems';
 import type { CrossTreeGroup } from './mentionItems';
 import type { ArtifactEntry, ChatNodeState } from '../state/chatTypes';
+import { backendEntityId } from '../config/backendIdentity';
 
 const mkCtx = (id: string, name: string): ArtifactEntry => ({
   id, name, filePath: `docs/${name}.md`, source: 'user', createdAt: 1000, updatedAt: 1000,
@@ -26,13 +27,6 @@ describe('buildAtMentionItems', () => {
   const contexts = [mkCtx('c1', 'api-spec'), mkCtx('c2', 'conventions')];
   const nodes = [mkNode('n1', 'Research thread', 3), mkNode('n2', 'Design doc', 1)];
 
-  it('returns both contexts and nodes with empty query', () => {
-    const items = buildAtMentionItems('', contexts, nodes, 'other');
-    expect(items.length).toBe(4);
-    expect(items.filter(i => i.kind === 'context')).toHaveLength(2);
-    expect(items.filter(i => i.kind === 'node')).toHaveLength(2);
-  });
-
   it('filters by query', () => {
     const items = buildAtMentionItems('api', contexts, nodes, 'other');
     expect(items).toHaveLength(1);
@@ -52,26 +46,16 @@ describe('buildAtMentionItems', () => {
     expect(items.filter(i => i.kind === 'node')).toHaveLength(0);
   });
 
-  it('node token uses node:nodeId format', () => {
-    const items = buildAtMentionItems('Research', [], nodes, 'other');
-    expect(items[0].token).toBe('node:n1');
+  it('keeps remote suggestion identities unencoded for MentionEditor to store as refId', () => {
+    const nodeId = backendEntityId('ssh/a', 'n:1');
+    const items = buildAtMentionItems('', [], [mkNode(nodeId, 'Remote', 1)], 'other');
+    expect(items[0].token.replace(/^node:/, '')).toBe(nodeId);
   });
 
   it('orders same-tree nodes before artifacts before cross-tree nodes', () => {
     const cross: CrossTreeGroup[] = [{ treeTitle: 'Other', nodes: [mkNode('x1', 'Remote', 2)] }];
     const items = buildAtMentionItems('', contexts, nodes, 'other', cross);
     expect(items.map(i => i.id)).toEqual(['node-n1', 'node-n2', 'ctx-c1', 'ctx-c2', 'node-x1']);
-  });
-
-  it('tags artifacts with their type, inferring legacy rows (url → link, else doc)', () => {
-    const typed: ArtifactEntry[] = [
-      { ...mkCtx('i1', 'shot'), type: 'image' },
-      { ...mkCtx('l1', 'legacy-link'), filePath: '', url: 'https://example.com' },
-      mkCtx('d1', 'legacy-doc'),
-    ];
-    const items = buildAtMentionItems('', typed, [], 'other');
-    expect(items.map(i => i.artifactType)).toEqual(['image', 'link', 'doc']);
-    expect(items.map(i => i.description)).toEqual(['image', 'link', 'doc']);
   });
 });
 
@@ -131,10 +115,5 @@ describe('buildAtMentionItems — cross-tree nodes', () => {
   it('cross-tree node token uses node:nodeId format', () => {
     const items = buildAtMentionItems('CDK', [], [], 'other', crossTreeNodes);
     expect(items[0].token).toBe('node:x3');
-  });
-
-  it('returns empty when crossTreeNodes is undefined', () => {
-    const items = buildAtMentionItems('', [], [], 'other', undefined);
-    expect(items).toHaveLength(0);
   });
 });

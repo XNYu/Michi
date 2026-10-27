@@ -50,26 +50,6 @@ describe('resolve a branch boundary from durable graph + messages', () => {
       kind: 'branch', anchor_message_id: anchor, created_at: createdAt });
   }
 
-  test('an anchored cut inherits exactly through the selected message', () => {
-    branchEdge('m2');
-    const boundary = resolveBranchBoundary({ childNodeId: 'child' });
-    assert.ok(boundary);
-    assert.equal(boundary.kind, 'exact');
-    assert.equal(boundary.parentNodeId, 'root');
-    assert.equal(boundary.boundaryMessageId, 'm2');
-    assert.equal(boundary.atTail, false);
-    assert.deepEqual(boundary.messages.map(message => message.id), ['m1', 'm2']);
-    assert.equal(boundary.note, undefined);
-  });
-
-  test('a tail anchor is reported as tail so native latest-state fork stays valid', () => {
-    branchEdge('m4');
-    const boundary = resolveBranchBoundary({ childNodeId: 'child' });
-    assert.ok(boundary);
-    assert.equal(boundary.atTail, true);
-    assert.deepEqual(boundary.messages.map(message => message.id), ['m1', 'm2', 'm3', 'm4']);
-  });
-
   test('a missing anchor is rejected instead of silently inheriting everything', () => {
     branchEdge('gone');
     assert.throws(

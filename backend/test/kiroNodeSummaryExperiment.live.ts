@@ -73,7 +73,9 @@ async function main() {
   const config = require('../src/services/agentConfig') as typeof import('../src/services/agentConfig');
   const repo = require('../src/services/dbRepository') as typeof import('../src/services/dbRepository');
   const { McpSlotRegistry, mountMcp } = require('../src/services/mcpServer') as typeof import('../src/services/mcpServer');
-  const { KiroRuntime } = require('../src/agents/kiro/KiroRuntime') as typeof import('../src/agents/kiro/KiroRuntime');
+  const { KiroRuntime } = require('michi-runtime/internal/adapters/kiro/KiroRuntime') as typeof import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+  const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
+  const { kiroEnvOptions } = require('../src/agents/michiKiroOptions') as typeof import('../src/agents/michiKiroOptions');
   closeDb(); initDb();
   configureRuntimeDeps({
     historyStore: { getNode: repo.getNode, listMessages: repo.listMessages,
@@ -83,7 +85,8 @@ async function main() {
     agentConfig: { getAgentConfig: config.getAgentConfig, resolveModel: config.resolveModel,
       resolveReasoning: config.resolveReasoning },
   });
-  const registry = new McpSlotRegistry();
+  // Read once the server below listens: the port the runtime gets.
+  const registry = new McpSlotRegistry({ mcpPort: () => (server.address() as AddressInfo).port });
   const app = express();
   app.use(express.json());
   const router = express.Router();
@@ -98,10 +101,9 @@ async function main() {
     const workspaceId = 'kiro-summary-pilot';
     getDb().prepare('INSERT INTO workspaces (id,name,cwd,created_at,updated_at) VALUES (?,?,?,1,1)')
       .run(workspaceId, 'Disposable Kiro summary pilot', dataDir);
-    runtime = new KiroRuntime(
-      { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
-      registry, (server.address() as AddressInfo).port, dataDir, undefined, { engine },
-    );
+    runtime = new KiroRuntime({
+      bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+      mcpSlots: registry, defaultCwd: dataDir, ...kiroEnvOptions(), host: michiTestHost(), engine });
     for (const fixture of fixtures) {
       const nodeId = randomUUID();
       getDb().prepare("INSERT INTO nodes (id,workspace_id,kind,status,created_at) VALUES (?,?,'chat','idle',1)")
@@ -135,9 +137,9 @@ async function main() {
             lastChunkMs = Math.round(now - started);
             answer += event.text;
           }
-          if (event.kind === 'branch_overview') {
+          if (event.kind === 'host_event' && event.type === 'branch_overview') {
             overviewMs = Math.round(now - started);
-            overviews.push(event.overview);
+            overviews.push((event.payload as { overview: string }).overview);
           }
           if (event.kind === 'usage_summary') usage.push({ ...event });
           if (event.kind === 'tool_call') tools.push(event.title);

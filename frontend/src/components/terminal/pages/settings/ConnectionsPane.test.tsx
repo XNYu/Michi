@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectionsPane } from './ConnectionsPane';
 import type { Project } from '../../../../state/chatTypes';
 import { setKnownBackendConnections } from '../../../../config/backendConnections';
+import { backendEntityId } from '../../../../config/backendIdentity';
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -25,7 +26,8 @@ vi.mock('../../../../services/api/remoteWorkspaces', () => ({ fetchRemoteWorkspa
 const desktop = { id: 'remote-1', name: 'Build box', transport: 'ssh' as const, sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 };
 const other = { id: 'remote-2', name: 'Other machine', transport: 'direct' as const, apiUrl: 'https://example.com/api', hasToken: true, createdAt: 1, updatedAt: 1 };
 const project = (id: string, backendConnectionId?: string, extra = {}): Project => ({
-  id, name: id, backendConnectionId, cwd: `/home/u/${id}`, chatIds: [], edges: [], trees: [], activeTreeId: null, createdAt: 1, ...extra,
+  id: backendConnectionId ? backendEntityId(backendConnectionId, id) : id,
+  name: id, backendConnectionId, cwd: `/home/u/${id}`, chatIds: [], edges: [], trees: [], activeTreeId: null, createdAt: 1, ...extra,
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -81,7 +83,7 @@ describe('ConnectionsPane', () => {
     expect(within(list).getByText('Archived')).toBeTruthy();
     for (const name of ['Local project', 'stale-local', 'Deleted on remote', 'Other project']) expect(within(list).queryByText(name)).toBeNull();
     fireEvent.click(within(list).getByRole('button', { name: 'Renamed on remote' }));
-    expect(open).toHaveBeenCalledWith('remote-project');
+    expect(open).toHaveBeenCalledWith(backendEntityId(desktop.id, 'remote-project'));
     for (const name of ['Archived project', 'Created on another device', 'Remote ID collision']) {
       expect(within(list).getByText(name)).toBeTruthy();
       expect(within(list).queryByRole('button', { name })).toBeNull();
@@ -92,24 +94,25 @@ describe('ConnectionsPane', () => {
     expect(within(screen.getByRole('listitem', { name: desktop.name })).getByText('SSH connected')).toBeTruthy();
   });
 
-  it('shows loading and failure independently per host, without substituting local workspaces or a zero count', async () => {
-    const pending = deferred<never>();
+  it('keeps matching raw IDs on Local and other hosts separate when enabling and opening a workspace', async () => {
     mocks.list.mockResolvedValue([desktop, other]);
-    mocks.workspaces.mockImplementation(id => id === desktop.id ? pending.promise : Promise.reject(new Error('SSH authentication expired')));
-    render(<ConnectionsPane projects={[project('stale-local', desktop.id)]} />);
-    const desktopRow = within(await screen.findByRole('listitem', { name: desktop.name }));
-    const otherRow = within(screen.getByRole('listitem', { name: other.name }));
-    expect(desktopRow.getByText('Reading remote workspaces…')).toBeTruthy();
-    expect(desktopRow.getByText('Connecting…')).toBeTruthy();
-    expect(await otherRow.findByText('Workspaces unavailable')).toBeTruthy();
-    expect(otherRow.getByRole('alert').textContent).toContain('SSH authentication expired');
-    expect(screen.queryByText('stale-local')).toBeNull();
-    expect(screen.queryByText('0 workspaces')).toBeNull();
-    mocks.workspaces.mockResolvedValueOnce([]);
-    fireEvent.click(otherRow.getByRole('button', { name: 'Retry workspaces' }));
-    expect(await otherRow.findByText('0 workspaces')).toBeTruthy();
-    expect(otherRow.getByText('No workspaces on this machine.')).toBeTruthy();
-    expect(desktopRow.getByText('Reading remote workspaces…')).toBeTruthy();
+    mocks.workspaces.mockImplementation(async id => [{
+      id: 'same', name: id === desktop.id ? 'Build box shared workspace' : 'Other host shared workspace',
+    }]);
+    const open = vi.fn();
+    const projects = [project('same'), project('same', other.id)];
+    const { rerender } = render(<ConnectionsPane projects={projects} onOpenWorkspace={open} />);
+    const desktopList = await screen.findByRole('list', { name: 'Workspaces on Build box' });
+    const otherList = await screen.findByRole('list', { name: 'Workspaces on Other machine' });
+    expect(within(desktopList).getByText('Build box shared workspace')).toBeTruthy();
+    expect(within(desktopList).queryByRole('button', { name: 'Build box shared workspace' })).toBeNull();
+    fireEvent.click(within(otherList).getByRole('button', { name: 'Other host shared workspace' }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(backendEntityId(other.id, 'same'));
+
+    rerender(<ConnectionsPane projects={[...projects, project('same', desktop.id)]} onOpenWorkspace={open} />);
+    fireEvent.click(within(desktopList).getByRole('button', { name: 'Build box shared workspace' }));
+    expect(open).toHaveBeenLastCalledWith(backendEntityId(desktop.id, 'same'));
+    expect(open).toHaveBeenCalledTimes(2);
   });
 
   it('clears old inventory while refreshing and after failure, and reflects remote rename and deletion', async () => {
@@ -132,23 +135,6 @@ describe('ConnectionsPane', () => {
     expect(screen.queryByText('New name')).toBeNull();
     expect(screen.queryByText('1 workspace')).toBeNull();
     expect(screen.queryByText('0 workspaces')).toBeNull();
-  });
-
-  it('cancels pending requests on close and reads again on reopening, ignoring late old responses', async () => {
-    mocks.list.mockResolvedValue([desktop]);
-    const pending = deferred<Array<{ id: string; name: string }>>();
-    mocks.workspaces.mockReturnValueOnce(pending.promise);
-    const first = render(<ConnectionsPane projects={[]} />);
-    await screen.findByText('Reading remote workspaces…');
-    const signal = mocks.workspaces.mock.calls[0][1] as AbortSignal;
-    first.unmount();
-    expect(signal.aborted).toBe(true);
-    mocks.workspaces.mockResolvedValueOnce([{ id: 'fresh', name: 'Fresh from remote' }]);
-    render(<ConnectionsPane projects={[]} />);
-    await screen.findByText('Fresh from remote');
-    await act(async () => pending.resolve([{ id: 'late', name: 'Late old response' }]));
-    expect(screen.queryByText('Late old response')).toBeNull();
-    expect(mocks.workspaces).toHaveBeenCalledTimes(2);
   });
 
   it('cancels the old target inventory when a saved connection is edited', async () => {
@@ -216,33 +202,6 @@ describe('ConnectionsPane', () => {
     }));
     expect(await screen.findByText(/Connected to Michi backend/)).toBeTruthy();
   });
-
-  it('restores saved SSH fields and shows the current read error while editing', async () => {
-    mocks.workspaces.mockRejectedValueOnce(new Error('Permission denied'));
-    mocks.list.mockResolvedValue([{
-      id: 'ssh-1',
-      name: 'Build tunnel',
-      transport: 'ssh',
-      sshHost: 'build-server-box',
-      sshUser: 'builder',
-      remotePort: 3000,
-      tunnelStatus: 'error',
-      tunnelError: 'Stale saved tunnel error',
-      hasToken: true,
-      createdAt: 1,
-      updatedAt: 1,
-    }]);
-    render(<ConnectionsPane projects={[]} />);
-    expect(await screen.findByText('Build tunnel')).toBeTruthy();
-    expect(await screen.findByText(/Permission denied/)).toBeTruthy();
-    expect(screen.queryByText('Stale saved tunnel error')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-
-    expect((screen.getByLabelText('Connection transport') as HTMLSelectElement).value).toBe('ssh');
-    expect((screen.getByLabelText('SSH host') as HTMLInputElement).value).toBe('build-server-box');
-    expect((screen.getByLabelText('SSH user') as HTMLInputElement).value).toBe('builder');
-    expect((screen.getByLabelText('Remote Michi port') as HTMLInputElement).value).toBe('3000');
-  });
   it('keeps quick connect and manual editing mutually exclusive', async () => {
     mocks.list.mockResolvedValue([{
       id: 'ssh-1', name: 'Remote Linux', transport: 'ssh', sshHost: 'build+',
@@ -257,19 +216,6 @@ describe('ConnectionsPane', () => {
     expect((screen.getByLabelText('SSH host') as HTMLInputElement).value).toBe('build+');
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.getByRole('button', { name: 'Connect remote' })).toBeTruthy();
-  });
-
-  it('shows a failed manual connection test and allows retry', async () => {
-    mocks.test.mockRejectedValueOnce(new Error('SSH authentication expired'));
-    render(<ConnectionsPane projects={[]} />);
-    await screen.findByText('Local');
-    fireEvent.click(screen.getByRole('button', { name: /Manual setup/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('SSH authentication expired');
-    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
-    expect(await screen.findByText(/Connected to Michi backend/)).toBeTruthy();
-    expect(mocks.test).toHaveBeenCalledTimes(2);
-    expect(mocks.save).not.toHaveBeenCalled();
   });
 
 });

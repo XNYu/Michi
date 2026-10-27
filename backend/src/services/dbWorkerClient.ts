@@ -14,6 +14,7 @@ import { Worker } from 'node:worker_threads';
 import path from 'node:path';
 import type { EnsureDurableGraphNodeInput, EnsureDurableGraphNodeResult } from './graphCommands';
 import type { DurableTurnSnapshot } from 'michi-shared';
+import { DomainError, type SerializedDomainError } from './domainErrors';
 
 declare const __MICHIBUNDLE__: boolean | undefined;
 
@@ -21,6 +22,8 @@ let _worker: Worker | null = null;
 let _nextId = 1;
 const _pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 let _readyPromise: Promise<void> | null = null;
+let _rejectReady: ((error: Error) => void) | null = null;
+let _ready = false;
 
 /**
  * Resolve the worker thread entry point.
@@ -35,70 +38,77 @@ function resolveWorkerPath(): string {
   if (bundled) {
     return path.join(__dirname, 'dbWorkerThread.js');
   }
-  // Dev mode: run the TS file directly via ts-node's ESM loader.
+  // Dev mode: run the TS file directly via ts-node's require hook.
   return path.join(__dirname, 'dbWorkerThread.ts');
+}
+
+/** Fail the current generation only: late exit events from a stopped worker
+ * must not clear a replacement or reject its requests. Writes are never replayed. */
+function clearWorker(worker: Worker, error: Error): void {
+  if (_worker !== worker) return;
+  _worker = null;
+  _ready = false;
+  _readyPromise = null;
+  const rejectReady = _rejectReady;
+  _rejectReady = null;
+  rejectReady?.(error);
+  for (const [, callback] of _pending) callback.reject(error);
+  _pending.clear();
 }
 
 export function initDbWorker(dbPath: string): Promise<void> {
   if (_readyPromise) return _readyPromise;
 
-  _readyPromise = new Promise((resolve, reject) => {
-    const workerPath = resolveWorkerPath();
-    const isTsFile = workerPath.endsWith('.ts');
-
-    _worker = new Worker(workerPath, {
+  const workerPath = resolveWorkerPath();
+  const isTsFile = workerPath.endsWith('.ts');
+  let worker: Worker;
+  try {
+    worker = new Worker(workerPath, {
       workerData: { dbPath },
-      // ts-node dev: register the TypeScript loader so the worker can import TS
-      ...(isTsFile ? { execArgv: ['--require', 'ts-node/register'] } : {}),
+      // Dev uses the same transpilation-only model as the esbuild watcher. The
+      // workspace typecheck covers this entry point; rechecking its complete
+      // imported type graph on each worker start delays readiness under load.
+      ...(isTsFile ? { execArgv: ['--require', 'ts-node/register/transpile-only'] } : {}),
     });
-
-    _worker.on('message', (msg: { type?: string; id?: number; result?: unknown; error?: string }) => {
+  } catch (error) {
+    // Keep initialization failures on the promise path used by startup fallback.
+    return Promise.reject(error);
+  }
+  _worker = worker;
+  _ready = false;
+  _readyPromise = new Promise((resolve, reject) => {
+    _rejectReady = reject;
+    worker.on('message', (msg: { type?: string; id?: number; result?: unknown; error?: string; domainError?: SerializedDomainError }) => {
+      if (_worker !== worker) return;
       if (msg.type === 'ready') {
+        _ready = true;
+        _rejectReady = null;
         resolve();
         return;
       }
       if (msg.id !== undefined) {
-        const cb = _pending.get(msg.id);
-        if (cb) {
+        const callback = _pending.get(msg.id);
+        if (callback) {
           _pending.delete(msg.id);
           if (msg.error) {
-            cb.reject(new Error(msg.error));
+            callback.reject(msg.domainError
+              ? new DomainError(msg.domainError.kind, msg.domainError.code, msg.error)
+              : new Error(msg.error));
           } else {
-            cb.resolve(msg.result);
+            callback.resolve(msg.result);
           }
         }
       }
     });
-
-    _worker.on('error', (err) => {
-      // Worker crashed — reject all pending calls and null the worker
-      for (const [, cb] of _pending) {
-        cb.reject(err);
-      }
-      _pending.clear();
-      _worker = null;
-      _readyPromise = null;
-    });
-
-    _worker.on('exit', (code) => {
-      if (code !== 0) {
-        const err = new Error(`dbWorker exited with code ${code}`);
-        for (const [, cb] of _pending) {
-          cb.reject(err);
-        }
-        _pending.clear();
-      }
-      _worker = null;
-      _readyPromise = null;
-    });
+    worker.on('error', error => clearWorker(worker, error));
+    worker.on('exit', code => clearWorker(worker, new Error(`dbWorker exited with code ${code}`)));
   });
-
   return _readyPromise;
 }
 
 function rpc<T>(command: string, args: unknown): Promise<T> {
-  if (!_worker) {
-    return Promise.reject(new Error('dbWorker not initialized — call initDbWorker() first'));
+  if (!_worker || !_ready) {
+    return Promise.reject(new Error('dbWorker not ready — await initDbWorker() first'));
   }
   const id = _nextId++;
   return new Promise<T>((resolve, reject) => {
@@ -111,16 +121,15 @@ function rpc<T>(command: string, args: unknown): Promise<T> {
 }
 
 export async function shutdownDbWorker(): Promise<void> {
-  if (_worker) {
-    await _worker.terminate();
-    _worker = null;
-    _readyPromise = null;
-  }
+  const worker = _worker;
+  if (!worker) return;
+  clearWorker(worker, new Error('dbWorker stopped'));
+  await worker.terminate();
 }
 
 /** Whether the worker is alive and ready for commands. */
 export function isDbWorkerReady(): boolean {
-  return _worker !== null;
+  return _worker !== null && _ready;
 }
 
 // ── Public async command API ───────────────────────────────────────────────

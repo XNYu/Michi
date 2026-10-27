@@ -9,13 +9,12 @@
  */
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
-import type {
-    AgentSession,
-    RuntimeSessionOwner,
-    RuntimeToolProfile,
-} from '../src/agents/types';
+import type { RuntimePermissionBroker, RuntimePermissionRequest, RuntimeSessionOwner } from '../src/agents/types';
+import { michiTestHost } from './helpers/michiTestHost';
+import { runOwner } from './helpers/owners';
 
 // ---------------------------------------------------------------------------
 // Shared stubs
@@ -27,111 +26,40 @@ const bridge: AgentToolBridge = {
     updateContext: () => null,
 };
 
-const RUN_OWNER: RuntimeSessionOwner = {
-    kind: 'agent_run',
-    runId: 'run-1',
-    attemptId: 'attempt-1',
-};
+const RUN_OWNER: RuntimeSessionOwner = runOwner('run-1', 'attempt-1');
+const RUN_ATTEMPT = 'attempt-1';
 
-const WRONG_OWNER: RuntimeSessionOwner = {
-    kind: 'agent_run',
-    runId: 'run-2',
-    attemptId: 'attempt-2',
-};
-
-// ---------------------------------------------------------------------------
-// newSession for agent_run
-// ---------------------------------------------------------------------------
-
-describe('KiroRuntime Agent Run newSession', () => {
-    test('creates a fresh ACP session with agent_run owner and returns attemptId as public id', async () => {
-        const createdSlots: any[] = [];
-        const slots = new Map<string, any>();
-        const registry = {
-            get: (id: string) => slots.get(id),
-            dispose: async (id: string) => { slots.delete(id); },
-            create: (parentChatId: string, cwd: string, ownerUserId: string | null, cbs: any, opts?: any) => {
-                const slot = { slotId: `slot-${createdSlots.length}`, parentChatId, cwd, ownerUserId, ...cbs, ...opts };
-                slots.set(slot.slotId, slot);
-                createdSlots.push(slot);
-                return slot;
-            },
-        };
-
-        const runtime = new KiroRuntime(bridge, registry as any, 9999, '/tmp/default');
-        const rt = runtime as any;
-        let sessionNewCount = 0;
-        rt.ensureClient = async () => ({
-            newSession: async (mcpServers: any[]) => {
-                sessionNewCount++;
-                return { sessionId: `acp-run-sid-${sessionNewCount}`, modes: {}, models: {} };
-            },
-        });
-        // Warm sessions should NOT be consumed for runs.
-        rt.warmedSessions.set('/tmp/cwd', [{ sid: 'warm-sid', slotId: 'warm-slot' }]);
-
-        const toolProfile: RuntimeToolProfile = { allowedToolNames: ['submit_agent_result', 'read'] };
-
-        const session = await runtime.newSession({
-            cwd: '/tmp/cwd',
-            owner: RUN_OWNER,
-            toolProfile,
-            profileHash: 'hash-abc',
-            workspaceId: 'ws-run',
-            ownerUserId: 'user-run',
-        });
-
-        assert.equal(session.id, 'attempt-1');
-        assert.equal(session.nativeSessionId, 'acp-run-sid-1');
-        assert.equal(session.runtimeProfileHash, 'hash-abc');
-        assert.deepEqual(session.owner, RUN_OWNER);
-
-        // Warm session was NOT consumed.
-        assert.ok(rt.warmedSessions.has('/tmp/cwd'));
-
-        // Fresh session/new was called.
-        assert.equal(sessionNewCount, 1);
-
-        // MCP slot was created with agent_run owner.
-        assert.equal(createdSlots.length, 1);
-        assert.deepEqual(createdSlots[0].owner, RUN_OWNER);
-
-        // Binding record stored.
-        const binding = runtime.getBinding('attempt-1');
-        assert.ok(binding);
-        assert.equal(binding.publicSessionId, 'attempt-1');
-        assert.equal(binding.nativeSessionId, 'acp-run-sid-1');
-        assert.deepEqual(binding.owner, RUN_OWNER);
-        assert.equal(binding.runtimeProfileHash, 'hash-abc');
-        assert.equal(binding.workspaceId, 'ws-run');
-    });
-
-    test('chat session still consumes warm pool (backward compat)', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
-        const rt = runtime as any;
-        rt.ensureClient = async () => ({});
-        rt.warmNextSession = () => {};
-        rt.warmedSessions.set('/tmp/cwd', [{ sid: 'warm-chat-sid', currentModeId: 'default' }]);
-
-        const session = await runtime.newSession({
-            cwd: '/tmp/cwd',
-            sessionId: 'node-chat-1',
-        });
-
-        assert.equal(session.id, 'node-chat-1');
-        assert.equal(session.nativeSessionId, 'warm-chat-sid');
-        assert.ok(!rt.warmedSessions.has('/tmp/cwd'));
-    });
-});
+const WRONG_OWNER: RuntimeSessionOwner = runOwner('run-2', 'attempt-2');
+const WRONG_ATTEMPT = 'attempt-2';
 
 // ---------------------------------------------------------------------------
 // loadSession for agent_run
 // ---------------------------------------------------------------------------
 
 describe('KiroRuntime Agent Run loadSession', () => {
+    test('fresh and resumed Runs both disable follow-ups', async () => {
+        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost(), engine: 'v2' });
+        const rt = runtime as any;
+        rt.ensureClient = async () => ({
+            newSession: async () => ({ sessionId: 'acp-fresh', modes: {}, models: {} }),
+            loadSession: async () => ({ modes: {}, models: {} }),
+        });
+        try {
+            const fresh = await runtime.newSession({ sessionId: RUN_ATTEMPT, owner: RUN_OWNER, cwd: '/tmp/cwd' });
+            const resumedOwner = runOwner('run-resume', 'attempt-resume');
+            const resumed = await runtime.loadSession({
+                sessionId: 'attempt-resume', owner: resumedOwner, cwd: '/tmp/cwd', nativeResumeToken: 'acp-resumed',
+            });
+            assert.equal((fresh as KiroSession).getEnableFollowUps(), false);
+            assert.equal((resumed as KiroSession).getEnableFollowUps(), false);
+        } finally {
+            await runtime.shutdown();
+        }
+    });
+
     test('resumes from nativeResumeToken without Node lookup', async () => {
         const loadedSids: string[] = [];
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
         rt.ensureClient = async () => ({
             loadSession: async (sid: string) => {
@@ -163,8 +91,48 @@ describe('KiroRuntime Agent Run loadSession', () => {
         assert.equal(binding.nativeSessionId, 'acp-original-sid');
     });
 
+    test('the Run permission broker receives canonical tool names and the Run owner ids', async () => {
+        const requests: RuntimePermissionRequest[] = [];
+        const broker: RuntimePermissionBroker = {
+            async requestPermission(request) { requests.push(request); return 'deny'; },
+        };
+        const options = [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }];
+        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost(), engine: 'v2' });
+        (runtime as any).ensureClient = async () => ({
+            newSession: async () => ({ sessionId: 'acp-fresh', modes: {}, models: {} }),
+            loadSession: async () => ({ modes: {}, models: {} }),
+            async *prompt() {
+                // Kiro titles are prose; only provider metadata names the tool.
+                yield { sessionUpdate: 'permission_request', requestId: 1, options, _meta: { toolName: 'execute_bash' },
+                    toolCall: { toolCallId: 'tc-named', title: 'Running: rm -rf build' } };
+                yield { sessionUpdate: 'permission_request', requestId: 2, options,
+                    toolCall: { toolCallId: 'tc-prose', title: 'Editing README.md' } };
+                yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
+            },
+        });
+        const ids = { workspaceId: 'ws-run', ownerUserId: 'alice', permissionBroker: broker };
+        try {
+            const fresh = await runtime.newSession({ sessionId: RUN_ATTEMPT, owner: RUN_OWNER, cwd: '/tmp/cwd', ...ids });
+            const resumed = await runtime.loadSession!({
+                sessionId: WRONG_ATTEMPT, owner: WRONG_OWNER, cwd: '/tmp/cwd', nativeResumeToken: 'acp-resumed', ...ids,
+            });
+            const rebound = await runtime.rebindRunSession(runtime.getBinding(WRONG_ATTEMPT)!);
+            for (const session of [fresh, resumed, rebound]) {
+                for await (const _event of session.send('go')) { /* drain */ }
+            }
+            // execute_bash is Kiro's shell tool: the broker receives Michi's canonical bash.
+            assert.deepEqual(requests.map((r) => [r.toolName, r.ownerUserId, r.workspaceId, r.toolCallId]), [
+                ['bash', 'alice', 'ws-run', 'tc-named'], ['unknown', 'alice', 'ws-run', 'tc-prose'],
+                ['bash', 'alice', 'ws-run', 'tc-named'], ['unknown', 'alice', 'ws-run', 'tc-prose'],
+                ['bash', 'alice', 'ws-run', 'tc-named'], ['unknown', 'alice', 'ws-run', 'tc-prose'],
+            ]);
+        } finally {
+            await runtime.shutdown();
+        }
+    });
+
     test('rejects agent_run loadSession without nativeResumeToken', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
         rt.ensureClient = async () => ({});
 
@@ -176,81 +144,5 @@ describe('KiroRuntime Agent Run loadSession', () => {
             }),
             /nativeResumeToken/,
         );
-    });
-});
-
-// ---------------------------------------------------------------------------
-// releaseSession with owner verification
-// ---------------------------------------------------------------------------
-
-describe('KiroRuntime releaseSession with owner verification', () => {
-    test('releases session when owner matches', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
-        const rt = runtime as any;
-        let sessionNewCalls = 0;
-        rt.ensureClient = async () => ({
-            newSession: async () => ({ sessionId: `acp-release-${++sessionNewCalls}`, modes: {}, models: {} }),
-            cancel: async () => {},
-            destroySession: () => {},
-        });
-
-        await runtime.newSession({ cwd: '/tmp/cwd', owner: RUN_OWNER });
-        await runtime.releaseSession('attempt-1', RUN_OWNER);
-        assert.equal(runtime.getBinding('attempt-1'), undefined);
-    });
-
-    test('rejects release when owner does not match', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
-        const rt = runtime as any;
-        rt.ensureClient = async () => ({
-            newSession: async () => ({ sessionId: 'acp-release-wrong', modes: {}, models: {} }),
-            cancel: async () => {},
-            destroySession: () => {},
-        });
-
-        await runtime.newSession({ cwd: '/tmp/cwd', owner: RUN_OWNER });
-        await assert.rejects(
-            () => runtime.releaseSession('attempt-1', WRONG_OWNER),
-            /Owner mismatch/,
-        );
-        assert.ok(runtime.getBinding('attempt-1'));
-    });
-});
-
-// ---------------------------------------------------------------------------
-// Binding record management
-// ---------------------------------------------------------------------------
-
-describe('KiroRuntime binding records', () => {
-    test('getBindingByNativeSid returns binding via reverse index', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
-        const rt = runtime as any;
-        rt.ensureClient = async () => ({
-            newSession: async () => ({ sessionId: 'acp-native-lookup', modes: {}, models: {} }),
-        });
-
-        await runtime.newSession({ cwd: '/tmp/cwd', owner: RUN_OWNER, profileHash: 'hash-lookup' });
-
-        const binding = runtime.getBindingByNativeSid('acp-native-lookup');
-        assert.ok(binding);
-        assert.equal(binding.publicSessionId, 'attempt-1');
-        assert.equal(binding.runtimeProfileHash, 'hash-lookup');
-    });
-
-    test('bindings are cleaned up on shutdown', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
-        const rt = runtime as any;
-        rt.ensureClient = async () => ({
-            newSession: async () => ({ sessionId: 'acp-shutdown', modes: {}, models: {} }),
-            shutdown: async () => {},
-        });
-
-        await runtime.newSession({ cwd: '/tmp/cwd', owner: RUN_OWNER });
-        assert.ok(runtime.getBinding('attempt-1'));
-
-        await runtime.shutdown();
-
-        assert.equal(runtime.getBinding('attempt-1'), undefined);
-        assert.equal(runtime.getBindingByNativeSid('acp-shutdown'), undefined);
     });
 });

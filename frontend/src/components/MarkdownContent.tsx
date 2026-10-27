@@ -1,4 +1,5 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { defaultUrlTransform } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkCjkFriendly from 'remark-cjk-friendly';
@@ -6,13 +7,20 @@ import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethr
 import remarkMath from 'remark-math';
 import { remarkCurrencyGuard } from './remarkCurrencyGuard';
 import { rehypeAutolinkBareUrls } from './rehypeAutolinkBareUrls';
+import { rehypeLocalOnly } from './rehypeLocalOnly';
 import MarkdownRendererAdapter from './MarkdownRendererAdapter';
 import LegacyCodeBlock, { languageFromClassName, trimCodeFenceNewline } from './LegacyCodeBlock';
 import MarkdownFeatureTable from './MarkdownFeatureTable';
 import MarkdownMermaidBlock from './MarkdownMermaidBlock';
+import { MarkdownPicture } from './MarkdownPicture';
 import { MarkdownStreamingTail } from './MarkdownStreamingTail';
+import { loadableImageUrl } from '../lib/pictureAddress';
 import { hasCjkText, performanceNowMs, rendererStreamProbeEnabled, writeRendererStreamProbe } from '../lib/streamProbe';
 import { countRender } from '../services/renderCounters';
+import { MarkdownLinkRendererContext, type MarkdownLinkRenderer } from './markdownLinkRenderer';
+import type { MarkdownBlockKind } from '../lib/streamingMarkdownBlocks';
+
+const isLoadableImage = (src: string) => loadableImageUrl(src) !== null;
 
 export interface MarkdownFeatureProfile {
   autoDirection?: boolean;
@@ -24,6 +32,16 @@ export interface MarkdownFeatureProfile {
   normalizeHtmlIndentation?: boolean;
   strikethrough?: boolean;
   tableControls?: boolean;
+  /** false: images and other embedded media render as their alt text or fallback, so nothing loads. Default true. */
+  remoteMedia?: boolean;
+  /**
+   * true, with remoteMedia false: pictures at https addresses on the internet
+   * still load, lazily and with no referrer; one that fails becomes a link to
+   * its address. Every other picture stays its alt text. Default false.
+   */
+  httpsImages?: boolean;
+  /** true: only https links with a host and in-page `#` anchors stay links; any other link renders as its text. Default false. */
+  httpsLinksOnly?: boolean;
 }
 
 export interface MarkdownContentProps {
@@ -50,6 +68,8 @@ export interface MarkdownContentProps {
   trimFirstChild?: boolean;
   /** Override last child bottom-margin trimming. Defaults to trimEdges. */
   trimLastChild?: boolean;
+  /** Previous non-whitespace streaming block, for cross-root prose spacing. */
+  previousBlockKind?: MarkdownBlockKind;
   /** Insert the live Smooth tail into the final semantic Markdown element. */
   appendStreamingTail?: boolean;
   /** Optional feature-parity profile; all features remain off by default. */
@@ -89,6 +109,16 @@ const sanitizeSchema = {
     span: [...(defaultSchema.attributes?.span ?? []), ['className', 'math', 'math-inline', 'mention-chip'], 'dataMention', 'dataMentionKind', 'dataNodeId'],
   },
 };
+
+/** The sanitize schema plus a link renderer's own schemes (its exact links are checked again at render). */
+function sanitizeSchemaFor(linkRenderer: MarkdownLinkRenderer | null): typeof sanitizeSchema {
+  if (!linkRenderer || linkRenderer.protocols.length === 0) return sanitizeSchema;
+  const href = defaultSchema.protocols?.href ?? [];
+  return {
+    ...sanitizeSchema,
+    protocols: { ...defaultSchema.protocols, href: [...href, ...linkRenderer.protocols] },
+  };
+}
 
 type HastNode = {
   type?: string;
@@ -316,8 +346,8 @@ function HighlightText({ children, term }: { children: string; term: string }) {
 function highlightChildren(children: React.ReactNode, term: string): React.ReactNode {
   return React.Children.map(children, (child) => {
     if (typeof child === 'string') return <HighlightText term={term}>{child}</HighlightText>;
-    if (React.isValidElement(child) && child.props.children) {
-      return React.cloneElement(child as React.ReactElement<any>, {}, highlightChildren(child.props.children, term));
+    if (React.isValidElement<{ children?: React.ReactNode }>(child) && child.props.children) {
+      return React.cloneElement(child, {}, highlightChildren(child.props.children, term));
     }
     return child;
   });
@@ -326,7 +356,7 @@ function highlightChildren(children: React.ReactNode, term: string): React.React
 function reactNodeText(children: React.ReactNode): string {
   if (typeof children === 'string' || typeof children === 'number') return String(children);
   if (Array.isArray(children)) return children.map(reactNodeText).join('');
-  if (React.isValidElement(children)) return reactNodeText(children.props.children);
+  if (React.isValidElement<{ children?: React.ReactNode }>(children)) return reactNodeText(children.props.children);
   return '';
 }
 
@@ -343,6 +373,7 @@ function MarkdownContentInner({
   trimEdges = true,
   trimFirstChild,
   trimLastChild,
+  previousBlockKind,
   appendStreamingTail = false,
   features,
   onLinkClick,
@@ -408,6 +439,14 @@ function MarkdownContentInner({
     [features?.cjk],
   );
   const mayContainRawHtml = renderText.includes('<');
+  // Opt-in app links (the assistant's chips); null for every other caller.
+  const linkRenderer = useContext(MarkdownLinkRendererContext);
+  const urlTransform = useMemo(
+    () => (linkRenderer
+      ? (url: string, key: string) => (key === 'href' && linkRenderer.matches(url) ? url : defaultUrlTransform(url))
+      : undefined),
+    [linkRenderer],
+  );
   const rehypePlugins = useMemo(() => {
     // Raw parsing is the expensive parse5 path. Markdown without a '<' cannot
     // contain a raw HTML node, so it is already safe to render through
@@ -415,7 +454,7 @@ function MarkdownContentInner({
     // keep raw + sanitize paired so allowed markup survives without admitting
     // executable attributes or elements.
     const plugins: any[] = mayContainRawHtml
-      ? [rehypeRaw, [rehypeSanitize, sanitizeSchema]]
+      ? [rehypeRaw, [rehypeSanitize, sanitizeSchemaFor(linkRenderer)]]
       : [];
     // katex runs after sanitize (when present) so its generated markup
     // (spans/MathML) is not stripped. Autolink and reveal follow it and both
@@ -424,8 +463,13 @@ function MarkdownContentInner({
     plugins.push(rehypeAutolinkBareUrls);
     if (revealPlugin) plugins.push(revealPlugin);
     if (appendStreamingTail) plugins.push(createStreamingTailPlugin());
+    // Last, so it sees every element sanitize and the autolinkers left.
+    const remoteMedia = features?.remoteMedia !== false;
+    const httpsLinksOnly = features?.httpsLinksOnly === true;
+    const keepImage = features?.httpsImages === true ? isLoadableImage : undefined;
+    if (!remoteMedia || httpsLinksOnly) plugins.push([rehypeLocalOnly, { remoteMedia, httpsLinksOnly, keepImage }]);
     return plugins;
-  }, [appendStreamingTail, mayContainRawHtml, rehypeKatex, revealPlugin]);
+  }, [appendStreamingTail, features?.httpsImages, features?.httpsLinksOnly, features?.remoteMedia, linkRenderer, mayContainRawHtml, rehypeKatex, revealPlugin]);
   // External links open in a new context (system browser in Electron via
   // setWindowOpenHandler; a new tab in a plain browser) instead of replacing
   // the app. Internal/relative/mailto/hash links keep default behavior.
@@ -435,6 +479,7 @@ function MarkdownContentInner({
       const external = /^https?:\/\//i.test(url);
       const mailto = /^mailto:/i.test(url);
       const content = ht ? highlightChildren(children, ht) : children;
+      if (linkRenderer && url && linkRenderer.matches(url)) return <>{linkRenderer.render(url, content)}</>;
 
       // Non-external, non-mailto links (relative paths, hash anchors, bare
       // filenames like "readme.md") would navigate the SPA to an invalid
@@ -471,7 +516,7 @@ function MarkdownContentInner({
         </a>
       );
     };
-  }, [features?.linkSafety, ht, onLinkClick]);
+  }, [features?.linkSafety, ht, linkRenderer, onLinkClick]);
   const hlComponents = useMemo(() => {
     if (!ht) return {};
     const wrap = (Tag: string) =>
@@ -513,6 +558,8 @@ function MarkdownContentInner({
     <div
       ref={rootRef}
       className={cls}
+      data-markdown-after={previousBlockKind}
+      data-markdown-first={shouldTrimFirstChild || undefined}
       dir={features?.autoDirection ? 'auto' : undefined}
       style={style}
     >
@@ -521,6 +568,7 @@ function MarkdownContentInner({
         remarkPluginsAfterGfm={cjkRemarkPlugins}
         legacyRemarkPlugins={remarkPlugins}
         legacyRehypePlugins={rehypePlugins}
+        urlTransform={urlTransform}
         legacyComponents={{
           ...hlComponents,
           a: anchorComponent,
@@ -562,6 +610,7 @@ function MarkdownContentInner({
             );
           },
           ...(features?.tableControls ? { table: MarkdownFeatureTable } : {}),
+          ...(features?.httpsImages && features.remoteMedia === false ? { img: MarkdownPicture } : {}),
           del({ children, ...props }: any) {
             return features?.strikethrough
               ? <del {...props}>{children}</del>
@@ -586,6 +635,7 @@ const MarkdownContent = React.memo(MarkdownContentInner, (prev, next) =>
   prev.trimEdges === next.trimEdges &&
   prev.trimFirstChild === next.trimFirstChild &&
   prev.trimLastChild === next.trimLastChild &&
+  prev.previousBlockKind === next.previousBlockKind &&
   prev.appendStreamingTail === next.appendStreamingTail &&
   prev.features === next.features,
 );

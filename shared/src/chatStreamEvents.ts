@@ -1,6 +1,14 @@
 import { parseSessionState, type AgentSessionState } from './sessionState';
 import { parseSteeringReports, type SteeringReport } from './kiroSteering';
 import type { DurableMessageMetadata } from './turnProjection';
+import {
+  parseSubagentActivityPayload,
+  parseSubagentPatches,
+  type SubagentActivityPayload,
+  type SubagentPatch,
+} from './subagents';
+
+export type { SubagentInfo, SubagentPatch, SubagentActivityPayload } from './subagents';
 
 export interface SteerMessageOptions {
   displayText?: string;
@@ -26,6 +34,8 @@ export interface ToolCallStreamPayload {
   status: string;
   kind?: string;
   detail?: string;
+  /** Input snapshot (possibly payload-capped), never an append-only JSON delta.
+   * May arrive on an update after the initial call; omission preserves prior input. */
   inputJson?: string;
   output?: string;
 }
@@ -44,17 +54,6 @@ export interface PermissionOption {
   disabled?: boolean;
 }
 
-export interface SubagentInfo {
-  sessionId: string;
-  sessionName: string;
-  agentName: string;
-  initialQuery: string;
-  status: "working" | "terminated";
-  statusMessage?: string;
-  group: string;
-  dependsOn: string[];
-}
-
 export interface UserInputOption {
   label: string;
   description?: string;
@@ -70,6 +69,8 @@ export interface UserInputQuestion {
 
 export interface UserInputRequestPayload {
   requestId: number;
+  /** Durable identity scoped to the owning turn; requestId remains the runtime response handle. */
+  interactionId?: string;
   questions: UserInputQuestion[];
 }
 
@@ -77,6 +78,20 @@ export interface UserInputAnswer {
   id?: string;
   question: string;
   answer: string;
+}
+
+export interface UsageCharge {
+  amount: number;
+  unit: 'USD' | 'credits';
+  provenance: 'provider_reported' | 'sdk_estimate' | 'catalog_estimate' | 'native_metering' | 'unknown';
+}
+
+export interface RuntimeWarning {
+  source: string;
+  category: 'provider' | 'runtime' | 'setup' | 'configuration';
+  message: string;
+  code?: string;
+  serverName?: string;
 }
 
 export const CHAT_STREAM_EVENTS = {
@@ -104,6 +119,7 @@ export const CHAT_STREAM_EVENTS = {
   contextUsage: "context_usage",
   usageSummary: "usage_summary",
   mcpServerError: "mcp_server_error",
+  warning: "warning",
   done: "done",
   error: "error",
   turnStart: "turn_start",
@@ -148,13 +164,16 @@ export interface ChatStreamPayloads {
     source?: string;
   };
   user_input_request: UserInputRequestPayload;
-  user_input_resolved: { requestId: number; answers: UserInputAnswer[] };
-  subagent_list_update: { subagents: SubagentInfo[] };
-  subagent_tool_activity: { subagentSessionId: string; title: string; status: string };
+  user_input_resolved: { requestId: number; interactionId?: string; answers: UserInputAnswer[]; outcome?: 'answered' | 'skipped' };
+  /** A patch: entries merge onto the roster by sessionId (see subagents.ts). */
+  subagent_list_update: { subagents: SubagentPatch[] };
+  subagent_tool_activity: SubagentActivityPayload;
   context_usage: { contextUsagePercentage: number };
   usage_summary: {
     contextUsagePercentage?: number;
+    /** Legacy native credit amount; currency charges use charge. */
     totalCredits?: number;
+    charge?: UsageCharge;
     turnDurationMs?: number;
     source?: string;
     totalTokens?: number;
@@ -184,7 +203,9 @@ export interface ChatStreamPayloads {
     nativeType?: string;
   };
   mcp_server_error: { serverName: string; error: string };
+  warning: RuntimeWarning;
   done: { stopReason?: string; persisted?: boolean; completedAt?: number };
+  /** `code` is machine-readable when present, e.g. META_AGENT_GUARD_ERROR_CODE (metaAgent.ts). */
   error: { message: string; code?: string; recoverable?: boolean; completedAt?: number };
   turn_start: {
     turnId: string;
@@ -200,6 +221,8 @@ export interface ChatStreamPayloads {
 }
 
 export interface ChatStreamEnvelope {
+  /** Backend observation time, preserved verbatim across journal/replay. */
+  observedAt?: number;
   /** Runtime chat identifier; present on every ChatHub-stamped frame. */
   chatId?: string;
   /** Stable Michi node identifier; present on every ChatHub-stamped frame. */
@@ -236,6 +259,15 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function parseUsageCharge(value: unknown): UsageCharge | undefined {
+  const raw = objectOrEmpty(value);
+  const amount = optionalFiniteNumber(raw.amount);
+  if (amount === undefined || amount < 0 || (raw.unit !== 'USD' && raw.unit !== 'credits')) return undefined;
+  const provenance = raw.provenance === 'provider_reported' || raw.provenance === 'sdk_estimate'
+    || raw.provenance === 'catalog_estimate' || raw.provenance === 'native_metering' ? raw.provenance : 'unknown';
+  return { amount, unit: raw.unit, provenance };
 }
 
 function parsePlanEntries(value: unknown): PlanEntry[] {
@@ -379,6 +411,7 @@ const parsers = {
       : [];
     return {
       requestId: optionalFiniteNumber(data.requestId) ?? 0,
+      interactionId: optionalString(data.interactionId),
       questions,
     };
   },
@@ -392,24 +425,20 @@ const parsers = {
       : [];
     return {
       requestId: optionalFiniteNumber(data.requestId) ?? 0,
+      interactionId: optionalString(data.interactionId),
+      ...(data.outcome === 'answered' || data.outcome === 'skipped' ? { outcome: data.outcome } : {}),
       answers,
     };
   },
-  subagent_list_update: (data) => {
-    const subagents = Array.isArray(data.subagents) ? data.subagents : [];
-    return { subagents };
-  },
-  subagent_tool_activity: (data) => ({
-    subagentSessionId: stringOrEmpty(data.subagentSessionId),
-    title: stringOrEmpty(data.title),
-    status: stringOrEmpty(data.status),
-  }),
+  subagent_list_update: (data) => ({ subagents: parseSubagentPatches(data.subagents) }),
+  subagent_tool_activity: (data) => parseSubagentActivityPayload(data),
   context_usage: (data) => ({
     contextUsagePercentage: optionalFiniteNumber(data.contextUsagePercentage) ?? 0,
   }),
   usage_summary: (data) => ({
     contextUsagePercentage: optionalFiniteNumber(data.contextUsagePercentage),
     totalCredits: optionalFiniteNumber(data.totalCredits),
+    charge: parseUsageCharge(data.charge),
     turnDurationMs: optionalFiniteNumber(data.turnDurationMs),
     source: optionalString(data.source),
     totalTokens: optionalFiniteNumber(data.totalTokens),
@@ -417,6 +446,13 @@ const parsers = {
     cachedInputTokens: optionalFiniteNumber(data.cachedInputTokens),
     outputTokens: optionalFiniteNumber(data.outputTokens),
     reasoningOutputTokens: optionalFiniteNumber(data.reasoningOutputTokens),
+  }),
+  warning: (data) => ({
+    source: stringOrEmpty(data.source),
+    category: data.category === 'provider' || data.category === 'setup' || data.category === 'configuration' ? data.category : 'runtime',
+    message: stringOrEmpty(data.message),
+    code: optionalString(data.code),
+    serverName: optionalString(data.serverName),
   }),
   mcp_server_error: (data) => ({
     serverName: stringOrEmpty(data.serverName),
@@ -430,7 +466,7 @@ const parsers = {
   error: (data) => ({
     message: stringOrEmpty(data.message),
     code: optionalString(data.code),
-    ...(data.recoverable === true ? { recoverable: true } : {}),
+    ...(typeof data.recoverable === 'boolean' ? { recoverable: data.recoverable } : {}),
     completedAt: optionalFiniteNumber(data.completedAt),
   }),
   turn_start: (data) => ({
@@ -499,6 +535,7 @@ export function parseChatStreamEvent(event: string, rawData: string): ChatStream
 
   const raw = objectOrEmpty(parsed);
   const data = parsers[event](raw) as ChatStreamPayloads[typeof event] & ChatStreamEnvelope;
+  if (typeof raw.observedAt === "number" && Number.isFinite(raw.observedAt)) data.observedAt = raw.observedAt;
   if (typeof raw.chatId === "string") data.chatId = raw.chatId;
   if (typeof raw.nodeId === "string") data.nodeId = raw.nodeId;
   if (typeof raw.turnId === "string") data.turnId = raw.turnId;

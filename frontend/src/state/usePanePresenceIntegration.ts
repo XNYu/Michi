@@ -172,7 +172,9 @@ export function usePanePresenceIntegration({
     if (!hydrated || !activeProjectId) return;
     const key = scopeKey(activeBackendConnectionId, activeProjectId);
     let cancelled = false;
-    void fetchPersistenceCapabilities(activeBackendConnectionId)
+    // A scope capability check must not tear down the gateway's authenticated
+    // stream transport. Boot hydration owns that credential boundary.
+    void fetchPersistenceCapabilities(activeBackendConnectionId, { configureTransport: false })
       .then((capabilities) => {
         if (cancelled) return;
         setCapabilityProbe({ key, supported: supportsPaneInspection(capabilities) });
@@ -319,7 +321,7 @@ export function usePanePresenceIntegration({
     for (const uiPaneId of activeProjectOpenUiPaneIds) {
       if (isBareNodeId(uiPaneId)) continue; // bare nodeId — resolves directly, no allocation.
       const item = paneItems[uiPaneId];
-      if (!item || item.kind === 'agent-run') continue; // agent-run resolves directly too.
+      if (!item || item.kind === 'agent-run' || item.kind === 'page') continue; // Neither kind has a surface registration.
       if (!isSurfaceKind(item.kind)) continue; // Unknown/future kind — nothing to allocate yet.
 
       const existing = surfaceMappingsRef.current.get(uiPaneId);
@@ -440,6 +442,7 @@ export function usePanePresenceIntegration({
         surfaceTitle: item.title || null,
       };
     }
+    if (item.kind === 'page') return undefined; // Native content has no runtime presence target.
     const mapping = surfaceMappingsRef.current.get(uiPaneId);
     if (!mapping) return undefined; // Not yet allocated — omitted from this submission.
     if (mapping.backendConnectionId !== activeBackendConnectionId || mapping.workspaceId !== activeProjectId || mapping.kind !== item.kind) {

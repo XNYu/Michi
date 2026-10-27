@@ -1,0 +1,432 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "<undefined>",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v2"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "load",
+    "=load": [
+      {
+        "configOptions": [
+          {
+            "id": "x",
+            "type": "boolean",
+            "currentValue": false
+          }
+        ],
+        "modes": {
+          "currentModeId": "default",
+          "availableModes": []
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_load",
+        {
+          "cwd": "/elsewhere",
+          "sessionId": "L1"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/load",
+        "params": {
+          "sessionId": "L1",
+          "cwd": "/elsewhere",
+          "mcpServers": [],
+          "_meta": {
+            "chatId": "c"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "state",
+    "lastUserMessageId": [
+      "u-7"
+    ],
+    "state": [
+      {
+        "sessionId": "L1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "configOptions": [
+            {
+              "id": "x",
+              "type": "boolean",
+              "currentValue": false
+            }
+          ],
+          "modes": {
+            "currentModeId": "default",
+            "availableModes": []
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "reasoning": null,
+          "availableModes": [],
+          "commands": [
+            {
+              "name": "clear"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "a replay frame after load is not shown",
+    "p1": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "reasoning": null,
+          "availableModes": [],
+          "commands": [
+            {
+              "name": "clear"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "L1",
+          "textLen": 4
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "L1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "L1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "next"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "tagged replay",
+    "p1": [
+      {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "live"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:prompt_to_first_chunk",
+        {
+          "sid": "L1"
+        }
+      ]
+    ]
+  },
+  {
+    "step": "prompt result",
+    "p1": [
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "end_turn"
+      },
+      "<end>"
+    ]
+  },
+  {
+    "step": "load again keeps the queue",
+    "=load2": [
+      {
+        "configOptions": [
+          {
+            "id": "x",
+            "type": "boolean",
+            "currentValue": false
+          }
+        ],
+        "modes": {
+          "currentModeId": "default",
+          "availableModes": []
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_load",
+        {
+          "cwd": "/elsewhere",
+          "sessionId": "L1"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/load",
+        "params": {
+          "sessionId": "L1",
+          "cwd": "/elsewhere",
+          "mcpServers": []
+        }
+      }
+    ]
+  },
+  {
+    "step": "failed load removes only the queue it allocated",
+    "=loadGone": [
+      {
+        "error": "ACPError",
+        "message": "Session not found",
+        "method": "session/load",
+        "sessionId": "gone",
+        "rpcCode": -32002
+      }
+    ],
+    "log": [
+      [
+        "error",
+        "acp",
+        "rpc request failed",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "<undefined>",
+          "rpcId": 4,
+          "method": "session/load",
+          "sessionId": "gone",
+          "rpcCode": -32002,
+          "rpcMessage": "Session not found",
+          "rpcData": "<undefined>"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/load",
+        "params": {
+          "sessionId": "gone",
+          "cwd": "/work",
+          "mcpServers": []
+        }
+      }
+    ]
+  },
+  {
+    "step": "state",
+    "state": [
+      {
+        "sessionId": "gone",
+        "alive": true,
+        "hasSession": false,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": "<undefined>",
+        "sessionState": {
+          "runtimeId": "kiro",
+          "nativeEngine": "v2"
+        }
+      },
+      {
+        "sessionId": "L1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "configOptions": [
+            {
+              "id": "x",
+              "type": "boolean",
+              "currentValue": false
+            }
+          ],
+          "modes": {
+            "currentModeId": "default",
+            "availableModes": []
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "reasoning": null,
+          "availableModes": [],
+          "commands": [
+            {
+              "name": "clear"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "destroy"
+  },
+  {
+    "step": "state after destroy",
+    "lastUserMessageId": [
+      "<undefined>"
+    ],
+    "state": [
+      {
+        "sessionId": "L1",
+        "alive": true,
+        "hasSession": false,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": "<undefined>",
+        "sessionState": {
+          "runtimeId": "kiro",
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  }
+]

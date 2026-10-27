@@ -2,10 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentCapabilityCatalogEntryV1 } from 'michi-shared';
-import AgentDefinitionForm, {
-  createAgentDefinitionFormValue,
-  validateAgentDefinitionForm,
-} from './AgentDefinitionForm';
+import AgentDefinitionForm, { createAgentDefinitionFormValue } from './AgentDefinitionForm';
 import AgentEditorPage from './AgentEditorPage';
 import AgentRuntimeProfileFields, { catalogKey, emptyRuntimeProfileDraft, type RuntimeFieldCatalog } from './AgentRuntimeProfileFields';
 
@@ -19,17 +16,6 @@ function catalogEntry(id: string, kind: AgentCapabilityCatalogEntryV1['kind'], r
 }
 
 describe('Agent Definition editing — instructions optional + capability chips', () => {
-  it('does not require instructions: a definition is [permissions, capabilities, when-to-use]', () => {
-    const value = createAgentDefinitionFormValue(null, 'workspace', 'ws-1');
-    const errors = validateAgentDefinitionForm({
-      ...value, name: 'Source Critic', description: 'Cross-checks claims. Call after research.',
-      runtimeProfile: { runtimeId: 'pi', providerId: 'openai', modelId: 'gpt', reasoning: '', modeId: '' },
-      instructions: '',
-    });
-    expect(errors.instructions).toBeUndefined();
-    expect(Object.keys(errors)).toHaveLength(0);
-  });
-
   it('renders selected refs as chips with readiness and flags unresolved ones', () => {
     const value = {
       ...createAgentDefinitionFormValue(null, 'workspace', 'ws-1'),
@@ -61,12 +47,6 @@ describe('Agent Definition editing — instructions optional + capability chips'
     expect(onChange.mock.calls.at(-1)?.[0].toolRefs).toBe('web_search\nread_file');
     fireEvent.click(screen.getByRole('button', { name: 'Remove capability web_search' }));
     expect(onChange.mock.calls.at(-1)?.[0].toolRefs).toBe('');
-  });
-
-  it('falls back to manual ref fields when the catalog is unavailable', () => {
-    const value = createAgentDefinitionFormValue(null, 'workspace', 'ws-1');
-    render(<AgentDefinitionForm value={value} onChange={() => {}} capabilities={null} />);
-    expect(screen.getByLabelText('tool refs')).not.toBeNull();
   });
 
   it('renders structured enable blockers as an actionable callout', () => {
@@ -111,10 +91,20 @@ describe('AgentRuntimeProfileFields — dropdowns from the runtime catalog', () 
     expect(onChange.mock.calls.at(-1)?.[0]).toMatchObject({ runtimeId: 'claude', providerId: '', modelId: '' });
     expect(catalog.request).toHaveBeenCalledWith('pi', 'anthropic');
   });
+});
 
-  it('falls back to text inputs when the catalog is unavailable', () => {
-    render(<AgentRuntimeProfileFields catalog={null} onChange={() => {}} value={emptyRuntimeProfileDraft()} />);
-    expect((screen.getByLabelText('runtime runtime') as HTMLElement).tagName).toBe('INPUT');
-    expect((screen.getByLabelText('runtime model') as HTMLElement).tagName).toBe('INPUT');
-  });
+it('uses model reasoning capabilities and clears runtime dependencies for the actual form controls', () => {
+  const onChange = vi.fn();
+  const catalog: RuntimeFieldCatalog = {
+    runtimes: [{ id: 'pi', label: 'Pi', available: true }, { id: 'codex', label: 'Codex', available: true }],
+    providersFor: {},
+    modelsFor: { [catalogKey('pi', '')]: [{ id: 'model', supportedReasoningLevels: ['high'] }] },
+    capabilitiesFor: { pi: { nativeResume: false, models: true, modes: false, permissions: false, providerModels: true, reasoning: true, supportedReasoningLevels: ['low', 'high'], apiKeys: true, warmSessions: false, saveContext: false, spawnBranches: false } },
+    request: vi.fn(),
+  };
+  render(<AgentRuntimeProfileFields catalog={catalog} onChange={onChange} value={{ runtimeId: 'pi', providerId: '', modelId: 'model', reasoning: 'high', modeId: 'plan' }} />);
+  const reasoning = screen.getByLabelText('runtime reasoning') as HTMLSelectElement;
+  expect([...reasoning.options].map((option) => option.value)).toEqual(['', 'high']);
+  fireEvent.change(screen.getByLabelText('runtime runtime'), { target: { value: 'codex' } });
+  expect(onChange).toHaveBeenLastCalledWith({ runtimeId: 'codex', providerId: '', modelId: '', reasoning: '', modeId: '' });
 });

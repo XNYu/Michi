@@ -1,0 +1,151 @@
+{
+  "nativeSessionId": "thread-1",
+  "recordedNativeSessionIds": [],
+  "turnEvents": [
+    [
+      "title:Golden title",
+      "usage_summary",
+      "turn_end"
+    ]
+  ],
+  "slots": [
+    {
+      "parentChatId": "hook-disabled",
+      "cwd": "/tmp/michi-codex-golden",
+      "ownerUserId": null,
+      "opts": {
+        "nodeId": "hook-disabled",
+        "workspaceId": null
+      },
+      "callbacks": [
+        "getActivePageTurnAttribution",
+        "onAskUser",
+        "onSaveArtifact",
+        "onSetBranchOverview",
+        "onShowImage",
+        "onSpawnBranches",
+        "onUpdateArtifact",
+        "onValidateFollowUps"
+      ],
+      "owner": {
+        "kind": "chat_node",
+        "nodeId": "hook-disabled"
+      }
+    }
+  ],
+  "requests": [
+    {
+      "method": "model/list",
+      "params": {}
+    },
+    {
+      "method": "thread/start",
+      "params": {
+        "model": "gpt-golden",
+        "cwd": "/tmp/michi-codex-golden",
+        "developerInstructions": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Follow-ups are DISABLED for this thread. Do NOT emit [FOLLOW-UP n/3:] or [FOLLOW-UPS:] sentinel lines.\n- Provide this turn's branch-journal entry (what this turn did — explored, decided, discovered)\n  through the runtime's structured metadata tool. Entries accumulate into a chronological journal;\n  do not restate earlier turns and do not duplicate the entry in the visible answer.\n- Do not emit title metadata in commentary, progress/status updates, tool plans,\n  or any message before you are ready to deliver the final answer.\n\nTool override — AskUserQuestion:\nDo NOT use the built-in AskUserQuestion tool. It does not work in this environment.\nInstead, use the MCP tool ____michi_internal____ask_user to ask the user structured\nquestions with selectable options. The schema is identical: questions[] with question,\nheader, options[{label, description}], and multiSelect. The tool blocks until the user\nresponds in the UI.\n\nCodex turn metadata:\n- Before ending every real user turn, call mcp____michi_internal____set_branch_overview exactly once.\n- Pass {\"overview\":\"...\"}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered — matching the user's language. Entries accumulate into the branch's journal; do not restate earlier turns.\n- The structured overview tool call is canonical. Do not duplicate the overview as textual fallback metadata or visible answer text. This replaces any older instructions or conversation examples that requested overview text markers.\n- Follow-ups are disabled. Do not call set_follow_ups or emit follow-up metadata. Call set_branch_overview before writing the final answer.",
+        "approvalPolicy": "on-request",
+        "approvalsReviewer": "user",
+        "sandbox": "workspace-write",
+        "config": {
+          "mcp_servers": {
+            "__michi_internal__": {
+              "url": "http://127.0.0.1:3001/api/mcp/fake-slot-1",
+              "headers": [],
+              "default_tools_approval_mode": "approve"
+            }
+          },
+          "features": {
+            "hooks": true
+          },
+          "hooks": {
+            "Stop": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "ELECTRON_RUN_AS_NODE=1 '<node>' '<repo>/runtime/src/adapters/codex/assets/codexStopHookRunner.cjs' 'http://127.0.0.1:3001/api/codex-hooks/fake-slot-1/stop'",
+                    "commandWindows": "set \"ELECTRON_RUN_AS_NODE=1\"&& \"<node>\" \"<repo>/runtime/src/adapters/codex/assets/codexStopHookRunner.cjs\" \"http://127.0.0.1:3001/api/codex-hooks/fake-slot-1/stop\"",
+                    "timeout": 15,
+                    "statusMessage": "Validating structured follow-ups"
+                  }
+                ]
+              }
+            ]
+          },
+          "bypass_hook_trust": true
+        },
+        "reasoningEffort": "xhigh"
+      }
+    },
+    {
+      "method": "thread/start",
+      "params": {
+        "model": "gpt-5.6-luna",
+        "cwd": "/tmp/michi-codex-golden",
+        "developerInstructions": "Create a concise title for the user's request before the main assistant begins working.\nDo not answer the request, plan the work, use tools, or discuss your reasoning.\nMatch the user's language. Prefer 4-8 words for space-delimited languages or 8-20 characters for Chinese/Japanese.\nReturn only the JSON object required by the output schema.",
+        "approvalPolicy": "never",
+        "sandbox": "read-only",
+        "ephemeral": true
+      }
+    },
+    {
+      "method": "turn/start",
+      "params": {
+        "approvalPolicy": "untrusted",
+        "sandboxPolicy": {
+          "type": "readOnly",
+          "networkAccess": false
+        },
+        "threadId": "thread-1",
+        "input": [
+          {
+            "type": "text",
+            "text": "No follow-ups\n\nCodex turn metadata:\n- Before ending every real user turn, call mcp____michi_internal____set_branch_overview exactly once.\n- Pass {\"overview\":\"...\"}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered — matching the user's language. Entries accumulate into the branch's journal; do not restate earlier turns.\n- The structured overview tool call is canonical. Do not duplicate the overview as textual fallback metadata or visible answer text. This replaces any older instructions or conversation examples that requested overview text markers.\n- Follow-ups are disabled. Do not call set_follow_ups or emit follow-up metadata. Call set_branch_overview before writing the final answer.\n- Do not call the Stop-hook validator yourself; Michi invokes it automatically."
+          }
+        ],
+        "effort": "xhigh",
+        "summary": "detailed"
+      }
+    },
+    {
+      "method": "turn/start",
+      "params": {
+        "threadId": "title-thread-2",
+        "input": [
+          {
+            "type": "text",
+            "text": "No follow-ups"
+          }
+        ],
+        "effort": "low",
+        "summary": "none",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "method": "thread/name/set",
+      "params": {
+        "threadId": "thread-1",
+        "name": "Golden title"
+      }
+    },
+    {
+      "method": "thread/unsubscribe",
+      "params": {
+        "threadId": "thread-1"
+      }
+    }
+  ]
+}

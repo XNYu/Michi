@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 test.use({ reducedMotion: 'no-preference', launchOptions: { args: ['--enable-smooth-scrolling'] } });
 
@@ -53,7 +54,7 @@ for (const native of [true, false]) {
       return false;
     } });
     await bootWithWorkspace(page, 'Pane scroll regression');
-    await page.locator('[contenteditable="true"]').first().fill('Check pane and title alignment');
+    await page.locator(COMPOSER_EDITOR).first().fill('Check pane and title alignment');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
     await expect(page.locator('.terminal-dashboard > [data-node-id]')).toHaveCount(1);
     for (let count = 2; count <= 3; count++) {

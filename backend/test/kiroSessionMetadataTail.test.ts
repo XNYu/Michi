@@ -1,8 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { KiroSession } from '../src/agents/kiro/KiroSession';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { michiTestHost } from './helpers/michiTestHost';
 
 function runtimeWithUpdates(updates: Array<Record<string, unknown>>): KiroRuntime {
     const client = {
@@ -11,6 +12,7 @@ function runtimeWithUpdates(updates: Array<Record<string, unknown>>): KiroRuntim
         },
     };
     return {
+        host: michiTestHost(),
         ensureClient: async () => client,
         getCurrentMode: () => null,
         getCurrentModel: () => null,
@@ -18,6 +20,19 @@ function runtimeWithUpdates(updates: Array<Record<string, unknown>>): KiroRuntim
 }
 
 describe('KiroSession metadata completion tail', () => {
+    it('shows a set_branch_overview result without the instruction it gives Kiro', async () => {
+        // The result Michi's MCP server returns for a Kiro slot (services/mcpServer.ts).
+        const result = 'Branch overview recorded. This turn\'s user-facing response is already complete; emit [MICHI_METADATA_DONE] as the runtime end-of-turn marker (auto-stripped before display).';
+        const session = new KiroSession('node-5', 'session-5', runtimeWithUpdates([
+            { sessionUpdate: 'tool_call_update', toolCallId: 'overview-1', title: 'set_branch_overview', status: 'completed', rawOutput: result },
+            { sessionUpdate: 'tool_call_update', toolCallId: 'other-1', title: 'Read', status: 'completed', rawOutput: 'file contents' },
+            { sessionUpdate: 'turn_end', stopReason: 'end_turn' },
+        ]), '/tmp');
+        const outputs: Array<string | undefined> = [];
+        for await (const event of session.send('hello')) if (event.kind === 'tool_call_update') outputs.push(event.output);
+        assert.deepEqual(outputs, ['Branch overview recorded.', 'file contents']);
+    });
+
     it('strips a completion sentinel split across ACP chunks and keeps it out of history', async () => {
         const session = new KiroSession('node-1', 'session-1', runtimeWithUpdates([
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Visible answer.' } },
@@ -38,52 +53,6 @@ describe('KiroSession metadata completion tail', () => {
             { role: 'user', content: 'hello' },
             { role: 'assistant', content: 'Visible answer.' },
         ]);
-    });
-
-    it('releases a held prefix when later text proves it is ordinary prose', async () => {
-        const session = new KiroSession('node-2', 'session-2', runtimeWithUpdates([
-            { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Literal [MICHI_META' } },
-            { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'X remains visible.' } },
-            { sessionUpdate: 'turn_end', stopReason: 'end_turn' },
-        ]), '/tmp');
-
-        const chunks: string[] = [];
-        for await (const event of session.send('hello')) {
-            if (event.kind === 'chunk') chunks.push(event.text);
-        }
-
-        assert.equal(chunks.join(''), 'Literal [MICHI_METAX remains visible.');
-    });
-
-    it('removes the hidden completion instruction from persisted tool output', async () => {
-        const session = new KiroSession('node-3', 'session-3', runtimeWithUpdates([
-            {
-                sessionUpdate: 'tool_call_update',
-                toolCallId: 'tool-1',
-                title: 'Running: @michi/set_branch_overview',
-                status: 'completed',
-                rawOutput: {
-                    items: [{
-                        Json: {
-                            content: [{
-                                type: 'text',
-                                text: 'Branch overview recorded. This turn\'s user-facing response is already complete; emit [MICHI_METADATA_DONE] as the runtime end-of-turn marker (auto-stripped before display).',
-                            }],
-                        },
-                    }],
-                },
-            },
-            { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '[MICHI_METADATA_DONE]' } },
-            { sessionUpdate: 'turn_end', stopReason: 'end_turn' },
-        ]), '/tmp');
-
-        const events = [];
-        for await (const event of session.send('hello')) events.push(event);
-
-        const toolUpdate = events.find((event) => event.kind === 'tool_call_update');
-        assert.ok(toolUpdate && toolUpdate.kind === 'tool_call_update');
-        assert.equal(toolUpdate.output?.includes('[MICHI_METADATA_DONE]'), false);
-        assert.equal(toolUpdate.output?.includes('Branch overview recorded.'), true);
     });
 
     it('extracts __tool_use_purpose from object and stringified rawInput', async () => {

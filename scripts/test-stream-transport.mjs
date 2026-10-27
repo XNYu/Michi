@@ -35,10 +35,12 @@ try {
   const app = express();
   app.use(express.json());
   transport = createStreamTransport();
-  app.use('/api', transport.router);
+  app.use('/api', (req, res, next) => transport.router(req, res, next));
   const held = new Map();
   let socketCount = 0;
   let ordinaryRequests = 0;
+  let capabilityUnavailable = false;
+  let capabilityProbes = 0;
   app.get('/', (_req, res) => res.type('html').send('<!doctype html><title>Michi transport regression</title><style>body{font:16px system-ui;margin:48px;color:#20242b;background:#fff}h1{font-size:26px}pre{font:15px monospace;line-height:1.8;white-space:pre-wrap}</style><h1>Michi transport regression</h1><pre id="result">Running isolated transport checks...</pre>'));
   app.get('/bundle.js', (_req, res) => res.type('js').send(frontend.outputFiles[0].text));
   app.all('/api/*route', async (req, res) => {
@@ -48,7 +50,9 @@ try {
       res.setHeader('Content-Type', 'text/event-stream');
       res.write(': connected\n\n');
     } else if (req.path.endsWith('/persistence/capabilities')) {
-      res.json({ protocolVersion: 2, streamTransport: 'websocket-v1' });
+      capabilityProbes++;
+      if (capabilityUnavailable) res.status(503).json({ error: 'Backend switching' });
+      else res.json({ protocolVersion: 2, streamTransport: 'websocket-v1' });
     } else if (req.path.includes('/artifacts/')) {
       ordinaryRequests++;
       const content = await readFile(path.join(root, 'package.json'), 'utf8');
@@ -128,9 +132,73 @@ try {
 
   await page.evaluate(() => window.cancels[0]());
   await waitUntil(() => held.size === 29);
+
+  const bootSockets = socketCount;
+  await page.evaluate(() => michi.fetchPersistenceCapabilities('local', { configureTransport: false }));
+  assert.equal(socketCount, bootSockets, 'a workspace capability check must retain the authenticated socket');
+  assert.equal(held.size, 29, 'a workspace capability check must not detach existing feeds');
+
+  // A probe can fail while Electron hands the same origin to the service.
+  // Failure is not evidence of an old gateway: native SSE fallback here
+  // fills Chromium's six HTTP slots and leaves every history read queued.
+  await page.evaluate(() => window.cancels.forEach((cancel) => cancel()));
+  capabilityUnavailable = true;
+  const failedProbe = await page.evaluate(async () => {
+    await michi.fetchPersistenceCapabilities().catch(() => {});
+    window.recoveryControllers = Array.from({ length: 6 }, () => new AbortController());
+    const outcomes = await Promise.allSettled(window.recoveryControllers.map((controller, i) =>
+      michi.fetchStream(`/api/workspaces/recovery-${i}/watch/stream`, { signal: controller.signal })));
+    return outcomes.map((outcome) => outcome.status);
+  });
+  assert.deepEqual(failedProbe, Array(6).fill('rejected'), 'an unavailable capability probe must never open native HTTP feeds');
+  await waitUntil(() => held.size === 0);
+  await startOrdinaryRequests();
+  await page.waitForFunction(() => Object.keys(window.completed).length === 3, null, { timeout: 3_000 });
+  const outageTimings = await page.evaluate(() => window.completed);
+
+  capabilityUnavailable = false;
+  const beforeRetry = capabilityProbes;
+  await page.evaluate(async () => {
+    // Existing subscribers retry without navigating, reloading or running a
+    // new boot hydration. The transport must re-probe on their next attempt.
+    const responses = await Promise.all(window.recoveryControllers.map((controller, i) =>
+      michi.fetchStream(`/api/workspaces/recovery-${i}/watch/stream`, { signal: controller.signal })));
+    window.disconnectedFeeds = 0;
+    responses.forEach((response) => response.text().catch(() => { window.disconnectedFeeds++; }));
+  });
+  assert.equal(capabilityProbes, beforeRetry + 1, 'concurrent subscription retries must share one capability probe');
+  await waitUntil(() => held.size === 6);
+  await startOrdinaryRequests();
+  await page.waitForFunction(() => Object.keys(window.completed).length === 3, null, { timeout: 3_000 });
+  const recoveryTimings = await page.evaluate(() => window.completed);
+
+  // Restart the real fixture backend on the same origin, as Electron does
+  // when handing the app backend over to launchd. Reuse the renderer and its
+  // negotiated transport; the next subscription must acquire a new ticket.
+  const port = server.address().port;
+  transport.close();
+  server.closeAllConnections();
+  await new Promise((resolve) => server.close(resolve));
+  await page.waitForFunction(() => window.disconnectedFeeds === 6);
+  await waitUntil(() => held.size === 0);
+  transport = createStreamTransport();
+  server = app.listen(port, '127.0.0.1');
+  transport.attach(server);
+  server.on('upgrade', () => { socketCount++; });
+  await once(server, 'listening');
+  await page.evaluate(() => Promise.all(window.recoveryControllers.map((controller, i) =>
+    michi.fetchStream(`/api/workspaces/restarted-${i}/watch/stream`, { signal: controller.signal }).then(() => true))));
+  await waitUntil(() => held.size === 6);
+  await startOrdinaryRequests();
+  await page.waitForFunction(() => Object.keys(window.completed).length === 3, null, { timeout: 3_000 });
+  const restartTimings = await page.evaluate(() => window.completed);
   const report = { status: 'PASS', legacyHttpStreams: 6, legacyQueuedRequests: 3,
     multiplexedStreams: 30, webSockets: socketCount, concurrentRequestMs: timings,
-    cancellation: 'One channel detached; 28 remain active', isolation: 'Mock gateway; no user data or agent execution' };
+    cancellation: 'One channel detached; 29 remain active',
+    unavailableProbe: { rejectedFeeds: failedProbe.length, ordinaryRequestMs: outageTimings },
+    recovery: { multiplexedStreams: 6, ordinaryRequestMs: recoveryTimings },
+    sameOriginRestart: { multiplexedStreams: 6, ordinaryRequestMs: restartTimings },
+    isolation: 'Mock gateway; no user data or agent execution' };
   await page.locator('#result').evaluate((element, text) => { element.textContent = text; }, JSON.stringify(report, null, 2));
   if (process.env.MICHI_TRANSPORT_SCREENSHOT) {
     const screenshot = path.resolve(process.env.MICHI_TRANSPORT_SCREENSHOT);

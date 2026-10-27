@@ -82,7 +82,33 @@ function sanitizeFtsQuery(raw: string): string {
     .join(' ');
 }
 
-export function keywordSearch(query: string, workspaceId?: string, limit = 20, userId?: string): SearchResult[] {
+/**
+ * System workspaces (`settings.system`, e.g. the Michi assistant's hidden
+ * one) are not search material: every search that names no workspace leaves
+ * them out, so the assistant's conversations never surface as ordinary hits.
+ * A search scoped to one workspace searches exactly that workspace.
+ */
+const NOT_SYSTEM_WORKSPACE = "(CASE WHEN json_valid(w.settings) THEN json_extract(w.settings, '$.system') END) IS NULL";
+
+function workspaceScope(workspaceId: string | undefined, params: (string | number)[]): string {
+  if (!workspaceId) return ` AND ${NOT_SYSTEM_WORKSPACE}`;
+  params.push(workspaceId);
+  return ' AND n.workspace_id = ?';
+}
+
+export interface KeywordSearchOptions {
+  /** Also leave out deleted workspaces (the Michi assistant's search across every workspace). */
+  excludeDeletedWorkspaces?: boolean;
+  /**
+   * Also leave out workspaces whose "Let AI navigate this workspace" is off
+   * (settings.aiGlobalContext === false, as getAiGlobalContext reads it).
+   */
+  excludeNavigationDisabled?: boolean;
+}
+
+const NAVIGATION_ALLOWED = "(CASE WHEN json_valid(w.settings) THEN json_type(w.settings, '$.aiGlobalContext') END) IS NOT 'false'";
+
+export function keywordSearch(query: string, workspaceId?: string, limit = 20, userId?: string, opts: KeywordSearchOptions = {}): SearchResult[] {
   const db = getDb();
   const ftsQuery = sanitizeFtsQuery(query);
   let sql = `
@@ -97,17 +123,17 @@ export function keywordSearch(query: string, workspaceId?: string, limit = 20, u
     WHERE messages_fts MATCH ?
   `;
   const params: (string | number)[] = [ftsQuery];
-  if (workspaceId) {
-    sql += ' AND n.workspace_id = ?';
-    params.push(workspaceId);
-  }
+  sql += workspaceScope(workspaceId, params);
   // In cloud mode, always scope FTS to the authenticated user's workspaces only.
   // There is no cross-user FTS path.
   if (process.env.MICHI_CLOUD === '1' && userId) {
     sql += ' AND w.owner_user_id = ?';
     params.push(userId);
   }
-  sql += ' AND n.deleted_at IS NULL AND n.kind != \'digest\' ORDER BY rank LIMIT ?';
+  if (opts.excludeDeletedWorkspaces) sql += ' AND w.deleted_at IS NULL';
+  if (opts.excludeNavigationDisabled) sql += ` AND ${NAVIGATION_ALLOWED}`;
+  sql += ' AND n.page_id IS NULL';
+  sql += ' AND n.deleted_at IS NULL AND n.page_id IS NULL AND n.maintenance_job_id IS NULL AND n.kind != \'digest\' ORDER BY rank LIMIT ?';
   params.push(limit);
   return db.prepare(sql).all(...params) as unknown as SearchResult[];
 }
@@ -151,13 +177,10 @@ export function nodeGroupedSearch(
       JOIN nodes n ON m.node_id = n.id
       JOIN workspaces w ON n.workspace_id = w.id
       WHERE messages_fts MATCH ?
-        AND n.deleted_at IS NULL AND n.kind != 'digest'
+        AND n.deleted_at IS NULL AND n.page_id IS NULL AND n.maintenance_job_id IS NULL AND n.kind != 'digest'
   `;
   const params: (string | number)[] = [ftsQuery];
-  if (workspaceId) {
-    sql += ' AND n.workspace_id = ?';
-    params.push(workspaceId);
-  }
+  sql += workspaceScope(workspaceId, params);
   if (process.env.MICHI_CLOUD === '1' && userId) {
     sql += ' AND w.owner_user_id = ?';
     params.push(userId);
@@ -263,7 +286,7 @@ function buildBreadcrumbs(db: ReturnType<typeof getDb>, results: NodeGroupedResu
   for (const wsId of workspaceIds) {
     const rows = db.prepare(
       `SELECT id, parent_node_id, title FROM nodes
-       WHERE workspace_id = ? AND deleted_at IS NULL AND kind != 'digest'`
+       WHERE workspace_id = ? AND deleted_at IS NULL AND page_id IS NULL AND maintenance_job_id IS NULL AND kind != 'digest'`
     ).all(wsId) as unknown as Array<{ id: string; parent_node_id: string | null; title: string | null }>;
     for (const r of rows) {
       allNodes.set(r.id, { id: r.id, parentNodeId: r.parent_node_id, title: r.title });
@@ -350,7 +373,7 @@ function searchNodesByTitleFts(
     JOIN nodes n ON nodes_fts.rowid = n.rowid
     JOIN workspaces w ON n.workspace_id = w.id
     WHERE nodes_fts MATCH ?
-      AND n.deleted_at IS NULL AND n.kind != 'digest'
+      AND n.deleted_at IS NULL AND n.page_id IS NULL AND n.maintenance_job_id IS NULL AND n.kind != 'digest'
       AND n.title IS NOT NULL AND TRIM(n.title) != ''
   `;
   const params: (string | number)[] = [ftsQuery];
@@ -359,10 +382,7 @@ function searchNodesByTitleFts(
     sql += ` AND n.id NOT IN (${excludePlaceholders})`;
     params.push(...excludeIds);
   }
-  if (workspaceId) {
-    sql += ' AND n.workspace_id = ?';
-    params.push(workspaceId);
-  }
+  sql += workspaceScope(workspaceId, params);
   if (process.env.MICHI_CLOUD === '1' && userId) {
     sql += ' AND w.owner_user_id = ?';
     params.push(userId);
@@ -431,7 +451,7 @@ function searchNodesByTitleLike(
            ) AS last_message_at
     FROM nodes n
     JOIN workspaces w ON n.workspace_id = w.id
-    WHERE n.deleted_at IS NULL AND n.kind != 'digest'
+    WHERE n.deleted_at IS NULL AND n.page_id IS NULL AND n.maintenance_job_id IS NULL AND n.kind != 'digest'
       AND n.title IS NOT NULL AND TRIM(n.title) != ''
       AND ${likeClauses.join(' AND ')}
   `;
@@ -441,10 +461,7 @@ function searchNodesByTitleLike(
     sql += ` AND n.id NOT IN (${excludePlaceholders})`;
     params.push(...excludeIds);
   }
-  if (workspaceId) {
-    sql += ' AND n.workspace_id = ?';
-    params.push(workspaceId);
-  }
+  sql += workspaceScope(workspaceId, params);
   if (process.env.MICHI_CLOUD === '1' && userId) {
     sql += ' AND w.owner_user_id = ?';
     params.push(userId);
@@ -519,17 +536,14 @@ function semanticSearch(query: string, workspaceId?: string, limit = 20, userId?
     WHERE messages_fts MATCH ?
   `;
   const params: (string | number)[] = [ftsQuery];
-  if (workspaceId) {
-    sql += ' AND n.workspace_id = ?';
-    params.push(workspaceId);
-  }
+  sql += workspaceScope(workspaceId, params);
   // In cloud mode, always scope FTS to the authenticated user's workspaces only.
   // There is no cross-user FTS path.
   if (process.env.MICHI_CLOUD === '1' && userId) {
     sql += ' AND w.owner_user_id = ?';
     params.push(userId);
   }
-  sql += ' AND n.deleted_at IS NULL AND n.kind != \'digest\' ORDER BY rank LIMIT ?';
+  sql += ' AND n.deleted_at IS NULL AND n.page_id IS NULL AND n.maintenance_job_id IS NULL AND n.kind != \'digest\' ORDER BY rank LIMIT ?';
   params.push(candidateLimit);
 
   const candidates = db.prepare(sql).all(...params) as unknown as RawSemanticResult[];

@@ -1,0 +1,13 @@
+.native-md-segment { position: relative; min-width: 0; padding-right: 28px; }
+.native-md-segment + .native-md-segment { margin-top: 10px; }
+.native-md-segment[data-native-segment-kind='list-item'] + .native-md-segment[data-native-segment-kind='list-item'] { margin-top: 0; }
+.native-md-segment[data-native-segment-kind='list-item']:is(:hover, :focus-within) { background: color-mix(in srgb, var(--term-hover) 50%, transparent); }
+.native-md-segment__sources {
+  position: absolute; top: 1px; right: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--ui-radius);
+  color: var(--term-mid); background: transparent; cursor: pointer; opacity: 0; pointer-events: none;
+}
+.native-md-segment:is(:hover, :focus-within, [data-sources-open]) .native-md-segment__sources { opacity: 1; pointer-events: auto; }
+.native-md-segment__sources:hover { color: var(--term-fg); background: var(--term-hover); }
+.native-md-segment__sources:focus-visible { opacity: 1; pointer-events: auto; outline: 2px solid var(--term-accent); outline-offset: 1px; }
+@media (hover: none) { .native-md-segment__sources { opacity: 1; pointer-events: auto; } }

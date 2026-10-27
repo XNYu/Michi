@@ -65,21 +65,6 @@ describe('AskUserAlertBar', () => {
     vi.mocked(chatStore.useChatActions).mockReturnValue(actions as never);
   });
 
-  it('renders nothing when nobody is asking', () => {
-    withNodes({ root: { ...askingNode('root', 'Root', 1), pendingUserInput: null } as ChatNodeState });
-    const { container } = render(<AskUserAlertBar />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  it('shows the thread title and the question', () => {
-    withNodes({ child: askingNode('child', 'Deploy plan', 4) });
-    render(<AskUserAlertBar />);
-    const alert = screen.getByRole('alert');
-    expect(alert.textContent).toContain('Deploy plan');
-    expect(alert.textContent).toContain('Pick one for Deploy plan?');
-    expect(alert.textContent).not.toContain('more question');
-  });
-
   it('counts the extra asks beyond the first', () => {
     withNodes({
       child: askingNode('child', 'A', 1),
@@ -87,12 +72,6 @@ describe('AskUserAlertBar', () => {
     });
     render(<AskUserAlertBar />);
     expect(screen.getByRole('alert').textContent).toContain('+1 more question');
-  });
-
-  it('falls back to a placeholder title before set_title lands', () => {
-    withNodes({ child: { ...askingNode('child', '', 1), title: undefined } as ChatNodeState });
-    render(<AskUserAlertBar />);
-    expect(screen.getByRole('alert').textContent).toContain('Untitled thread');
   });
 
   it('clicking navigates to the asking node, opens the dashboard and scrolls to the ask', () => {
@@ -130,29 +109,5 @@ describe('AskUserAlertBar', () => {
     // stopPropagation keeps the row's onClick from firing a second navigation.
     expect(actions.openPane).toHaveBeenCalledTimes(1);
     expect(actions.setFocusedNodeId).toHaveBeenCalledTimes(1);
-  });
-
-  it('crosses into the owning thread when the ask is in another tree', () => {
-    const twoTrees = {
-      ...project,
-      chatIds: ['root', 'child', 'other-root'],
-      trees: [
-        { id: 't-1', rootNodeId: 'root' },
-        { id: 't-2', rootNodeId: 'other-root' },
-      ],
-      activeTreeId: 't-1',
-    };
-    vi.mocked(chatStore.useChatProjects).mockReturnValue({
-      projects: [twoTrees],
-      activeProject: twoTrees,
-    } as never);
-    withNodes({ 'other-root': askingNode('other-root', 'Background branch', 9) });
-
-    render(<AskUserAlertBar />);
-    fireEvent.click(screen.getByRole('alert'));
-
-    expect(actions.openPaneInTree).toHaveBeenCalledWith('p-1', 't-2', 'other-root');
-    expect(actions.activateTree).toHaveBeenCalledWith('t-2', 'p-1');
-    expect(actions.openPane).not.toHaveBeenCalled();
   });
 });

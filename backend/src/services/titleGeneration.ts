@@ -1,16 +1,29 @@
 /**
- * Runtime-neutral helpers for sidecar thread-title generation.
+ * Michi's sidecar thread-title generation: the instruction text and prompt,
+ * and the per-runtime title model read from the environment.
  *
- * Runtimes that run a cheap one-shot prompt (Kiro, Codex)
- * share the same instruction text, output cleaning and plain-text fallback
- * so the sidebar title looks the same regardless of which model produced it.
- * The runtime-specific transport lives next to each runtime; this module
- * only owns the pure pieces.
+ * The runtime-neutral mechanics (output cleaning, the plain-text fallback,
+ * the deadline race and the length limits) live in michi-runtime
+ * (runtime/src/core/titles.ts) and are re-exported here, so existing
+ * importers keep the same functions. The runtime-specific transport lives
+ * next to each runtime.
  */
 
-export const DEFAULT_TITLE_TIMEOUT_MS = 15_000;
-export const MAX_TITLE_INPUT_CHARS = 4_000;
-export const MAX_TITLE_CHARS = 80;
+import {
+  DEFAULT_TITLE_TIMEOUT_MS,
+  MAX_TITLE_INPUT_CHARS,
+  truncateChars,
+} from 'michi-runtime/internal/core/titles';
+
+export {
+  DEFAULT_TITLE_TIMEOUT_MS,
+  MAX_TITLE_INPUT_CHARS,
+  MAX_TITLE_CHARS,
+  truncateChars,
+  cleanGeneratedTitle,
+  fallbackTitleFromUserText,
+  withTitleTimeout,
+} from 'michi-runtime/internal/core/titles';
 
 export const TITLE_INSTRUCTIONS = `You generate a short thread title from a user's message in a knowledge-exploration chat app.
 Do not answer the request, plan the work, call tools, or explain your reasoning.
@@ -26,47 +39,6 @@ export function buildTitlePrompt(userText: string, contextText?: string): string
     ? `\nCONTEXT (the user is replying to or quoting this):\n${truncateChars(contextText.trim(), 1_000)}\n`
     : '';
   return `${TITLE_INSTRUCTIONS}\n\n---${contextBlock}\nUSER MESSAGE:\n${truncateChars(userText, MAX_TITLE_INPUT_CHARS)}`;
-}
-
-export function truncateChars(value: string, maxChars: number): string {
-  const chars = Array.from(value);
-  return chars.length <= maxChars ? value : chars.slice(0, maxChars).join('');
-}
-
-/**
- * Normalize raw model output into a single-line title. Handles the common
- * ways a model ignores "output only the title": sentinel wrappers, code
- * fences, headings, quotes, a "Title:" prefix, and multi-line replies (the
- * first non-empty line wins).
- */
-export function cleanGeneratedTitle(raw: string): string {
-  let title = raw.trim();
-  const sentinel = /\[TITLE:\s*([^\]]+)\]/i.exec(title);
-  if (sentinel) title = sentinel[1];
-  title = title.replace(/^```(?:\w+)?\s*/i, '').replace(/\s*```$/i, '').trim();
-  const firstLine = title.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0) ?? '';
-  title = firstLine
-    .replace(/^#{1,6}\s*/, '')
-    .replace(/^(?:title|标题|主题|话题)\s*[:：]\s*/i, '')
-    .replace(/^["'“”‘’`「『《]+|["'“”‘’`」』》]+$/g, '')
-    .replace(/^\*\*(.+)\*\*$/, '$1')
-    .replace(/[\t]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return truncateChars(title, MAX_TITLE_CHARS).replace(/[\s:：,，;；.!?。！？-]+$/u, '').trim();
-}
-
-/** Last-resort title: the first sentence of the user's own message. */
-export function fallbackTitleFromUserText(userText: string): string {
-  const plain = userText
-    .replace(/^\s*\/(?:btw|branch)\s+/i, '')
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/[`*_>#\[\]()]/g, ' ')
-    .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const firstPhrase = plain.split(/(?<=[。！？.!?])\s*/u)[0] ?? plain;
-  return cleanGeneratedTitle(truncateChars(firstPhrase, 48));
 }
 
 export interface TitleModelConfig {
@@ -100,36 +72,5 @@ export function titleModelConfig(runtimeId: 'kiro' | 'codex'): TitleModelConfig 
       return { model: readModel('MICHI_TITLE_MODEL_KIRO', 'gpt-5.6-luna'), timeoutMs: readTimeout('MICHI_TITLE_TIMEOUT_MS') };
     case 'codex':
       return { model: readModel('MICHI_TITLE_MODEL_CODEX', 'gpt-5.6-luna'), timeoutMs: readTimeout('MICHI_CODEX_TITLE_TIMEOUT_MS') };
-  }
-}
-
-/**
- * Race a promise against a deadline. On timeout the abort controller fires so
- * the caller can stop the underlying work, then the promise rejects.
- */
-export async function withTitleTimeout<T>(
-  run: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number,
-  label: string,
-): Promise<T> {
-  const controller = new AbortController();
-  let timer: NodeJS.Timeout | undefined;
-  let timedOut = false;
-  const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([run(controller.signal), deadline]);
-  } catch (err) {
-    // The aborted work may reject before the deadline promise does; report
-    // the timeout either way so callers see one consistent failure.
-    if (timedOut) throw new Error(`${label} timed out after ${timeoutMs}ms`);
-    throw err;
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }

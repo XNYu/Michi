@@ -70,7 +70,7 @@ export class GrokRuntime extends AcpAgentRuntime {
         if (opts.anchorMessageId) {
             throw new NativeResumeUnavailableError("Grok native fork cannot stop at a historical branch anchor");
         }
-        if (!opts.sessionId || opts.owner?.kind === "agent_run") {
+        if (!opts.sessionId || opts.owner?.mode === "headless") {
             throw new NativeResumeUnavailableError("Only chat nodes can inherit a native Grok conversation");
         }
         const client = await this.ensureClient(opts.cwd, opts.model ?? undefined);

@@ -1,25 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useChatActions, useChatNodesSnapshot, useChatPanes, useChatProjects } from '../../state/chatStore';
+import { shallowArrayEqual, useChatActions, useChatNodesSnapshot, useChatPanes, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import type { Prefs } from '../../state/prefs';
-import {
-  isWorkspaceExpanded,
-  isThreadExpanded,
-  isBranchExpanded,
-  sortTrees,
-  sortLiveProjects,
-  mergeReferences,
-  workspaceHasUnread,
-  orderPinnedFirst,
-  type NodePinnedAt,
-} from '../../state/sidebarSelectors';
+import { isWorkspaceExpanded, isThreadExpanded, isBranchExpanded, sortTrees, sortLiveProjects, workspaceHasUnread, orderPinnedFirst, type NodePinnedAt } from '../../state/sidebarSelectors';
+import { isVisibleConversationNode } from '../../state/conversationVisibility';
 import WorkspaceRow from './WorkspaceRow';
 import ContextMenu from '../ContextMenu';
 import { buildTreeContextMenu } from '../../lib/treeContextMenu';
 import { buildTree, descendants, findTreeIdForNode, type TreeNode } from '../../state/tree';
 import { Row } from './primitives';
 import { Chevron } from './ThreadRow';
-import { rowGeom, spinePadding } from './sidebarRowStyle';
 import type { Project, ChatNodeState } from '../../state/chatTypes';
 
 const MERGED_PREVIEW_LIMIT = 5;
@@ -192,7 +182,7 @@ export default function WorkspaceTree({
   );
 
   const isAlive = useCallback(
-    (id: string) => !nodesSnapshot[id]?.deletedAt,
+    (id: string) => !nodesSnapshot[id]?.deletedAt && isVisibleConversationNode(nodesSnapshot[id]),
     [nodesSnapshot],
   );
   const nodePinnedAt = useCallback<NodePinnedAt>(
@@ -793,9 +783,14 @@ export default function WorkspaceTree({
     );
   };
 
-  const projectsToRender = unreadFilterOn
-    ? liveProjects.filter((p) => workspaceHasUnread(p, nodesSnapshot, focusedNodeId))
-    : liveProjects;
+  // Subscribed, so reading a thread (or "Read all") updates the filtered list
+  // and the caught-up state without waiting for an unrelated re-render.
+  const projectsToRender = useStructuralSelector(
+    (nodes) => (unreadFilterOn
+      ? liveProjects.filter((p) => workspaceHasUnread(p, nodes, focusedNodeId))
+      : liveProjects),
+    shallowArrayEqual,
+  );
 
   return (
     <div
@@ -914,33 +909,10 @@ export default function WorkspaceTree({
  *  Style matches ActivityView's time-label: uppercase, 11px, faint color,
  *  aligned to WorkspaceRow folder-icon left edge (6 + inset from sidebar). */
 function SectionLabel({ label }: { label: string }) {
-  const { prefs } = usePrefs();
-  const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   return (
     <div
       data-testid={`section-label-${label.toLowerCase()}`}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        // Card modes: the workspace row is itself a sentence-case group header,
-        // so this outer section stays UPPERCASE with wider caps tracking to
-        // keep the two tiers apart instead of reading as two labels of the
-        // same rank. Size stays on --fs-sm in both modes for legibility.
-        fontSize: 'var(--fs-sm)',
-        fontWeight: 600,
-        letterSpacing: geom.isCard ? 'var(--ls-caps)' : 'var(--ls-wide)',
-        textTransform: 'uppercase',
-        color: 'var(--term-muted)',
-        // Classic: match ActivityView's time-label exactly — same padding, same
-        // left offset (6px inside the container inset → aligns with the folder
-        // icon edge), same 8px marginTop so "Projects" and "Today" sit at the
-        // same vertical position when the user toggles sidebarView.
-        padding: geom.isCard
-          ? `0 ${spinePadding(geom, geom.rightGap)} 5px ${spinePadding(geom, geom.titleX)}`
-          : 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
-        marginTop: geom.isCard ? 18 : 8,
-        fontFamily: 'var(--ui-font)',
-      }}
+      className="sidebar-section-label"
     >
       {label}
     </div>

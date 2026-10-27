@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 
 import { initDb, closeDb } from '../src/services/db';
@@ -62,7 +63,7 @@ describe('Cloud-mode IDOR: trash/purge routes reject non-owner', () => {
   let port: number;
   let baseUrl: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = freshTmpDir();
     process.env.MICHI_DATA_DIR = tmpDir;
     process.env.MICHI_CLOUD = '1';
@@ -85,7 +86,7 @@ describe('Cloud-mode IDOR: trash/purge routes reject non-owner', () => {
       next();
     });
     app.use('/api', setupPersistenceRoutes());
-    server = app.listen(0);
+    server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     port = (server.address() as AddressInfo).port;
     baseUrl = `http://127.0.0.1:${port}/api`;
   });

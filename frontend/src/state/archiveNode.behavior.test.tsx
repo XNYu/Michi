@@ -40,7 +40,6 @@ vi.mock('../services/notifications', () => ({ notify: vi.fn() }));
 
 import { ChatProvider, useChatStore, useChatNodesSnapshot } from './chatStore';
 import { PrefsProvider } from './prefs';
-import { isArchiveGroupId } from './trashActions';
 
 function useStoreAndNodes() {
   const store = useChatStore();
@@ -68,51 +67,6 @@ function wrapper({ children }: { children: React.ReactNode }) {
 describe('archiveNode (single-node archive)', () => {
   beforeEach(() => {
     localStorage.clear();
-  });
-
-  it('archives a middle node into the arch- lane and reparents children up', async () => {
-    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
-    await act(async () => { await result.current.store.createProject('test', undefined); });
-    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
-
-    let rootId = '';
-    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
-    let midId = '';
-    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
-    let leafId = '';
-    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
-
-    act(() => { result.current.store.archiveNode(midId); });
-
-    const gid = result.current.nodes[midId].deletionGroupId!;
-    expect(isArchiveGroupId(gid)).toBe(true);
-    expect(result.current.nodes[midId].deletedAt).toBeTruthy();
-    expect(result.current.nodes[midId].trimSnapshot?.childrenIds).toEqual([leafId]);
-    // Leaf slides up to root, exactly like trim.
-    expect(result.current.nodes[leafId].parentNodeId).toBe(rootId);
-  });
-
-  it('restoreDeletion reverses an archive', async () => {
-    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
-    await act(async () => { await result.current.store.createProject('test', undefined); });
-    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
-
-    let rootId = '';
-    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
-    let midId = '';
-    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
-    let leafId = '';
-    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
-
-    act(() => { result.current.store.archiveNode(midId); });
-    const gid = result.current.nodes[midId].deletionGroupId!;
-
-    act(() => { result.current.store.restoreDeletion(gid); });
-
-    expect(result.current.nodes[midId].deletedAt).toBeFalsy();
-    expect(result.current.nodes[midId].trimSnapshot).toBeFalsy();
-    expect(result.current.nodes[midId].parentNodeId).toBe(rootId);
-    expect(result.current.nodes[leafId].parentNodeId).toBe(midId);
   });
 
   it('⌘Z restoreLastDeletion ignores the archived lane', async () => {

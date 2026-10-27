@@ -6,8 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import type { AgentSession } from '../src/agents/types';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import type { AgentSession, RuntimePermissionBroker } from '../src/agents/types';
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { runOwner } from './helpers/owners';
 
 // Explicit opt-in only: real authenticated CLI, provider credits, isolated DB.
 const enabled = (process.env.MICHI_KIRO_SMOKE ?? '').split(',');
@@ -32,7 +33,8 @@ for (const engine of ['v2', 'v3'] as const) {
             hasGrant: repo.hasGrant, grantPermission: repo.grantPermission }, dataDir: directory,
             providerKeys: { getProviderApiKey: () => null },
             agentConfig: { getAgentConfig: config.getAgentConfig, resolveModel: config.resolveModel, resolveReasoning: config.resolveReasoning } });
-        const registry = new McpSlotRegistry();
+        // Read once the server below listens: the port the runtime gets.
+        const registry = new McpSlotRegistry({ mcpPort: () => (server.address() as AddressInfo).port });
         const app = express(); app.use(express.json());
         const mcpRequests: unknown[] = [];
         app.use((req, _res, next) => { mcpRequests.push({ method: req.method, url: req.path, rpc: req.body?.method }); next(); });
@@ -59,7 +61,8 @@ for (const engine of ['v2', 'v3'] as const) {
             records.push(record);
             getDb().prepare('INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES (?,?,\'user\',?,?,1)').run(userId, session.id, prompt, ++sequence);
             for await (const event of session.send(prompt, { assistantMessageId: assistantId, userMessageId: userId })) {
-                kinds.push(event.kind);
+                // Michi's product events are host events; record them by type.
+                kinds.push(event.kind === 'host_event' ? event.type : event.kind);
                 if (['mcp_server_error', 'permission_request', 'tool_call', 'tool_call_update'].includes(event.kind)) details.push(event);
                 if (event.kind === 'chunk') { text += event.text; record.text = text; }
                 if (['tool_call', 'permission_request', 'user_input_request'].includes(event.kind)) console.info(`${engine} ${event.kind}: ${JSON.stringify(event).slice(0,1000)}`);
@@ -83,9 +86,11 @@ for (const engine of ['v2', 'v3'] as const) {
             for (const [id, parent] of [[parentId, null], [childId, parentId]]) {
                 getDb().prepare("INSERT INTO nodes (id,workspace_id,parent_node_id,kind,status,created_at) VALUES (?,'kiro-smoke',?,'chat','idle',1)").run(id, parent);
             }
-            runtime = new (require('../src/agents/kiro/KiroRuntime').KiroRuntime)(
-                { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
-                registry, (server.address() as AddressInfo).port, directory, undefined, { engine });
+            const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
+            const { kiroEnvOptions } = require('../src/agents/michiKiroOptions') as typeof import('../src/agents/michiKiroOptions');
+            runtime = new (require('michi-runtime/internal/adapters/kiro/KiroRuntime').KiroRuntime)({
+                bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+                mcpSlots: registry, defaultCwd: directory, ...kiroEnvOptions(), host: michiTestHost(), engine });
             const parent = await runtime!.newSession({ ...options, sessionId: parentId }); bind(parent);
             console.info(`${engine} native mode ${parent.currentModeId}`);
             assert.equal(parent.currentModelId, options.model);
@@ -147,6 +152,85 @@ for (const engine of ['v2', 'v3'] as const) {
             server.closeAllConnections();
             await new Promise<void>((resolve) => server.close(() => resolve()));
             clearAllSessions(); __resetRuntimeDeps(); closeDb(); process.env = previous;
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    });
+}
+
+// An Agent Run under the production (build preset) policy: kiro-cli's shell
+// request reaches the Run broker by its canonical name and is decided as
+// that category, on v2 (named by its tool_call update) as on v3 (by its
+// tool id). Prints the order the call's updates and request arrived in.
+for (const engine of ['v2', 'v3'] as const) {
+    test(`real Kiro ${engine}: an Agent Run's shell request is decided by its tool name`, {
+        skip: !enabled.includes(engine), timeout: 300_000,
+    }, async (t) => {
+        const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `michi-kiro-run-${engine}-`)));
+        const previous = { ...process.env };
+        Object.assign(process.env, { MICHI_DATA_DIR: directory, MICHI_TITLE_MODEL_KIRO: 'off' });
+        delete process.env.MICHI_CLOUD;
+        const { closeDb, initDb } = require('../src/services/db') as typeof import('../src/services/db');
+        const { AcpClient } = require('michi-runtime/internal/adapters/kiro/acpClient') as typeof import('michi-runtime/internal/adapters/kiro/acpClient');
+        const { RuntimeRunExecutor } = require('../src/agents/runs/runtimeRunExecutor') as typeof import('../src/agents/runs/runtimeRunExecutor');
+        const { intersectPermissionPolicies } = require('../src/agents/runs/effectivePermissionPolicy') as typeof import('../src/agents/runs/effectivePermissionPolicy');
+        const { DEFAULT_PLATFORM_POLICY } = require('../src/agents/agentRunAssembly') as typeof import('../src/agents/agentRunAssembly');
+        const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
+        const { kiroEnvOptions } = require('../src/agents/michiKiroOptions') as typeof import('../src/agents/michiKiroOptions');
+        closeDb(); initDb();
+        // Wire arrival order of requests and tool_call updates, by toolCallId.
+        const arrivals: Array<{ kind: string; toolCallId?: string }> = [];
+        const proto = AcpClient.prototype as unknown as { dispatch(message: any): void };
+        const dispatch = proto.dispatch;
+        proto.dispatch = function (this: unknown, message: any) {
+            const update = message?.method === 'session/update' ? message.params?.update : undefined;
+            if (message?.method === 'session/request_permission') arrivals.push({ kind: 'request_permission', toolCallId: message.params?.toolCall?.toolCallId });
+            else if (update?.toolCallId && ['tool_call', 'tool_call_update'].includes(update.sessionUpdate)) {
+                arrivals.push({ kind: `${update.sessionUpdate}${update._meta?.kiro?.toolName ? `[${update._meta.kiro.toolName}]` : ''}`, toolCallId: update.toolCallId });
+            }
+            return dispatch.call(this, message);
+        };
+        // The broker production Runs use, under the platform policy intersected with itself.
+        const policy = intersectPermissionPolicies({ platform: DEFAULT_PLATFORM_POLICY, workspace: DEFAULT_PLATFORM_POLICY });
+        const executor = new RuntimeRunExecutor() as unknown as {
+            createPermissionBroker(input: { spec: unknown }): RuntimePermissionBroker;
+        };
+        const production = executor.createPermissionBroker({ spec: { effectiveDefinition: { permissionPolicy: policy } } });
+        const decided: Array<{ toolName: string; toolCallId?: string; decision: string }> = [];
+        const broker: RuntimePermissionBroker = { async requestPermission(request) {
+            const decision = await production.requestPermission(request);
+            decided.push({ toolName: request.toolName, toolCallId: request.toolCallId, decision });
+            return decision;
+        } };
+        const marker = `MICHI_RUN_SHELL_PROBE_${Date.now()}`;
+        let runtime: KiroRuntime | undefined;
+        try {
+            runtime = new (require('michi-runtime/internal/adapters/kiro/KiroRuntime').KiroRuntime)({
+                bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+                defaultCwd: directory, ...kiroEnvOptions(), host: michiTestHost(), engine });
+            const attemptId = randomUUID();
+            const owner = runOwner(randomUUID(), attemptId);
+            const session = await runtime!.newSession({ sessionId: attemptId, owner, cwd: directory, enableFollowUps: false,
+                permissionBroker: broker, model: process.env.MICHI_KIRO_SMOKE_MODEL ?? 'claude-opus-4.7',
+                reasoning: process.env.MICHI_KIRO_SMOKE_REASONING === 'off' ? undefined : 'low' });
+            const outputs: string[] = [];
+            for await (const event of session.send(`Use your shell tool to run exactly \`echo ${marker}\`, then reply with the line it printed. Do not use any other tool.`)) {
+                if ((event.kind === 'tool_call' || event.kind === 'tool_call_update') && event.output) outputs.push(event.output);
+                if (event.kind === 'permission_request') session.cancelPermission?.(event.requestId);
+                if (event.kind === 'runtime_error') throw new Error(event.error);
+            }
+            for (const entry of decided) {
+                const order = arrivals.filter((arrival) => arrival.toolCallId === entry.toolCallId).map((arrival) => arrival.kind);
+                console.info(`${engine} run broker: ${entry.toolName} -> ${entry.decision}; arrival order: ${order.join(' -> ')}`);
+            }
+            const shell = decided.find((entry) => entry.toolName === 'bash');
+            assert.ok(shell, `the shell request reached the broker as bash: ${JSON.stringify(decided)}`);
+            assert.equal(shell.decision, 'allow_once', 'the build preset allows ShellExec');
+            assert.ok(outputs.some((output) => output.includes(marker)), 'the allowed command ran');
+            t.diagnostic(`${engine}: broker saw ${decided.map((entry) => `${entry.toolName}=${entry.decision}`).join(', ')}`);
+        } finally {
+            proto.dispatch = dispatch;
+            await runtime?.shutdown();
+            closeDb(); process.env = previous;
             fs.rmSync(directory, { recursive: true, force: true });
         }
     });

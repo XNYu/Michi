@@ -1,3 +1,4 @@
+import { backendFetch } from './backendRequest';
 /**
  * Pane Inspection API — frontend transport client (design §7; brief P1-10).
  *
@@ -152,7 +153,7 @@ export async function inspectPane(
 
   let response: Response;
   try {
-    response = await fetch(`${apiBase}/panes/inspect?${params.toString()}`, { signal });
+    response = await backendFetch(`${apiBase}/panes/inspect?${params.toString()}`, { signal });
   } catch (err) {
     if (signal?.aborted) throw new PaneInspectionClientError('INTERNAL', 'inspectPane aborted');
     throw new PaneInspectionClientError('INTERNAL', `inspectPane network error: ${(err as Error).message}`);
@@ -223,7 +224,7 @@ export async function readPaneOutput(
 
   let response: Response;
   try {
-    response = await fetch(`${apiBase}/panes/output?${params.toString()}`, { signal });
+    response = await backendFetch(`${apiBase}/panes/output?${params.toString()}`, { signal });
   } catch (err) {
     if (signal?.aborted) throw new PaneInspectionClientError('INTERNAL', 'readPaneOutput aborted');
     throw new PaneInspectionClientError('INTERNAL', `readPaneOutput network error: ${(err as Error).message}`);

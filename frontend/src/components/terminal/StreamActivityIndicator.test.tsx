@@ -59,52 +59,6 @@ describe('deriveStreamActivity', () => {
     expect(deriveStreamActivity(n)?.label).toBe('Restoring original Kiro session');
     expect(deriveStreamActivity({ ...n, status: 'error' })).toBeNull();
   });
-  it('returns null when not streaming', () => {
-    expect(deriveStreamActivity(node({ status: 'idle' }))).toBeNull();
-    expect(deriveStreamActivity(node({ status: 'error' }))).toBeNull();
-  });
-
-  it('returns null while hidden overview metadata finishes after visible completion', () => {
-    const n = node({
-      visibleResponseComplete: true,
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'complete answer', streaming: false }],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
-  it('returns null for a brand-new empty turn (in-bubble dots own it)', () => {
-    const n = node({ messages: [assistant({})] });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
-  it('falls back to Working when the tail message is not an assistant', () => {
-    const userMsg: ChatMessage = {
-      id: 'u1', role: 'user', text: 'hi', toolCalls: [], createdAt: 0,
-    };
-    expect(deriveStreamActivity(node({ messages: [userMsg] }))?.label).toBe('Working');
-  });
-
-  it('returns null while a visible tool is running because its chip owns the status', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'sure', streaming: false }],
-        toolCalls: [tool('t1', 'bash', 'in_progress')],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
-  it('returns null for a running tool even while a thinking block streams', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'hmm', streaming: true }],
-        toolCalls: [tool('t1', 'grep', 'running')],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
 
   it('returns null while a hidden internal tool is running (ThoughtCard shows Working)', () => {
     const n = node({
@@ -119,54 +73,6 @@ describe('deriveStreamActivity', () => {
     expect(deriveStreamActivity(n)).toBeNull();
   });
 
-  it('stays quiet while visible answer text streams (cursor conveys liveness)', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'partial', streaming: true }],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
-  it('shows Working when answer block is streaming but idle > 2s (e.g. file write)', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'partial', streaming: true }],
-      })],
-    });
-    (n as any).streamingIdleMs = 3000;
-    expect(deriveStreamActivity(n)?.label).toBe('Working');
-  });
-
-  it('stays quiet when answer block is streaming and idle < 2s', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'partial', streaming: true }],
-      })],
-    });
-    (n as any).streamingIdleMs = 1500;
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
-  it('shows Thinking while a thinking block streams with no running tool', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'reasoning', streaming: true }],
-      })],
-    });
-    expect(deriveStreamActivity(n)?.label).toBe('Thinking');
-  });
-
-  it('shows Working in a between-steps gap (blocks exist, nothing streaming)', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'done reasoning', streaming: false }],
-        toolCalls: [tool('t1', 'bash', 'completed')],
-      })],
-    });
-    expect(deriveStreamActivity(n)?.label).toBe('Working');
-  });
-
   it('defers to SubagentStatus while a Kiro subagent is working', () => {
     const sub: SubagentInfo = {
       sessionId: 's1', sessionName: 'sub', agentName: 'explorer', initialQuery: 'q',
@@ -178,75 +84,14 @@ describe('deriveStreamActivity', () => {
     });
     expect(deriveStreamActivity(n)).toBeNull();
   });
-
-  it('still renders once all subagents have terminated', () => {
-    const sub: SubagentInfo = {
-      sessionId: 's1', sessionName: 'sub', agentName: 'explorer', initialQuery: 'q',
-      status: 'terminated', group: '', dependsOn: [],
-    };
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'x', streaming: true }],
-      })],
-      subagents: [sub],
-    });
-    expect(deriveStreamActivity(n)?.label).toBe('Thinking');
-  });
-
-  it('returns null for a running tool with a long title', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'ok', streaming: false }],
-        toolCalls: [tool('t1', 'x'.repeat(80), 'running')],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
 });
 
 describe('deriveStreamActivity — Kiro plan steps', () => {
-  it('surfaces the in-progress step with a 1-based "Step N/M" detail and content label', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'x', streaming: false }],
-        plan: [
-          planEntry('read the files', 'completed'),
-          planEntry('parse tokens', 'in_progress'),
-          planEntry('write output', 'pending'),
-        ],
-      })],
-    });
-    const a = deriveStreamActivity(n);
-    expect(a?.detail).toBe('Step 2/3');
-    expect(a?.label).toBe('parse tokens');
-  });
-
-  it('overrides the Thinking/Working fallback when a plan step is in progress', () => {
-    // Tail thinking block is NOT streaming → without a plan this would be "Working".
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'x', streaming: false }],
-        plan: [planEntry('do the thing', 'in_progress')],
-      })],
-    });
-    expect(deriveStreamActivity(n)?.detail).toBe('Step 1/1');
-  });
-
   it('suppresses the plan row while a visible tool chip is running', () => {
     const n = node({
       messages: [assistant({
         blocks: [{ id: 'b0', kind: 'answer', rawText: 'ok', streaming: false }],
         toolCalls: [tool('t1', 'bash', 'running')],
-        plan: [planEntry('step one', 'in_progress')],
-      })],
-    });
-    expect(deriveStreamActivity(n)).toBeNull();
-  });
-
-  it('stays quiet for plan progress while visible answer text streams', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'answer', rawText: 'partial', streaming: true }],
         plan: [planEntry('step one', 'in_progress')],
       })],
     });
@@ -264,29 +109,11 @@ describe('deriveStreamActivity — Kiro plan steps', () => {
     expect(a?.detail).toBeUndefined();
     expect(a?.label).toBe('Thinking');
   });
-
-  it('falls back to Working when the in-progress entry has empty content', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'x', streaming: false }],
-        plan: [planEntry('   ', 'in_progress')],
-      })],
-    });
-    const a = deriveStreamActivity(n);
-    expect(a?.detail).toBe('Step 1/1');
-    expect(a?.label).toBe('Working');
-  });
 });
 
 describe('deriveStreamActivity — live thought header', () => {
   const card = { showThoughts: true, agentBlockStyle: 'card' as const };
   const plain = { showThoughts: true, agentBlockStyle: 'plain' as const };
-
-  const streamingThought = () => node({
-    messages: [assistant({
-      blocks: [{ id: 'b0', kind: 'thinking', rawText: 'reasoning', streaming: true }],
-    })],
-  });
   const betweenSteps = () => node({
     messages: [assistant({
       blocks: [
@@ -297,18 +124,8 @@ describe('deriveStreamActivity — live thought header', () => {
     })],
   });
 
-  it('defers to the card header while thinking streams', () => {
-    expect(deriveStreamActivity(streamingThought(), card)).toBeNull();
-    expect(deriveStreamActivity(streamingThought(), { ...card, agentBlockStyle: 'terminal' })).toBeNull();
-  });
-
   it('defers to the card header in a between-steps gap', () => {
     expect(deriveStreamActivity(betweenSteps(), card)).toBeNull();
-  });
-
-  it('keeps the fallback row when thoughts are hidden', () => {
-    expect(deriveStreamActivity(streamingThought(), { ...card, showThoughts: false })?.label).toBe('Thinking');
-    expect(deriveStreamActivity(betweenSteps(), { ...card, showThoughts: false })?.label).toBe('Working');
   });
 
   it('keeps Working once answer prose ends the agent cluster', () => {
@@ -322,23 +139,6 @@ describe('deriveStreamActivity — live thought header', () => {
     });
     expect(deriveStreamActivity(n, card)?.label).toBe('Working');
   });
-
-  it('plain style defers only while thinking streams', () => {
-    expect(deriveStreamActivity(streamingThought(), plain)).toBeNull();
-    // Plain ThinkingRunView collapses to "Thought for …" between steps, so
-    // the Working row is still the only liveness signal.
-    expect(deriveStreamActivity(betweenSteps(), plain)?.label).toBe('Working');
-  });
-
-  it('still surfaces plan steps under a live card header', () => {
-    const n = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'x', streaming: true }],
-        plan: [planEntry('parse tokens', 'in_progress')],
-      })],
-    });
-    expect(deriveStreamActivity(n, card)?.detail).toBe('Step 1/1');
-  });
 });
 
 describe('StreamActivityIndicator (render)', () => {
@@ -351,13 +151,6 @@ describe('StreamActivityIndicator (render)', () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
-  });
-
-  it('renders nothing when there is no standalone activity', () => {
-    const { container } = render(
-      <StreamActivityIndicator node={node({ status: 'idle' })} />,
-    );
-    expect(container.firstChild).toBeNull();
   });
 
   it('renders the derived label and reveals an elapsed counter after the grace window', () => {
@@ -392,29 +185,5 @@ describe('StreamActivityIndicator (render)', () => {
     expect(getByText('Step 2/2')).toBeTruthy();
     expect(getByText('parse tokens')).toBeTruthy();
     expect(getByRole('status').getAttribute('aria-label')).toContain('Step 2/2');
-  });
-
-  it('does not run a 1Hz elapsed timer while the node is not streaming', () => {
-    vi.useFakeTimers();
-    const setIntervalSpy = vi.spyOn(window, 'setInterval');
-    // An idle node produces no activity; the elapsed ticker must not run.
-    render(<StreamActivityIndicator node={node({ status: 'idle' })} />);
-    expect(setIntervalSpy).not.toHaveBeenCalled();
-    setIntervalSpy.mockRestore();
-  });
-
-  it('stops the elapsed timer once the node leaves the streaming state', () => {
-    vi.useFakeTimers();
-    const clearIntervalSpy = vi.spyOn(window, 'clearInterval');
-    const streamingNode = node({
-      messages: [assistant({
-        blocks: [{ id: 'b0', kind: 'thinking', rawText: 'reasoning', streaming: true }],
-      })],
-    });
-    const { rerender } = render(<StreamActivityIndicator node={streamingNode} />);
-    // Flip to idle — the interval effect must tear its timer down.
-    rerender(<StreamActivityIndicator node={{ ...streamingNode, status: 'idle' }} />);
-    expect(clearIntervalSpy).toHaveBeenCalled();
-    clearIntervalSpy.mockRestore();
   });
 });

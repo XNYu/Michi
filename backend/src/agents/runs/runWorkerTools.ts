@@ -9,21 +9,15 @@ import {
   type ResultBundleV1,
   type RunUsageSummaryV1,
 } from 'michi-shared';
-import type { RuntimeSessionOwner, RuntimeToolProfile } from '../types';
+import type { RuntimeSessionOwner } from '../types';
+import { isRunOwner, sameHostOwner } from '../ownerMapping';
+import { SUBMIT_AGENT_RESULT_TOOL, type RunWorkerToolProfile } from 'michi-runtime/internal/contract/tools';
 
-export const SUBMIT_AGENT_RESULT_TOOL = 'submit_agent_result';
-
-export interface RunWorkerToolProfile extends RuntimeToolProfile {
-  /** In-process hook consumed by fake transports and future native tool bridges. */
-  runWorkerTools: {
-    submitAgentResult(owner: RuntimeSessionOwner, payload: unknown): ResultBundleV1;
-  };
-}
-
-function sameOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boolean {
-  return left.kind === 'agent_run' && right.kind === 'agent_run'
-    && left.runId === right.runId && left.attemptId === right.attemptId;
-}
+// The result tool's name and profile shape live in michi-runtime
+// (runtime/src/contract/tools.ts); re-exported so existing imports keep
+// working. The collector stays here: it builds Michi's Result Bundles.
+export { SUBMIT_AGENT_RESULT_TOOL } from 'michi-runtime/internal/contract/tools';
+export type { RunWorkerToolProfile } from 'michi-runtime/internal/contract/tools';
 
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -51,7 +45,7 @@ export class RunResultCollector {
   private usage: RunUsageSummaryV1 | undefined;
 
   constructor(readonly owner: RuntimeSessionOwner) {
-    if (owner.kind !== 'agent_run') throw new Error('submit_agent_result is available only to Agent Run sessions');
+    if (!isRunOwner(owner)) throw new Error('submit_agent_result is available only to Agent Run sessions');
   }
 
   createToolProfile(allowedToolNames: readonly string[], capabilitySnapshot?: JsonValue): RunWorkerToolProfile {
@@ -63,7 +57,7 @@ export class RunResultCollector {
   }
 
   submit(owner: RuntimeSessionOwner, payload: unknown): ResultBundleV1 {
-    if (!sameOwner(this.owner, owner)) throw new Error('submit_agent_result owner does not match the active Run Attempt');
+    if (!sameHostOwner(this.owner, owner)) throw new Error('submit_agent_result owner does not match the active Run Attempt');
     assertSecretFreePublicPayload(payload, 'submit_agent_result');
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new Error('submit_agent_result payload must be a Result Bundle object');
@@ -116,5 +110,5 @@ export function createRunResultCollector(owner: RuntimeSessionOwner): RunResultC
 }
 
 export function discoverRunWorkerTools(owner: RuntimeSessionOwner): readonly string[] {
-  return owner.kind === 'agent_run' ? [SUBMIT_AGENT_RESULT_TOOL] : [];
+  return isRunOwner(owner) ? [SUBMIT_AGENT_RESULT_TOOL] : [];
 }

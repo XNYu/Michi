@@ -1,11 +1,14 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AcpClient } from '../src/services/acpClient';
-import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { KiroCancelRecoveryBusyError } from 'michi-runtime/internal/adapters/kiro/acpErrors';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import * as sessions from '../src/agents/sessionRegistry';
+import { michiTestHost } from './helpers/michiTestHost';
+import { chatOwner } from './helpers/owners';
 
 const realLoadSession = AcpClient.prototype.loadSession;
 
@@ -114,9 +117,9 @@ test('cancelling a queued prompt does not wait for or cancel its predecessor', a
 
 function runtimeFixture(t: TestContext) {
   const { client: old } = fixture();
-  const runtime = new KiroRuntime({} as AgentToolBridge, undefined, 0, '/tmp') as any;
+  const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, defaultCwd: '/tmp', host: michiTestHost() }) as any;
   const binding = { publicSessionId: 'watchdog-node', nativeSessionId: 'watchdog-sid',
-    owner: { kind: 'chat_node' as const, nodeId: 'watchdog-node' }, cwd: '/tmp', workspaceId: 'w1',
+    owner: chatOwner('watchdog-node'), cwd: '/tmp', workspaceId: 'w1',
     ownerUserId: 'owner1', runtimeProfileHash: 'profile1', modelId: 'model1' };
   runtime.pool.set('/tmp', old);
   runtime.sessionCwd.set(binding.nativeSessionId, '/tmp');
@@ -162,10 +165,100 @@ test('watchdog recovery stops old process before one native load and restores ow
 test('watchdog recovery refuses to kill a healthy peer prompt and retains its binding', async (t) => {
   const { runtime, old, binding, calls } = runtimeFixture(t);
   old.sessionInFlight.set('healthy-peer', new Promise(() => {}));
-  await assert.rejects(runtime.recoverCancelledSession(binding.nativeSessionId, '/tmp'), /other.*task|another.*task/i);
+  await assert.rejects(runtime.recoverCancelledSession(binding.nativeSessionId, '/tmp'), (error: unknown) => {
+    assert.ok(error instanceof KiroCancelRecoveryBusyError);
+    assert.match(error.message, /another.*task/i);
+    return true;
+  });
   assert.deepEqual(calls, []);
   assert.equal(runtime.getBinding(binding.publicSessionId), binding);
   assert.equal(old.isAlive(), true);
+});
+
+test('a peer that starts before the reserved restart is reported as busy, not as a changed process', async (t) => {
+  const { runtime, old, binding, calls } = runtimeFixture(t);
+  const recovery = runtime.recoverCancelledSession(binding.nativeSessionId, '/tmp');
+  old.sessionInFlight.set('late-peer', new Promise(() => {}));
+  await assert.rejects(recovery, (error: unknown) => error instanceof KiroCancelRecoveryBusyError);
+  assert.deepEqual(calls, []);
+  assert.equal(old.isAlive(), true);
+});
+
+test('a session blocked by a busy peer keeps waiting, then restores and sends once the peer finishes', async (t) => {
+  const { session, old, binding, calls } = runtimeFixture(t);
+  (session as any).cancelRecoveryPollMs = 5;
+  old.sessionInFlight.set('healthy-peer', new Promise(() => {}));
+  const prompts: string[] = [];
+  t.mock.method(AcpClient.prototype, 'prompt', async function*(sid: string) {
+    prompts.push(sid);
+    yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
+  });
+  const stream = session.send('continue after the peer');
+  assert.deepEqual((await stream.next()).value, { kind: 'retry_start', detail: 'Restoring original Kiro session' });
+  const waiting = (await stream.next()).value;
+  assert.equal(waiting?.kind, 'retry_start');
+  assert.match(waiting?.detail ?? '', /waiting for another task/i);
+  await delay(40);
+  assert.deepEqual(calls, [], 'a busy peer must never be stopped');
+  assert.equal(old.isAlive(), true);
+  old.sessionInFlight.delete('healthy-peer');
+  const rest: any[] = [];
+  for await (const ev of stream) rest.push(ev);
+  assert.deepEqual(rest, [
+    { kind: 'retry_start', detail: 'Restoring original Kiro session' },
+    { kind: 'retry_end' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]);
+  assert.deepEqual(calls, [{ method: 'stop-old' }, { method: 'initialize' }, { method: 'load', sid: binding.nativeSessionId }]);
+  assert.deepEqual(prompts, [binding.nativeSessionId]);
+});
+
+test('waiting for a busy peer emits heartbeats so the stream is not treated as stalled', async (t) => {
+  const { session, old } = runtimeFixture(t);
+  (session as any).cancelRecoveryPollMs = 5;
+  (session as any).cancelRecoveryHeartbeatMs = 20;
+  old.sessionInFlight.set('healthy-peer', new Promise(() => {}));
+  const stream = session.send('wait with heartbeats');
+  await stream.next();
+  await stream.next();
+  const beat = (await stream.next()).value;
+  assert.equal(beat?.kind, 'heartbeat');
+  assert.ok(beat.idleMs >= 20);
+  await session.cancel();
+  for await (const _ of stream) { /* drain */ }
+});
+
+test('stopping while recovery waits for a busy peer ends the turn without stopping the shared process', async (t) => {
+  const { runtime, session, old, binding, calls } = runtimeFixture(t);
+  (session as any).cancelRecoveryPollMs = 5;
+  old.sessionInFlight.set('healthy-peer', new Promise(() => {}));
+  let prompts = 0;
+  t.mock.method(AcpClient.prototype, 'prompt', async function*() { prompts++; });
+  const stream = session.send('stop while waiting');
+  await stream.next();
+  assert.match((await stream.next()).value?.detail ?? '', /waiting for another task/i);
+  await session.cancel();
+  const rest: any[] = [];
+  for await (const ev of stream) rest.push(ev);
+  assert.deepEqual(rest, [{ kind: 'retry_end' }, { kind: 'turn_end', stopReason: 'cancelled' }]);
+  assert.deepEqual(calls, []);
+  assert.equal(prompts, 0);
+  assert.equal(old.isAlive(), true);
+  assert.equal(old.needsSessionRecovery(binding.nativeSessionId), true);
+  assert.equal(runtime.getBinding(binding.publicSessionId), binding);
+});
+
+test('a recovery failure other than a busy peer is surfaced once, not retried', async (t) => {
+  const { session, calls } = runtimeFixture(t);
+  (session as any).cancelRecoveryPollMs = 5;
+  t.mock.method(AcpClient.prototype, 'loadSession', async () => {
+    calls.push({ method: 'load' });
+    throw new Error('authentication unavailable');
+  });
+  const stream = session.send('restore fails');
+  await stream.next();
+  await assert.rejects(stream.next(), /original.*retained/i);
+  assert.equal(calls.filter((c) => c.method === 'load').length, 1);
 });
 
 test('failed recovery loads no replacement session and never registers a half-restored session', async (t) => {

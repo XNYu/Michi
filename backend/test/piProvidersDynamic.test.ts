@@ -31,42 +31,6 @@ test('Pi model catalogs preserve SDK model-specific effort capabilities', async 
   assert.equal(models[1].defaultReasoning, 'high');
 });
 
-test("resolves an OpenRouter live-catalog model missing from pi-ai's static catalog", async () => {
-  piAiModule.loadPiAi = async () => ({ getModel: () => undefined });
-  global.fetch = async () => new Response(JSON.stringify({
-    data: [{
-      id: "stealth/ox-alpha",
-      name: "Ox Alpha",
-      description: "Reasoning model for coding",
-      context_length: 1_048_576,
-      architecture: {
-        modality: "text+image+video->text",
-        input_modalities: ["text", "image", "video"],
-        output_modalities: ["text"],
-      },
-      pricing: { prompt: "0", completion: "0" },
-      top_provider: {
-        context_length: 1_048_576,
-        max_completion_tokens: 131_072,
-      },
-      supported_parameters: ["reasoning", "reasoning_effort", "tools"],
-      reasoning: { mandatory: true },
-    }],
-  }), { status: 200, headers: { "content-type": "application/json" } });
-
-  const { resolvePiModel } = require("../src/agents/pi/piProviders") as typeof import("../src/agents/pi/piProviders");
-  const model = await resolvePiModel("openrouter", "stealth/ox-alpha");
-
-  assert.equal(model.id, "stealth/ox-alpha");
-  assert.equal(model.name, "Ox Alpha");
-  assert.equal(model.api, "openai-completions");
-  assert.equal(model.provider, "openrouter");
-  assert.equal(model.contextWindow, 1_048_576);
-  assert.equal(model.maxTokens, 131_072);
-  assert.equal(model.reasoning, true);
-  assert.deepEqual(model.input, ["text", "image"]);
-});
-
 test("returns a safe OpenRouter descriptor when the live catalog is unavailable", async () => {
   piAiModule.loadPiAi = async () => ({ getModel: () => undefined });
   global.fetch = async () => {

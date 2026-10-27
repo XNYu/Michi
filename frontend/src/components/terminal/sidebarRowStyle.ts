@@ -14,6 +14,17 @@
  * see sidebarRowStyle.test.ts for the spine assertions.
  */
 
+/** Card-mode row fills. Deliberately NOT the solid `--term-alt` /
+ *  `--term-select-f` tokens: the sidebar is translucent (CSS glass, or the
+ *  native macOS vibrancy material under Electron), and painting a light colour
+ *  on top of it is ADDITIVE — the row ends up more opaque than its neighbours
+ *  and visibly loses the frost. These resolve to low-alpha foreground overlays
+ *  that tint what shows through instead; see the `--sb-card-*` block in
+ *  index.css, which also dials them down under native vibrancy.
+ *  Shared so every sidebar row (threads, branches, Michi's rows) paints alike. */
+export const CARD_FILL = 'var(--sb-card-fill)';
+export const CARD_FILL_SELECT = 'var(--sb-card-fill-select)';
+
 export type SidebarRowStyle =
   | 'classic'
   | 'rounded-inset'

@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { ToolCallState, SubagentInfo } from '../../state/chatTypes';
+import { backendNow } from '../../services/backendClock';
 import {
   toolBucketKey,
-  prettifyToolTitle,
+  toolDisplayTitle,
   isFailedStatus,
   isRunningStatus,
   isTerminalStatus,
@@ -12,15 +13,22 @@ import {
   toolSpanMs,
   formatDurationMs,
   formatToolPayload,
-  subagentToolInfo,
+  delegationToolInfo,
   subagentHeading,
   subagentStatusLabel,
+  subagentToolInfo,
   summarizeToolsBase,
   failedToolCount,
-  findOwningSubagent,
   type SubagentToolInfo,
   type BucketKey,
 } from './toolCallGrouping';
+import { SubagentRow, SubagentSummaryLine } from './subagents/SubagentRoster';
+import {
+  delegationHeading,
+  delegationName,
+  delegationStatus,
+  subagentsForTool,
+} from './subagents/subagentPresentation';
 
 /**
  * Alternate chromes for the agent blocks (tool groups + subagents), from the
@@ -29,8 +37,9 @@ import {
  *   'card'     (1b) — every block is a hairline square-corner card on
  *                     --term-surface: type icons on the left, a status column
  *                     (✓ / spinner / FAILED) on the right, hairline row
- *                     separators. Subagents are nested cards with an alt
- *                     header strip.
+ *                     separators. Subagents are one-line cards (a crew
+ *                     adds an alt header strip); a line opens the
+ *                     Background work drawer on that agent.
  *   'terminal' (1d) — bare text, but ordered: ❯ / ✓ / × glyphs in a fixed
  *                     14px column, tracking-caps section headers with leader
  *                     rules, right-aligned mono durations. Only payloads and
@@ -49,6 +58,37 @@ const SCROLL_MAX_HEIGHT = 400;
 
 export function CardSpinner() {
   return <span aria-hidden className="agent-spinner" />;
+}
+
+/**
+ * A collapsed group's label: its summary, then the failure fragment in the
+ * danger color. A lone failed SubAgent shows its heading and the fragment,
+ * so "failed" appears once. One given its conversation's word
+ * (`subagentStatus`, useDelegationStatusLabel) has a failed tool only when
+ * that word is "failed" (withConversationTone).
+ */
+export function CollapsedToolSummary({
+  tools,
+  failed,
+  subagentStatus,
+}: {
+  tools: ToolCallState[];
+  failed: number;
+  subagentStatus?: string;
+}) {
+  // A lone failed SubAgent says "failed" once, as the fragment, whether or
+  // not its word came from the conversation.
+  const lone = failed > 0 && tools.length === 1 ? subagentToolInfo(tools[0]) : null;
+  return (
+    <>
+      {lone ? subagentHeading(lone) : summarizeToolsBase(tools, subagentStatus)}
+      {failed > 0 && (
+        <span style={{ color: 'var(--term-danger)' }}>
+          {' '}· {tools.length === 1 ? 'failed' : `${failed} failed`}
+        </span>
+      )}
+    </>
+  );
 }
 
 function iconPaths(key: BucketKey | 'subagent'): React.ReactNode {
@@ -118,18 +158,35 @@ function CheckIcon({ color = 'var(--term-muted)' }: { color?: string }) {
   );
 }
 
-/** Live "8s" seconds counter for streaming headers (1b thinking card). */
-export function LiveTimerLabel({ active }: { active: boolean }) {
+/** Whole seconds for LiveTimerLabel: from the durable `startedAt` (backend
+ *  clock) when known, else from when the label first went active here. */
+function liveElapsedSeconds(startedAt: number | undefined, clockKey: string | undefined, mountedAt: number | null): number {
+  if (startedAt !== undefined) return Math.max(0, Math.floor((backendNow(clockKey) - startedAt) / 1000));
+  if (mountedAt === null) return 0;
+  return Math.max(0, Math.floor((Date.now() - mountedAt) / 1000));
+}
+
+/**
+ * Live "8s" seconds counter for streaming headers (1b thinking card).
+ * `startedAt` makes the count a function of durable data, so a remount
+ * (switching away and back), a reload or another window resumes the same
+ * count. Without it (legacy turns) the count starts when the label mounts.
+ */
+export function LiveTimerLabel({ active, startedAt, clockKey }: {
+  active: boolean;
+  startedAt?: number;
+  clockKey?: string;
+}) {
   const startRef = useRef<number | null>(null);
-  const [sec, setSec] = useState(0);
+  const [sec, setSec] = useState(() => liveElapsedSeconds(startedAt, clockKey, null));
   useEffect(() => {
     if (!active) return;
     if (startRef.current == null) startRef.current = Date.now();
     const id = setInterval(() => {
-      setSec(Math.floor((Date.now() - startRef.current!) / 1000));
+      setSec(liveElapsedSeconds(startedAt, clockKey, startRef.current));
     }, 1000);
     return () => clearInterval(id);
-  }, [active]);
+  }, [active, startedAt, clockKey]);
   if (!active || sec < 1) return null;
   return (
     <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
@@ -138,7 +195,7 @@ export function LiveTimerLabel({ active }: { active: boolean }) {
   );
 }
 
-/** Breathing 5px accent dot + status word — subagent header status. */
+/** Breathing 5px accent dot + status word — crew delegation header status. */
 function SubagentStatus({ status }: { status: string | undefined }) {
   const failed = isFailedStatus(status);
   const running = isRunningStatus(status);
@@ -157,9 +214,27 @@ function SubagentStatus({ status }: { status: string | undefined }) {
   );
 }
 
-function clampText(text: string | undefined, max: number): string | undefined {
-  if (!text) return undefined;
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+/** Heading and status for a delegation chip, preferring roster facts. */
+function delegationPresentation(t: ToolCallState, info: SubagentToolInfo, linked: readonly SubagentInfo[]) {
+  const crew = !info.agentType && linked.length > 1;
+  return {
+    single: linked.length === 1 ? linked[0] : undefined,
+    status: delegationStatus(t, linked),
+    /** Card title: the bare agent name (the sparkle marks it a subagent). */
+    name: crew ? delegationHeading(t, info, linked) : delegationName(info, linked),
+    heading: delegationHeading(t, info, linked),
+    /** Mission from the delegation input, for agents the roster lacks. */
+    fallback: info.description ?? info.prompt,
+  };
+}
+
+/** One summary line per agent a crew delegation spawned. */
+function CrewRows({ linked, style }: { linked: readonly SubagentInfo[]; style?: React.CSSProperties }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, ...style }}>
+      {linked.map((entry) => <SubagentRow key={entry.sessionId} subagent={entry} />)}
+    </div>
+  );
 }
 
 /** Failed rows auto-open their payload; a user toggle wins (same contract as
@@ -199,14 +274,16 @@ interface VariantGroupProps {
   expanded: boolean;
   onToggle: () => void;
   subagents?: readonly SubagentInfo[];
+  /** A lone delegation's status word for the collapsed label (useDelegationStatusLabel). */
+  subagentStatus?: string;
 }
 
-function partition(tools: ToolCallState[]) {
+function partition(tools: ToolCallState[], subagents?: readonly SubagentInfo[]) {
   const normal: ToolCallState[] = [];
-  const subs: Array<{ t: ToolCallState; info: SubagentToolInfo }> = [];
+  const subs: Array<{ t: ToolCallState; info: SubagentToolInfo; linked: SubagentInfo[] }> = [];
   for (const t of tools) {
-    const info = subagentToolInfo(t);
-    if (info) subs.push({ t, info });
+    const info = delegationToolInfo(t, subagents);
+    if (info) subs.push({ t, info, linked: subagentsForTool(t, subagents) });
     else normal.push(t);
   }
   return { normal, subs };
@@ -243,7 +320,7 @@ function FailedBadge({ label }: { label: string }) {
 function cardToolName(t: ToolCallState): string {
   const key = toolBucketKey(t);
   if (key !== 'unknown') return key.charAt(0).toUpperCase() + key.slice(1);
-  return prettifyToolTitle(t.title) || t.kind || '(unnamed)';
+  return toolDisplayTitle(t) || t.kind || '(unnamed)';
 }
 
 function CardPayload({ t }: { t: ToolCallState }) {
@@ -413,86 +490,50 @@ function CardToolRow({ t, standalone = false }: { t: ToolCallState; standalone?:
 function CardSubagent({
   t,
   info,
-  currentTool,
+  linked,
   embedded,
 }: {
   t: ToolCallState;
   info: SubagentToolInfo;
-  currentTool: string | undefined;
+  linked: readonly SubagentInfo[];
   embedded?: boolean;
 }) {
-  const running = isRunningStatus(t.status);
-  const mission = clampText(info.description ?? info.prompt, 180);
-  const badgeStyle: React.CSSProperties = {
-    border: '1px solid var(--term-line-s)',
-    color: 'var(--term-muted)',
-    padding: '1px 5px',
-    flexShrink: 0,
-  };
+  const { single, status, name, fallback } = delegationPresentation(t, info, linked);
+  const sparkle = <SparkleIcon size={12} color="var(--term-mauve)" />;
   return (
     <div
       data-testid="subagent-card"
       style={{ border: embedded ? undefined : CARD_BORDER, borderTop: embedded ? CARD_BORDER : undefined, background: 'var(--term-surface)', fontFamily: 'var(--ui-font)' }}
     >
-      <div style={{ background: 'var(--term-alt)', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <SparkleIcon size={12} color="var(--term-mauve)" />
-        <span
-          style={{
-            fontSize: 'var(--fs-md)',
-            fontWeight: 600,
-            color: 'var(--term-fg)',
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {info.agentType ?? 'SubAgent'}
-        </span>
-        <span style={{ ...badgeStyle, fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase' }}>
-          subagent
-        </span>
-        {info.model && <span style={{ ...badgeStyle, fontFamily: MONO, fontSize: 'var(--fs-2xs)' }}>{info.model}</span>}
-        <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex' }}>
-          <SubagentStatus status={t.status} />
-        </span>
-      </div>
-      <div style={{ padding: '8px 10px' }}>
-        {mission && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-mid)', lineHeight: 1.5 }}>{mission}</div>}
-        {running && currentTool && (
-          <div
-            style={{
-              marginTop: mission ? 7 : 0,
-              border: CARD_BORDER,
-              padding: '4px 8px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              fontFamily: MONO,
-              fontSize: 'var(--fs-xs)',
-            }}
-          >
-            <span style={{ color: 'var(--term-muted)' }}>now</span>
-            <span
-              style={{
-                color: 'var(--term-accent)',
-                minWidth: 0,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {currentTool}
+      {linked.length > 1 ? (
+        <>
+          <div style={{ background: 'var(--term-alt)', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+            {sparkle}
+            <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--term-fg)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {name ?? 'SubAgents'}
+            </span>
+            <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex' }}>
+              <SubagentStatus status={status} />
             </span>
           </div>
-        )}
-      </div>
+          <CrewRows linked={linked} style={{ padding: '6px 10px' }} />
+        </>
+      ) : (
+        <SubagentSummaryLine
+          subagent={single}
+          name={name ?? 'SubAgent'}
+          status={status}
+          fallback={fallback}
+          glyph={sparkle}
+          style={{ padding: '7px 10px', alignItems: 'center' }}
+        />
+      )}
     </div>
   );
 }
 
-export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantGroupProps) {
-  const { normal, subs } = partition(tools);
+export function CardToolGroup({ tools, expanded, onToggle, subagents, subagentStatus }: VariantGroupProps) {
+  const { normal, subs } = partition(tools, subagents);
   const failed = failedToolCount(tools);
   const running = tools.some((t) => !isTerminalStatus(t.status));
   const doneCount = tools.filter((t) => isTerminalStatus(t.status)).length;
@@ -523,14 +564,14 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantG
     if (!expanded) {
       return (
         <div style={container}>
-          <CollapsedCardRow tools={tools} onToggle={onToggle} failed={failed} running={running} doneCount={doneCount} spanMs={spanMs} />
+          <CollapsedCardRow tools={tools} onToggle={onToggle} failed={failed} running={running} doneCount={doneCount} spanMs={spanMs} subagentStatus={subagentStatus} />
         </div>
       );
     }
     return (
       <div style={{ ...container, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {subs.map(({ t, info }) => (
-          <CardSubagent key={t.id} t={t} info={info} currentTool={findOwningSubagent(t, subagents)?.currentTool} />
+        {subs.map(({ t, info, linked }) => (
+          <CardSubagent key={t.id} t={t} info={info} linked={linked} />
         ))}
       </div>
     );
@@ -539,7 +580,7 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantG
   if (!expanded) {
     return (
       <div style={container}>
-        <CollapsedCardRow tools={tools} onToggle={onToggle} failed={failed} running={running} doneCount={doneCount} spanMs={spanMs} />
+        <CollapsedCardRow tools={tools} onToggle={onToggle} failed={failed} running={running} doneCount={doneCount} spanMs={spanMs} subagentStatus={subagentStatus} />
       </div>
     );
   }
@@ -586,8 +627,8 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents }: VariantG
           {normal.map((t) => (
             <CardToolRow key={t.id} t={t} />
           ))}
-          {subs.map(({ t, info }) => (
-            <CardSubagent key={t.id} t={t} info={info} currentTool={findOwningSubagent(t, subagents)?.currentTool} embedded />
+          {subs.map(({ t, info, linked }) => (
+            <CardSubagent key={t.id} t={t} info={info} linked={linked} embedded />
           ))}
         </div>
       </div>
@@ -602,6 +643,7 @@ function CollapsedCardRow({
   running,
   doneCount,
   spanMs,
+  subagentStatus,
 }: {
   tools: ToolCallState[];
   onToggle: () => void;
@@ -609,6 +651,7 @@ function CollapsedCardRow({
   running: boolean;
   doneCount: number;
   spanMs: number | undefined;
+  subagentStatus?: string;
 }) {
   return (
     <button
@@ -632,12 +675,7 @@ function CollapsedCardRow({
     >
       {running ? <CardSpinner /> : <ToolTypeIcon kind="bash" color="var(--term-muted)" />}
       <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {summarizeToolsBase(tools)}
-        {failed > 0 && (
-          <span style={{ color: 'var(--term-danger)' }}>
-            {' '}· {tools.length === 1 ? 'failed' : `${failed} failed`}
-          </span>
-        )}
+        <CollapsedToolSummary tools={tools} failed={failed} subagentStatus={subagentStatus} />
       </span>
       <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
         {running ? `${doneCount}/${tools.length}` : spanMs != null ? formatDurationMs(spanMs) : ''}
@@ -652,7 +690,7 @@ function CollapsedCardRow({
 function termToolName(t: ToolCallState): string {
   const key = toolBucketKey(t);
   if (key !== 'unknown') return key;
-  return prettifyToolTitle(t.title) || t.kind || '(unnamed)';
+  return toolDisplayTitle(t) || t.kind || '(unnamed)';
 }
 
 function TermPayload({ t }: { t: ToolCallState }) {
@@ -777,51 +815,45 @@ function TermToolRow({ t }: { t: ToolCallState }) {
 function TermSubagent({
   t,
   info,
-  currentTool,
+  linked,
 }: {
   t: ToolCallState;
   info: SubagentToolInfo;
-  currentTool: string | undefined;
+  linked: readonly SubagentInfo[];
 }) {
-  const running = isRunningStatus(t.status);
-  const mission = clampText(info.description ?? info.prompt, 180);
+  const { single, status, heading, fallback } = delegationPresentation(t, info, linked);
+  const diamond = <span aria-hidden style={{ color: 'var(--term-mauve)', fontSize: 'var(--fs-xs)', flexShrink: 0 }}>◆</span>;
   return (
     <div data-testid="subagent-card" style={{ border: CARD_BORDER, fontFamily: 'var(--ui-font)' }}>
-      <div style={{ padding: '5px 9px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: CARD_BORDER }}>
-        <span aria-hidden style={{ color: 'var(--term-mauve)', fontSize: 'var(--fs-xs)', flexShrink: 0 }}>◆</span>
-        <span
-          style={{
-            fontSize: 'var(--fs-sm)',
-            fontWeight: 600,
-            color: 'var(--term-fg)',
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {subagentHeading(info)}
-        </span>
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          {info.model && <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{info.model}</span>}
-          <SubagentStatus status={t.status} />
-        </span>
-      </div>
-      <div style={{ padding: '7px 9px' }}>
-        {mission && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', lineHeight: 1.5 }}>{mission}</div>}
-        {running && currentTool && (
-          <div style={{ marginTop: mission ? 5 : 0, fontFamily: MONO, fontSize: 'var(--fs-xs)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <span style={{ color: 'var(--term-muted)' }}>now ❯ </span>
-            <span style={{ color: 'var(--term-accent)' }}>{currentTool}</span>
+      {linked.length > 1 ? (
+        <>
+          <div style={{ padding: '5px 9px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: CARD_BORDER }}>
+            {diamond}
+            <span style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--term-fg)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {heading}
+            </span>
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <SubagentStatus status={status} />
+            </span>
           </div>
-        )}
-      </div>
+          <CrewRows linked={linked} style={{ padding: '6px 9px' }} />
+        </>
+      ) : (
+        <SubagentSummaryLine
+          subagent={single}
+          name={heading}
+          status={status}
+          fallback={fallback}
+          glyph={diamond}
+          style={{ padding: '5px 9px' }}
+        />
+      )}
     </div>
   );
 }
 
-export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantGroupProps) {
-  const { normal, subs } = partition(tools);
+export function TermToolGroup({ tools, expanded, onToggle, subagents, subagentStatus }: VariantGroupProps) {
+  const { normal, subs } = partition(tools, subagents);
   const failed = failedToolCount(tools);
   const running = tools.some((t) => !isTerminalStatus(t.status));
   const doneCount = tools.filter((t) => isTerminalStatus(t.status)).length;
@@ -866,8 +898,8 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
   if (normal.length === 0 && subs.length > 0 && expanded) {
     return (
       <div style={{ ...container, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {subs.map(({ t, info }) => (
-          <TermSubagent key={t.id} t={t} info={info} currentTool={findOwningSubagent(t, subagents)?.currentTool} />
+        {subs.map(({ t, info, linked }) => (
+          <TermSubagent key={t.id} t={t} info={info} linked={linked} />
         ))}
       </div>
     );
@@ -885,12 +917,7 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
         >
           <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▸</span>
           <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', minWidth: 0, flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {summarizeToolsBase(tools)}
-            {failed > 0 && (
-              <span style={{ color: 'var(--term-danger)' }}>
-                {' '}· {tools.length === 1 ? 'failed' : `${failed} failed`}
-              </span>
-            )}
+            <CollapsedToolSummary tools={tools} failed={failed} subagentStatus={subagentStatus} />
           </span>
           <span aria-hidden style={{ flex: 1, borderBottom: '1px dotted var(--term-line)', transform: 'translateY(-3px)' }} />
           <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
@@ -930,8 +957,8 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents }: VariantG
         {normal.map((t) => (
           <TermToolRow key={t.id} t={t} />
         ))}
-        {subs.map(({ t, info }) => (
-          <TermSubagent key={t.id} t={t} info={info} currentTool={findOwningSubagent(t, subagents)?.currentTool} />
+        {subs.map(({ t, info, linked }) => (
+          <TermSubagent key={t.id} t={t} info={info} linked={linked} />
         ))}
       </div>
     </div>

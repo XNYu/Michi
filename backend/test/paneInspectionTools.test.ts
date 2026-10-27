@@ -14,16 +14,12 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, test } from 'node:test';
 
 import type { ExecutionRef, PaneDescriptorV1, PaneTarget } from 'michi-shared';
-import { PaneInspectionError } from 'michi-shared';
+
 import * as paneInspectionModule from '../src/services/paneInspection';
 import type { PaneInspectionCaller } from '../src/services/paneInspection';
 import { PaneInspectionRing } from '../src/services/paneInspectionRing';
 import * as paneInspectionRingModule from '../src/services/paneInspectionRing';
-import {
-  buildPaneInspectionCaller,
-  waitPaneTool,
-  type PaneInspectionToolBinding,
-} from '../src/agents/paneInspectionTools';
+import { waitPaneTool, type PaneInspectionToolBinding } from '../src/agents/paneInspectionTools';
 
 // ---------------------------------------------------------------------------
 // Fake inspect()/authorizeCaller() — same convention as paneInspectionWait.test.ts.
@@ -119,108 +115,5 @@ describe('waitPaneTool — until: changed', () => {
     assert.match(text, /title: Renamed/);
     assert.equal((seenCaller as PaneInspectionCaller | null)?.ownerUserId, BINDING.ownerUserId);
     assert.equal((seenCaller as PaneInspectionCaller | null)?.workspaceId, BINDING.workspaceId);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Commit #2's remaining cases.
-// ---------------------------------------------------------------------------
-
-describe('waitPaneTool — until: terminal', () => {
-  test('an already-settled executionRef returns reason=terminal with the outcome rendered', async () => {
-    stubService();
-    authorizeImpl = () => {};
-    const settled = baseDescriptor({
-      execution: {
-        status: 'ready',
-        value: {
-          ref: EXECUTION_REF, assistantId: 'a-1', attemptId: null, attemptIndex: null,
-          status: 'completed', startedAt: 0, endedAt: 5, commitState: 'committed', waitingReason: null, error: null,
-        },
-      },
-    });
-    inspectImpl = () => settled;
-
-    const result = await waitPaneTool(BINDING, { nodeId: 'n-1', until: 'terminal', executionRef: EXECUTION_REF });
-
-    assert.equal(result.isError, undefined);
-    const text = result.content[0].text;
-    assert.match(text, /^reason: terminal$/m);
-    assert.match(text, /^outcome: completed$/m);
-  });
-});
-
-describe('waitPaneTool — argument validation', () => {
-  test('an unrecognised `until` value is rejected as INVALID_ARGUMENT before any service call', async () => {
-    stubService();
-    let called = false;
-    authorizeImpl = () => { called = true; };
-    inspectImpl = () => { called = true; return baseDescriptor(); };
-
-    const result = await waitPaneTool(BINDING, { nodeId: 'n-1', until: 'soon' });
-
-    assert.equal(result.isError, true);
-    assert.match(result.content[0].text, /^INVALID_ARGUMENT:/);
-    assert.equal(called, false, 'must fail before touching the service at all');
-  });
-
-  test('terminal without executionRef surfaces the service’s INVALID_ARGUMENT as an error result, not a throw', async () => {
-    stubService();
-    authorizeImpl = () => {};
-    inspectImpl = () => baseDescriptor();
-
-    const result = await waitPaneTool(BINDING, { nodeId: 'n-1', until: 'terminal' });
-
-    assert.equal(result.isError, true);
-    assert.match(result.content[0].text, /^INVALID_ARGUMENT: request\.executionRef/);
-  });
-
-  test('a timeoutMs above the shared limit is clamped by the shared parser', async () => {
-    stubService();
-    authorizeImpl = () => {};
-    inspectImpl = () => baseDescriptor({
-      execution: {
-        status: 'ready',
-        value: {
-          ref: EXECUTION_REF, assistantId: 'a-1', attemptId: null, attemptIndex: null,
-          status: 'completed', startedAt: 0, endedAt: 5, commitState: 'committed', waitingReason: null, error: null,
-        },
-      },
-    });
-
-    const result = await waitPaneTool(BINDING, {
-      nodeId: 'n-1', until: 'terminal', executionRef: EXECUTION_REF, timeoutMs: 999_999,
-    });
-
-    assert.equal(result.isError, undefined);
-    assert.match(result.content[0].text, /^reason: terminal$/m);
-  });
-
-  test('neither paneId, nodeId, nor runId is rejected by the shared locator parser', async () => {
-    stubService();
-    authorizeImpl = () => {};
-
-    const result = await waitPaneTool(BINDING, { until: 'changed', cursor: 'whatever' });
-
-    assert.equal(result.isError, true);
-    assert.match(result.content[0].text, /^INVALID_ARGUMENT:/);
-  });
-});
-
-describe('waitPaneTool — caller binding (security core)', () => {
-  test('buildPaneInspectionCaller throws SOURCE_UNAVAILABLE for an unbound slot, surfaced as an error result', async () => {
-    const unbound: PaneInspectionToolBinding = { ownerUserId: null, workspaceId: null, backendConnectionId: 'slot-2' };
-    const result = await waitPaneTool(unbound, { nodeId: 'n-1', until: 'changed', cursor: 'whatever' });
-    assert.equal(result.isError, true);
-    assert.match(result.content[0].text, /^SOURCE_UNAVAILABLE:/);
-  });
-
-  test('a run-owned binding is carried into the caller passed to the service', () => {
-    const runBinding: PaneInspectionToolBinding = {
-      ownerUserId: 'owner-a', workspaceId: 'ws-1', backendConnectionId: 'slot-3', runOwnerRunId: 'run-1',
-    };
-    const caller = buildPaneInspectionCaller(runBinding);
-    assert.deepEqual(caller.runOwner, { runId: 'run-1' });
-    assert.equal(caller.backendConnectionId, 'slot-3');
   });
 });

@@ -1,29 +1,43 @@
-import { describe, it, afterEach } from "node:test";
+import { isolatedConfigDir } from './isolatedConfigDir';
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import fs from 'node:fs';
+import path from 'node:path';
 
-// piMcpConfig reads ~/.michi/config.json (hard-coded path) + env var.
-// We test the env-var path heavily and verify the overall shape.
 import { readPiMcpServers } from "../src/services/piMcpConfig";
 
 describe("piMcpConfig", () => {
-    const savedEnv = process.env.MICHI_PI_MCP_SERVERS;
+    const envKeys = ['MICHI_PI_MCP_SERVERS'] as const;
+    const savedEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
+    const configPath = path.join(isolatedConfigDir, 'config.json');
+
+    beforeEach(() => {
+        for (const key of envKeys) delete process.env[key];
+        fs.writeFileSync(configPath, '{}');
+    });
 
     afterEach(() => {
-        if (savedEnv === undefined) {
-            delete process.env.MICHI_PI_MCP_SERVERS;
-        } else {
-            process.env.MICHI_PI_MCP_SERVERS = savedEnv;
+        for (const key of envKeys) {
+            if (savedEnv[key] === undefined) delete process.env[key];
+            else process.env[key] = savedEnv[key];
         }
     });
 
-    it("reads comma-separated shorthand from env", () => {
-        process.env.MICHI_PI_MCP_SERVERS = "sample-mcp,sample-docs-mcp";
-        const servers = readPiMcpServers();
-        assert.ok(servers.length >= 2, `expected at least 2 servers, got ${servers.length}`);
-        const names = servers.map((s) => s.serverName);
-        assert.ok(names.includes("sample"), "expected 'sample' server");
-        assert.ok(names.includes("sample-docs"), "expected 'sample-docs' server");
+    it('reads MCP definitions from the selected isolated config directory', () => {
+        fs.writeFileSync(configPath, JSON.stringify({ piMcpServers: [{ serverName: 'preview', command: 'preview-mcp' }] }));
+        assert.deepEqual(readPiMcpServers(), [{ serverName: 'preview', command: 'preview-mcp', args: undefined, env: undefined, cwd: undefined }]);
     });
+
+    it('lets explicit env definitions override the selected disk config by name', () => {
+        fs.writeFileSync(configPath, JSON.stringify({ piMcpServers: ['disk-only-mcp', { serverName: 'same', command: 'disk-mcp' }] }));
+        process.env.MICHI_PI_MCP_SERVERS = JSON.stringify([{ serverName: 'same', command: 'env-mcp' }]);
+        const servers = readPiMcpServers();
+        assert.equal(servers.find(server => server.serverName === 'same')?.command, 'env-mcp');
+        assert.equal(servers.find(server => server.serverName === 'disk-only')?.command, 'disk-only-mcp');
+    });
+
+
+
 
     it("reads JSON array from env", () => {
         process.env.MICHI_PI_MCP_SERVERS = JSON.stringify([
@@ -36,30 +50,11 @@ describe("piMcpConfig", () => {
         assert.deepEqual(custom.args, ["--flag"]);
     });
 
-    it("returns empty array when nothing configured", () => {
-        delete process.env.MICHI_PI_MCP_SERVERS;
-        // May not be empty if ~/.michi/config.json has piMcpServers, but
-        // at minimum it should not throw.
-        const servers = readPiMcpServers();
-        assert.ok(Array.isArray(servers));
-    });
-
     it("derives serverName from command basename", () => {
         process.env.MICHI_PI_MCP_SERVERS = "/opt/tools/sample-mcp";
         const servers = readPiMcpServers();
         const sample = servers.find((s) => s.serverName === "sample");
         assert.ok(sample, "expected serverName 'sample' derived from '/opt/tools/sample-mcp'");
-    });
-
-    it("de-duplicates by serverName (env wins over config.json)", () => {
-        process.env.MICHI_PI_MCP_SERVERS = JSON.stringify([
-            { serverName: "sample", command: "my-custom-sample" },
-        ]);
-        const servers = readPiMcpServers();
-        const samples = servers.filter((s) => s.serverName === "sample");
-        // Should have exactly one — env overrides any config.json entry
-        assert.equal(samples.length, 1);
-        assert.equal(samples[0].command, "my-custom-sample");
     });
 
     it("skips invalid entries", () => {
@@ -84,4 +79,19 @@ describe("piMcpConfig", () => {
         assert.equal(test.cwd, "/tmp");
         assert.deepEqual(test.env, { FOO: "bar" });
     });
+    it('surfaces corrupt selected config instead of treating it as an empty catalog or starting unconfigured servers', () => {
+        fs.writeFileSync(configPath, '{"credential":"fixture-secret",');
+        assert.throws(readPiMcpServers, (error: any) => error.code === 'CONFIG_CORRUPT' && !error.message.includes('fixture-secret'));
+        fs.writeFileSync(configPath, '[]');
+        assert.throws(readPiMcpServers, { code: 'CONFIG_CORRUPT' });
+    });
+
+    it('rejects malformed JSON-looking env config without turning it into a shorthand command', () => {
+        for (const value of ['[{"credential":"fixture-secret",', '{"command":"fixture"}']) {
+            process.env.MICHI_PI_MCP_SERVERS = value;
+            assert.throws(readPiMcpServers, (error: any) => error.code === 'MCP_CONFIG_INVALID' && !error.message.includes('fixture-secret'));
+        }
+    });
+
+
 });

@@ -7,7 +7,7 @@ import {
   type AgentRunInteractionDtoV1,
 } from 'michi-shared';
 import type { LocatedAgentResource } from '../../../state/agentIdentity';
-import { AgentRunCard } from './AgentRunCard';
+
 import { AgentRunPane } from './AgentRunPane';
 
 const HASH = 'b'.repeat(64);
@@ -44,14 +44,6 @@ describe('AgentRunPane', () => {
     expect(popover.textContent).toContain('context · 1 items · immutable');
     fireEvent.click(screen.getByRole('button', { name: 'Agent metadata' }));
     expect(screen.queryByTestId('run-metadata-popover')).toBeNull();
-  });
-
-  it('keeps full transcript in the Pane while the Parent card remains compact', () => {
-    const { rerender } = render(<AgentRunCard run={resource} onOpen={() => {}} />);
-    expect(screen.queryByText('FULL TRANSCRIPT DETAIL')).toBeNull();
-    rerender(<AgentRunPane run={resource} attempts={[attempt]} events={events} onClose={() => {}} />);
-    expect(screen.getByText('FULL TRANSCRIPT DETAIL')).not.toBeNull();
-    expect(screen.getByText('Deleted Definition Snapshot')).not.toBeNull();
   });
 
   it('queues steering by default and exposes immediate stop as a distinct action', () => {

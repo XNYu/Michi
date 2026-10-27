@@ -12,22 +12,26 @@ import type { ChildAnchor } from '../../state/branchAnchors';
 import { countRender } from '../../services/renderCounters';
 import { shouldShowFollowUps } from '../../state/followUpsVisibility';
 import { usageIsUnverifiable } from 'michi-shared';
-import { useAgentDomain } from '../../state/agentDomain';
-import { useChatActions } from '../../state/chatStore';
+import { useOptionalAgentDomain } from '../../state/agentDomain';
+import { useOptionalChatActions } from '../../state/chatStore';
 import { backendConnectionIdForWorkspace } from '../../config/backendConnections';
 import { AgentRunCardGroup } from './agentRuns/AgentRunCard';
+import { MessageSubagents } from './subagents/SubagentRoster';
+import { MessageWorkflowRuns } from './workflows/MessageWorkflowRuns';
+import { useWorkflowPlacementsForNode, workflowRunKey, type WorkflowPlacement } from '../../state/workflowDomain';
+import { latestAssistantMessageId, messageSubagentRoster, workflowMessageResolver } from '../../state/backgroundWork';
+import { unclaimedSubagents } from './subagents/subagentPresentation';
+import { BackgroundWorkNodeContext, openBackgroundWork } from './backgroundWork/backgroundWorkEvents';
 import { selectParentRunCards } from './agentRuns/agentRunSelectors';
-import { agentResourceKey } from '../../state/agentIdentity';
+import { agentResourceKey, type AgentResourceIdentity } from '../../state/agentIdentity';
+import { useSourceReference } from '../../state/sourceNav/sourceNav';
+import { SourceReferenceMark } from './source/SourceReferenceMark';
 
 function useOptionalAgentRunUi() {
-  try {
-    const domain = useAgentDomain();
-    const actions = useChatActions();
-    return { domain, actions };
-  } catch {
-    // PaneMessageList has intentionally provider-free render/perf unit tests.
-    return null;
-  }
+  const domain = useOptionalAgentDomain();
+  const actions = useOptionalChatActions();
+  // PaneMessageList also supports provider-free render/perf unit tests.
+  return domain && actions ? { domain, actions } : null;
 }
 
 interface PaneMessageListProps {
@@ -39,6 +43,7 @@ interface PaneMessageListProps {
   viewportHeight: number;
   bottomClearance?: number;
   onRetryTurn: (userMessageIndex: number) => void;
+  onRunAgain?: (userMessageIndex: number) => void;
   onEditUserMessage: (text: string) => void;
   onContinueFollowUp: (question: string) => void;
   onBranchFollowUp: (question: string) => void;
@@ -79,6 +84,7 @@ function PaneMessageListInner({
   viewportHeight,
   bottomClearance = 0,
   onRetryTurn,
+  onRunAgain,
   onEditUserMessage,
   onContinueFollowUp,
   onBranchFollowUp,
@@ -95,17 +101,38 @@ function PaneMessageListInner({
   onTestConnection,
 }: PaneMessageListProps) {
   const agentRunUi = useOptionalAgentRunUi();
+  const sourceReference = useSourceReference(node.nodeId);
+  const referenceLabel = sourceReference?.label ?? null;
+  const referenceMark = React.useMemo(() => <SourceReferenceMark label={referenceLabel} />, [referenceLabel]);
+  const nodeWorkflowRuns = useWorkflowPlacementsForNode(node.nodeId);
+  const nodeId = node.nodeId;
+  // "Open →" shows the run in the Background work drawer. Stable across
+  // stream chunks, so memoized workflow cards skip them.
+  const openWorkflowRun = React.useCallback((identity: AgentResourceIdentity) => {
+    openBackgroundWork({ nodeId, focus: { kind: 'workflow', runKey: workflowRunKey(identity) } });
+  }, [nodeId]);
   const backendConnectionId = backendConnectionIdForWorkspace(node.projectId);
-  const tailAssistantId = React.useMemo(() => {
-    // Backward scan (no array copy) — this recomputes on every stream chunk
-    // since the reducer hands a fresh messages array each chunk, so the old
-    // [...messages].reverse().find() copied+reversed the whole conversation
-    // many times per second.
-    for (let i = node.messages.length - 1; i >= 0; i--) {
-      if (node.messages[i].role === 'assistant') return node.messages[i].id;
+  // Recomputes on every stream chunk (the reducer hands a fresh messages
+  // array each chunk); the helper scans backward without copying.
+  const tailAssistantId = React.useMemo(() => latestAssistantMessageId(node.messages), [node.messages]);
+  // Workflow runs this chat launched, attached to the message whose tool
+  // call launched them. A run without a known launcher goes to the last
+  // assistant message that existed when it started, so it stays in place
+  // as the conversation grows.
+  // The Background work drawer applies the same placement (history rule).
+  const workflowsByMessage = React.useMemo(() => {
+    const byMessage = new Map<string, WorkflowPlacement[]>();
+    if (nodeWorkflowRuns.length === 0) return byMessage;
+    const messageFor = workflowMessageResolver(node.messages);
+    for (const placement of nodeWorkflowRuns) {
+      const messageId = messageFor(placement);
+      if (!messageId) continue;
+      const list = byMessage.get(messageId) ?? [];
+      list.push(placement);
+      byMessage.set(messageId, list);
     }
-    return undefined;
-  }, [node.messages]);
+    return byMessage;
+  }, [nodeWorkflowRuns, node.messages]);
   const [tailAnswerSmoothing, setTailAnswerSmoothing] = React.useState(false);
   const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
     setTailAnswerSmoothing(isSmoothing);
@@ -148,6 +175,7 @@ function PaneMessageListInner({
 
   return (
     <NodeUserInputContext.Provider value={userInputCtx}>
+    <BackgroundWorkNodeContext.Provider value={nodeId}>
     <div style={contentStyle}>
       <MergeSourcesNotice node={node} sourceLabels={mergeSourceLabels} />
 
@@ -166,6 +194,7 @@ function PaneMessageListInner({
           }
         }
 
+        const usage = m.usageSummary ?? (i === node.messages.length - 1 ? node.usageSummary : undefined);
         const isErrorTail =
           !isUser &&
           i === node.messages.length - 1 &&
@@ -188,6 +217,10 @@ function PaneMessageListInner({
         const parentRuns = agentRunUi && !isUser
           ? selectParentRunCards(Object.values(agentRunUi.domain.state.runs), backendConnectionId, m.id)
           : [];
+        // The durable roster lives on the message that spawned the agents.
+        // Messages saved before rosters were persisted fall back to the live
+        // node roster, which only ever belongs to the tail turn.
+        const roster = messageSubagentRoster(node, m, tailAssistantId);
 
         return (
           <React.Fragment key={m.id}>
@@ -207,11 +240,15 @@ function PaneMessageListInner({
             <div
               data-msg-id={m.id}
               data-streaming-tail={isStreamingTail ? 'true' : undefined}
+              data-source-referenced={sourceReference?.messageId === m.id ? 'true' : undefined}
               className="terminal-message-frame"
               style={isDownstream ? { opacity: 0.38, filter: 'saturate(0.5)', transition: 'opacity var(--t-enter)' } : undefined}
             >
               <MessageBlock
                 m={m}
+                highlight={sourceReference?.messageId === m.id ? referenceMark : undefined}
+                workspaceId={node.projectId}
+                backendConnectionId={backendConnectionId}
                 index={i}
                 isDark={isDark}
                 editing={m.id === editingMessageId}
@@ -248,6 +285,11 @@ function PaneMessageListInner({
                 isErrorTail={isErrorTail}
                 errorMessage={isErrorTail ? node.error : undefined}
                 errorKind={isErrorTail ? node.errorKind : undefined}
+                errorRecovery={isErrorTail ? node.errorRecovery : undefined}
+                onRunAgain={isErrorTail && onRunAgain && !streaming ? () => {
+                  const userIdx = node.messages.slice(0, i).findLastIndex((msg) => msg.role === 'user');
+                  if (userIdx >= 0) onRunAgain(userIdx);
+                } : undefined}
                 onTestConnection={isErrorTail ? onTestConnection : undefined}
                 showThoughts={prefs.showThoughts}
                 density={prefs.terminalDensity}
@@ -257,22 +299,23 @@ function PaneMessageListInner({
                   mono: 'var(--ui-font)',
                 }[prefs.fontFamily]}
                 usageInfo={
-                  !isUser && node.status === 'idle' && node.usageSummary && i === node.messages.length - 1
-                    ? usageIsUnverifiable(node.usageSummary.source, node.usageSummary.totalCredits)
-                      ? { durationMs: node.usageSummary.turnDurationMs, credits: 0, unverifiable: true }
+                  !isUser && !m.streaming && usage
+                    ? (usage.source === 'unverifiable' || (!usage.charge && usageIsUnverifiable(usage.source, usage.totalCredits)))
+                      ? { durationMs: usage.turnDurationMs, unverifiable: true }
                       : {
-                          durationMs: node.usageSummary.turnDurationMs,
-                          credits: node.usageSummary.totalCredits,
-                          totalTokens: node.usageSummary.totalTokens,
-                          inputTokens: node.usageSummary.inputTokens,
-                          cachedInputTokens: node.usageSummary.cachedInputTokens,
-                          outputTokens: node.usageSummary.outputTokens,
-                          reasoningOutputTokens: node.usageSummary.reasoningOutputTokens,
+                          durationMs: usage.turnDurationMs,
+                          credits: usage.charge ? undefined : usage.totalCredits,
+                          charge: usage.charge,
+                          totalTokens: usage.totalTokens,
+                          inputTokens: usage.inputTokens,
+                          cachedInputTokens: usage.cachedInputTokens,
+                          outputTokens: usage.outputTokens,
+                          reasoningOutputTokens: usage.reasoningOutputTokens,
                           contextUsagePercentage: node.contextUsagePercentage,
                         }
                     : undefined
                 }
-                subagents={node.subagents}
+                subagents={roster}
                 runtimeId={node.runtimeId}
                 turnAnchors={anchorsForMsg.length > 0 ? anchorsForMsg : undefined}
                 onOpenBranch={onOpenBranch}
@@ -287,11 +330,12 @@ function PaneMessageListInner({
                 i === node.messages.length - 1 && (
                   <DiffReceipt message={m} workspaceId={node.projectId} />
                 )}
-              {/* The subagent roster is node-level transient state cleared at
-                  every turn start, so it always belongs to the tail assistant
-                  message that spawned the agents. Render it inline within that
-                  turn's frame (not detached at the bottom of the conversation). */}
-              {!isUser && m.id === tailAssistantId && <SubagentStatus node={node} />}
+              {/* Agents no delegation chip claims (Crew runs, legacy rosters)
+                  render inline within the turn that spawned them. */}
+              {roster && <MessageSubagents subagents={unclaimedSubagents(roster, m.toolCalls)} />}
+              {!isUser && workflowsByMessage.get(m.id)?.length ? (
+                <MessageWorkflowRuns runs={workflowsByMessage.get(m.id)!} onOpen={openWorkflowRun} />
+              ) : null}
               {parentRuns.length > 0 && (
                 <div style={{ margin: '8px 0 2px' }}>
                   <AgentRunCardGroup
@@ -338,6 +382,7 @@ function PaneMessageListInner({
 
       <StreamActivityIndicator node={node} showThoughts={prefs.showThoughts} />
       <McpServerError node={node} />
+      <RuntimeWarningBanner node={node} />
       <FollowUpsSection
         node={node}
         prefs={prefs}
@@ -350,6 +395,7 @@ function PaneMessageListInner({
           reserved reply space as part of an error or status banner's offset. */}
       <TailSpacer node={node} viewportHeight={viewportHeight} bottomClearance={bottomClearance} />
     </div>
+    </BackgroundWorkNodeContext.Provider>
     </NodeUserInputContext.Provider>
   );
 }
@@ -451,48 +497,6 @@ function MergeSourcesNotice({
   );
 }
 
-function SubagentStatus({ node }: { node: ChatNodeState }) {
-  if (!node.subagents || node.subagents.length === 0) return null;
-  const workingCount = node.subagents.filter((s) => s.status === 'working').length;
-
-  return (
-    <div
-      style={{
-        margin: '8px 0',
-        padding: '8px 10px',
-        fontSize: 'var(--fs-sm)',
-        border: '1px solid var(--term-line)',
-        borderRadius: 'var(--ui-radius)',
-        fontFamily: 'var(--ui-font)',
-      }}
-    >
-      <div style={{ color: 'var(--term-mid)', marginBottom: 4 }}>
-        {workingCount > 0
-          ? `⚡ Orchestrating ${workingCount} agent${workingCount > 1 ? 's' : ''}`
-          : '✓ Agents completed'}
-      </div>
-      {node.subagents.map((s) => (
-        <div
-          key={s.sessionId}
-          style={{
-            display: 'flex',
-            gap: 6,
-            alignItems: 'center',
-            color: s.status === 'working' ? 'var(--term-fg)' : 'var(--term-muted)',
-          }}
-        >
-          <span>{s.status === 'working' ? '●' : '✓'}</span>
-          <span>{s.agentName}</span>
-          <span style={{ color: 'var(--term-muted)' }}>{s.sessionName}</span>
-          <span style={{ marginLeft: 'auto', color: 'var(--term-muted)' }}>
-            {s.status === 'working' ? (s.currentTool || s.statusMessage || 'Running') : 'Done'}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function TailSpacer({ node, viewportHeight, bottomClearance }: {
   node: ChatNodeState;
   viewportHeight: number;
@@ -535,6 +539,19 @@ function TailSpacer({ node, viewportHeight, bottomClearance }: {
 
   if (!enabled || !userMessageId) return null;
   return <div ref={spacerRef} aria-hidden data-tail-spacer style={{ height, flexShrink: 0 }} />;
+}
+
+function RuntimeWarningBanner({ node }: { node: ChatNodeState }) {
+  const owner = node.messages.findLast(message => message.warnings?.length);
+  const warning = owner?.warnings?.at(-1) ?? node.warning;
+  const [dismissedKey, setDismissedKey] = React.useState<string>();
+  const key = warning ? `${owner?.id ?? node.activeTurnId ?? ''}:${warning.source}:${warning.category}:${warning.message}` : undefined;
+  if (!warning || key === dismissedKey) return null;
+  const label = warning.source === 'mcp' ? `MCP server "${warning.serverName ?? 'unknown'}"` : warning.source;
+  return <div role="status" className="t-pre-block" style={{ margin: '8px 0', display: 'flex', gap: 8 }}>
+    <span style={{ flex: 1, overflowWrap: 'anywhere' }}>{label}: {warning.message}</span>
+    <button type="button" aria-label="Dismiss warning" onClick={() => setDismissedKey(key)}>×</button>
+  </div>;
 }
 
 function McpServerError({ node }: { node: ChatNodeState }) {

@@ -1,4 +1,5 @@
-import fs from "fs";
+import { isReasoningLevel } from 'michi-shared';
+import { readJsonConfig, updateJsonConfig } from "./jsonConfigStore";
 import { EventEmitter } from "node:events";
 import path from "path";
 import os from "os";
@@ -8,6 +9,7 @@ import { DEFAULT_MODELS } from "../agents/agentConfig";
 import { resolveDefaultPiProvider } from "./resolveProvider";
 import { getProviderInfo } from "../agents/pi/piProviders";
 import { isWebSearchFeatureEnabled, isWebSearchProviderId, type WebSearchProviderId } from "./searchProviders";
+import { getMichiConfigPaths } from './configPaths';
 
 export interface AgentConfig {
   runtime: RuntimeId;
@@ -26,6 +28,8 @@ export interface AgentConfig {
   nativeResumeByRuntime?: Record<string, boolean>;
   /** Omitted runtimes keep native fork enabled. Existing branches are unaffected. */
   nativeForkByRuntime?: Record<string, boolean>;
+  /** Runtime workflow features (Kiro CLI workflows). Opt-in; applies to new sessions. */
+  workflowsByRuntime?: Record<string, boolean>;
   /**
    * Claude config dir override (CLAUDE_CONFIG_DIR for spawned claude
    * processes). Unset = claude's own default (~/.claude). Desktop-only,
@@ -37,8 +41,7 @@ export interface AgentConfig {
   claudeConfigDir?: string;
 }
 
-const CONFIG_DIR = process.env.MICHI_CONFIG_DIR || path.join(os.homedir(), ".michi");
-const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+const { configPath: CONFIG_PATH } = getMichiConfigPaths();
 
 // Hard-coded default model per runtime. Used when neither
 // agentConfig.modelByRuntime nor a per-call override picks one.
@@ -75,9 +78,9 @@ const DEFAULTS: AgentConfig = {
   reasoningByRuntime: {},
   nativeResumeByRuntime: {},
   nativeForkByRuntime: {},
+  workflowsByRuntime: {},
 };
 
-const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 function booleanRuntimeMap(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -90,6 +93,11 @@ export function isNativeResumeEnabled(runtimeId: string, userId?: string | null)
 
 export function isNativeForkEnabled(runtimeId: string, userId?: string | null): boolean {
   return getAgentConfig(userId ?? undefined).nativeForkByRuntime?.[runtimeId] !== false;
+}
+
+/** Off unless the user opted in. */
+export function isWorkflowsEnabled(runtimeId: string, userId?: string | null): boolean {
+  return getAgentConfig(userId ?? undefined).workflowsByRuntime?.[runtimeId] === true;
 }
 
 let current: AgentConfig = {
@@ -106,11 +114,7 @@ export function normalizeLegacyRuntimeId(runtime: string): RuntimeId {
 }
 
 function readDiskFile(): Record<string, any> | null {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-  } catch {
-    return null;
-  }
+  return readJsonConfig(CONFIG_PATH);
 }
 
 function readRuntimeFromEnv(): RuntimeId | undefined {
@@ -142,18 +146,13 @@ function readRuntimeFromEnv(): RuntimeId | undefined {
   return undefined;
 }
 
-function persist(): void {
-  try {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    // Read-modify-write: preserve any unrelated fields on disk (e.g. providerApiKeys)
-    const existing = readDiskFile() ?? {};
-    const next = { ...existing, agent: { ...current } };
-    // Drop legacy `model` field if it lingers in the existing agent object.
-    if (next.agent && "model" in next.agent) delete (next.agent as any).model;
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), { mode: 0o600 });
-  } catch (err) {
-    console.error("[agentConfig] persist failed:", err);
-  }
+function persist(config: AgentConfig = current): void {
+  updateJsonConfig(CONFIG_PATH, (existing) => {
+    const agent = { ...config };
+    // Drop the legacy field without changing any unrelated namespace.
+    if ('model' in agent) delete (agent as any).model;
+    return { ...existing, agent };
+  });
 }
 
 export function loadAgentConfig(): AgentConfig {
@@ -190,13 +189,14 @@ export function loadAgentConfig(): AgentConfig {
       }
       if (a.reasoningByRuntime && typeof a.reasoningByRuntime === "object" && !Array.isArray(a.reasoningByRuntime)) {
         for (const [k, v] of Object.entries(a.reasoningByRuntime)) {
-          if (typeof v === "string" && VALID_REASONING.includes(v as AgentReasoning)) {
-            next.reasoningByRuntime[k] = v as AgentReasoning;
+          if (isReasoningLevel(v)) {
+            next.reasoningByRuntime[k] = v;
           }
         }
       }
       next.nativeResumeByRuntime = booleanRuntimeMap(a.nativeResumeByRuntime);
       next.nativeForkByRuntime = booleanRuntimeMap(a.nativeForkByRuntime);
+      next.workflowsByRuntime = booleanRuntimeMap(a.workflowsByRuntime);
       // Migrate legacy `agent.model` (single string) into modelByRuntime[<current runtime>]
       if (typeof a.model === "string" && a.model && !next.modelByRuntime[next.runtime]) {
         next.modelByRuntime[next.runtime] = a.model;
@@ -205,7 +205,7 @@ export function loadAgentConfig(): AgentConfig {
       // Migrate legacy `agent.reasoning` (single string) into reasoningByRuntime[<current runtime>]
       if (
         typeof a.reasoning === "string" &&
-        VALID_REASONING.includes(a.reasoning as AgentReasoning) &&
+        isReasoningLevel(a.reasoning) &&
         !next.reasoningByRuntime[next.runtime]
       ) {
         next.reasoningByRuntime[next.runtime] = a.reasoning as AgentReasoning;
@@ -223,7 +223,7 @@ export function loadAgentConfig(): AgentConfig {
       }
       if (
         typeof disk.agentReasoning === "string" &&
-        VALID_REASONING.includes(disk.agentReasoning as AgentReasoning)
+        isReasoningLevel(disk.agentReasoning)
       ) {
         next.reasoningByRuntime[next.runtime] = disk.agentReasoning as AgentReasoning;
         migratedFromLegacy = true;
@@ -269,7 +269,7 @@ export function getAgentConfig(userId?: string): AgentConfig {
     try {
       const raw = JSON.parse(row.reasoning_by_runtime);
       for (const [k, v] of Object.entries(raw)) {
-        if (typeof v === 'string' && VALID_REASONING.includes(v as AgentReasoning)) {
+        if (isReasoningLevel(v)) {
           reasoningByRuntime[k] = v as AgentReasoning;
         }
       }
@@ -286,6 +286,9 @@ export function getAgentConfig(userId?: string): AgentConfig {
       })(),
       nativeForkByRuntime: (() => {
         try { return booleanRuntimeMap(JSON.parse(row.native_fork_by_runtime)); } catch { return {}; }
+      })(),
+      workflowsByRuntime: (() => {
+        try { return booleanRuntimeMap(JSON.parse(row.workflows_by_runtime ?? '{}')); } catch { return {}; }
       })(),
     };
   }
@@ -315,6 +318,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       : { ...existing.reasoningByRuntime };
     const nativeResumeByRuntime = { ...existing.nativeResumeByRuntime, ...booleanRuntimeMap(patch.nativeResumeByRuntime) };
     const nativeForkByRuntime = { ...existing.nativeForkByRuntime, ...booleanRuntimeMap(patch.nativeForkByRuntime) };
+    const workflowsByRuntime = { ...existing.workflowsByRuntime, ...booleanRuntimeMap(patch.workflowsByRuntime) };
     upsertUserAgentConfig(userId, {
       runtime: (patch.runtime ?? existing.runtime) as string,
       provider: patch.provider ?? existing.provider,
@@ -324,6 +328,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       reasoning_by_runtime: JSON.stringify(mergedReasoningByRuntime),
       native_resume_by_runtime: JSON.stringify(nativeResumeByRuntime),
       native_fork_by_runtime: JSON.stringify(nativeForkByRuntime),
+      workflows_by_runtime: JSON.stringify(workflowsByRuntime),
     });
     return {
       ...existing,
@@ -334,6 +339,7 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
       reasoningByRuntime: mergedReasoningByRuntime,
       nativeResumeByRuntime,
       nativeForkByRuntime,
+      workflowsByRuntime,
     };
   }
   // Desktop: mutate in-memory singleton + persist to disk.
@@ -351,8 +357,9 @@ export function updateAgentConfig(patch: Partial<AgentConfig>, userId?: string):
     : { ...current.reasoningByRuntime };
   merged.nativeResumeByRuntime = { ...current.nativeResumeByRuntime, ...booleanRuntimeMap(patch.nativeResumeByRuntime) };
   merged.nativeForkByRuntime = { ...current.nativeForkByRuntime, ...booleanRuntimeMap(patch.nativeForkByRuntime) };
+  merged.workflowsByRuntime = { ...current.workflowsByRuntime, ...booleanRuntimeMap(patch.workflowsByRuntime) };
+  persist(merged);
   current = merged;
-  persist();
   return current;
 }
 
@@ -385,11 +392,12 @@ export function updateAgentModelForRuntime(runtimeId: string, modelId: string, u
   }
   const previous = current.modelByRuntime[runtimeId];
   if (previous === modelId) return current;
-  current = {
+  const next = {
     ...current,
     modelByRuntime: { ...current.modelByRuntime, [runtimeId]: modelId },
   };
-  persist();
+  persist(next);
+  current = next;
   agentConfigEvents.emit('model_changed', { runtime: runtimeId, model: modelId } as ModelChangedEvent);
   return current;
 }
@@ -402,11 +410,12 @@ export function updateAgentReasoningForRuntime(
   if (process.env.MICHI_CLOUD === '1' && userId) {
     return updateAgentConfig({ reasoningByRuntime: { [runtimeId]: level } }, userId);
   }
-  current = {
+  const next = {
     ...current,
     reasoningByRuntime: { ...current.reasoningByRuntime, [runtimeId]: level },
   };
-  persist();
+  persist(next);
+  current = next;
   return current;
 }
 

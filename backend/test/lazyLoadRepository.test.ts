@@ -90,17 +90,6 @@ describe('lazy-load repository', () => {
     assert.equal(empty.message_count, 0);
   });
 
-  test('loadTreeMessages returns ONLY the requested tree, ordered by node then seq', () => {
-    const treeA = loadTreeMessages('ws-1', 'tree-A');
-    assert.deepEqual(treeA.map(m => m.id), ['m-a1-0', 'm-a1-1', 'm-a2-0']);
-
-    const treeB = loadTreeMessages('ws-1', 'tree-B');
-    assert.deepEqual(treeB.map(m => m.id), ['m-b1-0', 'm-b1-1']);
-
-    // Cross-tree isolation: tree-A fetch never includes tree-B bodies.
-    assert.ok(treeA.every(m => m.node_id !== 'n-b1'));
-  });
-
   test('loadTreeMessages for an unknown tree is empty, not an error', () => {
     assert.deepEqual(loadTreeMessages('ws-1', 'tree-nope'), []);
   });

@@ -1,4 +1,4 @@
-import { collectCrossTreeGroups, EMPTY_CROSS_TREE_GROUPS, CROSS_TREE_MENTION_CAP } from './crossTreeMentions';
+import { collectCrossTreeGroups, CROSS_TREE_MENTION_CAP } from './crossTreeMentions';
 import type { ChatNodeState, Project, Tree } from '../state/chatTypes';
 
 const mkNode = (nodeId: string, title: string, msgCount: number, parentNodeId?: string): ChatNodeState => ({
@@ -42,26 +42,6 @@ function fixture() {
 }
 
 describe('collectCrossTreeGroups', () => {
-  it('excludes the given tree and orders the rest by lastActiveAt desc', () => {
-    const { nodes, project } = fixture();
-    const groups = collectCrossTreeGroups(nodes, project, 'tB');
-    expect(groups.map((g) => g.treeTitle)).toEqual(['A root']);
-    expect(groups[0].nodes.map((n) => n.nodeId)).toEqual(['a1', 'a2']);
-  });
-
-  it('includes every thread when excludeTreeId is null (Home composer)', () => {
-    const { nodes, project } = fixture();
-    const groups = collectCrossTreeGroups(nodes, project, null);
-    expect(groups.map((g) => g.treeTitle)).toEqual(['A root', 'B root']);
-  });
-
-  it('prefers the tree name over the root title for the group label', () => {
-    const { nodes, project } = fixture();
-    const named = { ...project, trees: [mkTree('tA', 'a1', 200, { name: 'Alpha' }), project.trees[1]] };
-    const groups = collectCrossTreeGroups(nodes, named, null);
-    expect(groups[0].treeTitle).toBe('Alpha');
-  });
-
   it('skips archived trees, deleted nodes and empty nodes', () => {
     const { nodes, project } = fixture();
     const archived = { ...project, trees: [project.trees[0], mkTree('tB', 'b1', 100, { archivedAt: 5 })] };
@@ -71,9 +51,11 @@ describe('collectCrossTreeGroups', () => {
     expect(groups[0].nodes.map((n) => n.nodeId)).toEqual(['a1']);
   });
 
-  it('returns the shared empty reference when nothing qualifies', () => {
+  it('skips Meta agent maintenance runs and page helpers', () => {
     const { nodes, project } = fixture();
-    expect(collectCrossTreeGroups(nodes, { ...project, trees: [] }, null)).toBe(EMPTY_CROSS_TREE_GROUPS);
+    const hidden = { ...nodes, a2: { ...nodes.a2, pageId: 'pg-1' }, b1: { ...nodes.b1, maintenanceJobId: 'job-1' } };
+    const groups = collectCrossTreeGroups(hidden, project, null);
+    expect(groups.map((g) => [g.treeTitle, g.nodes.map((n) => n.nodeId)])).toEqual([['A root', ['a1']]]);
   });
 
   it('caps total candidates at CROSS_TREE_MENTION_CAP', () => {

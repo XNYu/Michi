@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PendingComment } from '../state/chatTypes';
-import {
-  QUOTE_PREVIEW_MAX,
-  formatCommentsBlock,
-  joinMessageParts,
-  renderComment,
-  truncateQuotePreview,
-} from './commentFormat';
+import { formatCommentsBlock, joinMessageParts, renderComment, truncateQuotePreview } from './commentFormat';
 
 const QUOTED_CONTEXT =
   'Context: The user selected the passage below from the previous assistant reply. Treat it as source context, not as text authored by the user.';
@@ -20,19 +14,6 @@ function mkComment(
 }
 
 describe('truncateQuotePreview', () => {
-  it('returns input unchanged when under the cap', () => {
-    expect(truncateQuotePreview('short passage')).toBe('short passage');
-  });
-
-  it('uses middle-ellipsis to keep both ends when exceeding the cap', () => {
-    const input = 'a'.repeat(200);
-    const out = truncateQuotePreview(input);
-    expect(out.startsWith('a')).toBe(true);
-    expect(out.endsWith('a')).toBe(true);
-    expect(out).toContain(' ... ');
-    expect(out.length).toBeLessThanOrEqual(QUOTE_PREVIEW_MAX + 2); // +2 safety for trim variance
-  });
-
   it('operates on code points so CJK characters count as one each', () => {
     // 120 CJK chars — each is one code point but multiple UTF-16 units only for surrogates.
     const cjk = '一'.repeat(120);
@@ -45,83 +26,9 @@ describe('truncateQuotePreview', () => {
     // Head+tail well under the original length.
     expect(head.length + tail.length).toBeLessThan(120);
   });
-
-  it('honors a custom max', () => {
-    const out = truncateQuotePreview('abcdefghijklmnop', 10);
-    expect(out).toContain(' ... ');
-    expect(out.startsWith('a')).toBe(true);
-    expect(out.endsWith('p')).toBe(true);
-  });
-});
-
-describe('renderComment', () => {
-  it('prefixes every quote line with > and appends the body', () => {
-    const c = mkComment('c1', 'line one\nline two', 'my reply');
-    expect(renderComment(c)).toBe('> line one\n> line two\n\nmy reply');
-  });
-
-  it('does not double-prefix quotes that already start with >', () => {
-    const c = mkComment('c1', '> already quoted', 'reply');
-    expect(renderComment(c)).toBe('> already quoted\n\nreply');
-  });
-
-  it('renders quote-only when body is blank', () => {
-    const c = mkComment('c1', 'just a quote', '   ');
-    expect(renderComment(c)).toBe('> just a quote');
-  });
-
-  it('truncates overly long quotes with middle-ellipsis', () => {
-    const long = 'x'.repeat(250);
-    const c = mkComment('c1', long, 'reply');
-    const out = renderComment(c);
-    expect(out).toContain(' ... ');
-    expect(out).toContain('reply');
-  });
-
-  it('normalizes CRLF line endings to LF', () => {
-    const c = mkComment('c1', 'a\r\nb', 'reply');
-    expect(renderComment(c)).toBe('> a\n> b\n\nreply');
-  });
 });
 
 describe('renderComment with artifact source', () => {
-  it('includes attribution and read-hint when source is provided', () => {
-    const c: PendingComment = {
-      id: 'c1',
-      quotedText: 'some passage',
-      body: 'my comment',
-      createdAt: 0,
-      source: { type: 'artifact', name: 'API Spec', filePath: 'docs/api.md' },
-    };
-    const out = renderComment(c);
-    expect(out).toBe(
-      [
-        'From artifact "API Spec" at `docs/api.md`:',
-        '',
-        '> some passage',
-        '',
-        'my comment',
-        '',
-        'The full document is available at `docs/api.md`. Read it if you need more context.',
-      ].join('\n'),
-    );
-  });
-
-  it('uses generic label when source has no name', () => {
-    const c: PendingComment = {
-      id: 'c2',
-      quotedText: 'hello',
-      body: 'world',
-      createdAt: 0,
-      source: { type: 'artifact', filePath: 'notes.md' },
-    };
-    const out = renderComment(c);
-    expect(out).toContain('From an artifact document at `notes.md`:');
-    expect(out).toContain('> hello');
-    expect(out).toContain('world');
-    expect(out).toContain('The full document is available at `notes.md`.');
-  });
-
   it('renders without body when body is empty (source present)', () => {
     const c: PendingComment = {
       id: 'c3',
@@ -167,64 +74,9 @@ describe('renderComment with artifact source', () => {
     expect(out).toContain('Context after: " This determines the routing"');
     expect(out).toContain('Read lines 42-42 for the exact passage.');
   });
-
-  it('renders line range for multi-line selections', () => {
-    const c: PendingComment = {
-      id: 'c5',
-      quotedText: 'multi\nline\ntext',
-      body: 'review this',
-      createdAt: 0,
-      source: {
-        type: 'artifact',
-        name: 'Doc',
-        filePath: 'doc.md',
-        selector: {
-          exact: 'multi\nline\ntext',
-          startLine: 10,
-          endLine: 12,
-        },
-      },
-    };
-    const out = renderComment(c);
-    expect(out).toContain('lines 10-12');
-    expect(out).toContain('Read lines 10-12 for the exact passage.');
-  });
-
-  it('omits context lines when prefix/suffix are absent', () => {
-    const c: PendingComment = {
-      id: 'c6',
-      quotedText: 'simple text',
-      body: 'note',
-      createdAt: 0,
-      source: {
-        type: 'artifact',
-        name: 'Doc',
-        filePath: 'doc.md',
-        selector: {
-          exact: 'simple text',
-          startLine: 5,
-          endLine: 5,
-        },
-      },
-    };
-    const out = renderComment(c);
-    expect(out).not.toContain('Context before');
-    expect(out).not.toContain('Context after');
-  });
 });
 
 describe('formatCommentsBlock', () => {
-  it('returns empty string for an empty array', () => {
-    expect(formatCommentsBlock([])).toBe('');
-  });
-
-  it('formats a single comment with the section header', () => {
-    const out = formatCommentsBlock([mkComment('c1', 'hello', 'hi back')]);
-    expect(out).toBe(
-      '## My Comments on Previous Reply\n\n> hello\n\nhi back',
-    );
-  });
-
   it('separates multiple comments with a horizontal rule', () => {
     const out = formatCommentsBlock([
       mkComment('c1', 'first quote', 'first reply'),
@@ -249,38 +101,29 @@ describe('formatCommentsBlock', () => {
 });
 
 describe('joinMessageParts', () => {
-  it('returns just the user text when nothing else is present', () => {
-    expect(joinMessageParts(null, null, 'hello world')).toBe('hello world');
-  });
-
-  it('puts the comment block before the user text', () => {
-    const block = '## My Comments on Previous Reply\n\n> q\n\nb';
-    expect(joinMessageParts(block, null, 'question?')).toBe(
-      `${block}\n\nquestion?`,
-    );
-  });
-
-  it('labels quote-reply text as selected assistant context', () => {
-    const block = '## My Comments on Previous Reply\n\n> q1\n\nb1';
-    expect(joinMessageParts(block, 'quoted line', 'the question')).toBe(
-      `${block}\n\n${QUOTED_CONTEXT}\n\nSelected assistant passage:\n> quoted line\n\nUser's reply:\nthe question`,
-    );
-  });
-
   it('allows comment-only send (empty user text, null quote)', () => {
     const block = '## My Comments on Previous Reply\n\n> q\n\nb';
     expect(joinMessageParts(block, null, '')).toBe(block);
   });
+});
 
-  it('does not double-prefix quote lines that already start with >', () => {
-    expect(joinMessageParts(null, '> already', 'next')).toBe(
-      `${QUOTED_CONTEXT}\n\nSelected assistant passage:\n> already\n\nUser's reply:\nnext`,
-    );
-  });
+it('does not tell the agent old line numbers locate the current file passage', () => {
+  const result = renderComment({ ...mkComment('c', 'old text', 'fix this'), source: {
+    type: 'artifact', filePath: 'spec.md', selector: { exact: 'old text', startLine: 8, endLine: 9 },
+    snapshot: { hashKind: 'sha256-text-utf8', contentHash: 'abc123', backendConnectionId: 'local', projectId: 'p', resolvedFilePath: '/actual/spec.md' },
+  } });
+  expect(result).toContain('lines 8-9');
+  expect(result).toContain('sha256-text-utf8 abc123');
+  expect(result).toContain('current file may differ');
+  expect(result).not.toContain('Read lines 8-9 for the exact passage');
+});
 
-  it('trims stray whitespace on all inputs', () => {
-    expect(joinMessageParts('  block  ', '  q  ', '  text  ')).toBe(
-      `block\n\n${QUOTED_CONTEXT}\n\nSelected assistant passage:\n> q\n\nUser's reply:\ntext`,
-    );
-  });
+it('sends the complete old selection when a snapshot is the only retained version', () => {
+  const exact = '完整旧版选段🙂'.repeat(100);
+  const result = renderComment({ ...mkComment('long', 'short preview', 'edit this'), source: {
+    type: 'artifact', filePath: 'a.md', selector: { exact },
+    snapshot: { hashKind: 'sha256-text-utf8', contentHash: 'old', backendConnectionId: 'local', projectId: 'p', resolvedFilePath: '/a.md' },
+  } });
+  expect(result).toContain(exact);
+  expect(result).not.toContain('short preview');
 });

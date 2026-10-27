@@ -3,7 +3,8 @@
  *
  * Configuration sources (evaluated in order, all additive):
  *
- *   1. `~/.michi/config.json` → `piMcpServers` array
+ *   1. `config.json` under `MICHI_CONFIG_DIR` (default `~/.michi`)
+ *      → `piMcpServers` array
  *   2. `MICHI_PI_MCP_SERVERS` env var — JSON array or comma-separated
  *      shorthand commands (e.g. "sample-mcp,sample-docs-mcp")
  *
@@ -11,13 +12,12 @@
  * When shorthand (bare command name) is used, the serverName is derived
  * by stripping a trailing "-mcp" suffix: "sample-mcp" → "sample".
  */
-import fs from "fs";
 import path from "path";
-import os from "os";
 import type { McpServerConfig } from "./mcpClientManager";
+import { getMichiConfigPaths } from './configPaths';
+import { readJsonConfig } from './jsonConfigStore';
 
-const CONFIG_DIR = path.join(os.homedir(), ".michi");
-const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+const { configPath: CONFIG_PATH } = getMichiConfigPaths();
 
 /**
  * Derive a short server name from a command.
@@ -64,34 +64,33 @@ function normalizeEntry(entry: unknown): McpServerConfig | null {
 export function readPiMcpServers(): McpServerConfig[] {
     const byName = new Map<string, McpServerConfig>();
 
-    // Source 1: config.json → piMcpServers
-    try {
-        const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-        const arr = raw?.piMcpServers;
-        if (Array.isArray(arr)) {
-            for (const entry of arr) {
-                const cfg = normalizeEntry(entry);
-                if (cfg) byName.set(cfg.serverName, cfg);
-            }
-        }
-    } catch {
-        // Missing or malformed config.json — not an error.
+    // Only a missing file is an empty configuration. Corrupt/unreadable files
+    // must reach PiSession's MCP setup warning, rather than starting unconfigured servers.
+    const raw = readJsonConfig(CONFIG_PATH) ?? {};
+    if (raw.piMcpServers !== undefined && !Array.isArray(raw.piMcpServers)) {
+        throw Object.assign(new Error('piMcpServers must be an array'), { code: 'MCP_CONFIG_INVALID' });
+    }
+    for (const entry of raw.piMcpServers ?? []) {
+        const cfg = normalizeEntry(entry);
+        if (cfg) byName.set(cfg.serverName, cfg);
     }
 
     // Source 2: MICHI_PI_MCP_SERVERS env var
     const envVal = process.env.MICHI_PI_MCP_SERVERS?.trim();
     if (envVal) {
-        // Try JSON array first
-        try {
-            const parsed = JSON.parse(envVal);
-            if (Array.isArray(parsed)) {
-                for (const entry of parsed) {
-                    const cfg = normalizeEntry(entry);
-                    if (cfg) byName.set(cfg.serverName, cfg);
-                }
+        // JSON-looking input must not become an executable shorthand after
+        // a syntax failure. Keep the diagnostic free of credential-bearing input.
+        if (envVal.startsWith('[') || envVal.startsWith('{')) {
+            let parsed: unknown;
+            try { parsed = JSON.parse(envVal); } catch {
+                throw Object.assign(new Error('MICHI_PI_MCP_SERVERS must contain a valid JSON array or command shorthand'), { code: 'MCP_CONFIG_INVALID' });
             }
-        } catch {
-            // Fallback: comma-separated command names
+            if (!Array.isArray(parsed)) throw Object.assign(new Error('MICHI_PI_MCP_SERVERS JSON must be an array'), { code: 'MCP_CONFIG_INVALID' });
+            for (const entry of parsed) {
+                const cfg = normalizeEntry(entry);
+                if (cfg) byName.set(cfg.serverName, cfg);
+            }
+        } else {
             for (const cmd of envVal.split(",")) {
                 if (cmd.trim()) {
                     const cfg = parseShorthand(cmd);

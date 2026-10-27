@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AcpClient } from '../src/services/acpClient';
-import type { KiroEngine } from '../src/agents/kiro/kiroProtocol';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import type { KiroEngine } from 'michi-runtime/internal/adapters/kiro/kiroProtocol';
 
 function fixture(engine: KiroEngine) {
     const c = new AcpClient('/bin/false', '/tmp', undefined, engine);
@@ -85,26 +85,6 @@ for (const engine of ['v2', 'v3'] as const) {
         assert.equal(cleared.cleared, true);
         assert.deepEqual(cleared.messageIds, engine === 'v3' ? ['steer-id'] : undefined);
     });
-
-    test(`${engine}: load absorbs identity/config but drops replay before the next prompt`, async () => {
-        const { c, internal } = fixture(engine);
-        const send = internal.send;
-        internal.send = async (method: string, params: any) => {
-            if (method === 'session/load') internal.dispatch({ method: 'session/update', params: {
-                sessionId: 'parent', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'OLD' }, _meta: { kiro: { replay: true } } },
-            } });
-            if (method === 'session/prompt') {
-                c.injectUpdate('parent', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'NEW' } });
-                return { stopReason: 'end_turn' };
-            }
-            return send(method, params);
-        };
-        await c.initialize();
-        await c.loadSession('parent', '/tmp');
-        const updates = [];
-        for await (const event of c.prompt('parent', 'continue')) updates.push(event);
-        assert.deepEqual(updates.filter((u) => u.sessionUpdate !== 'session_state').map((u) => u.content?.text ?? u.sessionUpdate), ['NEW', 'turn_end']);
-    });
 }
 
 test('v3 emits one usage summary and waits for prompt response despite early turn_end', async () => {
@@ -169,15 +149,6 @@ test('v2 compact waits for its own completion notification, locks the session, a
     assert.equal(c.needsSessionRecovery('parent'), false);
 });
 
-test('v2 compact accepts a completion arriving before the command acknowledgement', async () => {
-    const { c, internal } = fixture('v2');
-    internal.send = async () => {
-        internal.dispatch({ method: '_kiro.dev/compaction/status', params: { sessionId: 'parent', status: { type: 'completed' } } });
-        return { success: true };
-    };
-    assert.equal((await c.compact('parent')).success, true);
-});
-
 test('v2 compact timeout quarantines the session and blocks subsequent prompts', async () => {
     const { c, internal } = fixture('v2');
     await c.newSession();
@@ -210,29 +181,6 @@ for (const failure of ['refused', 'failed', 'released', 'shutdown']) {
     });
 }
 
-test('v3 compact uses the dedicated RPC and a queued prompt waits for its completion', async () => {
-    const { c, internal } = fixture('v3');
-    await c.newSession();
-    const methods: string[] = [];
-    let complete!: () => void;
-    internal.send = async (method: string) => {
-        methods.push(method);
-        if (method === '_kiro/session/compact') return new Promise((resolve) => { complete = () => resolve({}); });
-        return { stopReason: 'end_turn' };
-    };
-    const compact = c.compact('parent');
-    const prompt = c.prompt('parent', 'continue');
-    const next = nextTurnUpdate(prompt);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.deepEqual(methods, ['_kiro/session/compact']);
-    complete();
-    assert.equal((await compact).success, true);
-    assert.equal((await next).value?.sessionUpdate, 'turn_end');
-    await prompt.return?.();
-    assert.deepEqual(methods, ['_kiro/session/compact', 'session/prompt']);
-    assert.equal(internal.sessionInFlight.size, 0);
-});
-
 test('v3 compact immediately after done waits for native steer cleanup', async () => {
     const { c, internal } = fixture('v3');
     await c.newSession();
@@ -261,52 +209,5 @@ test('v3 compact immediately after done waits for native steer cleanup', async (
 
 for (const engine of ['v2', 'v3'] as const) {
     for (const clearSucceeds of [true, false]) {
-        test(`${engine}: cancelled steer settles before reuse; clear=${clearSucceeds}`, async () => {
-            const { c, internal } = fixture(engine);
-            await c.newSession();
-            let finishPrompt!: (result: any) => void;
-            let finishSteer!: (result: any) => void;
-            let cleared = 0;
-            internal.notify = async () => {};
-            internal.send = async (method: string) => {
-                if (method === 'session/prompt') return new Promise((resolve) => { finishPrompt = resolve; });
-                if (method === '_session/steer') return new Promise((resolve) => { finishSteer = resolve; });
-                if (method === '_session/steer/clear') { cleared++; return { cleared: clearSucceeds }; }
-                return {};
-            };
-            const stream = c.prompt('parent', 'hello');
-            const terminal = nextTurnUpdate(stream);
-            const steering = c.steer('parent', 'pending');
-            await c.cancel('parent');
-            finishPrompt({ stopReason: 'cancelled' });
-            assert.equal((await terminal).value?.stopReason, 'cancelled');
-            let finished = false;
-            const cleanup = stream.return?.().then(() => { finished = true; });
-            await new Promise<void>((resolve) => setImmediate(resolve));
-            assert.equal(finished, false, 'late steer response must settle before releasing turn lock');
-            finishSteer({ queued: true });
-            assert.equal((await steering).queued, false);
-            await cleanup;
-            assert.equal(cleared, 1);
-            assert.equal(c.needsSessionRecovery('parent'), !clearSucceeds);
-            assert.equal(internal.sessionInFlight.has('parent'), false);
-        });
     }
-
-    test(`${engine}: an aborted queued consumer cannot clear active predecessor steering`, async () => {
-        const { c, internal } = fixture(engine);
-        await c.newSession();
-        let finish!: (result: any) => void;
-        internal.send = async () => new Promise((resolve) => { finish = resolve; });
-        const stream = c.prompt('parent', 'first'); const first = stream.next();
-        internal.cancelledPrompts.add('parent');
-        internal.steeredSessions.add('parent');
-        const abort = new AbortController(); abort.abort();
-        for await (const _ of c.prompt('parent', 'never sent', [], abort.signal)) { /* drain cancelled consumer */ }
-        assert.equal(internal.cancelledPrompts.has('parent'), true);
-        assert.equal(internal.steeredSessions.has('parent'), true);
-        internal.send = async () => ({ cleared: true });
-        finish({ stopReason: 'cancelled' }); await first; await stream.return?.();
-        assert.equal(internal.steeredSessions.has('parent'), false);
-    });
 }

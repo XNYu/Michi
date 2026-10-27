@@ -40,7 +40,7 @@ it('retains failure diagnostics and clears a post-hydration issue only after met
   view.unmount(); window.removeEventListener(REMOTE_WORKSPACE_RETRY_EVENT, wake);
 });
 
-it('keeps the notice when metadata remains unavailable and aborts in-flight polling on unmount', async () => {
+it('keeps the issue when metadata remains unavailable and aborts in-flight polling on unmount', async () => {
   reportRemoteRecoveryFailure(connection, new Error('Service stopped'));
   mocks.statuses.mockResolvedValue([{ connectionId: connection.id, phase: 'ready', message: 'Ready' }]);
   mocks.metadata.mockRejectedValue(new Error('Remote database still unavailable'));

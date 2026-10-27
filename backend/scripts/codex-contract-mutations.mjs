@@ -9,7 +9,7 @@ const cases = {
   'question-label-as-id': 'wire input',
 };
 const run = (mutation) => spawnSync(process.execPath, [
-  '--require', 'ts-node/register',
+  '--require', 'ts-node/register', '--require', './test/helpers/isolateUserDirs.cjs',
   ...(mutation ? ['--require', './test/contracts/codex/mutation-hook.cjs'] : []),
   '--test', '--test-reporter=tap', '--test-timeout=30000', 'test/codexContract.test.ts',
 ], { cwd, encoding: 'utf8', timeout: 90_000, maxBuffer: 4 * 1024 * 1024,

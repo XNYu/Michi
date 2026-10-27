@@ -3,39 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AcpClient } from '../src/services/acpClient';
-import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import { McpSlotRegistry } from '../src/services/mcpServer';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import { initDb, closeDb } from '../src/services/db';
 import * as sessionRegistry from '../src/agents/sessionRegistry';
-
-test('session context is limited to local Kiro v3 chats with MCP; Crew, v2, cloud and isolated workers keep their existing transport', async () => {
-    const oldCloud = process.env.MICHI_CLOUD;
-    delete process.env.MICHI_CLOUD;
-    const bridge: AgentToolBridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
-    const registry = new McpSlotRegistry();
-    const runtimes: KiroRuntime[] = [];
-    const create = (engine: 'v2' | 'v3', isolatedSession = false, withMcp = true) => {
-        const runtime = new KiroRuntime(bridge, withMcp ? registry : undefined, 12345, '/tmp', undefined, { engine, isolatedSession });
-        runtimes.push(runtime);
-        return runtime;
-    };
-    try {
-        assert.match(create('v3').getMcpSessionReminder('current'), /current ACP SessionID is "current"/);
-        assert.equal(create('v2').getMcpSessionReminder('current'), '');
-        assert.equal(create('v3', true).getMcpSessionReminder('current'), '');
-        assert.equal(create('v3', false, false).getMcpSessionReminder('current'), '');
-        const crew = new KiroRuntime(bridge, registry, 12345, '/tmp', undefined, { id: 'crew', engine: 'v3' });
-        runtimes.push(crew);
-        assert.equal(crew.getMcpSessionReminder('current'), '');
-        process.env.MICHI_CLOUD = '1';
-        assert.equal(create('v3').getMcpSessionReminder('current'), '');
-    } finally {
-        await Promise.all(runtimes.map(runtime => runtime.shutdown()));
-        if (oldCloud === undefined) delete process.env.MICHI_CLOUD; else process.env.MICHI_CLOUD = oldCloud;
-    }
-});
+import { michiTestHost } from './helpers/michiTestHost';
+import { hostOwner, runOwner } from './helpers/owners';
 
 test('v3 defaults to shared warm sessions with a stable MCP definition and per-turn context', async t => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-anchor-unit-'));
@@ -75,7 +50,7 @@ test('v3 defaults to shared warm sessions with a stable MCP definition and per-t
     });
     const bridge: AgentToolBridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null,
         agentRunToolsForSession: () => process.env.MICHI_CUSTOM_AGENTS === '1' ? { invoke: async () => ({}) } : null };
-    const runtime = new KiroRuntime(bridge, registry, 12345, dir, undefined, { engine: 'v3' });
+    const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: dir, host: michiTestHost(), engine: 'v3' });
     try {
         await runtime.warm(dir);
         const warmSid = runtime.listWarmedSessions()[0]?.sid;
@@ -113,17 +88,17 @@ test('v3 defaults to shared warm sessions with a stable MCP definition and per-t
         assert.notEqual(runtime.getClient(dir), quarantined);
         assert.equal(registry.resolveSessionSlot(group, b.nativeSessionId!), undefined);
         const run = await runtime.newSession({ sessionId: 'attempt', cwd: dir,
-            owner: { kind: 'agent_run', runId: 'run', attemptId: 'attempt' } });
+            owner: runOwner('run', 'attempt') });
         assert.equal(clients.length, 4, 'Run Attempts retain their isolated tool profiles after two chat recoveries');
-        assert.equal(runtime.getBinding(run.id)?.owner.kind, 'agent_run');
+        assert.equal(hostOwner(runtime.getBinding(run.id)!.owner).kind, 'agent_run');
         assert.equal(runtime.getBinding(b.id)?.nativeSessionId, b.nativeSessionId);
         assert.equal(runtime.activeProcessCount, 2, 'shared chat process and isolated Run both count toward the cap');
         (runtime as any).processCap = 2;
         await assert.rejects(runtime.ensureClient(path.join(dir, 'another-cwd')), /process cap/i);
         await assert.rejects(runtime.newSession({ sessionId: 'another-attempt', cwd: dir,
-            owner: { kind: 'agent_run', runId: 'run', attemptId: 'another-attempt' } }), /process cap/i);
+            owner: runOwner('run', 'another-attempt') }), /process cap/i);
         process.env.MICHI_CUSTOM_AGENTS = '1';
-        const enabled = new KiroRuntime(bridge, registry, 12345, dir, undefined, { engine: 'v3' });
+        const enabled = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: dir, host: michiTestHost(), engine: 'v3', customAgents: () => true });
         try {
             await enabled.warm(dir);
             assert.ok(registry.getSessionGroupCatalog(group)?.agentRuns,

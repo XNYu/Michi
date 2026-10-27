@@ -1,5 +1,6 @@
 import { parseAgentDefinitionDtoV1, type AgentDefinitionDtoV1 } from 'michi-shared';
 import { backendApiBase } from '../../config/backendConnections';
+import { backendFetch } from './backendRequest';
 import type { AgentResourceIdentity, LocatedAgentResource } from '../../state/agentIdentity';
 import { locatedAgentResource } from '../../state/agentIdentity';
 
@@ -41,7 +42,7 @@ async function responseJson(response: Response, operation: string): Promise<Reco
 
 export async function continueAgentRunAsBranch(identity: AgentResourceIdentity,
   request: ContinueAgentRunActionRequest, operationId: string, signal?: AbortSignal): Promise<ContinueAgentRunActionResult> {
-  const payload = await responseJson(await fetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}/continue-as-branch`, {
+  const payload = await responseJson(await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}/continue-as-branch`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-idempotency-key': operationId },
     body: JSON.stringify(request), signal,
   }), 'continueAgentRunAsBranch');
@@ -51,7 +52,7 @@ export async function continueAgentRunAsBranch(identity: AgentResourceIdentity,
 export async function saveAgentRunAsCustomAgent(identity: AgentResourceIdentity,
   request: { version: 1; workspaceId: string; name?: string }, operationId: string,
   signal?: AbortSignal): Promise<LocatedAgentResource<AgentDefinitionDtoV1>> {
-  const payload = await responseJson(await fetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}/save-as-agent`, {
+  const payload = await responseJson(await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}/save-as-agent`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-idempotency-key': operationId },
     body: JSON.stringify(request), signal,
   }), 'saveAgentRunAsCustomAgent');

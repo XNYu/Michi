@@ -13,7 +13,7 @@
     "moduleResolution": "node"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/agents/codex/gen"],
+  "exclude": ["node_modules", "dist"],
   "ts-node": {
     "files": true
   }

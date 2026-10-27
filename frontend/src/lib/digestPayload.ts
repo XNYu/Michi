@@ -1,6 +1,7 @@
 import type { ChatNodeState, Project } from '../state/chatStore';
 import { activeTreeRootNodeId } from '../state/chatStore';
-import { visibleMessageText } from '../state/assistantBlocks';
+import { findTreeIdForNode } from '../state/tree';
+import { digestSourceSnapshot } from './digestSource';
 import type { DigestGenerationPayload } from '../services/digestApi';
 
 export function buildDigestPayload(
@@ -10,7 +11,10 @@ export function buildDigestPayload(
   previousContent?: string,
   customPrompt?: string,
 ): DigestGenerationPayload {
-  const rootNode = nodes[activeTreeRootNodeId(project) ?? project.chatIds[0]];
+  const sourceTreeId = sourceIds.map((id) => findTreeIdForNode(id, project)).find((id) => id !== null);
+  const sourceRootId = project.trees.find((tree) => tree.id === sourceTreeId)?.rootNodeId;
+  const rootId = sourceRootId ?? activeTreeRootNodeId(project);
+  const rootNode = rootId ? nodes[rootId] : undefined;
   const rootTitle =
     rootNode?.title
     ?? rootNode?.messages.find((m) => m.role === 'user')?.text.slice(0, 80)
@@ -19,18 +23,7 @@ export function buildDigestPayload(
   for (const id of sourceIds) {
     const n = nodes[id];
     if (!n || n.kind !== 'chat' || n.deletedAt) continue;
-    nodeList.push({
-      nodeId: n.nodeId,
-      parentNodeId: n.parentNodeId,
-      title: n.title,
-      depth: 0,
-      messages: n.messages
-        .map((m) => ({
-          role: m.role,
-          text: visibleMessageText(m),
-        }))
-        .filter((m) => !!m.text),
-    });
+    nodeList.push(digestSourceSnapshot(n));
   }
   return {
     workspace: { name: project.name, cwd: project.cwd, createdAt: project.createdAt },

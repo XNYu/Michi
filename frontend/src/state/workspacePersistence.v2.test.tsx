@@ -46,7 +46,7 @@ function useHarness() {
   const dirtyDraftNodeIdsRef = useRef(new Set<string>());
   const syncPausedRef = useRef(false);
   nodesRef.current = nodes;
-  const { runWorkspaceMutation } = useWorkspacePersistence({
+  const { runWorkspaceMutation, noteBackendInstalled, pendingBackendDeletes } = useWorkspacePersistence({
     projects, activeProjectId, nodes, structureVersion, hydrated, nodesRef,
     setProjects, setActiveProjectId, setNodes, setHydrated,
     dirtyDraftNodeIdsRef, syncPausedRef, windowId: 'window-a',
@@ -61,7 +61,55 @@ function useHarness() {
   });
   return {
     runWorkspaceMutation,
+    pendingBackendDeletes,
+    projects,
+    noteBackendInstalled,
+    dropTree(treeId: string) {
+      setProjects((prev) => prev.map((p) => (p.id === 'ws-1' ? { ...p, trees: p.trees.filter((t) => t.id !== treeId) } : p)));
+    },
+    /** The install's state change alone (as a later render would bring it). */
+    land(fresh: { project: Project; nodes: Record<string, ChatNodeState> }) {
+      setProjects((prev) => [...prev, fresh.project]);
+      setNodes((prev) => ({ ...prev, ...fresh.nodes }));
+      setStructureVersion((version) => version + 1);
+    },
+    /** Any other change to one workspace (and its nodes). */
+    change(projectId: string, update: (p: Project) => Project, freshNodes: Record<string, ChatNodeState> = {}) {
+      setProjects((prev) => prev.map((p) => (p.id === projectId ? update(p) : p)));
+      setNodes((prev) => ({ ...prev, ...freshNodes }));
+      setStructureVersion((version) => version + 1);
+    },
     rename(name: string) { setProjects(prev => prev.map(p => ({ ...p, name }))); },
+    /** What installWorkspaceSnapshot does with a backend workspace: tell, then set. */
+    installFromBackend(fresh: { project: Project; nodes: Record<string, ChatNodeState> }, intoExisting = false) {
+      if (intoExisting) {
+        noteBackendInstalled({
+          projectId: 'ws-1', newProject: false,
+          nodeIds: Object.keys(fresh.nodes), treeIds: fresh.project.trees.map((t) => t.id), edgeIds: [],
+        });
+        setProjects((prev) => prev.map((p) => (p.id === 'ws-1'
+          ? { ...p, chatIds: [...p.chatIds, ...fresh.project.chatIds], trees: [...p.trees, ...fresh.project.trees] }
+          : p)));
+      } else {
+        noteBackendInstalled({
+          projectId: fresh.project.id, newProject: true,
+          nodeIds: Object.keys(fresh.nodes), treeIds: fresh.project.trees.map((t) => t.id), edgeIds: [],
+        });
+        setProjects((prev) => [...prev, fresh.project]);
+      }
+      setNodes((prev) => ({ ...prev, ...fresh.nodes }));
+      setStructureVersion((version) => version + 1);
+    },
+    /** A reply finished on n1. */
+    reply(lastAssistantAt: number) {
+      setNodes((prev) => ({ ...prev, n1: { ...prev.n1, lastAssistantAt } }));
+      setStructureVersion((version) => version + 1);
+    },
+    /** What the focus effect's node-viewed does. */
+    view(viewedAt: number) {
+      setNodes((prev) => ({ ...prev, n1: { ...prev.n1, viewedAt } }));
+      setStructureVersion((version) => version + 1);
+    },
     editDraft(value: string) {
       setNodes({ n1: { ...node, composerDraft: value ? { value, mentions: [] } : undefined } });
       dirtyDraftNodeIdsRef.current.add('n1');
@@ -174,6 +222,151 @@ describe('v2 authoritative workspace persistence', () => {
     result.current.resetNodeReads();
     act(() => result.current.finishStream());
     expect(result.current.nodeReads()).toBeGreaterThan(0);
+  });
+
+  it('never writes back what a backend snapshot brought in, only what changes after', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    const other: Project = {
+      id: 'ws-2', name: 'Other window', chatIds: ['n2'], edges: [], createdAt: 2,
+      trees: [{ id: 't2', rootNodeId: 'n2', createdAt: 2, lastActiveAt: 2 }], activeTreeId: 't2', artifacts: [],
+    };
+    const n2: ChatNodeState = { ...node, nodeId: 'n2', projectId: 'ws-2' };
+    act(() => result.current.installFromBackend({ project: other, nodes: { n2 } }));
+    // A thread made elsewhere, merged into a workspace this window has.
+    const n3: ChatNodeState = { ...node, nodeId: 'n3' };
+    act(() => result.current.installFromBackend({
+      project: { ...project, chatIds: ['n3'], trees: [{ id: 't3', rootNodeId: 'n3', createdAt: 3, lastActiveAt: 3 }] },
+      nodes: { n3 },
+    }, true));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands).not.toHaveBeenCalled();
+
+    // A local edit afterwards still goes out.
+    act(() => result.current.renameWorkspace('Edited here'));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands).toHaveBeenCalledTimes(1);
+    expect(apiMocks.applyWorkspaceCommands.mock.calls[0][0]).toBe('ws-1');
+    const commands = apiMocks.applyWorkspaceCommands.mock.calls[0][2];
+    expect(commands.map((c) => c.type)).toEqual(['workspace.upsert']);
+  });
+
+  it('keeps a noted install for the scan that sees it land, not one that runs before', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    const other: Project = {
+      id: 'ws-2', name: 'Other window', chatIds: ['n2'], edges: [], createdAt: 2,
+      trees: [{ id: 't2', rootNodeId: 'n2', createdAt: 2, lastActiveAt: 2 }], activeTreeId: 't2', artifacts: [],
+    };
+    const n2: ChatNodeState = { ...node, nodeId: 'n2', projectId: 'ws-2' };
+    act(() => result.current.noteBackendInstalled({ projectId: 'ws-2', newProject: true, nodeIds: ['n2'], treeIds: ['t2'], edgeIds: [] }));
+    // Another change's scan runs first (a commit's delayed effects).
+    act(() => result.current.renameWorkspace('Edited here'));
+    act(() => result.current.land({ project: other, nodes: { n2 } }));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands.mock.calls.map((call) => call[0])).toEqual(['ws-1']);
+  });
+
+  it('keeps local edits to a workspace a scan already held when a noted new install lands there', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    const other: Project = {
+      id: 'ws-2', name: 'Other window', chatIds: ['n2'], edges: [], createdAt: 2,
+      trees: [{ id: 't2', rootNodeId: 'n2', createdAt: 2, lastActiveAt: 2 }], activeTreeId: 't2', artifacts: [],
+    };
+    const n2: ChatNodeState = { ...node, nodeId: 'n2', projectId: 'ws-2' };
+    const n5: ChatNodeState = { ...node, nodeId: 'n5', projectId: 'ws-2' };
+    // Two installs noted together (new workspace, then more of it) that land in two renders.
+    act(() => result.current.noteBackendInstalled({ projectId: 'ws-2', newProject: true, nodeIds: ['n2', 'n5'], treeIds: ['t2', 't5'], edgeIds: [] }));
+    act(() => result.current.land({ project: other, nodes: { n2 } }));
+    // Edited here before the rest arrives.
+    act(() => result.current.change('ws-2', (p) => ({ ...p, name: 'Renamed here' })));
+    act(() => result.current.change('ws-2', (p) => ({
+      ...p, chatIds: [...p.chatIds, 'n5'], trees: [...p.trees, { id: 't5', rootNodeId: 'n5', createdAt: 5, lastActiveAt: 5 }],
+    }), { n5 }));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    const calls = apiMocks.applyWorkspaceCommands.mock.calls.filter((call) => call[0] === 'ws-2');
+    expect(calls).toHaveLength(1);
+    const commands = calls[0][2];
+    // The rename goes out; nothing the installs brought in does.
+    expect(commands.map((c) => c.type)).toEqual(['workspace.upsert']);
+    expect(JSON.stringify(commands[0])).toContain('Renamed here');
+  });
+
+  it('counts a confirmed tree delete only for snapshot reads begun before the backend confirmed it', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    act(() => result.current.dropTree('t1'));
+    const pending = (readStartedAt?: number) => [
+      ...result.current.pendingBackendDeletes(result.current.projects.find((p) => p.id === 'ws-1')!, readStartedAt).treeIds,
+    ];
+    const readBefore = Date.now();
+    // Not sent yet: every read may hold it.
+    expect(pending(readBefore)).toEqual(['t1']);
+    expect(pending(readBefore + 60_000)).toEqual(['t1']);
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands.mock.calls[0][2].map((c) => c.type)).toContain('tree.delete');
+    const confirmedBy = Date.now();
+    // A read begun before the confirmation may still hold it, however long ago it began.
+    await act(async () => vi.advanceTimersByTimeAsync(10 * 60_000));
+    expect(pending(readBefore)).toEqual(['t1']);
+    expect(pending(confirmedBy)).toEqual(['t1']);
+    // One begun after already saw it gone: what it holds is back for real.
+    expect(pending(confirmedBy + 1)).toEqual([]);
+    expect(pending(Date.now())).toEqual([]);
+    // When the read began is unknown, it counts.
+    expect(pending()).toEqual(['t1']);
+  });
+
+  it('writes view marks on the persistence cadence: one patch with the latest mark, retried until it lands', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    act(() => result.current.reply(500));
+    act(() => result.current.view(1_000));
+    act(() => result.current.view(2_000));
+    act(() => result.current.view(3_000));
+    expect(apiMocks.applyWorkspaceCommands).not.toHaveBeenCalled();
+    apiMocks.applyWorkspaceCommands.mockRejectedValueOnce(new Error('Offline'));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    const viewMark = [{ type: 'node.patch', payload: { id: 'n1', viewed_at: 3_000 } }];
+    expect(apiMocks.applyWorkspaceCommands.mock.calls.map((call) => call[2])).toEqual([viewMark, viewMark]);
+    act(() => result.current.view(3_000));
+    act(() => result.current.view(2_500));
+    await act(async () => vi.advanceTimersByTimeAsync(4_000));
+    expect(apiMocks.applyWorkspaceCommands).toHaveBeenCalledTimes(2);
+  });
+
+  it('writes no view mark for a conversation without a reply', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    act(() => result.current.view(1_000));
+    await act(async () => vi.advanceTimersByTimeAsync(4_000));
+    expect(apiMocks.applyWorkspaceCommands).not.toHaveBeenCalled();
+    act(() => result.current.reply(1_500));
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(apiMocks.applyWorkspaceCommands.mock.calls.map((call) => call[2])).toEqual([[{ type: 'node.patch', payload: { id: 'n1', viewed_at: 1_000 } }]]);
+  });
+
+  it('sends an unsent view mark with the unload beacon', async () => {
+    const sendBeacon = vi.fn<(url: string | URL, data?: BodyInit | null) => boolean>(() => true);
+    Object.defineProperty(navigator, 'sendBeacon', { configurable: true, value: sendBeacon });
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await Promise.resolve(); });
+    act(() => result.current.reply(3_000));
+    act(() => result.current.view(4_000));
+    const parts: BlobPart[] = [];
+    vi.stubGlobal('Blob', class extends Blob {
+      constructor(blobParts?: BlobPart[], options?: BlobPropertyBag) { super(blobParts, options); parts.push(...(blobParts ?? [])); }
+    });
+    try {
+      act(() => window.dispatchEvent(new Event('beforeunload')));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(sendBeacon).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(parts[0])) as { commands: WorkspaceCommand[] };
+    expect(body.commands).toEqual([{ type: 'node.patch', payload: { id: 'n1', viewed_at: 4_000 } }]);
   });
 
   it('flushes an immediate-close domain mutation with an explicit command beacon, never /sync', async () => {

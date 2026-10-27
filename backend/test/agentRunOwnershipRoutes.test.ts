@@ -4,6 +4,7 @@ import express from 'express';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { AgentRunEventBus } from '../src/agents/runs/agentRunEventBus';
@@ -28,7 +29,7 @@ function seed(): void {
     status,created_at,updated_at) VALUES ('watch-a','owner-a','ws-a','{"version":1}','notify','active',1,1)`).run();
 }
 
-function start(): void {
+async function start(): Promise<void> {
   const service: AgentRunRouteService = {
     async spawn() { throw new Error('unused'); },
     list() { return []; },
@@ -46,7 +47,7 @@ function start(): void {
     service,
     sse: { source: { getRun: () => null, listEvents: () => [], listRuns: () => [] }, events: new AgentRunEventBus() },
   }));
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
 }
 
@@ -58,11 +59,11 @@ async function request(method: string, route: string, owner: string, body?: unkn
 }
 
 describe('Agent Run ownership middleware mounted on production routes', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-agent-route-owner-'));
     process.env.MICHI_DATA_DIR = tmpDir;
     process.env.MICHI_CLOUD = '1';
-    closeDb(); initDb(); seed(); serviceCalls = []; start();
+    closeDb(); initDb(); seed(); serviceCalls = []; await start();
   });
 
   afterEach(async () => {

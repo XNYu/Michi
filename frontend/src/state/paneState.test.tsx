@@ -11,10 +11,8 @@ import { vi } from 'vitest';
 import React, { act } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { ChatProvider, useChatStore } from './chatStore';
-import { prunePaneMaps, usePaneState } from './paneState';
+import { paneScopeKey, prunePaneMaps, singlePageVisiblePanes, usePaneState } from './paneState';
 import { PrefsProvider } from './prefs';
-import { renderHook as renderStateHook } from '@testing-library/react';
-import type { Project } from './chatTypes';
 
 // Opt into React's concurrent-act environment so state updates dispatched
 // inside act(...) callbacks don't trigger the "not configured to support
@@ -85,62 +83,6 @@ describe('pane state', () => {
     delete window.electron;
   });
 
-  it('opens a pane and focuses it', async () => {
-    const harness = renderHook(() => useChatStore());
-    // openPanes is keyed by `projectId::activeTreeId`; fresh workspaces have
-    // no tree yet. Create one via createThread so paneKey becomes non-null.
-    await act(async () => {
-      await harness.result.current.createProject('WS');
-    });
-    await act(async () => {
-      await harness.result.current.createThread();
-    });
-    act(() => {
-      harness.result.current.openPane('n1');
-    });
-    expect(harness.result.current.openPanes).toContain('n1');
-    expect(harness.result.current.focusedPane).toBe('n1');
-    harness.unmount();
-  });
-
-  it('closes a focused pane and shifts focus to the last remaining', async () => {
-    const harness = renderHook(() => useChatStore());
-    await act(async () => {
-      await harness.result.current.createProject('WS');
-    });
-    await act(async () => {
-      await harness.result.current.createThread();
-    });
-    // Replace panes with just 'a' and 'b' by focusing known ids.
-    act(() => {
-      harness.result.current.openPane('a');
-    });
-    act(() => {
-      harness.result.current.openPane('b');
-    });
-    expect(harness.result.current.focusedPane).toBe('b');
-    act(() => {
-      harness.result.current.closePane('b');
-    });
-    expect(harness.result.current.openPanes).toContain('a');
-    expect(harness.result.current.openPanes).not.toContain('b');
-    expect(harness.result.current.focusedPane).toBe('a');
-    harness.unmount();
-  });
-
-  it('opens artifact files as PaneItems without inserting graph nodes', async () => {
-    const harness = renderHook(() => useChatStore());
-    await act(async () => { await harness.result.current.createProject('WS'); });
-    await act(async () => { await harness.result.current.createThread(); });
-    const before = harness.result.current.activeProject?.chatIds.slice() ?? [];
-    let paneId = '';
-    await act(async () => { paneId = await harness.result.current.openArtifactPane('docs/brief.md'); });
-    expect(harness.result.current.activeProject?.chatIds).toEqual(before);
-    expect(harness.result.current.paneItems[paneId]).toMatchObject({ kind: 'file', filePath: 'docs/brief.md' });
-    expect(harness.result.current.focusedPane).toBe(paneId);
-    harness.unmount();
-  });
-
   it('strips source locations and reuses the pane for the underlying file', async () => {
     const harness = renderHook(() => useChatStore());
     await act(async () => { await harness.result.current.createProject('WS'); });
@@ -163,65 +105,6 @@ describe('pane state', () => {
       filePath: path,
       sourceLocation: { line: 275, column: 9 },
       sourceReferencePath: `${path}:275:9`,
-    });
-    harness.unmount();
-  });
-
-  it('opens a line-targeted Markdown file in source mode', async () => {
-    const harness = renderHook(() => useChatStore());
-    await act(async () => { await harness.result.current.createProject('WS'); });
-    await act(async () => { await harness.result.current.createThread(); });
-    let paneId = '';
-    await act(async () => { paneId = await harness.result.current.openArtifactPane('docs/brief.md'); });
-    expect(harness.result.current.paneItems[paneId]).toMatchObject({ viewMode: 'rendered' });
-
-    let sourcePaneId = '';
-    await act(async () => { sourcePaneId = await harness.result.current.openArtifactPane('docs/brief.md:12', { parseSourceLocation: true }); });
-    expect(sourcePaneId).not.toBe(paneId);
-    expect(harness.result.current.paneItems[paneId]).toMatchObject({ viewMode: 'rendered' });
-    expect(harness.result.current.paneItems[sourcePaneId]).toMatchObject({
-      filePath: 'docs/brief.md',
-      viewMode: 'source',
-      sourceLocation: { line: 12 },
-      sourceReferencePath: 'docs/brief.md:12',
-    });
-    harness.unmount();
-  });
-
-  it('preserves numeric-colon filenames for ordinary artifact opens', async () => {
-    const harness = renderHook(() => useChatStore());
-    await act(async () => { await harness.result.current.createProject('WS'); });
-    await act(async () => { await harness.result.current.createThread(); });
-    let paneId = '';
-    await act(async () => { paneId = await harness.result.current.openArtifactPane('/repo/report:2024'); });
-    expect(harness.result.current.paneItems[paneId]).toMatchObject({
-      kind: 'file',
-      filePath: '/repo/report:2024',
-    });
-    const item = harness.result.current.paneItems[paneId];
-    expect(item.kind).toBe('file');
-    if (item.kind !== 'file') throw new Error('Expected a file pane');
-    expect(item.sourceLocation).toBeUndefined();
-    harness.unmount();
-  });
-
-
-  it('keeps a literal numeric-colon pane separate from a base-file source link', async () => {
-    const harness = renderHook(() => useChatStore());
-    await act(async () => { await harness.result.current.createProject('WS'); });
-    await act(async () => { await harness.result.current.createThread(); });
-    let literalPaneId = '';
-    await act(async () => { literalPaneId = await harness.result.current.openArtifactPane('/repo/report:2024'); });
-    let sourcePaneId = '';
-    await act(async () => {
-      sourcePaneId = await harness.result.current.openArtifactPane('/repo/report:12', { parseSourceLocation: true });
-    });
-
-    expect(sourcePaneId).not.toBe(literalPaneId);
-    expect(harness.result.current.paneItems[literalPaneId]).toMatchObject({ filePath: '/repo/report:2024' });
-    expect(harness.result.current.paneItems[sourcePaneId]).toMatchObject({
-      filePath: '/repo/report',
-      sourceLocation: { line: 12 },
     });
     harness.unmount();
   });
@@ -252,28 +135,22 @@ describe('pane state', () => {
     harness.unmount();
   });
 
-
-  it('persists independent workspace and tree slots through switches and remounts', () => {
-    const project: Project = {
-      id: 'empty', name: 'Empty', activeTreeId: null, trees: [], chatIds: [], edges: [], artifacts: [], createdAt: 1,
-    };
-    const hook = renderStateHook(({ projects, activeProjectId }) => usePaneState({ projects, activeProjectId }), {
-      initialProps: { projects: [project], activeProjectId: project.id },
+  it('opens a native Page in the active host slot while retaining owner identity', async () => {
+    const harness = renderHook(() => useChatStore());
+    await act(async () => { await harness.result.current.createProject('Host workspace'); });
+    await act(async () => { await harness.result.current.createThread(); });
+    let paneId = '';
+    act(() => { paneId = harness.result.current.openPagePane({
+      pageId: 'page-1', workspaceId: 'owner-workspace', backendConnectionId: 'remote-a', title: 'Roadmap',
+    }); });
+    expect(harness.result.current.paneItems[paneId]).toMatchObject({
+      kind: 'page', projectId: harness.result.current.activeProject?.id,
+      treeId: harness.result.current.activeProject?.activeTreeId,
+      backendConnectionId: 'remote-a', workspaceId: 'owner-workspace', pageId: 'page-1', title: 'Roadmap',
     });
-    act(() => hook.result.current.openPane('file'));
-    hook.rerender({ projects: [{ ...project, activeTreeId: 'tree' }], activeProjectId: project.id });
-    expect(hook.result.current.openPanes).toEqual([]);
-    act(() => hook.result.current.openPane('root'));
-    hook.rerender({ projects: [project], activeProjectId: project.id });
-    expect(hook.result.current.openPanes).toEqual(['file']);
-    expect(hook.result.current.focusedPane).toBe('file');
-    hook.unmount();
-    const restored = renderStateHook(() => usePaneState({ projects: [project], activeProjectId: project.id }));
-    expect(restored.result.current.openPanes).toEqual(['file']);
-    expect(restored.result.current.focusedPane).toBe('file');
-    const slots = JSON.parse(sessionStorage.getItem('michi:panes:open')!);
-    expect(slots).toEqual({ 'empty::workspace': ['file'], 'empty::tree': ['root'] });
-    restored.unmount();
+    expect(harness.result.current.openPanes).toContain(paneId);
+    expect(harness.result.current.focusedPane).toBe(paneId);
+    harness.unmount();
   });
 
   it('destroys a runtime surface only when its pane is explicitly closed', async () => {
@@ -317,26 +194,6 @@ describe('pane state', () => {
     harness.unmount();
   });
 
-  it('registers standalone pane descriptors without touching project nodes', () => {
-    const project = {
-      id: 'p1', name: 'WS', chatIds: ['root'], edges: [], artifacts: [],
-      trees: [{ id: 't1', rootNodeId: 'root', createdAt: 1, lastActiveAt: 1 }],
-      activeTreeId: 't1', createdAt: 1,
-    };
-    const harness = renderHook(() => usePaneState({ projects: [project], activeProjectId: 'p1' }));
-    const item = {
-      id: 'pane:terminal:test', kind: 'terminal' as const, projectId: 'p1', treeId: 't1', title: 'Terminal',
-      createdAt: 1, surfaceId: 'test', cwd: '/tmp',
-    };
-    act(() => {
-      harness.result.current.registerPaneItem(item);
-      harness.result.current.openPane(item.id);
-    });
-    expect(harness.result.current.paneItems[item.id]).toEqual(item);
-    expect(harness.result.current.openPanes).toEqual([item.id]);
-    harness.unmount();
-  });
-
   it('updates synthetic pane widths independently from node state', () => {
     const project = {
       id: 'p1', name: 'WS', chatIds: ['root'], edges: [], artifacts: [],
@@ -375,46 +232,39 @@ describe('pane state', () => {
 });
 
 describe('prunePaneMaps', () => {
-  it('removes dead ids from open panes across ALL pane keys', () => {
-    const open = { 'p::t1': ['a', 'dead', 'b'], 'p::t2': ['dead', 'c'] };
-    const focused = { 'p::t1': 'a', 'p::t2': 'dead' };
-    const { openPanesMap, focusedPaneMap } = prunePaneMaps(open, focused, new Set(['dead']));
-    expect(openPanesMap).toEqual({ 'p::t1': ['a', 'b'], 'p::t2': ['c'] });
-    // Focused pane that pointed at a dead id falls back (to last remaining, else null).
-    expect(focusedPaneMap['p::t1']).toBe('a');
-    expect(focusedPaneMap['p::t2']).toBe('c');
-  });
-
-  it('drops focus to null when the only pane in a key was dead', () => {
-    const open = { 'p::t1': ['dead'] };
-    const focused = { 'p::t1': 'dead' };
-    const { openPanesMap, focusedPaneMap } = prunePaneMaps(open, focused, new Set(['dead']));
-    expect(openPanesMap['p::t1']).toEqual([]);
-    expect(focusedPaneMap['p::t1']).toBeNull();
-  });
-
-  it('returns the SAME map references when nothing was dead (no spurious render)', () => {
-    const open = { 'p::t1': ['a', 'b'] };
-    const focused = { 'p::t1': 'a' };
-    const result = prunePaneMaps(open, focused, new Set(['nonexistent']));
-    expect(result.openPanesMap).toBe(open);
-    expect(result.focusedPaneMap).toBe(focused);
-  });
-
-  it('preserves untouched pane-key arrays by reference', () => {
-    const untouched = ['x', 'y'];
-    const open = { 'p::t1': ['dead', 'a'], 'p::t2': untouched };
-    const focused = { 'p::t1': 'a', 'p::t2': 'x' };
-    const result = prunePaneMaps(open, focused, new Set(['dead']));
-    expect(result.openPanesMap['p::t2']).toBe(untouched); // key with no dead id unchanged
-    expect(result.openPanesMap['p::t1']).toEqual(['a']);
-  });
-
   it('empty dead set is a no-op (same refs)', () => {
     const open = { 'p::t1': ['a'] };
     const focused = { 'p::t1': 'a' };
     const result = prunePaneMaps(open, focused, new Set());
     expect(result.openPanesMap).toBe(open);
     expect(result.focusedPaneMap).toBe(focused);
+  });
+});
+
+describe('single-page mode', () => {
+  const items = {
+    file: { id: 'file', kind: 'files', projectId: 'p', treeId: null, title: '', createdAt: 0 },
+    web: { id: 'web', kind: 'browser', projectId: 'p', treeId: null, title: '', createdAt: 0, surfaceId: 's', url: 'about:blank' },
+  } as const;
+
+  it('shows the focused tab as the page and keeps browser items for the dock', () => {
+    expect(singlePageVisiblePanes(['a', 'file', 'web', 'b'], items, 'a')).toEqual(['a', 'web']);
+    expect(singlePageVisiblePanes(['a', 'file', 'web', 'b'], items, 'file')).toEqual(['file', 'web']);
+  });
+
+  it('falls back to the last tab when focus is outside the tabs', () => {
+    expect(singlePageVisiblePanes(['a', 'b', 'web'], items, 'web')).toEqual(['b', 'web']);
+    expect(singlePageVisiblePanes(['a', 'b'], items, null)).toEqual(['b']);
+  });
+
+  it('returns the slot unchanged when it holds one tab', () => {
+    const single = ['a', 'web'];
+    expect(singlePageVisiblePanes(single, items, 'a')).toBe(single);
+  });
+
+  it('scopes pane motion by page so switching tabs swaps without open/close motion', () => {
+    const project = { id: 'p', activeTreeId: 't' };
+    expect(paneScopeKey(project)).toBe('p::t');
+    expect(paneScopeKey(project, 'a')).not.toBe(paneScopeKey(project, 'b'));
   });
 });

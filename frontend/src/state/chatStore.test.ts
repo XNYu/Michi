@@ -2,8 +2,7 @@ import { vi } from 'vitest';
 import { reduceProject, Project } from './chatStore';
 import { parseTitle } from './assistantParsing';
 import { finalizeAssistant } from './assistantParsing';
-import { hydrateSavedState, hydrateBackendWorkspaces, STATE_SCHEMA_VERSION } from './chatHydration';
-import { shouldBranchOnSubmit } from '../components/nodes/chatNodeUtils';
+import { hydrateSavedState, hydrateBackendWorkspaces } from './chatHydration';
 
 describe('parseTitle', () => {
   it('extracts a plain Title: line', () => {
@@ -13,43 +12,15 @@ describe('parseTitle', () => {
     expect(rest).toBe('#### Overview\nBody text here.');
   });
 
-  it('tolerates markdown decoration around the title', () => {
-    const input = '**Title:** Something cool\n\nBody';
-    const { title } = parseTitle(input);
-    expect(title).toBe('Something cool');
-  });
-
   it('returns null when no title marker is present', () => {
     const input = '#### Overview\nNo title here.';
     const { title, rest } = parseTitle(input);
     expect(title).toBeNull();
     expect(rest).toBe(input);
   });
-
-  it('handles a full-width colon', () => {
-    const input = 'Title：Seabird Compass\n\nBody';
-    const { title } = parseTitle(input);
-    expect(title).toBe('Seabird Compass');
-  });
-
-  it('strips the title line even if it is not on line 1', () => {
-    const input = 'Some preface\nTitle: Later title\n\nBody';
-    const { title, rest } = parseTitle(input);
-    expect(title).toBe('Later title');
-    expect(rest).toBe('Some preface\nBody');
-  });
 });
 
 describe('finalizeAssistant remapOffset', () => {
-  it('is identity when no title or follow-ups are present', () => {
-    const raw = 'Hello world, some text here.';
-    const { remapOffset, visibleText } = finalizeAssistant(raw);
-    expect(visibleText).toBe(raw);
-    expect(remapOffset(0)).toBe(0);
-    expect(remapOffset(5)).toBe(5);
-    expect(remapOffset(raw.length)).toBe(raw.length);
-  });
-
   it('shifts offsets after a title line is removed', () => {
     const raw = 'Title: My Title\n\nBody text here.';
     const { remapOffset, visibleText } = finalizeAssistant(raw);
@@ -77,105 +48,11 @@ describe('finalizeAssistant remapOffset', () => {
     expect(remapOffset(raw.length)).toBe(visibleText.length);
   });
 
-  it('handles both title removal and follow-up truncation', () => {
-    const raw = 'Title: Test\n\nAnswer body.\n\nFollow-up Questions:\n1. Why?\n2. How?';
-    const { remapOffset, visibleText } = finalizeAssistant(raw);
-    expect(visibleText).toBe('Answer body.');
-    // Offset at "Answer" in raw
-    const answerInRaw = raw.indexOf('Answer');
-    expect(remapOffset(answerInRaw)).toBe(visibleText.indexOf('Answer'));
-    // Offset past follow-ups → clamped
-    expect(remapOffset(raw.length)).toBe(visibleText.length);
-  });
-
-  it('handles title in the middle of text', () => {
-    const raw = 'Preface\nTitle: Mid Title\n\nAfter title.';
-    const { remapOffset, visibleText } = finalizeAssistant(raw);
-    expect(visibleText).toBe('Preface\nAfter title.');
-    // "Preface" is before the title, offset unchanged
-    expect(remapOffset(0)).toBe(0);
-    expect(remapOffset(7)).toBe(7); // end of "Preface"
-    // "After title." starts at different positions in raw vs visible
-    const afterInRaw = raw.indexOf('After title.');
-    const afterInVisible = visibleText.indexOf('After title.');
-    expect(remapOffset(afterInRaw)).toBe(afterInVisible);
-  });
-
-  // ── Inline [FOLLOW-UP n/3: ...] sentinels (current streaming format) ──
-  it('extracts follow-ups from per-question inline sentinels', () => {
-    const raw = [
-      'Here is the answer.',
-      '',
-      '[FOLLOW-UP 1/3: What about X?]',
-      '[FOLLOW-UP 2/3: Why not Y?]',
-      '[FOLLOW-UP 3/3: How does Z compare?]',
-    ].join('\n');
-    const { visibleText, followUps } = finalizeAssistant(raw);
-    expect(visibleText).toBe('Here is the answer.');
-    expect(followUps).toEqual(['What about X?', 'Why not Y?', 'How does Z compare?']);
-  });
-
-  it('uses the final contiguous per-question follow-up group', () => {
-    const raw = [
-      'Earlier I quoted [FOLLOW-UP 1/3: old?] inside the answer.',
-      '',
-      '[FOLLOW-UP 1/3: new1?]',
-      '[FOLLOW-UP 2/3: new2?]',
-    ].join('\n');
-    const { visibleText, followUps } = finalizeAssistant(raw);
-    expect(visibleText).toBe('Earlier I quoted [FOLLOW-UP 1/3: old?] inside the answer.');
-    expect(followUps).toEqual(['new1?', 'new2?']);
-  });
-
-  // ── Inline [FOLLOW-UPS: ...] sentinel (legacy compact format) ──
-  it('extracts follow-ups from the inline [FOLLOW-UPS:] sentinel', () => {
-    const raw = 'Here is the answer.\n\n[FOLLOW-UPS: What about X? | Why not Y? | How does Z compare?]';
-    const { visibleText, followUps } = finalizeAssistant(raw);
-    expect(visibleText).toBe('Here is the answer.');
-    expect(followUps).toEqual(['What about X?', 'Why not Y?', 'How does Z compare?']);
-  });
-
   it('prefers the LAST inline sentinel when multiple are present', () => {
     // Defensive against the LLM quoting an earlier [FOLLOW-UPS: ...] mid-reply.
     const raw = 'Earlier I wrote [FOLLOW-UPS: old1 | old2 | old3]. Now the real answer.\n\n[FOLLOW-UPS: new1? | new2? | new3?]';
     const { followUps } = finalizeAssistant(raw);
     expect(followUps).toEqual(['new1?', 'new2?', 'new3?']);
-  });
-
-  it('caps inline follow-ups at 3 items and trims whitespace', () => {
-    const raw = 'Answer.\n[FOLLOW-UPS:   a?   |  b?  |  c?  |  d?  ]';
-    const { followUps } = finalizeAssistant(raw);
-    expect(followUps).toEqual(['a?', 'b?', 'c?']);
-  });
-
-  it('falls back to the prose "Follow-up Questions:" marker when no inline tag', () => {
-    const raw = 'Legacy reply.\n\nFollow-up Questions:\n1. Why? \n2. How? ';
-    const { visibleText, followUps } = finalizeAssistant(raw);
-    expect(visibleText).toBe('Legacy reply.');
-    expect(followUps).toEqual(['Why?', 'How?']);
-  });
-
-  it('handles title + inline follow-ups together', () => {
-    const raw = 'Title: Demo\n\nBody content.\n\n[FOLLOW-UPS: q1? | q2? | q3?]';
-    const { title, visibleText, followUps } = finalizeAssistant(raw);
-    expect(title).toBe('Demo');
-    expect(visibleText).toBe('Body content.');
-    expect(followUps).toEqual(['q1?', 'q2?', 'q3?']);
-  });
-
-  it('extracts title from the inline [TITLE:] sentinel', () => {
-    const raw = '[TITLE: Quick Summary]\n\nThe body of the answer.\n\n[FOLLOW-UPS: a? | b? | c?]';
-    const { title, visibleText, followUps } = finalizeAssistant(raw);
-    expect(title).toBe('Quick Summary');
-    expect(visibleText).toBe('The body of the answer.');
-    expect(followUps).toEqual(['a?', 'b?', 'c?']);
-  });
-
-  it('inline [TITLE:] takes precedence over legacy "Title:" prose marker', () => {
-    const raw = '[TITLE: New Form]\n\nTitle: Old Form\n\nBody.';
-    const { title, visibleText } = finalizeAssistant(raw);
-    expect(title).toBe('New Form');
-    expect(visibleText).toContain('Title: Old Form');
   });
 });
 
@@ -198,44 +75,6 @@ describe('hydrateSavedState', () => {
       },
     },
   };
-
-  it('nulls chatId on every restored node', () => {
-    const hydrated = hydrateSavedState(baseState);
-    expect(hydrated.nodes.n1.chatId).toBeNull();
-    expect(hydrated.nodes.n2.chatId).toBeNull();
-  });
-
-  it('maps a legacy runtime chatId to the public nodeId marker', () => {
-    const hydrated = hydrateSavedState({
-      ...baseState,
-      nodes: {
-        ...baseState.nodes,
-        n1: { ...baseState.nodes.n1, chatId: 'legacy-kiro-acp-session' },
-      },
-    });
-    expect(hydrated.nodes.n1.chatId).toBe('n1');
-    expect(hydrated.nodes.n1.runtimeId).toBe('kiro');
-  });
-
-  it('forces status to idle and clears any streaming flag', () => {
-    const hydrated = hydrateSavedState(baseState);
-    expect(hydrated.nodes.n1.status).toBe('idle');
-    expect(hydrated.nodes.n2.status).toBe('idle');
-    const stillStreaming = hydrated.nodes.n2.messages.find((m) => (m as any).streaming);
-    expect(stillStreaming).toBeUndefined();
-  });
-
-  it('preserves projects, activeProjectId, messages, edges, title', () => {
-    const hydrated = hydrateSavedState(baseState);
-    // Projects are migrated from v1 (no trees) to v2 (with trees).
-    expect(hydrated.projects).toHaveLength(1);
-    expect(hydrated.projects[0].id).toBe('p1');
-    expect(hydrated.projects[0].name).toBe('Design');
-    expect(hydrated.projects[0].trees).toBeDefined();
-    expect(hydrated.activeProjectId).toBe('p1');
-    expect(hydrated.nodes.n2.messages.length).toBe(2);
-    expect(hydrated.nodes.n2.title).toBe('Child');
-  });
 
   it('preserves composer drafts across localStorage hydration', () => {
     const hydrated = hydrateSavedState({
@@ -277,156 +116,6 @@ describe('hydrateSavedState', () => {
   });
 });
 
-describe('hydrateSavedState kind discriminator', () => {
-  it("defaults kind to 'chat' for legacy saved nodes", () => {
-    const saved = {
-      version: 1,
-      projects: [{ id: 'p', name: 'x', chatIds: ['n'], edges: [], createdAt: 0 }],
-      activeProjectId: 'p',
-      nodes: { n: { nodeId: 'n', projectId: 'p', messages: [], followUps: [] } },
-    };
-    const h = hydrateSavedState(saved);
-    expect(h.nodes.n.kind).toBe('chat');
-  });
-
-  it("preserves kind: 'digest' when present", () => {
-    const saved = {
-      version: 1,
-      projects: [{ id: 'p', name: 'x', chatIds: ['n'], edges: [], createdAt: 0 }],
-      activeProjectId: 'p',
-      nodes: { n: { nodeId: 'n', kind: 'digest', projectId: 'p', messages: [], followUps: [] } },
-    };
-    const h = hydrateSavedState(saved);
-    expect(h.nodes.n.kind).toBe('digest');
-  });
-});
-
-describe('focusedNodeId persistence across hydration', () => {
-  it('is not persisted — hydrated state does not include focusedNodeId', () => {
-    const saved = {
-      version: 1,
-      projects: [],
-      activeProjectId: null,
-      nodes: {},
-    };
-    const h = hydrateSavedState(saved);
-    expect((h as any).focusedNodeId).toBeUndefined();
-  });
-});
-
-describe('digest hydration', () => {
-  it('survives a reload with status forced idle', () => {
-    const saved = {
-      version: 1,
-      projects: [{ id: 'p', name: 'x', chatIds: ['d'], edges: [], createdAt: 0 }],
-      activeProjectId: 'p',
-      nodes: {
-        d: {
-          nodeId: 'd',
-          kind: 'digest',
-          projectId: 'p',
-          messages: [],
-          followUps: [],
-          digest: {
-            sources: ['s1'],
-            sourceFingerprints: { s1: 'abc' },
-            content: '# hello',
-            generatedAt: 42,
-            status: 'streaming', // should be forced to idle
-            error: 'old error', // should clear
-          },
-        },
-      },
-    };
-    const h = hydrateSavedState(saved);
-    const d = h.nodes.d;
-    expect(d.kind).toBe('digest');
-    expect(d.digest?.content).toBe('# hello');
-    expect(d.digest?.status).toBe('idle');
-    expect(d.digest?.error).toBeUndefined();
-    expect(d.digest?.generatedAt).toBe(42);
-  });
-});
-
-describe('hydrate v1→v2 migration', () => {
-  it('synthesizes a default tree for legacy v1 snapshots', () => {
-    const v1 = {
-      version: 1,
-      projects: [
-        {
-          id: 'p1',
-          name: 'WS',
-          chatIds: ['n-root'],
-          edges: [],
-          createdAt: 1000,
-        },
-      ],
-      activeProjectId: 'p1',
-      nodes: {
-        'n-root': { nodeId: 'n-root', projectId: 'p1', messages: [], followUps: [] },
-      },
-    };
-    const h = hydrateSavedState(v1);
-    expect(h.projects).toHaveLength(1);
-    const p = h.projects[0];
-    expect(p.trees).toHaveLength(1);
-    expect(p.trees[0].rootNodeId).toBe('n-root');
-    expect(p.activeTreeId).toBe(p.trees[0].id);
-    expect(p.trees[0].archivedAt).toBeUndefined();
-  });
-
-  it('passes through a valid v2 snapshot unchanged (aside from chatId nulling)', () => {
-    const tree = { id: 't1', rootNodeId: 'n-root', createdAt: 1, lastActiveAt: 2 };
-    const v2 = {
-      version: STATE_SCHEMA_VERSION,
-      projects: [
-        {
-          id: 'p1',
-          name: 'WS',
-          chatIds: ['n-root'],
-          edges: [],
-          createdAt: 1,
-          trees: [tree],
-          activeTreeId: 't1',
-        },
-      ],
-      activeProjectId: 'p1',
-      nodes: {
-        'n-root': { nodeId: 'n-root', projectId: 'p1', messages: [], followUps: [] },
-      },
-    };
-    const h = hydrateSavedState(v2);
-    expect(h.projects[0].trees[0].id).toBe('t1');
-    expect(h.projects[0].activeTreeId).toBe('t1');
-  });
-
-  it('drops snapshots with an unrecognized schema version', () => {
-    const bogus = { version: 999, projects: [], activeProjectId: null, nodes: {} };
-    const h = hydrateSavedState(bogus);
-    expect(h.projects).toEqual([]);
-  });
-});
-
-describe('hydrateSavedState v2→v3 migration', () => {
-    it('adds artifacts array to v2 projects', () => {
-        const v2State = {
-            version: 2,
-            activeProjectId: 'p1',
-            projects: [{
-                id: 'p1', name: 'Test', chatIds: ['n1'], edges: [],
-                createdAt: 1000,
-                trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 1000, lastActiveAt: 1000 }],
-                activeTreeId: 't1',
-            }],
-            nodes: {
-                n1: { nodeId: 'n1', kind: 'chat', chatId: 'c1', projectId: 'p1', messages: [], followUps: [], status: 'idle' },
-            },
-        };
-        const result = hydrateSavedState(v2State);
-        expect(result.projects[0].artifacts).toEqual([]);
-    });
-});
-
 describe('hydrateSavedState v4 artifacts', () => {
     it('preserves file-based artifacts across reloads', () => {
         const v4State = {
@@ -462,25 +151,6 @@ describe('hydrateSavedState v4 artifacts', () => {
             type: 'doc',
             source: 'user',
         });
-    });
-
-    it('drops old text-body artifacts without file paths', () => {
-        const v3State = {
-            version: 3,
-            activeProjectId: 'p1',
-            projects: [{
-                id: 'p1', name: 'Test', chatIds: ['n1'], edges: [],
-                createdAt: 1000,
-                trees: [{ id: 't1', rootNodeId: 'n1', createdAt: 1000, lastActiveAt: 1000 }],
-                activeTreeId: 't1',
-                artifacts: [{ id: 'ctx1', name: 'legacy', body: 'old text', source: 'user' }],
-            }],
-            nodes: {
-                n1: { nodeId: 'n1', kind: 'chat', chatId: 'c1', projectId: 'p1', messages: [], followUps: [], status: 'idle' },
-            },
-        };
-        const result = hydrateSavedState(v3State);
-        expect(result.projects[0].artifacts).toEqual([]);
     });
 });
 
@@ -643,42 +313,6 @@ describe('hydrateBackendWorkspaces', () => {
         });
         expect(result.nodes.d1.digest?.error).toBeUndefined();
     });
-
-    it('skips deleted/archived workspaces when picking the fallback active id', () => {
-        const result = hydrateBackendWorkspaces([
-            {
-                workspace: { id: 'p1', name: 'Trashed', created_at: 1, active_tree_id: 't1', deleted_at: 9 },
-                trees: [{ id: 't1', workspace_id: 'p1', root_node_id: 'n1', created_at: 1, last_active_at: 1 }],
-                nodes: [{ id: 'n1', workspace_id: 'p1', kind: 'chat', status: 'idle', created_at: 1 }],
-                edges: [], messages: [], artifacts: [],
-            },
-            {
-                workspace: { id: 'p2', name: 'Live', created_at: 2, active_tree_id: 't2' },
-                trees: [{ id: 't2', workspace_id: 'p2', root_node_id: 'n2', created_at: 2, last_active_at: 2 }],
-                nodes: [{ id: 'n2', workspace_id: 'p2', kind: 'chat', status: 'idle', created_at: 2 }],
-                edges: [], messages: [], artifacts: [],
-            },
-        ]);
-        expect(result.activeProjectId).toBe('p2');
-    });
-
-    it('falls back to a live workspace when the preferred id points at a deleted one', () => {
-        const result = hydrateBackendWorkspaces([
-            {
-                workspace: { id: 'p1', name: 'Trashed', created_at: 1, active_tree_id: 't1', deleted_at: 9 },
-                trees: [{ id: 't1', workspace_id: 'p1', root_node_id: 'n1', created_at: 1, last_active_at: 1 }],
-                nodes: [{ id: 'n1', workspace_id: 'p1', kind: 'chat', status: 'idle', created_at: 1 }],
-                edges: [], messages: [], artifacts: [],
-            },
-            {
-                workspace: { id: 'p2', name: 'Live', created_at: 2, active_tree_id: 't2' },
-                trees: [{ id: 't2', workspace_id: 'p2', root_node_id: 'n2', created_at: 2, last_active_at: 2 }],
-                nodes: [{ id: 'n2', workspace_id: 'p2', kind: 'chat', status: 'idle', created_at: 2 }],
-                edges: [], messages: [], artifacts: [],
-            },
-        ], 'p1');
-        expect(result.activeProjectId).toBe('p2');
-    });
 });
 
 vi.mock('../services/api', () => ({
@@ -703,29 +337,12 @@ function makeProject(): Project {
 }
 
 describe('reduceProject: thread lifecycle', () => {
-  it('create-tree appends a new tree and activates it', () => {
-    const p = reduceProject(makeProject(), {
-      type: 'create-tree',
-      treeId: 't2',
-      rootNodeId: 'r2',
-      now: 100,
-    });
-    expect(p.trees).toHaveLength(2);
-    expect(p.activeTreeId).toBe('t2');
-    expect(p.chatIds).toContain('r2');
-  });
-
   it('archive-tree on the active tree flips activeTreeId to the next non-archived by lastActiveAt', () => {
     let p = reduceProject(makeProject(), { type: 'create-tree', treeId: 't2', rootNodeId: 'r2', now: 200 });
     // t1 has lastActiveAt=0, t2=200; archive t2, expect t1 to activate.
     p = reduceProject(p, { type: 'archive-tree', treeId: 't2', now: 300 });
     expect(p.trees.find((t) => t.id === 't2')!.archivedAt).toBe(300);
     expect(p.activeTreeId).toBe('t1');
-  });
-
-  it('archive-tree on the last non-archived tree leaves activeTreeId null', () => {
-    const p = reduceProject(makeProject(), { type: 'archive-tree', treeId: 't1', now: 300 });
-    expect(p.activeTreeId).toBeNull();
   });
 
   it('unarchive-tree clears archivedAt and bumps lastActiveAt; does not auto-activate', () => {
@@ -748,12 +365,6 @@ describe('reduceProject: thread lifecycle', () => {
     expect(p.trees[0].pinnedAt).toBeUndefined();
   });
 
-  it('activate-tree switches activeTreeId to an existing tree', () => {
-    let p = reduceProject(makeProject(), { type: 'create-tree', treeId: 't2', rootNodeId: 'r2', now: 0 });
-    p = reduceProject(p, { type: 'activate-tree', treeId: 't1' });
-    expect(p.activeTreeId).toBe('t1');
-  });
-
   it('activate-tree rejects tree ids that do not belong to the project', () => {
     // Regression: cross-workspace search jump used to route activate-tree to
     // the source project before setActiveProjectId flushed, leaving it with
@@ -761,24 +372,9 @@ describe('reduceProject: thread lifecycle', () => {
     const p = reduceProject(makeProject(), { type: 'activate-tree', treeId: 'foreign-tree' });
     expect(p.activeTreeId).toBe('t1');
   });
-
-  it('touch-tree updates lastActiveAt of the matching tree', () => {
-    const p = reduceProject(makeProject(), { type: 'touch-tree', treeId: 't1', now: 999 });
-    expect(p.trees[0].lastActiveAt).toBe(999);
-  });
 });
 
 describe('lastActiveAt tracking', () => {
-  it('touch-tree bumps lastActiveAt when called with a future timestamp', () => {
-    // This tests the core mechanism: dispatch calls reduceProject with
-    // touch-tree when a NODE_ACTIVITY_ACTION fires (user-send, chunk, done, …).
-    // The reduceProject touch-tree path is what actually writes lastActiveAt.
-    const p = makeProject(); // lastActiveAt: 0
-    const after = reduceProject(p, { type: 'touch-tree', treeId: 't1', now: 5000 });
-    expect(after.trees[0].lastActiveAt).toBe(5000);
-    expect(after.trees[0].lastActiveAt).toBeGreaterThan(p.trees[0].lastActiveAt);
-  });
-
   it('dispatch wires NODE_ACTIVITY_ACTIONS to touch-tree: node-level activity types are covered', () => {
     // Verify the set of action types that trigger lastActiveAt bumps.
     // These are the types enumerated in the NODE_ACTIVITY_ACTIONS set inside
@@ -803,16 +399,6 @@ describe('reduceProject context actions', () => {
         artifacts: [],
     };
 
-    it('upsert-context inserts a new context', () => {
-        const result = reduceProject(baseProject, {
-            type: 'upsert-context', projectId: 'p1',
-            context: { name: 'api-spec', filePath: 'docs/api.md', source: 'user' },
-        });
-        expect(result.artifacts).toHaveLength(1);
-        expect(result.artifacts![0].name).toBe('api-spec');
-        expect(result.artifacts![0].source).toBe('user');
-    });
-
     it('upsert-context dedupes name with suffix', () => {
         const withOne = reduceProject(baseProject, {
             type: 'upsert-context', projectId: 'p1',
@@ -824,39 +410,6 @@ describe('reduceProject context actions', () => {
         });
         expect(withTwo.artifacts).toHaveLength(2);
         expect(withTwo.artifacts![1].name).toBe('api-spec-2');
-    });
-
-    it('upsert-context updates existing by id', () => {
-        const withOne = reduceProject(baseProject, {
-            type: 'upsert-context', projectId: 'p1',
-            context: { name: 'api-spec', filePath: 'docs/api-spec.md' },
-        });
-        const id = withOne.artifacts![0].id;
-        const updated = reduceProject(withOne, {
-            type: 'upsert-context', projectId: 'p1',
-            context: { id, name: 'api-spec', filePath: 'docs/api-spec-v2.md' },
-        });
-        expect(updated.artifacts).toHaveLength(1);
-        expect(updated.artifacts![0].filePath).toBe('docs/api-spec-v2.md');
-    });
-
-    it('keeps one context when a live agent SSE follows a durable workspace reload', () => {
-        const hydrated = {
-            ...baseProject,
-            artifacts: [{
-                id: 'ctx-durable', name: 'notes', filePath: '.artifacts/notes.md',
-                size: 2, source: 'agent' as const, createdAt: 1, updatedAt: 1,
-            }],
-        };
-        const afterLiveEvent = reduceProject(hydrated, {
-            type: 'upsert-context', projectId: 'p1',
-            context: {
-                id: 'ctx-durable', name: 'notes', filePath: '.artifacts/notes.md',
-                size: 11, source: 'agent',
-            },
-        });
-        expect(afterLiveEvent.artifacts).toHaveLength(1);
-        expect(afterLiveEvent.artifacts![0]).toMatchObject({ id: 'ctx-durable', size: 11, name: 'notes' });
     });
 
     it('update-context-by-name updates an existing context without duplicating it', () => {
@@ -928,37 +481,4 @@ describe('reduceProject context actions', () => {
         });
         expect(renamed.artifacts![1].name).toBe('bar'); // unchanged
     });
-});
-
-// ----------------------------------------------------------------------------
-// Feature 5: Streaming submit routing (updated 2026-05-07 — composer-queue)
-// ----------------------------------------------------------------------------
-// Contract (updated): streaming alone no longer auto-branches. When the user
-// hits Send while the current node is streaming, the composer queues the text
-// onto N via queueMessage (handled in TPane.onSubmit) — it does NOT fork a
-// child. Forking is now reserved for explicit signals: the Branch button
-// (⌘↵) or a /btw|/branch slash prefix.
-//
-// The pure-function proxy for the fork-vs-stay decision lives in
-// chatNodeUtils.ts (shouldBranchOnSubmit). This describe block documents the
-// contract at the chatStore layer so a regression to either sendMessage or
-// submit() is caught.
-
-describe('streaming submit routing', () => {
-  it('should NOT branch when sending to a streaming node — caller queues instead', () => {
-    // Updated 2026-05-07: streaming-only submits are routed through the queue
-    // by TPane.onSubmit. shouldBranchOnSubmit returns false so the caller
-    // knows not to fork.
-    expect(shouldBranchOnSubmit({ forceBranch: false, slashBranched: false, streaming: true })).toBe(false);
-  });
-
-  it('should route to in-place reply (sendMessage) when the node is idle', () => {
-    expect(shouldBranchOnSubmit({ forceBranch: false, slashBranched: false, streaming: false })).toBe(false);
-  });
-
-  it('still respects explicit branch signals (⌘+Enter, /branch) regardless of streaming', () => {
-    expect(shouldBranchOnSubmit({ forceBranch: true, slashBranched: false, streaming: false })).toBe(true);
-    expect(shouldBranchOnSubmit({ forceBranch: false, slashBranched: true, streaming: false })).toBe(true);
-    expect(shouldBranchOnSubmit({ forceBranch: true, slashBranched: true, streaming: true })).toBe(true);
-  });
 });

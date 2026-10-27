@@ -1,0 +1,910 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "claude-x",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v2",
+          "--model",
+          "claude-x"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new",
+    "=newSession": [
+      {
+        "sessionId": "S1",
+        "modes": {
+          "currentModeId": "default",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ]
+        },
+        "models": {
+          "currentModelId": "claude-x",
+          "availableModels": [
+            {
+              "modelId": "claude-x",
+              "name": "X"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S1"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S1",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": []
+        }
+      }
+    ]
+  },
+  {
+    "step": "between-turn context usage is buffered"
+  },
+  {
+    "step": "prompt",
+    "p1": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      },
+      {
+        "sessionUpdate": "context_usage",
+        "contextUsagePercentage": 12
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 5
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "hello"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "delegations and a subagent roster",
+    "p1": [
+      {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "tc1",
+        "title": "Agent",
+        "kind": "other",
+        "status": "in_progress"
+      },
+      {
+        "sessionUpdate": "tool_call",
+        "toolCallId": "tc-read",
+        "title": "Read file",
+        "kind": "read",
+        "status": "in_progress"
+      },
+      {
+        "sessionUpdate": "subagent_list_update",
+        "subagents": [
+          {
+            "sessionId": "C1",
+            "name": "coder",
+            "status": "Running"
+          },
+          {
+            "name": "anonymous"
+          }
+        ],
+        "parentToolCallId": "tc1"
+      }
+    ]
+  },
+  {
+    "step": "child narration and tools reach the parent",
+    "p1": [
+      {
+        "sessionUpdate": "subagent_message_chunk",
+        "subagentSessionId": "C1",
+        "text": "child says hi"
+      },
+      {
+        "sessionUpdate": "subagent_tool_activity",
+        "subagentSessionId": "C1",
+        "toolCallId": "ct1",
+        "title": "grep",
+        "status": "in_progress",
+        "kind": "search",
+        "childUpdate": {
+          "sessionUpdate": "tool_call",
+          "toolCallId": "ct1",
+          "title": "grep",
+          "kind": "search",
+          "status": "in_progress"
+        }
+      },
+      {
+        "sessionUpdate": "subagent_tool_activity",
+        "subagentSessionId": "C1",
+        "toolCallId": "ct1",
+        "title": "",
+        "status": "completed",
+        "kind": "",
+        "childUpdate": {
+          "sessionUpdate": "tool_call_update",
+          "toolCallId": "ct1",
+          "status": "completed",
+          "rawOutput": {
+            "matches": 2
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "a second concurrent delegation from another session",
+    "p1": [
+      {
+        "sessionUpdate": "subagent_list_update",
+        "subagents": [
+          {
+            "sessionId": "C1",
+            "name": "coder"
+          }
+        ],
+        "parentToolCallId": "tc1"
+      }
+    ]
+  },
+  {
+    "step": "Kiro extension updates and metadata",
+    "log": [
+      [
+        "error",
+        "mcp",
+        "kiro mcp server initialization failed",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "claude-x",
+          "sessionId": "S1",
+          "serverName": "broken",
+          "error": "{\"code\":1,\"message\":\"no binary\"}"
+        }
+      ],
+      [
+        "error",
+        "mcp",
+        "kiro mcp server initialization failed",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "claude-x",
+          "sessionId": "<undefined>",
+          "serverName": "sessionless",
+          "error": "<undefined>"
+        }
+      ],
+      [
+        "info",
+        "acp",
+        "inbox notification for session S1: 2 message(s) from alice, bob"
+      ]
+    ],
+    "p1": [
+      {
+        "sessionUpdate": "tool_call_chunk",
+        "toolCallId": "tc1",
+        "chunk": "x"
+      },
+      {
+        "sessionUpdate": "context_usage",
+        "contextUsagePercentage": 30
+      },
+      {
+        "sessionUpdate": "mcp_server_error",
+        "serverName": "broken",
+        "error": {
+          "code": 1,
+          "message": "no binary"
+        }
+      },
+      {
+        "sessionUpdate": "plan",
+        "entries": [
+          {
+            "content": "do it",
+            "priority": "high",
+            "status": "pending"
+          }
+        ]
+      },
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "commands": [
+            {
+              "name": "compact"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      },
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "reasoning": null,
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "commands": [
+            {
+              "name": "compact"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      },
+      {
+        "sessionUpdate": "config_option_update",
+        "configOptions": [
+          {
+            "id": "x",
+            "type": "boolean",
+            "currentValue": true
+          }
+        ]
+      },
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "planner",
+          "modelId": "claude-x",
+          "reasoning": null,
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "commands": [
+            {
+              "name": "compact"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      },
+      {
+        "sessionUpdate": "current_mode_update",
+        "currentModeId": "planner"
+      }
+    ]
+  },
+  {
+    "step": "the delegation completes",
+    "p1": [
+      {
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "tc1",
+        "status": "completed"
+      }
+    ]
+  },
+  {
+    "step": "turn-end metadata"
+  },
+  {
+    "step": "prompt result",
+    "p1": [
+      {
+        "sessionUpdate": "usage_summary",
+        "contextUsagePercentage": 31,
+        "meteringUsage": [
+          {
+            "unit": "credit",
+            "value": 1.5
+          }
+        ],
+        "turnDurationMs": 1234
+      },
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "end_turn"
+      },
+      "<end>"
+    ]
+  },
+  {
+    "step": "state",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "modes": {
+            "currentModeId": "planner",
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "id": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          "models": {
+            "currentModelId": "claude-x",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          },
+          "configOptions": [
+            {
+              "id": "x",
+              "type": "boolean",
+              "currentValue": true
+            }
+          ]
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "planner",
+          "modelId": "claude-x",
+          "reasoning": null,
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "commands": [
+            {
+              "name": "compact"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "next prompt starts clean",
+    "p2": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "planner",
+          "modelId": "claude-x",
+          "reasoning": null,
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "commands": [
+            {
+              "name": "compact"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 5
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "again"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "an empty roster with no owner is discarded"
+  },
+  {
+    "step": "prompt result without metadata",
+    "p2": [
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "max_tokens"
+      },
+      "<end>"
+    ]
+  },
+  {
+    "step": "prompt the agent rejects",
+    "p3": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "planner",
+          "modelId": "claude-x",
+          "reasoning": null,
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "commands": [
+            {
+              "name": "compact"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 4
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "fail"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "rejection",
+    "log": [
+      [
+        "error",
+        "acp",
+        "rpc request failed",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "claude-x",
+          "rpcId": 4,
+          "method": "session/prompt",
+          "sessionId": "S1",
+          "rpcCode": -32603,
+          "rpcMessage": "Internal error",
+          "rpcData": "{\"reason\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…[truncated]"
+        }
+      ]
+    ],
+    "p3": [
+      {
+        "error": "ACPError",
+        "message": "Internal error",
+        "method": "session/prompt",
+        "sessionId": "S1",
+        "rpcCode": -32603,
+        "rpcData": {
+          "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      }
+    ]
+  },
+  {
+    "step": "prompt with image blocks",
+    "p4": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "planner",
+          "modelId": "claude-x",
+          "reasoning": null,
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "commands": [
+            {
+              "name": "compact"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 4
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "look"
+            },
+            {
+              "type": "image",
+              "mimeType": "image/png",
+              "data": "AAAA"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "an error without a message",
+    "log": [
+      [
+        "error",
+        "acp",
+        "rpc request failed",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "claude-x",
+          "rpcId": 5,
+          "method": "session/prompt",
+          "sessionId": "S1",
+          "rpcCode": 1,
+          "rpcMessage": "unknown ACP error",
+          "rpcData": "<undefined>"
+        }
+      ]
+    ],
+    "p4": [
+      {
+        "error": "ACPError",
+        "message": "unknown ACP error",
+        "method": "session/prompt",
+        "sessionId": "S1",
+        "rpcCode": 1
+      }
+    ]
+  }
+]

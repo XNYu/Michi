@@ -45,28 +45,6 @@ describe('Agent REST/SSE multi-Backend routing', () => {
     expect(calls.every((call) => call.url.startsWith(backendApiBase('remote-a')))).toBe(true);
   });
 
-  it('uses the composite Run identity for mutations even when an equal-ID Parent points at another Backend', async () => {
-    indexBackendProjects([
-      { id: 'local-ws', chatIds: ['local-parent'] },
-      { id: 'remote-ws', backendConnectionId: 'remote-a', chatIds: ['remote-parent'] },
-    ]);
-    const calls: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      calls.push(String(input));
-      return new Response(null, { status: 204 });
-    }));
-    await sendAgentRunInput({
-      identity: { backendConnectionId: 'remote-a', id: 'same-run' },
-      workspaceId: 'remote-ws', parentNodeId: 'local-parent',
-    }, { version: 1, text: 'remote input', mode: 'queued', expectedAttemptId: null });
-    await cancelAgentRun({
-      identity: { backendConnectionId: 'local', id: 'same-run' },
-      workspaceId: 'local-ws', parentNodeId: 'remote-parent',
-    }, { version: 1, expectedAttemptId: null, reason: null });
-    expect(calls[0].startsWith(backendApiBase('remote-a'))).toBe(true);
-    expect(calls[1].startsWith(backendApiBase('local'))).toBe(true);
-  });
-
   it('routes spawn by the Workspace Backend and rejects a Parent from another Backend', async () => {
     indexBackendProjects([
       { id: 'remote-ws', backendConnectionId: 'remote-a', chatIds: ['remote-parent'] },

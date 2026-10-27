@@ -1,0 +1,349 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "<undefined>",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v3",
+          "--auth-method",
+          "cli"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new",
+    "=newSession": [
+      {
+        "sessionId": "S1",
+        "configOptions": [
+          {
+            "id": "model",
+            "type": "select",
+            "category": "model",
+            "currentValue": "m1",
+            "options": [
+              {
+                "value": "m1",
+                "name": "Model one"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "select",
+            "category": "mode",
+            "currentValue": "agent",
+            "options": [
+              {
+                "value": "agent",
+                "name": "Agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          {
+            "id": "effortLevel",
+            "type": "select",
+            "currentValue": "low",
+            "options": [
+              {
+                "group": "Effort",
+                "options": [
+                  {
+                    "value": "low"
+                  },
+                  {
+                    "value": "high"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "models": {
+          "currentModelId": "m1",
+          "availableModels": [
+            {
+              "value": "m1",
+              "name": "Model one",
+              "modelId": "m1"
+            },
+            {
+              "value": "m2",
+              "name": "Model two",
+              "_meta": {
+                "kiro": {
+                  "hasEffort": true,
+                  "effortLevels": [
+                    "low",
+                    "high"
+                  ],
+                  "defaultEffortLevel": "low"
+                }
+              },
+              "modelId": "m2"
+            }
+          ]
+        },
+        "modes": {
+          "currentModeId": "agent",
+          "availableModes": [
+            {
+              "value": "agent",
+              "name": "Agent",
+              "id": "agent"
+            },
+            {
+              "value": "planner",
+              "name": "Planner",
+              "id": "planner"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S1"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S1",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [],
+          "_meta": {
+            "kiro": {}
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "fork",
+    "=fork": [
+      "F3"
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/fork",
+        "params": {
+          "sessionId": "S1",
+          "cwd": "/work",
+          "_meta": {
+            "kiro": {
+              "messageId": "msg-9",
+              "createdReason": "rewind"
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "fork without a point",
+    "=fork2": [
+      "F3"
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/fork",
+        "params": {
+          "sessionId": "S1",
+          "cwd": "/work"
+        }
+      }
+    ]
+  },
+  {
+    "step": "fork without the capability",
+    "=initialize2": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "refused",
+    "=fork3": [
+      {
+        "error": "ACPError",
+        "message": "Kiro did not advertise session/fork"
+      }
+    ]
+  }
+]

@@ -1,0 +1,83 @@
+/* Media and link blocks (Task 27). Greys and the one accent from desk.css and :root; pictures never grow past the page column. */
+.desk-media-figure{margin:0;min-width:0}
+.desk-media-img{display:block;max-width:100%;height:auto;border-radius:10px}
+.desk-media-caption{display:block;margin-top:6px;font-size:13px;color:var(--desk-meta)}
+.desk-media-missing{display:flex;align-items:center;justify-content:center;min-height:96px;padding:12px;border:1px dashed var(--line-strong);border-radius:10px;font-size:13px;color:var(--desk-meta-soft);text-align:center;overflow-wrap:anywhere}
+a.desk-media-missing{color:var(--desk-link);text-decoration:underline;text-underline-offset:3px}
+.desk-media-out{color:var(--desk-link);font-size:13px;text-decoration:none}
+.desk-media-out:hover{color:var(--desk-link-hover);text-decoration:underline;text-underline-offset:3px}
+
+/* Gallery: square thumbnails; the lightbox shows one picture as large as the window allows */
+.desk-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;list-style:none;margin:0;padding:0}
+.desk-gallery li{min-width:0}
+.desk-gallery-thumb{display:block;width:100%;aspect-ratio:1;padding:0;border:0;border-radius:10px;overflow:hidden;background:var(--subtle);cursor:zoom-in}
+.desk-gallery-thumb img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .2s ease}
+.desk-gallery-thumb:hover img{transform:scale(1.03)}
+.desk-gallery-thumb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.desk-gallery-thumb .desk-media-missing{height:100%;min-height:0;border:0}
+.desk-lightbox{max-width:min(92vw,1200px)}
+.desk-lightbox-body{display:flex;flex-direction:column;align-items:center;gap:12px}
+.desk-lightbox-img{display:block;max-width:100%;max-height:72vh;border-radius:8px}
+.desk-lightbox .desk-media-figure{text-align:center}
+.desk-lightbox-nav{display:flex;gap:8px}
+
+/* Before and after: the after picture is cut at the divider; the range input lies over both, see-through */
+.desk-compare-pics{position:relative;overflow:hidden;border-radius:10px;--at:50%}
+.desk-compare-pics .desk-media-img{border-radius:0}
+.desk-compare-after{position:absolute;inset:0;clip-path:inset(0 0 0 var(--at))}
+.desk-compare-after .desk-media-img{width:100%;height:100%;object-fit:cover}
+.desk-compare-line{position:absolute;top:0;bottom:0;left:var(--at);width:2px;margin-left:-1px;background:#fff;box-shadow:0 0 0 1px #18181b33;pointer-events:none}
+.desk-compare-tag{position:absolute;top:8px;padding:1px 8px;border-radius:999px;background:#18181b99;color:#fff;font-size:12px;pointer-events:none}
+.desk-compare-tag[data-side=before]{left:8px}
+.desk-compare-tag[data-side=after]{right:8px}
+.desk-compare-range{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:ew-resize}
+.desk-compare-pics:has(.desk-compare-range:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+
+/* Carousel: a fixed frame, the picture fitted inside it */
+.desk-carousel{border-radius:10px;overflow:hidden;background:var(--desk-panel)}
+.desk-carousel-img{display:block;width:100%;aspect-ratio:16/10;object-fit:contain}
+.desk-carousel .desk-media-missing{aspect-ratio:16/10;border:0}
+.desk-carousel .desk-media-caption{margin:0;padding:8px 12px 28px;text-align:center}
+.desk-carousel-dots{bottom:10px}
+.desk-carousel-dot{width:6px;height:6px;border-radius:50%;background:var(--faint);opacity:1;box-shadow:none}
+.desk-carousel-dot[data-active]{width:16px;border-radius:3px;background:var(--desk-meta)}
+.desk-carousel-control[data-inactive]{opacity:0;pointer-events:none}
+
+/* Video and audio: a frame keeps 16:9; a file plays at its own shape */
+.desk-video-frame{position:relative;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000}
+.desk-video-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.desk-video{display:block;width:100%;max-height:70vh;border-radius:10px;background:#000}
+.desk-audio{display:block;width:100%}
+
+/* Embedded page: a bar naming it and offering it in the browser, then the frame */
+.desk-embed{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.desk-embed-bar{display:flex;align-items:center;gap:8px;min-width:0;padding:6px 12px;border-bottom:1px solid var(--desk-edge);background:var(--desk-panel);font-size:13px;color:var(--desk-meta)}
+.desk-embed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--desk-name);font-weight:500}
+.desk-embed-bar .desk-media-out{flex:none}
+.desk-embed-frame{display:block;width:100%;border:0;background:var(--surface)}
+.desk-embed>.desk-quiet{padding:16px 12px}
+
+/* Link, file, person and place cards */
+.desk-link-card{display:flex;min-width:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;color:inherit;text-decoration:none;transition:border-color .15s ease,background-color .15s ease}
+.desk-link-card:hover{border-color:var(--line-strong);background:var(--desk-hover)}
+.desk-link-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.desk-link-image{flex:0 0 132px;background:var(--subtle)}
+.desk-link-image img{display:block;width:100%;height:100%;object-fit:cover}
+.desk-link-image .desk-media-missing{height:100%;min-height:0;border:0}
+.desk-link-body{display:flex;flex-direction:column;gap:2px;min-width:0;padding:12px 16px}
+.desk-link-title{font-size:14px;font-weight:500;color:var(--desk-ink)}
+.desk-link-desc{font-size:13px;color:var(--text-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.desk-link-site{margin-top:2px;font-size:12px;color:var(--desk-meta-soft)}
+.desk-file-card,.desk-person-card,.desk-place-card{display:flex;align-items:flex-start;gap:12px;min-width:0;padding:14px 16px;border:1px solid var(--line);border-radius:12px}
+.desk-card-icon{flex:none;margin-top:2px;color:var(--desk-meta-soft)}
+.desk-card-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.desk-card-body p{margin:0}
+.desk-card-name{font-size:14px;font-weight:500;color:var(--desk-ink)}
+.desk-card-meta{font-size:13px;color:var(--desk-meta)}
+.desk-card-note{font-size:13px;color:var(--text-2)}
+.desk-file-path{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--text-2);overflow-wrap:anywhere}
+.desk-card-links{display:flex;flex-wrap:wrap;gap:4px 14px;list-style:none;margin:4px 0 0;padding:0;font-size:13px}
+.desk-card-links a{color:var(--desk-link);text-decoration:none}
+.desk-card-links a:hover{color:var(--desk-link-hover);text-decoration:underline;text-underline-offset:3px}
+.desk-block-thread-card .desk-thread-cards .desk-thread{flex:0 1 420px}
+@media (max-width:560px){.desk-link-card{flex-direction:column}.desk-link-image{flex-basis:auto;aspect-ratio:1.91}}

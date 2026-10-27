@@ -14,10 +14,16 @@ interface PaneComposerActionsProps {
   onSend: () => void;
   onStop: () => void;
   onRetry: () => void;
+  allowBranch?: boolean;
+  /** An uncertain outcome checks the original task instead of resending it. */
+  inspectOriginal?: boolean;
+  checkingOriginal?: boolean;
   /** Context window usage percentage (0–100). Shows ring indicator when present. */
   contextUsagePercentage?: number | null;
   /** Token breakdown for the ring tooltip. */
   usageSummary?: ContextRingProps['usageSummary'];
+  /** What Stop also ends (e.g. a running workflow); shown as its tooltip. */
+  stopHint?: string;
 }
 
 export function PaneComposerActions({
@@ -29,13 +35,17 @@ export function PaneComposerActions({
   onSend,
   onStop,
   onRetry,
+  allowBranch = true,
+  inspectOriginal = false,
+  checkingOriginal = false,
   contextUsagePercentage,
   usageSummary,
+  stopHint,
 }: PaneComposerActionsProps) {
   return (
     <>
       <ContextRing percentage={contextUsagePercentage} usageSummary={usageSummary} />
-      {draftHasText && (
+      {draftHasText && allowBranch && (
         <button
           type="button"
           className="t-action-btn is-outline"
@@ -65,12 +75,13 @@ export function PaneComposerActions({
               ? onRetry
               : onSend
         }
-        disabled={sendMode === 'send' ? sendDisabled : false}
+        disabled={sendMode === 'send' ? sendDisabled : sendMode === 'retry' && checkingOriginal}
+        title={sendMode === 'stop' ? stopHint : undefined}
         aria-label={
           sendMode === 'stop'
-            ? 'Stop stream'
+            ? stopHint ? `Stop stream. ${stopHint}` : 'Stop stream'
           : sendMode === 'retry'
-              ? 'Retry last turn'
+              ? inspectOriginal ? 'Check original turn' : 'Retry last turn'
               : streaming
                 ? 'Send next (Enter). Sends after the current response'
                 : 'Send (Enter)'
@@ -117,7 +128,7 @@ export function PaneComposerActions({
           {sendMode === 'stop'
             ? 'Stop'
             : sendMode === 'retry'
-              ? 'Retry'
+              ? inspectOriginal ? checkingOriginal ? 'Checking…' : 'Check result' : 'Retry'
               : <>{streaming ? 'Send next' : 'Send'} <span className="t-action-kbd-key">{kbd('enter')}</span></>
           }
         </span>

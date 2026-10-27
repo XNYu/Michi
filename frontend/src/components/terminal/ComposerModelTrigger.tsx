@@ -15,23 +15,29 @@ interface ComposerModelTriggerProps {
   providerModels: readonly AgentModelInfo[];
   providers?: readonly AgentProviderInfo[];
   isStreaming: boolean;
+  /** Shows the binding without offering a picker (the ⌘J assistant's: Settings owns it). */
+  locked?: boolean;
   modelMenuOpen?: boolean;
   onOpenModelMenu: (anchor: PaneMenuAnchor) => void;
+  /** What switching the model also ends (e.g. a running workflow). */
+  switchHint?: string;
 }
 
-export function ComposerModelTrigger({ toolbarTier, agentStatus, resolvedBinding, catalogCapabilities, providerModels, providers, isStreaming, modelMenuOpen = false, onOpenModelMenu }: ComposerModelTriggerProps) {
+export function ComposerModelTrigger({ toolbarTier, agentStatus, resolvedBinding, catalogCapabilities, providerModels, providers, isStreaming, locked = false, modelMenuOpen = false, onOpenModelMenu, switchHint }: ComposerModelTriggerProps) {
   const caps = catalogCapabilities ?? (resolvedBinding.runtime === agentStatus?.runtime ? agentStatus.capabilities : undefined);
   const runtimeLabel = agentStatus?.availableRuntimes?.find((runtime) => runtime.id === resolvedBinding.runtime)?.label || resolvedBinding.runtime;
   const hasModel = caps?.providerModels || caps?.models || resolvedBinding.model;
   const modelLabel = composerModelLabel(resolvedBinding.runtime, resolvedBinding.model, providerModels);
   const effort = resolveComposerReasoning(resolvedBinding, agentStatus, catalogCapabilities, providerModels, providers);
   const effortLabel = effort.adjustable ? REASONING_LABELS[effort.value ?? ''] ?? effort.value : undefined;
+  // A locked binding cannot be switched here, so there is nothing to warn about.
+  const hint = locked ? undefined : switchHint;
 
   return (
     <button type="button" className="t-toolbar-chip composer-model-trigger" data-compact={toolbarTier > 0 || undefined}
-      aria-label={`Model settings: ${runtimeLabel}, ${modelLabel}${effortLabel ? `, ${effortLabel} effort` : ''}`}
-      title={[runtimeLabel, modelLabel, effortLabel].filter(Boolean).join(' · ')}
-      aria-haspopup="dialog" aria-expanded={modelMenuOpen} disabled={isStreaming}
+      aria-label={`${locked ? 'Model' : 'Model settings'}: ${runtimeLabel}, ${modelLabel}${effortLabel ? `, ${effortLabel} effort` : ''}${hint ? `. ${hint}` : ''}`}
+      title={[[runtimeLabel, modelLabel, effortLabel].filter(Boolean).join(' · '), hint].filter(Boolean).join('. ')}
+      aria-haspopup={locked ? undefined : 'dialog'} aria-expanded={locked ? undefined : modelMenuOpen} disabled={isStreaming || locked}
       onClick={(event) => {
         event.stopPropagation();
         const rect = event.currentTarget.getBoundingClientRect();
@@ -45,7 +51,7 @@ export function ComposerModelTrigger({ toolbarTier, agentStatus, resolvedBinding
       }}>
       <span className="t-chip-label">{hasModel ? modelLabel : runtimeLabel}</span>
       {effortLabel && <span className="composer-model-trigger-effort">{effortLabel}</span>}
-      <ChevronRightIcon size={12} className="composer-model-chevron" />
+      {!locked && <ChevronRightIcon size={12} className="composer-model-chevron" />}
     </button>
   );
 }

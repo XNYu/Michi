@@ -1,10 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 test('new pane opens an in-pane chooser and transforms the same slot', async ({ page }) => {
   await installMockApi(page);
   await bootWithWorkspace(page);
-  await page.locator('[contenteditable="true"]').first().fill('open workbench');
+  await page.locator(COMPOSER_EDITOR).first().fill('open workbench');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await expect(page.locator('.terminal-dashboard')).toBeVisible();
 
@@ -45,7 +46,7 @@ test('new pane opens an in-pane chooser and transforms the same slot', async ({ 
 test('Browser button opens a matching pinned pane with a standard topbar caption', async ({ page }) => {
   await installMockApi(page);
   await bootWithWorkspace(page);
-  await page.locator('[contenteditable="true"]').first().fill('browser pane');
+  await page.locator(COMPOSER_EDITOR).first().fill('browser pane');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await page.getByRole('button', { name: 'Browser', exact: true }).click();
   const dock = page.locator('[data-browser-dock]');

@@ -1,12 +1,14 @@
+import { serverEntityId } from '../../../config/backendIdentity';
 import { usePermissionPreferences } from '../../../hooks/usePermissionPreferences';
 import { ComposerPermissionControl } from '../ComposerPermissionControl';
 import { chatPermissionModeForRuntime } from '../../../lib/chatPermissionModes';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useChatStore, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { MentionEditorHandle } from '../../MentionEditor';
 const MentionEditor = React.lazy(() => import('../../MentionEditor'));
 import type { MentionRecord } from '../../mentions';
 import { expandMentions } from '../../mentions';
+import { draftToDoc } from '../../mentionDoc';
 import { collectCrossTreeGroups, EMPTY_CROSS_TREE_GROUPS } from '../../crossTreeMentions';
 import { getElectron } from '../../../lib/electronBridge';
 import {
@@ -122,6 +124,17 @@ interface Props {
   onSubmitted: () => void;
 }
 
+/** Puts text in the composer for the user to edit and send; nothing here sends. */
+export interface ManageComposerHandle {
+  /**
+   * Adds `text` to the draft: alone in an empty composer, otherwise on a new
+   * line after what is there. Focuses the composer with the caret at the end.
+   */
+  insert: (text: string) => void;
+  /** Types `@` at the end of the draft, which opens the mention picker. */
+  startMention: () => void;
+}
+
 type ToolbarTier = 0 | 1 | 2;
 
 /** Pick the toolbar tier from its measured width, following the toolbar as
@@ -155,7 +168,7 @@ function useToolbarTier(
 function pendingThumbSrc(p: PendingAttachment, workspaceId?: string): string | null {
   if (workspaceId && p.relPath) {
     const encoded = p.relPath.split('/').map(encodeURIComponent).join('/');
-    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(serverEntityId(workspaceId))}/${encoded}`;
   }
   if (workspaceId && p.absPath) {
     const marker = '/.attachments/';
@@ -163,16 +176,17 @@ function pendingThumbSrc(p: PendingAttachment, workspaceId?: string): string | n
     if (idx !== -1) {
       const rel = '.attachments/' + p.absPath.slice(idx + marker.length);
       const encoded = rel.split('/').map(encodeURIComponent).join('/');
-      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(serverEntityId(workspaceId))}/${encoded}`;
     }
   }
   return null;
 }
 
-export default function ManageComposer(props: Props) {
+const ManageComposer = React.forwardRef<ManageComposerHandle, Props>(function ManageComposer(props, ref) {
   const scope = props.parentNodeId ? `${props.workspaceId ?? ''}:${props.parentNodeId}` : '__manage__';
-  return <ScopedManageComposer key={scope} {...props} />;
-}
+  return <ScopedManageComposer key={scope} {...props} handleRef={ref} />;
+});
+export default ManageComposer;
 
 function ScopedManageComposer({
   parentNodeId,
@@ -181,7 +195,8 @@ function ScopedManageComposer({
   enableAgentSelect = false,
   toolbarCompaction,
   onSubmitted,
-}: Props) {
+  handleRef,
+}: Props & { handleRef: React.ForwardedRef<ManageComposerHandle> }) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const toolbarTier = useToolbarTier(toolbarRef, toolbarCompaction);
   const {
@@ -321,6 +336,7 @@ function ScopedManageComposer({
     retry: retryModels,
   } = useRuntimeCatalog({
     enabled: shouldLoadModels,
+    connectionId: backendConnectionIdForWorkspace(workspaceId),
     runtime: agentStatus?.runtime,
     provider: agentStatus?.provider,
   });
@@ -494,6 +510,34 @@ function ScopedManageComposer({
   const insertMentionTrigger = useCallback(() => {
     inputRef.current?.editor?.chain().focus().insertContent('@').run();
   }, []);
+
+  useImperativeHandle(handleRef, () => ({
+    insert: (text) => {
+      const editor = inputRef.current?.editor;
+      const live = editor && !editor.isDestroyed ? editor : null;
+      const requested = text.trim();
+      if (requested) {
+        const current = draftRef.current;
+        const kept = current.value.trimEnd();
+        const next = {
+          value: kept ? `${kept}\n${requested}` : requested,
+          mentions: current.mentions.filter((mention) => mention.end <= kept.length),
+        };
+        // Through the editor, so its change path updates the draft and the
+        // caret can be placed after the new text at once.
+        if (live) live.commands.setContent(draftToDoc(next.value, next.mentions));
+        else setDraft(next);
+      }
+      if (live) live.commands.focus('end');
+      else inputRef.current?.focus();
+    },
+    startMention: () => {
+      const editor = inputRef.current?.editor;
+      if (!editor || editor.isDestroyed) return;
+      const value = draftRef.current.value;
+      editor.chain().focus('end').insertContent(value && !/\s$/.test(value) ? ' @' : '@').run();
+    },
+  }), [setDraft]);
 
   const openModelMenu = useCallback(
     (anchor: PaneMenuAnchor) => {
@@ -828,6 +872,7 @@ function ScopedManageComposer({
             mentions={draft.mentions}
             onChange={setDraft}
             disabled={submitting}
+            placeholder="What would you like to explore?"
             className="hide-sb"
             artifacts={artifacts}
             sameTreeNodes={[]}

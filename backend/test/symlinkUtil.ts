@@ -1,5 +1,7 @@
 import fs from "node:fs";
 
+// Same as runtime/test/helpers/symlinkUtil.ts; keep the two copies alike.
+
 /** Create a symlink, or return false when the host forbids them (typical on Windows). */
 export function trySymlinkSync(target: string, link: string): boolean {
   try {

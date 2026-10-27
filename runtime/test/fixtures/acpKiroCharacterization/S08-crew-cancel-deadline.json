@@ -1,0 +1,693 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "crew-model",
+          "binaryPath": "/fake/crew-acp"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/crew-acp",
+        "args": [
+          "crew-acp",
+          "--model",
+          "crew-model"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/crew-acp"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new",
+    "=newSession": [
+      {
+        "sessionId": "S1",
+        "modes": {
+          "currentModeId": "default",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ]
+        },
+        "models": {
+          "currentModelId": "claude-x",
+          "availableModels": [
+            {
+              "modelId": "claude-x",
+              "name": "X"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S1"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S1",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": []
+        }
+      }
+    ]
+  },
+  {
+    "step": "second session",
+    "=newSession2": [
+      {
+        "sessionId": "S2",
+        "modes": {
+          "currentModeId": "default",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ]
+        },
+        "models": {
+          "currentModelId": "claude-x",
+          "availableModels": [
+            {
+              "modelId": "claude-x",
+              "name": "X"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S2"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S2",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": []
+        }
+      }
+    ]
+  },
+  {
+    "step": "prompt",
+    "p1": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "crew",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 4
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "work"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "a pending permission",
+    "p1": [
+      {
+        "sessionUpdate": "permission_request",
+        "requestId": 30,
+        "toolCall": {
+          "toolCallId": "perm-30",
+          "title": "Edit file"
+        },
+        "options": [
+          {
+            "optionId": "allow",
+            "name": "Allow",
+            "kind": "allow_once"
+          },
+          {
+            "optionId": "always",
+            "name": "Always",
+            "kind": "allow_always"
+          },
+          {
+            "optionId": "reject",
+            "name": "Reject",
+            "kind": "reject_once"
+          }
+        ],
+        "_meta": "<undefined>"
+      }
+    ]
+  },
+  {
+    "step": "an RPC of another session",
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "S2",
+          "modeId": "planner"
+        }
+      }
+    ]
+  },
+  {
+    "step": "cancel",
+    "=cancel": [
+      true
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 30,
+        "result": {
+          "outcome": {
+            "outcome": "cancelled"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "state while cancelling",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": true,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "modes": {
+            "currentModeId": "default",
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "id": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          "models": {
+            "currentModelId": "claude-x",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "crew",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "deadline",
+    "log": [
+      [
+        "warn",
+        "acp",
+        "cancel deadline exceeded; native session quarantined",
+        {
+          "sessionId": "S1",
+          "pid": 4242,
+          "timeoutMs": 25
+        }
+      ]
+    ],
+    "p1": [
+      {
+        "error": "ACPSessionRecoveryRequiredError",
+        "message": "Kiro did not finish cancellation. The original session has been retained for recovery.",
+        "method": "session/prompt",
+        "sessionId": "S1"
+      }
+    ]
+  },
+  {
+    "step": "state after the deadline",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": false,
+        "needsSessionRecovery": true,
+        "hasHealthyWork": true,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "modes": {
+            "currentModeId": "default",
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "id": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          "models": {
+            "currentModelId": "claude-x",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "crew",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      },
+      {
+        "sessionId": "S2",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": true,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S2",
+          "modes": {
+            "currentModeId": "default",
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "id": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          "models": {
+            "currentModelId": "claude-x",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "crew",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "frames of the quarantined session are discarded",
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 31,
+        "result": {
+          "outcome": {
+            "outcome": "cancelled"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "the late result finds no request"
+  },
+  {
+    "step": "calls on the quarantined session",
+    "=compact": [
+      {
+        "error": "ACPSessionRecoveryRequiredError",
+        "message": "The previous Kiro turn did not stop. The original session needs recovery before another message can be sent.",
+        "sessionId": "S1"
+      }
+    ],
+    "=inject": [
+      false
+    ],
+    "=load": [
+      {
+        "error": "ACPSessionRecoveryRequiredError",
+        "message": "The previous Kiro turn did not stop. The original session needs recovery before another message can be sent.",
+        "sessionId": "S1"
+      }
+    ],
+    "=setMode": [
+      {
+        "error": "ACPSessionRecoveryRequiredError",
+        "message": "The previous Kiro turn did not stop. The original session needs recovery before another message can be sent.",
+        "sessionId": "S1"
+      }
+    ],
+    "p2": [
+      {
+        "error": "ACPSessionRecoveryRequiredError",
+        "message": "The previous Kiro turn did not stop. The original session needs recovery before another message can be sent.",
+        "sessionId": "S1"
+      }
+    ]
+  },
+  {
+    "step": "other session answers",
+    "=setModeOther": [
+      "<undefined>"
+    ]
+  },
+  {
+    "step": "state",
+    "state": [
+      {
+        "sessionId": "S2",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S2",
+          "modes": {
+            "currentModeId": "planner",
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "id": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          "models": {
+            "currentModelId": "claude-x",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          },
+          "configOptions": "<undefined>"
+        },
+        "sessionState": {
+          "runtimeId": "crew",
+          "version": "<version>",
+          "currentModeId": "planner",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  }
+]

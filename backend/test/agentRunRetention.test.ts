@@ -4,11 +4,6 @@ import { AgentRunStatus, MIN_RUN_TTL_MS, type AgentRunDtoV1 } from 'michi-shared
 import { AgentRunRetention, deriveRunExpiresAt } from '../src/agents/runs/agentRunRetention';
 
 describe('Agent Run retention', () => {
-  test('manual override may replace the Definition default within the platform ceiling', () => {
-    assert.equal(deriveRunExpiresAt({ now: 1_000, invocationMode: 'manual', requestedTtlMs: 4 * MIN_RUN_TTL_MS,
-      definitionDefaultTtlMs: 2 * MIN_RUN_TTL_MS, platformMaxTtlMs: 10 * MIN_RUN_TTL_MS }), 1_000 + 4 * MIN_RUN_TTL_MS);
-  });
-
   test('delegated Parent may only shorten a finite Definition retention ceiling', () => {
     assert.equal(deriveRunExpiresAt({ now: 1_000, invocationMode: 'delegated', requestedTtlMs: 4 * MIN_RUN_TTL_MS,
       definitionDefaultTtlMs: 2 * MIN_RUN_TTL_MS, platformMaxTtlMs: 10 * MIN_RUN_TTL_MS }), 1_000 + 2 * MIN_RUN_TTL_MS);

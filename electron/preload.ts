@@ -1,54 +1,24 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
-interface ChooseFolderResult {
-  canceled: boolean;
-  path?: string;
-  name?: string;
-}
+import type {
+  AppUpdateState, BackgroundServiceStatus, BrowserSurfaceState, ChooseFolderResult, ChooseFoldersResult,
+  DesktopBridge, DesktopCommandContract, DesktopEventContract, DesktopInvokeContract, DesktopInvokeArgs,
+  DesktopInvokeResult, FilePreviewResult, FileTreeEntry, GitChangeEntry,
+  RemoteAuthenticationTarget, SaveMarkdownResult, ScheduledNotice, ScheduledRunTarget,
+  TerminalSurfaceSnapshot, VibrancyMaterial,
+} from 'michi-shared';
 
-interface ChooseFoldersResult {
-  canceled: boolean;
-  folders: Array<{ path: string; name: string }>;
+function invoke<K extends keyof DesktopInvokeContract>(channel: K, ...args: DesktopInvokeArgs<K>): Promise<DesktopInvokeResult<K>> {
+  return ipcRenderer.invoke(channel, ...args);
 }
-
-interface SaveMarkdownResult {
-  canceled: boolean;
-  path?: string;
+function send<K extends keyof DesktopCommandContract>(channel: K, ...args: DesktopCommandContract[K]): void {
+  ipcRenderer.send(channel, ...args);
 }
-
-interface AppUpdateState {
-  status: 'idle' | 'checking' | 'available' | 'unavailable' | 'downloading' | 'ready' | 'installing' | 'error';
-  currentVersion: string;
-  latestVersion?: string;
-  notes?: string;
-  percent?: number;
-  error?: string;
+function on<K extends keyof DesktopEventContract>(channel: K, handler: (...args: DesktopEventContract[K]) => void): () => void {
+  const listener = (_event: Electron.IpcRendererEvent, ...args: DesktopEventContract[K]) => handler(...args);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
 }
-
-interface BrowserSurfaceState {
-  surfaceId: string;
-  url: string;
-  title: string;
-  loading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
-  error?: string;
-}
-
-interface FileTreeEntry {
-  name: string;
-  path: string;
-  kind: 'file' | 'directory';
-}
-
-interface GitChangeEntry {
-  path: string;
-  status: string;
-}
-
-type FilePreviewResult =
-  | { kind: 'text'; content: string; size: number; modifiedAt: number; extension: string }
-  | { kind: 'image'; dataUrl: string; size: number; modifiedAt: number; extension: string };
 
 // Read bootstrap flags from the URL query string injected by main.ts —
 // zero IPC, no sendSync blocking the renderer's main thread.
@@ -56,6 +26,17 @@ const _qs = new URLSearchParams(window.location.search);
 const isPackaged: boolean = _qs.get('michiPackaged') === '1';
 const michiWindowId: string = _qs.get('michiWindowId') ?? '';
 const hasVibrancy: boolean = _qs.get('michiVibrancy') === '1';
+
+// A window opened from a scheduled-run notification carries its target in
+// the URL; the renderer opens it once the workspace has hydrated.
+const initialScheduledRun: ScheduledRunTarget | null = _qs.get('michiOpenRun') && _qs.get('michiOpenWorkspace') && _qs.get('michiOpenJob')
+  ? {
+      runId: _qs.get('michiOpenRun')!,
+      jobId: _qs.get('michiOpenJob')!,
+      workspaceId: _qs.get('michiOpenWorkspace')!,
+      nodeId: _qs.get('michiOpenNode'),
+    }
+  : null;
 
 // Mark <html> before first paint so index.css can punch the see-through hole
 // (transparent shell + sidebar) without an opaque→glass flash. document may not
@@ -68,81 +49,94 @@ function markVibrancy(): void {
 if (document.documentElement) markVibrancy();
 else document.addEventListener('DOMContentLoaded', markVibrancy, { once: true });
 
-contextBridge.exposeInMainWorld('electron', {
-  openExternal(url: string): void { ipcRenderer.send('app:openExternal', url); },
+const electronBridge = {
+  openExternal(url: string): void { send('app:openExternal', url); },
   onOpenUrl(handler: (url: string) => void): () => void {
-    const listener = (_event: Electron.IpcRendererEvent, url: string) => handler(url);
-    ipcRenderer.on('app:openUrl', listener);
-    return () => ipcRenderer.removeListener('app:openUrl', listener);
+    return on('app:openUrl', handler);
   },
   isPackaged,
   michiWindowId,
   hasVibrancy,
   chooseFolder(): Promise<ChooseFolderResult> {
-    return ipcRenderer.invoke('app:chooseFolder');
+    return invoke('app:chooseFolder');
   },
   chooseFolders(): Promise<ChooseFoldersResult> {
-    return ipcRenderer.invoke('app:chooseFolders');
+    return invoke('app:chooseFolders');
   },
   resolveSkipCwd(projectId: string): Promise<{ path: string }> {
-    return ipcRenderer.invoke('app:resolveSkipCwd', projectId);
+    return invoke('app:resolveSkipCwd', projectId);
   },
   saveMarkdown(suggestedName: string, content: string): Promise<SaveMarkdownResult> {
-    return ipcRenderer.invoke('app:saveMarkdown', suggestedName, content);
+    return invoke('app:saveMarkdown', suggestedName, content);
   },
   openPath(absPath: string): Promise<{ ok: boolean; error?: string }> {
-    return ipcRenderer.invoke('app:openPath', absPath);
+    return invoke('app:openPath', absPath);
   },
   /** Fire-and-forget OS notification via main process. */
   showNotification(title: string, body: string): void {
-    ipcRenderer.send('app:showNotification', title, body);
+    send('app:showNotification', title, body);
   },
   /** Match native chrome and Browser panes to the active palette. */
   setDarkMaterial(dark: boolean, backgroundColor?: string): void {
-    ipcRenderer.send('app:setDarkMaterial', dark, backgroundColor);
+    send('app:setDarkMaterial', dark, backgroundColor);
   },
   /** Switch the sidebar's native vibrancy material (desktop see-through density). */
-  setVibrancy(material: string): void {
-    ipcRenderer.send('app:setVibrancy', material);
+  setVibrancy(material: VibrancyMaterial): void {
+    send('app:setVibrancy', material);
   },
   /** Relaunch the app (used after self-update). */
   relaunch(): void {
-    ipcRenderer.send('app:relaunch');
+    send('app:relaunch');
+  },
+  /** Always-on backend (macOS LaunchAgent) status. */
+  getBackgroundServiceStatus(): Promise<BackgroundServiceStatus> {
+    return invoke('service:getStatus');
+  },
+  /** Hand the backend over to / back from the background service. */
+  setBackgroundServiceEnabled(enabled: boolean): Promise<BackgroundServiceStatus> {
+    return invoke('service:setEnabled', enabled);
+  },
+  initialScheduledRun,
+  /** A scheduled-run notification was clicked while this window exists. */
+  onScheduledRunOpen(handler: (target: ScheduledRunTarget) => void): () => void {
+    return on('scheduled:open-run', handler);
+  },
+  /** A scheduled run finished (or needs attention) while this window is focused. */
+  onScheduledNotice(handler: (notice: ScheduledNotice) => void): () => void {
+    return on('scheduled:notice', handler);
   },
   getUpdateState(): Promise<AppUpdateState> {
-    return ipcRenderer.invoke('app:getUpdateState');
+    return invoke('app:getUpdateState');
   },
   checkForUpdate(): Promise<AppUpdateState> {
-    return ipcRenderer.invoke('app:checkForUpdate');
+    return invoke('app:checkForUpdate');
   },
   downloadUpdate(): Promise<AppUpdateState> {
-    return ipcRenderer.invoke('app:downloadUpdate');
+    return invoke('app:downloadUpdate');
   },
   installUpdate(): Promise<AppUpdateState> {
-    return ipcRenderer.invoke('app:installUpdate');
+    return invoke('app:installUpdate');
   },
   onAppUpdate(listener: (state: AppUpdateState) => void): () => void {
-    const handler = (_ev: unknown, state: AppUpdateState) => { listener(state); };
-    ipcRenderer.on('app:update-state', handler);
-    return () => { ipcRenderer.removeListener('app:update-state', handler); };
+    return on('app:update-state', listener);
   },
   chooseFiles(): Promise<{ canceled: boolean; paths?: string[] }> {
-    return ipcRenderer.invoke('app:chooseFiles');
+    return invoke('app:chooseFiles');
   },
   readFile(absPath: string): Promise<{ content: string; size: number; modifiedAt: number } | null> {
-    return ipcRenderer.invoke('app:readFile', absPath);
+    return invoke('app:readFile', absPath);
   },
   statFile(absPath: string): Promise<{ size: number; modifiedAt: number } | null> {
-    return ipcRenderer.invoke('app:statFile', absPath);
+    return invoke('app:statFile', absPath);
   },
   listDirectory(absPath: string, allowedRoots: string[]): Promise<FileTreeEntry[]> {
-    return ipcRenderer.invoke('app:listDirectory', absPath, allowedRoots);
+    return invoke('app:listDirectory', absPath, allowedRoots);
   },
   readFilePreview(absPath: string): Promise<FilePreviewResult | null> {
-    return ipcRenderer.invoke('app:readFilePreview', absPath);
+    return invoke('app:readFilePreview', absPath);
   },
   listGitChanges(cwd: string, allowedRoots: string[]): Promise<GitChangeEntry[]> {
-    return ipcRenderer.invoke('app:listGitChanges', cwd, allowedRoots);
+    return invoke('app:listGitChanges', cwd, allowedRoots);
   },
   getPathForFile(file: File): string | null {
     try {
@@ -152,61 +146,53 @@ contextBridge.exposeInMainWorld('electron', {
       return null;
     }
   },
-  terminalCreate(surfaceId: string, cwd: string, cols: number, rows: number) {
-    return ipcRenderer.invoke('terminal:create', surfaceId, cwd, cols, rows);
+  terminalCreate(surfaceId: string, cwd: string, cols: number, rows: number): Promise<TerminalSurfaceSnapshot> {
+    return invoke('terminal:create', surfaceId, cwd, cols, rows);
   },
   terminalWrite(surfaceId: string, data: string): void {
-    ipcRenderer.send('terminal:write', surfaceId, data);
+    send('terminal:write', surfaceId, data);
   },
-  remoteAuthCreate(surfaceId: string, target: unknown, cols: number, rows: number) {
-    return ipcRenderer.invoke('remote-auth:create', surfaceId, target, cols, rows);
+  remoteAuthCreate(surfaceId: string, target: RemoteAuthenticationTarget, cols: number, rows: number): Promise<TerminalSurfaceSnapshot> {
+    return invoke('remote-auth:create', surfaceId, target, cols, rows);
   },
   terminalResize(surfaceId: string, cols: number, rows: number): void {
-    ipcRenderer.send('terminal:resize', surfaceId, cols, rows);
+    send('terminal:resize', surfaceId, cols, rows);
   },
   terminalDestroy(surfaceId: string): void {
-    ipcRenderer.send('terminal:destroy', surfaceId);
+    send('terminal:destroy', surfaceId);
   },
   terminalListActive(): Promise<Array<{ surfaceId: string }>> {
-    return ipcRenderer.invoke('terminal:listActive');
+    return invoke('terminal:listActive');
   },
   onTerminalData(handler: (surfaceId: string, data: string) => void): () => void {
-    const listener = (_event: Electron.IpcRendererEvent, surfaceId: string, data: string) => handler(surfaceId, data);
-    ipcRenderer.on('terminal:data', listener);
-    return () => ipcRenderer.removeListener('terminal:data', listener);
+    return on('terminal:data', handler);
   },
   onTerminalExit(handler: (surfaceId: string, exitCode: number) => void): () => void {
-    const listener = (_event: Electron.IpcRendererEvent, surfaceId: string, exitCode: number) => handler(surfaceId, exitCode);
-    ipcRenderer.on('terminal:exit', listener);
-    return () => ipcRenderer.removeListener('terminal:exit', listener);
+    return on('terminal:exit', handler);
   },
   browserCreate(surfaceId: string, projectId: string, url: string): Promise<BrowserSurfaceState> {
-    return ipcRenderer.invoke('browser:create', surfaceId, projectId, url);
+    return invoke('browser:create', surfaceId, projectId, url);
   },
   browserSetBounds(surfaceId: string, bounds: { x: number; y: number; width: number; height: number }, visible: boolean): void {
-    ipcRenderer.send('browser:set-bounds', surfaceId, bounds, visible);
+    send('browser:set-bounds', surfaceId, bounds, visible);
   },
   browserNavigate(surfaceId: string, url: string): Promise<BrowserSurfaceState> {
-    return ipcRenderer.invoke('browser:navigate', surfaceId, url);
+    return invoke('browser:navigate', surfaceId, url);
   },
-  browserBack(surfaceId: string): void { ipcRenderer.send('browser:back', surfaceId); },
-  browserForward(surfaceId: string): void { ipcRenderer.send('browser:forward', surfaceId); },
-  browserReload(surfaceId: string): void { ipcRenderer.send('browser:reload', surfaceId); },
-  browserStop(surfaceId: string): void { ipcRenderer.send('browser:stop', surfaceId); },
-  browserDestroy(surfaceId: string): void { ipcRenderer.send('browser:destroy', surfaceId); },
+  browserBack(surfaceId: string): void { send('browser:back', surfaceId); },
+  browserForward(surfaceId: string): void { send('browser:forward', surfaceId); },
+  browserReload(surfaceId: string): void { send('browser:reload', surfaceId); },
+  browserStop(surfaceId: string): void { send('browser:stop', surfaceId); },
+  browserDestroy(surfaceId: string): void { send('browser:destroy', surfaceId); },
   onBrowserState(handler: (state: BrowserSurfaceState) => void): () => void {
-    const listener = (_event: Electron.IpcRendererEvent, state: BrowserSurfaceState) => handler(state);
-    ipcRenderer.on('browser:state', listener);
-    return () => ipcRenderer.removeListener('browser:state', listener);
+    return on('browser:state', handler);
   },
   onBrowserFocus(handler: (surfaceId: string) => void): () => void {
-    const listener = (_event: Electron.IpcRendererEvent, surfaceId: string) => handler(surfaceId);
-    ipcRenderer.on('browser:focus', listener);
-    return () => ipcRenderer.removeListener('browser:focus', listener);
+    return on('browser:focus', handler);
   },
   onBrowserCloseRequest(handler: (surfaceId: string) => void): () => void {
-    const listener = (_event: Electron.IpcRendererEvent, surfaceId: string) => handler(surfaceId);
-    ipcRenderer.on('browser:close-request', listener);
-    return () => ipcRenderer.removeListener('browser:close-request', listener);
+    return on('browser:close-request', handler);
   },
-});
+} satisfies DesktopBridge & { getPathForFile(file: File): string | null };
+
+contextBridge.exposeInMainWorld('electron', electronBridge);

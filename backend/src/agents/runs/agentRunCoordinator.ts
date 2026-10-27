@@ -197,7 +197,7 @@ export class AgentRunCoordinator {
     const attempt = this.ports.repository.createAttempt({
       operationId: `${runId}:attempt:${this.nextId('operation')}`,
       ownerUserId, runId, profileIndex, runtimeProfile: profile,
-      publicSessionId: this.nextId('operation'), recoveryEnvelope,
+      recoveryEnvelope,
     });
     try {
       this.ports.capabilities.validateBindings?.(ownerUserId, run.workspaceId, run.effectiveDefinition.capabilitySnapshot);

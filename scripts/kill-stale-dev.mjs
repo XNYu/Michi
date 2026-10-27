@@ -8,10 +8,20 @@
 // projects' Vite / nodemon / Electron processes are not touched.
 
 import { execFileSync, execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Preflight: checkouts installed before runtime/ became a workspace have no
+// node_modules link for it, so backend imports of michi-runtime would
+// fail with a module-not-found error. Resolved from the repo root, not cwd.
+if (!existsSync(path.join(REPO_ROOT, 'node_modules', 'michi-runtime'))) {
+  console.error('Missing workspace link for runtime/. Run "npm install" from the repo root (a new workspace was added).');
+  process.exit(1);
+}
+
 const WORKTREES_DIR = path.join(REPO_ROOT, '.worktrees') + path.sep;
 const IS_WIN = process.platform === 'win32';
 

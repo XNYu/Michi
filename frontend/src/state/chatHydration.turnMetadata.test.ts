@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapMessageRow } from './chatHydration';
+import { hydrateSavedState, mapNodeRowScalars, mapMessageRow } from './chatHydration';
 
 describe('turn message snapshot hydration', () => {
   it('restores plan, user metadata, and complete tool-call fields', () => {
@@ -26,4 +26,32 @@ describe('turn message snapshot hydration', () => {
       detail: 'why', inputJson: '{"x":1}', output: 'ok', textOffset: 0,
     });
   });
+});
+
+describe('hydrated errors retain unknown execution semantics', () => {
+  it('does not infer the failed turn from a backend row replay watermark', () => {
+    const node = mapNodeRowScalars({ id: 'n1', status: 'error', last_applied_turn_id: 'older-success' });
+    expect(node).toMatchObject({ status: 'error', errorKind: 'turn_outcome_unknown', lastAppliedTurnId: 'older-success' });
+    expect(node.errorTurnId).toBeUndefined();
+  });
+
+  it('treats legacy errors as unknown and does not trust their old error kind or watermark', () => {
+    const { nodes } = hydrateSavedState({ version: 6, projects: [], nodes: { n1: {
+      nodeId: 'n1', projectId: 'p1', status: 'error', errorKind: 'generic', lastAppliedTurnId: 'older-success',
+      messages: [{ id: 'answer', role: 'assistant', text: 'Already produced', toolCalls: [] }],
+    } } });
+    expect(nodes.n1).toMatchObject({ status: 'error', errorKind: 'turn_outcome_unknown', lastAppliedTurnId: 'older-success' });
+    expect(nodes.n1.errorTurnId).toBeUndefined();
+    expect(nodes.n1.messages[0].id).toBe('answer');
+  });
+});
+
+it('round-trips snapshot provenance in saved messages and composer drafts', () => {
+  const source = { type: 'artifact', filePath: 'a.md', snapshot: { hashKind: 'sha256-text-utf8', contentHash: 'abc', backendConnectionId: 'local', projectId: 'p', resolvedFilePath: '/a.md' } };
+  const comment = { id: 'c', body: 'edit', quotedText: 'old', createdAt: 1, source };
+  const message = mapMessageRow({ id: 'u', node_id: 'n', role: 'user', content: 'edit', seq: 0, created_at: 1, metadata: JSON.stringify({ comments: [comment], quotedText: 'old', quoteSource: source }) });
+  expect(message.comments?.[0].source).toEqual(source);
+  expect(message.quoteSource).toEqual(source);
+  const node = mapNodeRowScalars({ id: 'n', status: 'idle', composer_draft: { value: 'edit', mentions: [], quotedText: 'old', quoteSource: source } });
+  expect(node.composerDraft?.quoteSource).toEqual(source);
 });

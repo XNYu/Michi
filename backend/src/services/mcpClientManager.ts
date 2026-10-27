@@ -15,9 +15,16 @@
  */
 import { log } from "./logger";
 import { abortable, withDeadline } from '../agents/runtimeLifecycle';
+import { getUserSandboxRoot } from '../agents/tools/pathSandbox';
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv-provider.js';
+import type { JsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/types.js';
+import { DEFAULT_INHERITED_ENV_VARS } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const MCP_SETUP_TIMEOUT_MS = 30_000;
 const MCP_CLEANUP_TIMEOUT_MS = 5_000;
+const MCP_MAX_TOOL_PAGES = 100;
+const MCP_MAX_TOOLS = 10_000;
 
 // Lazy-loaded MCP SDK imports. The SDK is ESM-only and the backend is CJS,
 // so we dynamic-import at first use.
@@ -60,12 +67,40 @@ export interface McpToolInfo {
     description?: string;
     /** JSON Schema for the tool's input parameters. */
     inputSchema: Record<string, unknown>;
+    outputSchema?: Tool['outputSchema'];
+    execution?: Tool['execution'];
+    [key: string]: unknown;
 }
 
 /** Result of an MCP tool invocation. */
-export interface McpToolResult {
-    content: Array<{ type: string; text?: string; [key: string]: unknown }>;
-    isError?: boolean;
+export type McpToolResult = CallToolResult;
+
+export interface McpClientManagerOptions {
+    ownerUserId?: string | null;
+    /** Only an owner-scoped configuration/credential source may supply this.
+     * Process-global desktop MCP configuration must never opt cloud users in. */
+    cloudEnvironment?: { ownerUserId: string; env?: Record<string, string> };
+}
+
+export function mcpSubprocessEnvironment(config: McpServerConfig, options: McpClientManagerOptions): Record<string, string> {
+    if (process.env.MICHI_CLOUD === '1') {
+        const policy = options.cloudEnvironment;
+        if (!options.ownerUserId || !policy || policy.ownerUserId !== options.ownerUserId) {
+            throw Object.assign(new Error('External MCP requires an owner-scoped cloud configuration and credential policy'), { code: 'MCP_CLOUD_POLICY_REQUIRED' });
+        }
+        if (Object.keys(config.env ?? {}).length) {
+            throw new Error('Process-global MCP environment is unavailable in cloud mode; use owner-scoped credentials');
+        }
+        // StdioClientTransport always merges its own inherited defaults. Empty
+        // overrides prevent host USER/LOGNAME/SHELL (and Windows profile paths)
+        // from being reintroduced behind the explicit cloud allowlist.
+        const suppressedDefaults = Object.fromEntries(DEFAULT_INHERITED_ENV_VARS.map(key => [key, '']));
+        return { ...suppressedDefaults, PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: process.env.LANG ?? 'en_US.UTF-8',
+            NODE_NO_WARNINGS: '1', ...policy.env, HOME: getUserSandboxRoot(options.ownerUserId) };
+    }
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
+    return { ...env, ...config.env };
 }
 
 interface ManagedConnection {
@@ -73,13 +108,19 @@ interface ManagedConnection {
     client: InstanceType<typeof import("@modelcontextprotocol/sdk/client/index.js").Client>;
     transport: InstanceType<typeof import("@modelcontextprotocol/sdk/client/stdio.js").StdioClientTransport>;
     tools: McpToolInfo[];
+    outputValidators: Map<string, JsonSchemaValidator<unknown>>;
 }
 
 export class McpClientManager {
+    constructor(private readonly options: McpClientManagerOptions = {}) {}
     private connections = new Map<string, ManagedConnection>();
     private readonly connecting = new Map<string, Promise<{ tools: McpToolInfo[] }>>();
     private readonly pendingConnections = new Set<ManagedConnection>();
-    private readonly closing = new Map<ManagedConnection, Promise<void>>();
+    // Remember idempotence weakly after a resource has closed. Only unfinished
+    // closes need a strong owner; retries must not retain old SDK clients and
+    // partially discovered catalogs for the rest of the session.
+    private readonly closing = new WeakMap<ManagedConnection, Promise<void>>();
+    private readonly closingConnections = new Set<ManagedConnection>();
     private readonly lifetimeAbort = new AbortController();
     private disposePromise: Promise<void> | undefined;
     private cleanupError: Error | undefined;
@@ -122,18 +163,10 @@ export class McpClientManager {
             args: config.args,
         });
 
-        // Build a clean env record with no undefined values (satisfies
-        // StdioServerParameters["env"] which requires Record<string, string>).
-        const baseEnv: Record<string, string> = {};
-        for (const [k, v] of Object.entries(process.env)) {
-            if (v !== undefined) baseEnv[k] = v;
-        }
-        Object.assign(baseEnv, config.env ?? {});
-
         const transport = new StdioClientTransport({
             command: config.command,
             args: config.args,
-            env: baseEnv,
+            env: mcpSubprocessEnvironment(config, this.options),
             cwd: config.cwd,
             stderr: "pipe",
         });
@@ -142,22 +175,33 @@ export class McpClientManager {
             { name: "michi", version: "1.0.0" },
         );
         // Own the transport before either handshake or discovery can suspend.
-        const conn: ManagedConnection = { serverName: config.serverName, client, transport, tools: [] };
+        const conn: ManagedConnection = { serverName: config.serverName, client, transport, tools: [], outputValidators: new Map() };
         this.pendingConnections.add(conn);
 
         try {
             await abortable(client.connect(transport, { signal, timeout: MCP_SETUP_TIMEOUT_MS }), signal);
             signal.throwIfAborted();
-            try {
-                const response = await abortable(client.listTools(undefined, { signal, timeout: MCP_SETUP_TIMEOUT_MS }), signal);
-                conn.tools = (response.tools ?? []).map((t) => ({
-                    name: t.name,
-                    description: t.description,
-                    inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
-                }));
-            } catch (err) {
-                signal.throwIfAborted();
-                log.warn('mcp', `listTools failed for ${config.serverName}`, { error: (err as Error).message });
+            let cursor: string | undefined;
+            const seen = new Set<string>();
+            const names = new Set<string>();
+            for (let page = 0; ; page++) {
+                if (page >= MCP_MAX_TOOL_PAGES) throw new Error('MCP tool discovery exceeded its page limit');
+                const response = await abortable(client.listTools(cursor !== undefined ? { cursor } : undefined, { signal, timeout: MCP_SETUP_TIMEOUT_MS }), signal);
+                for (const t of response.tools) {
+                    if (names.has(t.name)) throw new Error(`MCP tool discovery returned duplicate tool: ${t.name}`);
+                    names.add(t.name);
+                    if (names.size > MCP_MAX_TOOLS) throw new Error('MCP tool discovery exceeded its tool limit');
+                    conn.tools.push(t);
+                    // SDK listTools caches only its latest page. Keep aggregate
+                    // validators through the supported public validator provider
+                    // so earlier-page output/task contracts remain enforced.
+                    if (t.outputSchema) conn.outputValidators.set(t.name,
+                        new AjvJsonSchemaValidator().getValidator(t.outputSchema));
+                }
+                cursor = response.nextCursor;
+                if (cursor === undefined) break;
+                if (seen.has(cursor)) throw new Error('MCP tool discovery repeated a cursor');
+                seen.add(cursor);
             }
             signal.throwIfAborted();
             this.connections.set(config.serverName, conn);
@@ -204,16 +248,22 @@ export class McpClientManager {
         }
 
         try {
+            const tool = conn.tools.find(tool => tool.name === toolName);
+            if (tool?.execution?.taskSupport === 'required') {
+                throw new Error(`MCP tool "${toolName}" requires task-based execution, which the Pi bridge does not support`);
+            }
             const result = await conn.client.callTool({ name: toolName, arguments: args }, undefined, { signal });
-            // Normalize content to always be an array of { type, text?, ... }
-            const content = Array.isArray(result.content)
-                ? result.content.map((c: any) => ({
-                    type: typeof c.type === "string" ? c.type : "text",
-                    ...(typeof c.text === "string" ? { text: c.text } : {}),
-                    ...(c.data ? { data: c.data } : {}),
-                }))
-                : [{ type: "text", text: String(result.content ?? "") }];
-            return { content, isError: result.isError === true };
+            const validate = conn.outputValidators?.get(toolName);
+            if (validate) {
+                if (!result.structuredContent && !result.isError) throw new Error(`MCP tool "${toolName}" has an output schema but did not return structured content`);
+                if (result.structuredContent) {
+                    const validation = validate(result.structuredContent);
+                    if (!validation.valid) throw new Error(`MCP structured content does not match the tool's output schema: ${validation.errorMessage}`);
+                }
+            }
+            // SDK validation owns the wire contract. Preserve the entire result,
+            // including resource/link metadata, MIME types, structuredContent and _meta.
+            return result as CallToolResult;
         } catch (err) {
             signal?.throwIfAborted();
             log.error("mcp", `callTool failed: ${serverName}/${toolName}`, {
@@ -248,6 +298,7 @@ export class McpClientManager {
     private closeConnection(conn: ManagedConnection): Promise<void> {
         let work = this.closing.get(conn);
         if (!work) {
+            this.closingConnections.add(conn);
             work = Promise.allSettled([
                 Promise.resolve().then(() => conn.client.close()),
                 Promise.resolve().then(() => conn.transport.close()),
@@ -255,6 +306,7 @@ export class McpClientManager {
                 const failed = results.find((result) => result.status === 'rejected');
                 if (failed?.status === 'rejected') throw failed.reason;
                 this.pendingConnections.delete(conn);
+                this.closingConnections.delete(conn);
             });
             this.closing.set(conn, work);
         }
@@ -272,7 +324,7 @@ export class McpClientManager {
         if (this.disposePromise) return this.disposePromise;
         this.disposed = true;
         this.lifetimeAbort.abort();
-        const connections = new Set([...this.connections.values(), ...this.pendingConnections, ...this.closing.keys()]);
+        const connections = new Set([...this.connections.values(), ...this.pendingConnections, ...this.closingConnections]);
         this.connections.clear();
         this.disposePromise = Promise.all([...connections].map((conn) => this.closeConnection(conn))).then(() => {});
         return this.disposePromise;

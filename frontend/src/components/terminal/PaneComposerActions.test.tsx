@@ -23,26 +23,32 @@ function renderActions(
 }
 
 describe('PaneComposerActions', () => {
-  it('labels an idle submit as Send', () => {
-    renderActions();
+  it('omits Branch in surfaces that cannot create branches', () => {
+    renderActions({ draftHasText: true, allowBranch: false });
+    expect(screen.queryByRole('button', { name: /^Branch \(/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Send (Enter)' })).toBeTruthy();
   });
-
-  it('labels a streaming submit as Send next and explains its FIFO behavior', () => {
-    const { onSend } = renderActions({ streaming: true });
-    const button = screen.getByRole('button', {
-      name: 'Send next (Enter). Sends after the current response',
-    });
-    expect(button.textContent).toContain('Send next');
+  it('labels uncertain recovery as a check and prevents duplicate checks', () => {
+    const props = renderActions({ sendMode: 'retry', inspectOriginal: true, checkingOriginal: true });
+    const button = screen.getByRole('button', { name: 'Check original turn' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toContain('Checking');
     fireEvent.click(button);
-    expect(onSend).toHaveBeenCalledOnce();
+    expect(props.onRetry).not.toHaveBeenCalled();
   });
 
-  it('keeps an explicit Branch action separate from Send next', () => {
-    const { onBranch, onSend } = renderActions({ draftHasText: true, streaming: true });
-    fireEvent.click(screen.getByRole('button', { name: /^Branch/ }));
-    expect(onBranch).toHaveBeenCalledOnce();
-    expect(onSend).not.toHaveBeenCalled();
+  it('says what else Stop ends, in its label and tooltip', () => {
+    const { onStop } = renderActions({ sendMode: 'stop', streaming: true, stopHint: 'Also stops the running workflow.' });
+    const button = screen.getByRole('button', { name: 'Stop stream. Also stops the running workflow.' });
+    expect(button.getAttribute('title')).toBe('Also stops the running workflow.');
+    fireEvent.click(button);
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the plain Stop label without a hint', () => {
+    renderActions({ sendMode: 'stop', streaming: true });
+    const button = screen.getByRole('button', { name: 'Stop stream' });
+    expect(button.getAttribute('title')).toBeNull();
   });
 
   it('shares the right-facing split icon with follow-up branches', () => {

@@ -1,29 +1,16 @@
-/**
- * Tests for agentConfig event emitter.
- *
- * Uses node:test (Node 22+). Stubs fs.writeFileSync to keep the user's
- * real ~/.michi/config.json out of the loop.
- */
-
+import { isolatedConfigDir } from './isolatedConfigDir';
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
-// agentConfig.persist() calls fs.writeFileSync. Monkey-patch the CJS fs
-// module directly (works through ts-node's CommonJS interop) so tests
-// don't churn the real ~/.michi/config.json.
-let origWriteFileSync: typeof import('node:fs').writeFileSync;
-function stubFsWrite(): void {
-    const fsCjs = require('fs');
-    origWriteFileSync = fsCjs.writeFileSync;
-    fsCjs.writeFileSync = () => { /* noop */ };
-}
-function restoreFsWrite(): void {
-    require('fs').writeFileSync = origWriteFileSync;
-}
+const configPath = path.join(isolatedConfigDir, 'config.json');
+beforeEach(() => {
+    fs.writeFileSync(configPath, '{}');
+    require('../src/services/agentConfig').loadAgentConfig();
+});
 
 describe('agentConfig events', () => {
-    beforeEach(stubFsWrite);
-    afterEach(restoreFsWrite);
 
     test('emits model_changed when updateAgentModelForRuntime changes a model', () => {
         const { agentConfigEvents, updateAgentModelForRuntime } =
@@ -65,14 +52,10 @@ describe('agentConfig events', () => {
 });
 
 describe('desktop native resume preferences', () => {
-    beforeEach(stubFsWrite);
-    afterEach(restoreFsWrite);
     test('merges runtime flags and validates persisted boolean values on reload', () => {
-        const fsCjs = require('fs');
-        const originalRead = fsCjs.readFileSync;
         const { loadAgentConfig, getAgentConfig, updateAgentConfig, isNativeResumeEnabled } = require('../src/services/agentConfig');
         try {
-            fsCjs.readFileSync = () => JSON.stringify({ agent: { nativeResumeByRuntime: { codex: false, claude: 'false', kiro: null } } });
+            fs.writeFileSync(configPath, JSON.stringify({ agent: { nativeResumeByRuntime: { codex: false, claude: 'false', kiro: null } } }));
             loadAgentConfig();
             assert.deepEqual(getAgentConfig().nativeResumeByRuntime, { codex: false });
             assert.equal(isNativeResumeEnabled('claude'), true);
@@ -82,22 +65,17 @@ describe('desktop native resume preferences', () => {
             updateAgentConfig({ nativeResumeByRuntime: { codex: true } });
             assert.deepEqual(getAgentConfig().nativeResumeByRuntime, { codex: true, claude: false });
         } finally {
-            fsCjs.readFileSync = () => '{}';
+            fs.writeFileSync(configPath, '{}');
             loadAgentConfig();
-            fsCjs.readFileSync = originalRead;
         }
     });
 });
 
 describe('desktop native fork preferences', () => {
-    beforeEach(stubFsWrite);
-    afterEach(restoreFsWrite);
     test('defaults on, filters malformed values, and merges per-runtime updates', () => {
-        const fsCjs = require('fs');
-        const originalRead = fsCjs.readFileSync;
         const { loadAgentConfig, getAgentConfig, updateAgentConfig, isNativeForkEnabled } = require('../src/services/agentConfig');
         try {
-            fsCjs.readFileSync = () => JSON.stringify({ agent: { nativeForkByRuntime: { codex: false, claude: 'false', kiro: null } } });
+            fs.writeFileSync(configPath, JSON.stringify({ agent: { nativeForkByRuntime: { codex: false, claude: 'false', kiro: null } } }));
             loadAgentConfig();
             assert.deepEqual(getAgentConfig().nativeForkByRuntime, { codex: false });
             assert.equal(isNativeForkEnabled('codex'), false);
@@ -108,27 +86,17 @@ describe('desktop native fork preferences', () => {
             updateAgentConfig({ nativeForkByRuntime: { codex: true } });
             assert.equal(isNativeForkEnabled('codex'), true);
         } finally {
-            fsCjs.readFileSync = () => '{}';
+            fs.writeFileSync(configPath, '{}');
             loadAgentConfig();
-            fsCjs.readFileSync = originalRead;
         }
     });
 });
 
-describe('agentConfig runtime defaults', () => {
-    test('Codex defaults to extra-high reasoning effort', () => {
-        const { getBuiltinDefaultReasoning } = require('../src/services/agentConfig');
-        assert.equal(getBuiltinDefaultReasoning('codex'), 'xhigh');
-    });
-});
-
 describe('agentConfig claudeConfigDir', () => {
-    beforeEach(stubFsWrite);
     afterEach(() => {
         // Reset the singleton so other suites see the default (unset) state.
         const { updateAgentConfig } = require('../src/services/agentConfig');
         updateAgentConfig({ claudeConfigDir: undefined });
-        restoreFsWrite();
     });
 
     test('unset by default — resolveClaudeConfigDir returns undefined', () => {
@@ -142,10 +110,10 @@ describe('agentConfig claudeConfigDir', () => {
         const { updateAgentConfig, resolveClaudeConfigDir } =
             require('../src/services/agentConfig');
 
-        updateAgentConfig({ claudeConfigDir: '~/.claude-custom' });
+        updateAgentConfig({ claudeConfigDir: '~/.claude-example' });
         assert.equal(
             resolveClaudeConfigDir(),
-            path.join(os.homedir(), '.claude-custom'),
+            path.join(os.homedir(), '.claude-example'),
         );
     });
 
@@ -158,20 +126,17 @@ describe('agentConfig claudeConfigDir', () => {
     });
 
     test('loadAgentConfig reads agent.claudeConfigDir from disk and ignores blanks', () => {
-        const fsCjs = require('fs');
-        const origReadFileSync = fsCjs.readFileSync;
         const { loadAgentConfig, getAgentConfig } = require('../src/services/agentConfig');
         try {
-            fsCjs.readFileSync = () =>
-                JSON.stringify({ agent: { claudeConfigDir: '  ~/.claude-custom  ' } });
+            fs.writeFileSync(configPath, JSON.stringify({ agent: { claudeConfigDir: '  ~/.claude-example  ' } }));
             loadAgentConfig();
-            assert.equal(getAgentConfig().claudeConfigDir, '~/.claude-custom');
+            assert.equal(getAgentConfig().claudeConfigDir, '~/.claude-example');
 
-            fsCjs.readFileSync = () => JSON.stringify({ agent: { claudeConfigDir: '   ' } });
+            fs.writeFileSync(configPath, JSON.stringify({ agent: { claudeConfigDir: '   ' } }));
             loadAgentConfig();
             assert.equal(getAgentConfig().claudeConfigDir, undefined);
         } finally {
-            fsCjs.readFileSync = origReadFileSync;
+            fs.writeFileSync(configPath, '{}');
         }
     });
 });

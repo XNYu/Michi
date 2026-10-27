@@ -1,0 +1,11 @@
+/* Michi rules for the Desk-drawn interactive-text blocks (deskRenderers.tsx): excerpts of agent-desk CSS they read, and fits to Michi's page. Theme tokens only. */
+
+/* Code-like text in Michi's monospace stack (the same Geist Mono first as Desk's literal stack). */
+.michi-mantine :is(.desk-diff, .desk-mermaid-src pre, .desk-math-src) { font-family: var(--font-mono); }
+
+/* math: KaTeX draws a formula it cannot parse in its own red as an inline style; here it is the page's error text. */
+.michi-mantine .desk-math .katex-error { color: var(--term-danger-text) !important; }
+
+/* mermaid: drawn in Mermaid's default theme, for a light page, as Desk draws it. On a dark palette its lines, arrows and words would be
+   dark on dark, so the drawing is turned over: lightness inverted, hue kept (a node's own colours included). */
+.michi-mantine[data-mantine-color-scheme='dark'] .desk-mermaid svg { filter: invert(1) hue-rotate(180deg); }

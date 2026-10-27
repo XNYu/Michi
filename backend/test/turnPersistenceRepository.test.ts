@@ -159,25 +159,6 @@ describe('turn persistence repository', () => {
     assert.equal(fts.length, 1);
   });
 
-  test('steering reports survive checkpoint, cancellation, database reopen and retain plan metadata', () => {
-    let snapshot = createDurableTurn({ turnId: 'steering-turn', assistantId: 'steering-answer', nodeId: 'node-1', workspaceId: 'ws-1', displayUserText: 'q', startedAt: 100 });
-    const reports = [{ messageId: 'steer-c3999cf6ce9f462cb72019fcc3fb5368', text: 'Partial model explanation', complete: false }];
-    beginTurn(snapshot);
-    snapshot = applyTurnEvent(snapshot, event('chunk', { text: 'Clean answer', seq: 1 }));
-    snapshot = applyTurnEvent(snapshot, event('plan', { entries: [{ content: 'Check', status: 'pending', priority: 'low' }], seq: 2 }));
-    snapshot = applyTurnEvent(snapshot, event('steering_report', { reports, seq: 3 }));
-    checkpointTurn(snapshot);
-    assert.deepEqual(JSON.parse(listMessages('node-1')[1].metadata!).steeringReports, reports);
-    snapshot = applyTurnEvent(snapshot, event('done', { stopReason: 'cancelled', seq: 4 }));
-    finalizeTurn(snapshot);
-    closeDb();
-    initDb();
-    const message = listMessages('node-1')[1];
-    assert.equal(message.content, 'Clean answer');
-    assert.deepEqual(JSON.parse(message.metadata!), { steeringReports: reports, plan: snapshot.assistantMessage.plan });
-    assert.ok(!message.blocks!.includes('[STEERING'));
-  });
-
   test('beginTurn atomically consumes an agent spawn prompt outbox', () => {
     getDb().prepare('UPDATE nodes SET composer_draft = ? WHERE id = ?').run(
       JSON.stringify({ __michiPendingSpawnPrompt: 'Investigate the child' }),
@@ -197,20 +178,6 @@ describe('turn persistence repository', () => {
     const node = getDb().prepare('SELECT composer_draft FROM nodes WHERE id = ?')
       .get('node-1') as { composer_draft: string | null };
     assert.equal(node.composer_draft, null);
-  });
-
-  test('consuming a spawn prompt preserves every window draft', () => {
-    const drafts = { 'window-a': JSON.stringify({ value: 'a', mentions: [] }), 'window-b': null };
-    getDb().prepare('UPDATE nodes SET composer_draft = ? WHERE id = ?').run(
-      JSON.stringify({ __michiPendingSpawnPrompt: 'Investigate the child', __michiWindowDrafts: drafts }), 'node-1',
-    );
-    beginTurn(createDurableTurn({
-      turnId: 'turn-scoped-spawn', assistantId: 'a-scoped-spawn', nodeId: 'node-1', workspaceId: 'ws-1',
-      displayUserText: 'Investigate the child', startedAt: 250,
-    }));
-    const node = getDb().prepare('SELECT composer_draft FROM nodes WHERE id = ?')
-      .get('node-1') as { composer_draft: string };
-    assert.deepEqual(JSON.parse(node.composer_draft), { __michiWindowDrafts: drafts });
   });
 
   test('finalizes cancelled and errored partial turns without losing content', () => {

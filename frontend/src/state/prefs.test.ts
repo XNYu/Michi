@@ -1,18 +1,12 @@
-import {
-  CORNER_RADIUS_MAX,
-  DEFAULT_PREFS,
-  cornerRadiusVars,
-  normalizeCornerRadius,
-  normalizeKiroSidecarTitlesPreference,
-} from './prefs';
+import { CORNER_RADIUS_MAX, DEFAULT_PREFS, normalizeCornerRadius } from './prefs';
 
 describe('DEFAULT_PREFS', () => {
   it('has slate as default terminal palette', () => {
     expect(DEFAULT_PREFS.terminalPalette).toBe('slate');
   });
 
-  it('defaults singlePaneContentWidth to 800', () => {
-    expect(DEFAULT_PREFS.singlePaneContentWidth).toBe(800);
+  it('defaults singlePaneContentWidth to 676', () => {
+    expect(DEFAULT_PREFS.singlePaneContentWidth).toBe(676);
   });
 
   it('has empty per-palette accent overrides by default', () => {
@@ -30,38 +24,24 @@ describe('DEFAULT_PREFS', () => {
   it('starts with the sidebar expanded (sidebarCollapsed = false)', () => {
     expect(DEFAULT_PREFS.sidebarCollapsed).toBe(false);
   });
+
+  it('gives a new profile a 252px sidebar', () => {
+    expect(DEFAULT_PREFS.terminalSidebarWidth).toBe(252);
+  });
 });
 
 describe('Kiro sidecar title preference', () => {
   it('is disabled by default', () => {
     expect(DEFAULT_PREFS.enableKiroSidecarTitles).toBe(false);
   });
-
-  it('preserves booleans and rejects malformed persisted values', () => {
-    expect(normalizeKiroSidecarTitlesPreference(true)).toBe(true);
-    expect(normalizeKiroSidecarTitlesPreference(false)).toBe(false);
-    expect(normalizeKiroSidecarTitlesPreference('false')).toBe(false);
-    expect(normalizeKiroSidecarTitlesPreference(null)).toBe(false);
-  });
 });
 
 describe('Corner radius preference', () => {
-  it('defaults to the tuned 4px menu radius', () => {
-    expect(DEFAULT_PREFS.cornerRadius).toBe(4);
-    expect(cornerRadiusVars(DEFAULT_PREFS.cornerRadius)).toEqual({ '--ui-radius': '4px', '--ui-radius-sm': '2px', '--ui-radius-lg': '8px' });
-  });
-
   it('clamps and rounds persisted values, falling back on malformed ones', () => {
     expect(normalizeCornerRadius(-3)).toBe(0);
     expect(normalizeCornerRadius(99)).toBe(CORNER_RADIUS_MAX);
     expect(normalizeCornerRadius(6.6)).toBe(7);
     expect(normalizeCornerRadius('8')).toBe(DEFAULT_PREFS.cornerRadius);
     expect(normalizeCornerRadius(Number.NaN)).toBe(DEFAULT_PREFS.cornerRadius);
-  });
-
-  it('derives the nested radius as half and the container radius as double', () => {
-    expect(cornerRadiusVars(0)).toEqual({ '--ui-radius': '0px', '--ui-radius-sm': '0px', '--ui-radius-lg': '0px' });
-    expect(cornerRadiusVars(9)).toEqual({ '--ui-radius': '9px', '--ui-radius-sm': '5px', '--ui-radius-lg': '18px' });
-    expect(cornerRadiusVars(12)).toEqual({ '--ui-radius': '12px', '--ui-radius-sm': '6px', '--ui-radius-lg': '24px' });
   });
 });

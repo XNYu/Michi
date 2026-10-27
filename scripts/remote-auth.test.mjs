@@ -12,6 +12,7 @@ test('authentication uses fixed argv for local sign-in or remote SSH with strict
   assert.equal(remote.binary, 'ssh');
   assert.deepEqual(remote.args.slice(-4, -1), ['-p', '2222', 'builder@build+']);
   assert.ok(remote.args.includes('StrictHostKeyChecking=yes'));
+  assert.ok(remote.args.includes('ConnectTimeout=30'), 'remote sign-in also allows a cold SSH proxy');
   assert.match(remote.args.at(-1), /exec example-login --remote$/);
 });
 test('remote sign-in is refused when the build has no remote command', () => {

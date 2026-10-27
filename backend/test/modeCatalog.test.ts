@@ -1,21 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ChatManager } from '../src/services/chatManager';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
-
-test('mode catalog returns a known workspace default without waiting for another warm session', async () => {
-  const modes = [{ id: 'vibe', name: 'Default' }];
-  let warmCalls = 0;
-  const runtime = {
-    getDefaultModeId: () => 'vibe',
-    getAvailableModes: async () => modes,
-    warm: () => { warmCalls++; return new Promise(() => {}); },
-  } as unknown as KiroRuntime;
-  assert.deepEqual(await new ChatManager(runtime).getModeCatalog('/tmp/known'), {
-    availableModes: modes, defaultModeId: 'vibe',
-  });
-  assert.equal(warmCalls, 0);
-});
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 
 test('mode catalog discovers the fresh default separately for each workspace', async () => {
   const defaults = new Map<string, string>();

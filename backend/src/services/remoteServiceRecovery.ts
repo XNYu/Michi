@@ -2,6 +2,11 @@ import { isLocalCredentialError, type RemoteServiceRecoveryStatus } from 'michi-
 import { getBackendConnection } from './backendConnections';
 import { RemoteDiagnosticLog } from './remoteDiagnostics';
 import { RemoteDesktopError, RemoteDesktopSetup } from './remoteDesktopSetup';
+import { SSH_CONNECT_TIMEOUT_SECONDS } from './sshTunnelManager';
+
+// Inspection, an optional service restart, and forwarding can each require a
+// new proxy handshake. Leave room for remote startup and the health probe too.
+const RECOVERY_TIMEOUT_MS = (3 * SSH_CONNECT_TIMEOUT_SECONDS + 30) * 1000;
 
 export function isSshAuthenticationError(message: string): boolean {
   return /Permission denied|Authentication failed|credentials? (?:have |has )?expired|certificate.*expired|unauthorized/i.test(message) || isLocalCredentialError(message);
@@ -10,7 +15,7 @@ export function isSshAuthenticationError(message: string): boolean {
 /** One bounded startup per saved machine, shared by all failing requests. */
 export class RemoteServiceRecovery {
   private jobs = new Map<string, { status: RemoteServiceRecoveryStatus; controller: AbortController; done: Promise<void>; updatedAt: number }>();
-  constructor(private readonly setup: RemoteDesktopSetup, private readonly timeoutMs = 45_000) {}
+  constructor(private readonly setup: RemoteDesktopSetup, private readonly timeoutMs = RECOVERY_TIMEOUT_MS) {}
 
   private current(status: RemoteServiceRecoveryStatus): RemoteServiceRecoveryStatus {
     return status.phase === 'starting' ? { ...status, message: status.diagnostic?.message ?? status.message } : status;
@@ -67,6 +72,24 @@ export class RemoteServiceRecovery {
       }
     })();
     return this.current(job.status);
+  }
+
+  /** Capture before a request starts: only a failure already settled then can be disproved by its success. */
+  currentFailure(id: string): RemoteServiceRecoveryStatus | undefined {
+    const status = this.jobs.get(id)?.status;
+    return status?.phase === 'error' ? status : undefined;
+  }
+
+  /**
+   * A proxied 2xx proves the tunnel, the remote service and the saved token
+   * work, even if the connection recovered without this job. It does not prove
+   * remote sign-in. updatedAt keeps the failed attempt's time, so a new outage
+   * is not held back by the cooldown any longer than before.
+   */
+  markReachable(id: string, failure: RemoteServiceRecoveryStatus | undefined): void {
+    const job = this.jobs.get(id);
+    if (!failure || job?.status !== failure || failure.diagnostic?.code === 'remote_credentials') return;
+    job.status = { connectionId: id, phase: 'ready', message: 'Remote Michi is reachable again.' };
   }
 
   stop(id: string): void { this.jobs.get(id)?.controller.abort(); this.jobs.delete(id); }

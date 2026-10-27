@@ -9,26 +9,32 @@
  *    binding, never from tool arguments. Agent Runs have no node and are refused.
  *  - The target must be another, already-started chat in the caller's own
  *    workspace (same owner/workspace check as pane inspection), not archived.
- *  - Every message needs an explicit, single-use user approval. A runtime's
- *    Trust/YOLO mode, "always allow" grants or session trust never approve it.
+ *    The one exception is the Michi assistant (caller.assistant, set from its
+ *    session binding): it may reach a started chat in any workspace its owner
+ *    owns, and its messages carry the assistant's own header.
+ *  - Messages send directly by default. The agent can request a single-use
+ *    approval when the user's intent needs clarification.
  *
  * The tool only delivers. How the two threads coordinate (wait_pane,
  * inspect_pane polling, or replying with send_to_thread) is up to the agents.
  */
 
 import {
+  ASSISTANT_THREAD_MESSAGE_TITLE,
   PaneInspectionError,
   THREAD_MESSAGE_MAX_CHARS,
+  formatAssistantThreadMessage,
   formatThreadMessage,
+  isSystemWorkspaceSettings,
   sanitizeThreadTitle,
   type DurableMessageMetadata,
 } from "michi-shared";
 import { getDb } from "../services/db";
 import { DISABLED_MESSAGE } from "../services/globalContext";
 import { log } from "../services/logger";
-import { authorizeCaller } from "../services/paneInspection";
+import { authorizeCaller, paneTargetWorkspaceId } from "../services/paneInspection";
 import { isArchivedPaneNode } from "../services/paneInspectionProjection.chat";
-import { getNode, type NodeRow } from "../services/dbRepository";
+import { getNode, getWorkspace, type NodeRow } from "../services/dbRepository";
 import { buildPaneInspectionCaller } from "./paneInspectionTools";
 import type { StartRequestedSelfTurnArgs, StartedRequestedSelfTurn } from "./chatHub";
 import type { AgentSession } from "./types";
@@ -41,12 +47,25 @@ export interface ThreadMessageCaller {
   workspaceId: string | null;
   nodeId: string | null;
   isAgentRun: boolean;
+  /**
+   * The Michi assistant (backend/src/assistant): it may message a started
+   * chat in ANY of its owner's workspaces, and its message carries the
+   * assistant's own header.
+   */
+  assistant?: boolean;
 }
 
 export interface ThreadMessageApprovalRequest {
   targetNodeId: string;
   targetTitle: string;
   text: string;
+  /** Set when the target is in another workspace than the sender's (assistant only). */
+  targetWorkspaceName?: string;
+  /**
+   * Show the whole message, as sent, instead of a one-line preview (the Michi
+   * assistant: what the user approves is exactly what the other thread gets).
+   */
+  exact?: boolean;
 }
 
 export type ThreadMessageApprovalResult =
@@ -81,9 +100,15 @@ export function configureThreadMessaging(deps: ThreadMessagingDeps | null): void
   configuredDeps = deps;
 }
 
+/** The boot wiring, for other tools that open a thread's session and start its turn the same way. */
+export function threadMessagingDeps(): ThreadMessagingDeps | null {
+  return configuredDeps;
+}
+
 export interface SendToThreadArgs {
   nodeId?: unknown;
   text?: unknown;
+  requestApproval?: unknown;
 }
 
 class ThreadMessageError extends Error {
@@ -100,7 +125,7 @@ function jsonResult(value: Record<string, unknown>): ThreadMessageToolResult {
   return { content: [{ type: "text", text: JSON.stringify(value) }] };
 }
 
-function parseArgs(args: SendToThreadArgs): { targetNodeId: string; text: string } {
+function parseArgs(args: SendToThreadArgs): { targetNodeId: string; text: string; requestApproval: boolean } {
   const targetNodeId = typeof args.nodeId === "string" ? args.nodeId.trim() : "";
   if (!targetNodeId) throw new ThreadMessageError("INVALID_ARGUMENT", "nodeId is required");
   const text = typeof args.text === "string" ? args.text.trim() : "";
@@ -108,7 +133,10 @@ function parseArgs(args: SendToThreadArgs): { targetNodeId: string; text: string
   if (text.length > THREAD_MESSAGE_MAX_CHARS) {
     throw new ThreadMessageError("INVALID_ARGUMENT", `text exceeds ${THREAD_MESSAGE_MAX_CHARS} characters`);
   }
-  return { targetNodeId, text };
+  if (args.requestApproval !== undefined && typeof args.requestApproval !== "boolean") {
+    throw new ThreadMessageError("INVALID_ARGUMENT", "requestApproval must be a boolean");
+  }
+  return { targetNodeId, text, requestApproval: args.requestApproval === true };
 }
 
 function treeArchived(node: NodeRow): boolean {
@@ -136,13 +164,26 @@ function resolveTarget(caller: ThreadMessageCaller, targetNodeId: string): Resol
   if (targetNodeId === caller.nodeId) {
     throw new ThreadMessageError("INVALID_TARGET", "cannot send a message to the current thread");
   }
-  const paneCaller = buildPaneInspectionCaller({
+  const sessionCaller = buildPaneInspectionCaller({
     ownerUserId: caller.ownerUserId,
     workspaceId: caller.workspaceId,
     runOwnerRunId: null,
     backendConnectionId: "local",
+    ...(caller.assistant ? { assistant: true } : {}),
   });
-  // Same gate and same-workspace/owner rule as inspect_pane: another
+  // Everyone else stays inside their own workspace. The assistant is scoped
+  // to the target's workspace (same owner); no system workspace (its own
+  // conversations included) holds a target.
+  let paneCaller = sessionCaller;
+  if (caller.assistant) {
+    const workspaceId = paneTargetWorkspaceId(sessionCaller.ownerUserId, { kind: "node", nodeId: targetNodeId });
+    if (workspaceId === sessionCaller.workspaceId || (workspaceId && isSystemWorkspaceSettings(getWorkspace(workspaceId)?.settings))) {
+      throw new ThreadMessageError("INVALID_TARGET", "cannot send a message to an assistant conversation");
+    }
+    if (workspaceId) paneCaller = { ...sessionCaller, workspaceId };
+  }
+  // Same gates and same-workspace/owner rule as inspect_pane (for the
+  // assistant, the target workspace's own AI-navigation setting): another
   // workspace's node is indistinguishable from a missing one.
   const authorized = authorizeCaller(paneCaller, { kind: "node", nodeId: targetNodeId });
   if (authorized.kind !== "node") throw new ThreadMessageError("INVALID_TARGET", "target is not a chat thread");
@@ -195,7 +236,7 @@ export async function sendToThreadTool(
   approve: ThreadMessageApprover,
   deps: ThreadMessagingDeps | null = configuredDeps,
 ): Promise<ThreadMessageToolResult> {
-  let request: { targetNodeId: string; text: string };
+  let request: ReturnType<typeof parseArgs>;
   let target: ResolvedTarget;
   try {
     request = parseArgs(args);
@@ -206,7 +247,16 @@ export async function sendToThreadTool(
   if (!deps) return errorResult("UNAVAILABLE", "cross-thread messaging is not configured on this backend");
 
   const targetTitle = sanitizeThreadTitle(target.node.title);
-  const approval = await approve({ targetNodeId: target.node.id, targetTitle, text: request.text });
+  const targetWorkspaceName = caller.assistant
+    ? sanitizeThreadTitle(getWorkspace(target.workspaceId)?.name ?? null)
+    : undefined;
+  const approval: ThreadMessageApprovalResult = request.requestApproval ? await approve({
+    targetNodeId: target.node.id,
+    targetTitle,
+    text: request.text,
+    ...(targetWorkspaceName ? { targetWorkspaceName } : {}),
+    ...(caller.assistant ? { exact: true } : {}),
+  }) : { approved: true };
   if (!approval.approved) {
     if (approval.reason === "unavailable") {
       return errorResult("APPROVAL_UNAVAILABLE", "this runtime cannot ask the user for approval; the message was not sent");
@@ -242,8 +292,10 @@ export async function sendToThreadTool(
   }
   if (!session) return errorResult("TARGET_UNAVAILABLE", "could not open the target thread's session");
 
-  const sourceTitle = getNode(current.callerNodeId)?.title ?? null;
-  const wireText = formatThreadMessage({ fromNodeId: current.callerNodeId, fromTitle: sourceTitle, text: request.text });
+  const sourceTitle = caller.assistant ? ASSISTANT_THREAD_MESSAGE_TITLE : getNode(current.callerNodeId)?.title ?? null;
+  const wireText = caller.assistant
+    ? formatAssistantThreadMessage({ text: request.text })
+    : formatThreadMessage({ fromNodeId: current.callerNodeId, fromTitle: sourceTitle, text: request.text });
   const userMetadata: DurableMessageMetadata = {
     threadMessage: { fromNodeId: current.callerNodeId, fromTitle: sanitizeThreadTitle(sourceTitle) },
   };
@@ -280,17 +332,20 @@ export async function sendToThreadTool(
     const message = outcome.error instanceof Error ? outcome.error.message : String(outcome.error);
     return errorResult("TARGET_UNAVAILABLE", message);
   }
-  return jsonResult(deliveryResult(outcome.kind, { nodeId: current.node.id, title: targetTitle }, turnId));
+  return jsonResult(deliveryResult(outcome.kind, { nodeId: current.node.id, title: targetTitle }, turnId,
+    { targetCanReply: !caller.assistant }));
 }
 
 /**
  * The follow-up calls are returned as complete argument objects for the model to pass
- * unchanged, instead of prose it has to turn into arguments.
+ * unchanged, instead of prose it has to turn into arguments. `targetCanReply` is false when
+ * the target cannot message the sender back (the assistant lives outside its workspace).
  */
 export function deliveryResult(
   status: "started" | "queued",
   target: { nodeId: string; title: string },
   turnId: string,
+  opts: { targetCanReply?: boolean } = {},
 ): Record<string, unknown> {
   const executionRef = { kind: "chat_turn", nodeId: target.nodeId, turnId };
   const waitPaneArgs = { nodeId: target.nodeId, until: "terminal", executionRef, timeoutMs: 30_000 };
@@ -318,8 +373,8 @@ export function deliveryResult(
     waitPaneArgs,
     readPaneOutputArgs,
     next: "The target thread is answering. Call wait_pane with waitPaneArgs exactly as given (again while "
-      + "reason is 'timed_out'), then read_pane_output with readPaneOutputArgs to get its reply. It may also "
-      + "reply with send_to_thread.",
+      + "reason is 'timed_out'), then read_pane_output with readPaneOutputArgs to get its reply."
+      + (opts.targetCanReply === false ? "" : " It may also reply with send_to_thread."),
   };
 }
 
@@ -347,7 +402,12 @@ type AskUser = (questions: Array<{
 export function askUserThreadMessageApprover(askUser: AskUser | undefined): ThreadMessageApprover {
   return async (request) => {
     if (!askUser) return { approved: false, reason: "unavailable" };
-    const question = `Send this message to "${request.targetTitle}"? “${previewText(request.text)}”`;
+    const where = request.targetWorkspaceName ? ` in ${request.targetWorkspaceName}` : "";
+    // An exact request shows the message whole, line breaks kept (the question
+    // card wraps and scrolls it); others keep the one-line preview.
+    const question = request.exact
+      ? `Send this message to "${request.targetTitle}"${where}?\n\n${request.text}`
+      : `Send this message to "${request.targetTitle}"${where}? “${previewText(request.text)}”`;
     const answers = await askUser([{
       question,
       header: "Send msg",
@@ -368,7 +428,8 @@ export function askUserThreadMessageApprover(askUser: AskUser | undefined): Thre
 /** Title for single-use permission prompts (Pi). */
 export function threadMessageApprovalTitle(request: ThreadMessageApprovalRequest): { title: string; detail: string } {
   return {
-    title: `Send a message to "${request.targetTitle}"?`,
-    detail: previewText(request.text),
+    title: `Send a message to "${request.targetTitle}"${request.targetWorkspaceName ? ` in ${request.targetWorkspaceName}` : ""}?`,
+    // The permission card shows detail whole in a scrolling, line-preserving box.
+    detail: request.exact ? request.text : previewText(request.text),
   };
 }

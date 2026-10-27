@@ -10,12 +10,14 @@ import { NotificationsPane } from './settings/NotificationsPane';
 import { ShortcutsPane } from './settings/ShortcutsPane';
 import { AccountPane } from './settings/AccountPane';
 import { ConnectionsPane } from './settings/ConnectionsPane';
+import { BackgroundPane } from './settings/BackgroundPane';
+import { MichiAssistantSettings } from './settings/assistant/MichiAssistantSettings';
 import './Settings.css';
 import { setManageWorkspaceId } from '../../../state/manageRoute';
 
 // No Custom Agents section: that feature is switched on by the backend's
 // environment (MICHI_CUSTOM_AGENTS=1), never from the app.
-export type SettingsSection = 'browser' | 'model' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'account' | 'usage';
+export type SettingsSection = 'browser' | 'model' | 'assistant' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'background' | 'account';
 
 export default function TerminalSettings({
   onNav,
@@ -57,7 +59,9 @@ export default function TerminalSettings({
   const signedIn = !!session?.user;
 
   const selectedSection = controlledSection ?? localSection;
-  const section = selectedSection === 'account' && !signedIn ? 'appearance' : selectedSection;
+  const section = (selectedSection === 'account' && !signedIn)
+    ? 'appearance'
+    : selectedSection;
   const setSection = (next: SettingsSection) => {
     setLocalSection(next);
     onSectionChange?.(next);
@@ -65,14 +69,16 @@ export default function TerminalSettings({
   const sections: Array<[SettingsSection, string]> = [
     ['appearance', 'Appearance'],
     ['model', 'Model'],
+    ['assistant', 'Assistant'],
     ['connections', 'Connections'],
     ['browser', 'Browser'],
     ['notifications', 'Notifications'],
+    ['background', 'Background'],
     ['shortcuts', 'Shortcuts'],
     ...(signedIn ? ([['account', 'Account']] as Array<[SettingsSection, string]>) : []),
   ];
   const sectionLabel = sections.find(([key]) => key === section)?.[1];
-  const waitingForWorkspace = !workspaceReady && ['model', 'connections'].includes(section);
+  const waitingForWorkspace = !workspaceReady && ['model', 'assistant', 'connections'].includes(section);
 
   const openTrashPage = () => {
     onClose?.();
@@ -123,10 +129,14 @@ export default function TerminalSettings({
           {section === 'appearance' && <AppearancePane />}
           {section === 'browser' && <BrowserSettingsPane />}
           {section === 'model' && <ModelPane activeProjectId={activeProject?.id ?? null} />}
+          {section === 'assistant' && <MichiAssistantSettings />}
           {section === 'connections' && <ConnectionsPane projects={projects} onOpenWorkspace={onNav ? id => {
             setManageWorkspaceId(id); onClose?.(); onNav('workspace-manage');
           } : undefined} />}
           {section === 'notifications' && <NotificationsPane />}
+          {section === 'background' && (
+            <BackgroundPane onOpenScheduled={onNav ? () => { onClose?.(); onNav('scheduled'); } : undefined} />
+          )}
           {section === 'shortcuts' && <ShortcutsPane />}
           {section === 'account' && signedIn && <AccountPane user={session!.user} />}
           </>}

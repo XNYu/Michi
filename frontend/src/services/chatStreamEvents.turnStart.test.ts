@@ -21,19 +21,33 @@ describe('dispatchChatStreamEvent turn_start/envelope', () => {
     });
   });
 
-  it('passes seq, assistantId, and turnId through chunk handlers', () => {
+  it('passes seq, assistantId, turnId, and observedAt through chunk handlers', () => {
     const onChunk = vi.fn();
     const handlers: StreamHandlers = { onChunk };
 
     dispatchChatStreamEvent(
       {
         event: CHAT_STREAM_EVENTS.chunk,
-        data: { text: 'hi', seq: 5, turnId: 'T1', assistantId: 'a-n1-T1' },
+        data: { text: 'hi', seq: 5, turnId: 'T1', assistantId: 'a-n1-T1', observedAt: 1_234 },
       },
       handlers,
     );
 
-    expect(onChunk).toHaveBeenCalledWith('hi', 5, 'a-n1-T1', 'T1');
+    expect(onChunk).toHaveBeenCalledWith('hi', 5, 'a-n1-T1', 'T1', 1_234);
+  });
+
+  it('passes observedAt through thought handlers', () => {
+    const onThought = vi.fn();
+
+    dispatchChatStreamEvent(
+      {
+        event: CHAT_STREAM_EVENTS.thought,
+        data: { text: 'hmm', seq: 6, turnId: 'T1', assistantId: 'a-n1-T1', observedAt: 1_300 },
+      },
+      { onThought },
+    );
+
+    expect(onThought).toHaveBeenCalledWith('hmm', 6, 'a-n1-T1', 'T1', 1_300);
   });
 
   it('keeps chunk envelope args undefined for back-compat frames', () => {
@@ -44,7 +58,7 @@ describe('dispatchChatStreamEvent turn_start/envelope', () => {
       { onChunk },
     );
 
-    expect(onChunk).toHaveBeenCalledWith('hi', undefined, undefined, undefined);
+    expect(onChunk).toHaveBeenCalledWith('hi', undefined, undefined, undefined, undefined);
   });
 
   it('passes assistantId and turnId through terminal events', () => {

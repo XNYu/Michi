@@ -5,13 +5,14 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { applyTurnEvent, createDurableTurn, parseChatStreamEvent } from 'michi-shared';
-import { createCodexTranslator } from '../src/agents/codex/codexEventTranslator';
-import { CODEX_SERVER_REQUESTS } from '../src/agents/codex/codexProtocol';
+import { createCodexTranslator } from 'michi-runtime/internal/adapters/codex/codexEventTranslator';
+import { CODEX_SERVER_REQUESTS } from 'michi-runtime/internal/adapters/codex/codexProtocol';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import { toChatStreamEvent } from '../src/routes/chatStreamEvents';
 import { baselineDir, manifest, schema, assertSchema, validator, discriminants, tsDiscriminants, variableStringLiterals } from './contracts/codex/schema';
 import { notifications, requests, items, consumedEnums, responseTypes, tsOnlyNotifications } from './contracts/codex/dispositions';
 import { activeWire, wireClient, tick, threadId, turnId, turnNotification } from './contracts/codex/wire';
+import { CODEX_EVENT_TRANSLATOR } from './helpers/adapterPaths';
 
 const registeredCases = new Set<string>();
 function contract(name: string, fn: (t: TestContext) => void | Promise<void>) {
@@ -54,7 +55,7 @@ contract('inventory and provenance', () => {
   assert.deepEqual(Object.keys(responseTypes).sort(), methods.sort());
   for (const type of Object.values(responseTypes)) assert.ok(validator(type));
   for (const method of Object.values(CODEX_SERVER_REQUESTS)) assert.ok(methods.includes(method), `unofficial runtime method: ${method}`);
-  const translator = path.join(__dirname, '../src/agents/codex/codexEventTranslator.ts');
+  const translator = CODEX_EVENT_TRANSLATOR;
   const officialNotifications = tsDiscriminants('ServerNotification', 'method');
   for (const name of variableStringLiterals(translator, 'N')) assert.ok(officialNotifications.includes(name), `unofficial translator method: ${name}`);
   const acceptedItems = [...tsDiscriminants('ThreadItem', 'type'), 'compaction', 'context_compaction'];
@@ -269,7 +270,9 @@ contract('terminal lifecycle', async (t) => {
         assert.throws(() => toChatStreamEvent(event), /Fixture failure/);
         continue; // ChatHub catches this; the following turn_end preserves error status.
       }
-      durable = applyTurnEvent(durable, toChatStreamEvent(event));
+      const stream = toChatStreamEvent(event);
+      assert.ok(stream);
+      durable = applyTurnEvent(durable, stream);
     }
     for (const type of ['commandExecution', 'fileChange']) for (const endStatus of ['completed', 'failed', 'declined']) {
       assert.equal(durable.assistantMessage.toolCalls.find((tool) => tool.id === `${type}:${endStatus}`)?.status, endStatus);

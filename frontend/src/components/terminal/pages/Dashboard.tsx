@@ -1,21 +1,27 @@
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { serverEntityId } from '../../../config/backendIdentity';
 import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
+import { paneScopeKey } from '../../../state/paneState';
 import type { ChatNodeState } from '../../../state/chatTypes';
 import type { AgentRunPaneItem } from '../../../state/paneItems';
+import type { PagePaneItem } from '../../../state/paneItems';
 import { agentResourceKey, identityOf } from '../../../state/agentIdentity';
+import type { WorkflowRunPaneItem } from '../../../state/paneItems';
+import { useOptionalWorkflowDomain, useWorkflowRunDetail } from '../../../state/workflowDomain';
 import { useAgentDomain } from '../../../state/agentDomain';
 import { createAgentRunNotificationTracker } from '../../../state/agentRunNotifications';
 import { usePrefs } from '../../../state/prefs';
 import EmptyThreads from '../../EmptyThreads';
 import ResizeHandle from '../../ResizeHandle';
 import TPane from '../TPane';
+import { AssistantPaneScope } from '../assistant/AssistantLinks';
 import DigestPane from '../DigestPane';
 import ArtifactPane from '../ArtifactPane';
 import PaneErrorBoundary from '../PaneErrorBoundary';
 import BrowserDock from '../BrowserDock';
 import TerminalHome from './Home';
 import { getElectron } from '../../../lib/electronBridge';
-import { getAgentRunDetail, getWebUploadCwd, importWorkspaceFileUpload, respondAgentRunInteraction, type UploadProgress } from '../../../services/api';
+import { getWebUploadCwd, importWorkspaceFileUpload, type UploadProgress } from '../../../services/api';
 import { notify } from '../../../services/notifications';
 import { toast } from 'sonner';
 import UploadProgressBar, { type UploadProgressViewState } from '../../UploadProgressBar';
@@ -31,53 +37,29 @@ const TerminalPane = lazy(() => import('../TerminalPane'));
 const PaneChooser = lazy(() => import('../PaneChooser'));
 const FilesPane = lazy(() => import('../FilesPane'));
 const ReviewPane = lazy(() => import('../ReviewPane'));
-const AgentRunPane = lazy(() => import('../agentRuns/AgentRunPane').then((module) => ({ default: module.AgentRunPane })));
+const PagePane = lazy(() => import('../spaces/PagePane'));
+const AgentRunPaneSurface = lazy(() => import('../agentRuns/AgentRunPaneSurface'));
+const WorkflowRunPane = lazy(() => import('../workflows/WorkflowRunPane').then((module) => ({ default: module.WorkflowRunPane })));
 const notificationTracker = createAgentRunNotificationTracker();
 
-function AgentRunPaneSurface({ item }: { item: AgentRunPaneItem }) {
-  const { closePane } = useChatActions();
-  const { state, dispatch, sendInput, cancel } = useAgentDomain();
+function WorkflowRunPaneSurface({ item }: { item: WorkflowRunPaneItem }) {
+  const { closePane, openPane } = useChatActions();
+  const workflows = useOptionalWorkflowDomain();
   const identity = useMemo(() => ({ backendConnectionId: item.backendConnectionId, id: item.runId }), [item.backendConnectionId, item.runId]);
-  const runKey = agentResourceKey(identity);
-  const [attempts, setAttempts] = useState<Awaited<ReturnType<typeof getAgentRunDetail>>['value']['attempts']>([]);
-
-  useEffect(() => {
-    let active = true;
-    void getAgentRunDetail(identity).then((detail) => {
-      if (!active) return;
-      setAttempts(detail.value.attempts);
-      dispatch({
-        type: 'replace-run-feed',
-        resource: { backendConnectionId: detail.backendConnectionId, value: detail.value.run },
-        events: detail.value.events,
-        interactions: detail.value.interactions,
-      });
-    }).catch(() => undefined);
-    return () => { active = false; };
-  }, [dispatch, identity]);
-
-  const resource = state.runs[runKey];
-  if (!resource) return <div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>loading Agent Run…</div>;
-  const target = { identity, workspaceId: resource.value.workspaceId, parentNodeId: resource.value.parentNodeId };
+  const { resource, pending, error, missing } = useWorkflowRunDetail(identity);
+  if (!workflows || !resource) {
+    return <div style={{ padding: 16, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>{missing ? 'This workflow is no longer available.' : 'loading workflow…'}</div>;
+  }
+  const parentNodeId = resource.value.nodeId;
   return (
-    <AgentRunPane
-      run={resource}
-      attempts={attempts}
-      events={state.eventsByRun[runKey] ?? []}
-      interactions={state.interactionsByRun[runKey] ?? []}
+    <WorkflowRunPane
+      run={resource.value}
+      pending={pending}
+      error={error}
       onClose={() => closePane(item.id)}
-      onCancel={() => { void cancel(target, { version: 1, expectedAttemptId: resource.value.activeAttemptId, reason: null }); }}
-      onSendInput={(_, request) => { void sendInput(target, request); }}
-      onRespondInteraction={(_, interaction, response) => {
-        void respondAgentRunInteraction(target, interaction.id, { version: 1, response })
-          .then(() => getAgentRunDetail(identity))
-          .then((detail) => dispatch({
-            type: 'replace-run-feed',
-            resource: { backendConnectionId: detail.backendConnectionId, value: detail.value.run },
-            events: detail.value.events,
-            interactions: detail.value.interactions,
-          }));
-      }}
+      onAction={(action) => { void workflows.act(identity, action); }}
+      onAnswer={(approvalId, optionId) => { void workflows.answer(identity, approvalId, optionId); }}
+      onOpenParent={parentNodeId ? () => openPane(parentNodeId) : undefined}
     />
   );
 }
@@ -109,7 +91,8 @@ export function centeredPaneScrollLeft({
 
 export default function TerminalDashboard() {
   const { activeProject, agentStatus } = useChatProjects();
-  const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const { openPanes: activePanes, pagePane, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const paneScope = paneScopeKey(activeProject, pagePane);
   const { settleFocus } = usePresentedPaneFocus(focusedPane);
   const { paneIds: presentedPanes, paneItems, exitingIds: allExitingIds, holdExits, finishExit } = usePresentedPanes(activePanes, activeItems);
   const openPanes = useMemo(() => presentedPanes.filter(id => paneItems[id]?.kind !== 'browser'), [presentedPanes, paneItems]);
@@ -117,7 +100,59 @@ export default function TerminalDashboard() {
   const browserItems = activePanes.flatMap(id => { const item = activeItems[id]; return item?.kind === 'browser' ? [item] : []; });
   const { setPaneWidth, openAgentRunPane } = useChatActions();
   const agentDomain = useAgentDomain();
+  const workflowDomain = useOptionalWorkflowDomain();
+  const subscribeWorkflows = workflowDomain?.subscribeWorkspace;
   const { prefs } = usePrefs();
+
+  useEffect(() => {
+    let retryTimer: number | null = null;
+    let deadline = 0;
+    const revealTarget = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        pageId: string; workspaceId: string; backendConnectionId: string;
+        resourceKind: 'page' | 'database'; resourceId: string; targetId: string;
+      }>).detail;
+      if (!detail) return;
+      deadline = Date.now() + 1200;
+      if (retryTimer !== null) window.clearInterval(retryTimer);
+      const attempt = () => {
+        const owners = Array.from(document.querySelectorAll<HTMLElement>('[data-native-page-pane]'))
+          .filter((element) => element.dataset.pageId === detail.pageId
+            && element.dataset.workspaceId === detail.workspaceId
+            && element.dataset.backendConnectionId === detail.backendConnectionId);
+        for (const owner of owners) {
+          const selector = detail.resourceKind === 'page' ? '[data-block-id]' : '[data-row-id]';
+          const target = Array.from(owner.querySelectorAll<HTMLElement>(selector))
+            .find((element) => {
+              if (detail.resourceKind === 'page') return element.dataset.blockId === detail.targetId;
+              return element.dataset.rowId === detail.targetId
+                && element.closest<HTMLElement>('[data-native-database]')?.dataset.databaseId === detail.resourceId;
+            }) ?? (detail.resourceKind === 'database'
+              && detail.targetId === serverEntityId(detail.resourceId, detail.backendConnectionId)
+              ? Array.from(owner.querySelectorAll<HTMLElement>('[data-native-database]'))
+                .find((element) => element.dataset.databaseId === detail.resourceId)
+              : undefined);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+            if (retryTimer !== null) window.clearInterval(retryTimer);
+            retryTimer = null;
+            return;
+          }
+        }
+        if (Date.now() >= deadline && retryTimer !== null) {
+          window.clearInterval(retryTimer);
+          retryTimer = null;
+        }
+      };
+      attempt();
+      if (Date.now() < deadline) retryTimer = window.setInterval(attempt, 50);
+    };
+    window.addEventListener('michi:scroll-to-page-target', revealTarget);
+    return () => {
+      window.removeEventListener('michi:scroll-to-page-target', revealTarget);
+      if (retryTimer !== null) window.clearInterval(retryTimer);
+    };
+  }, []);
   const selectPaneWidths = useCallback(
     (nodesMap: Record<string, ChatNodeState>) =>
       openPanes.map((id) => paneItems[id]?.width ?? nodesMap[id]?.paneWidth),
@@ -136,7 +171,7 @@ export default function TerminalDashboard() {
     paneIds: openPanes, customWidths: widths, mode: prefs.paneWidthMode, exitingIds,
     defaultPaneWidth: prefs.defaultPaneWidth,
     enabled: !!activeProject && openPanes.length > 0,
-    scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
+    scope: paneScope,
     appReduceMotion: prefs.reduceMotion,
     onExitStart: holdExits,
     onExitComplete: finishExit,
@@ -160,6 +195,13 @@ export default function TerminalDashboard() {
     void agentDomain.loadRuns({ version: 1, workspaceId: activeProject.id }).catch(() => {});
     return agentDomain.subscribeWorkspace(activeProject.id);
   }, [activeProject?.id, agentStatus?.customAgentsEnabled, agentDomain.loadRuns, agentDomain.subscribeWorkspace]);
+
+  // Workflow runs are independent of custom agents: any Claude or Kiro chat
+  // can launch one.
+  useEffect(() => {
+    if (!activeProject?.id || !subscribeWorkflows) return;
+    return subscribeWorkflows(activeProject.id);
+  }, [activeProject?.id, subscribeWorkflows]);
 
   useEffect(() => {
     const runs = Object.values(agentDomain.state.runs).filter((resource) => resource.value.workspaceId === activeProject?.id);
@@ -377,7 +419,7 @@ export default function TerminalDashboard() {
       revealRef.current?.();
       return;
     }
-    const scope = `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`;
+    const scope = paneScope;
     const previous = lastReveal.current;
     lastReveal.current = { scope, focused: focusedPane, mode: prefs.paneWidthMode, ready: layout.ready, ids: activePanes };
     const strip = stripRef.current;
@@ -405,7 +447,7 @@ export default function TerminalDashboard() {
       strip.scrollTo({ left: target, behavior: 'instant' });
       mirror(strip.scrollLeft);
     }
-  }, [activeProject?.id, activeProject?.activeTreeId, focusedPane, openPanes, activePanes, prefs.paneWidthMode, layout]);
+  }, [paneScope, focusedPane, openPanes, activePanes, prefs.paneWidthMode, layout]);
 
   useLayoutEffect(() => () => { revealRef.current?.(); }, []);
 
@@ -418,7 +460,7 @@ export default function TerminalDashboard() {
   const entrances = useRef(new Map<string, Animation>());
   const previousExits = useRef<ReadonlySet<string>>(new Set());
   useLayoutEffect(() => {
-    const scope = `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`;
+    const scope = paneScope;
     const previous = previousEntrance.current;
     previousEntrance.current = { scope, ids: openPanes };
     const reduced = prefs.reduceMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
@@ -458,7 +500,7 @@ export default function TerminalDashboard() {
       };
     }
     previousExits.current = exitingIds;
-  }, [openPanes, exitingIds, activeProject?.id, activeProject?.activeTreeId, prefs.paneSpawnAnimation]);
+  }, [openPanes, exitingIds, paneScope, prefs.paneSpawnAnimation]);
   useLayoutEffect(() => {
     const running = entrances.current;
     return () => { for (const animation of running.values()) animation.cancel(); running.clear(); };
@@ -562,7 +604,7 @@ export default function TerminalDashboard() {
             data-node-id={id}
             data-pane-exiting={exitingIds.has(id) ? '' : undefined}
             aria-hidden={exitingIds.has(id) || undefined}
-            {...(exitingIds.has(id) ? { inert: '' } : {})}
+            inert={exitingIds.has(id)}
             style={wrapStyle}
           >
             <div className="pane-entry-surface" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
@@ -577,6 +619,8 @@ export default function TerminalDashboard() {
                     : paneItems[id].kind === 'diff' ? <DiffPane item={paneItems[id]} />
                     : paneItems[id].kind === 'terminal' ? <TerminalPane item={paneItems[id]} />
                     : paneItems[id].kind === 'agent-run' ? <AgentRunPaneSurface item={paneItems[id]} />
+                    : paneItems[id].kind === 'page' ? <PagePane item={paneItems[id] as PagePaneItem} />
+                    : paneItems[id].kind === 'workflow-run' ? <WorkflowRunPaneSurface item={paneItems[id]} />
                     : null}
                 </Suspense>
               ) : paneKinds[i] === 'digest' ? (
@@ -584,13 +628,15 @@ export default function TerminalDashboard() {
               ) : paneKinds[i] === 'artifact' ? (
                 <ArtifactPane nodeId={id} contentMaxWidth={effContentWidth} />
               ) : (
-                <TPane nodeId={id} contentMaxWidth={effContentWidth} />
+                <AssistantPaneScope nodeId={id}>
+                  <TPane nodeId={id} contentMaxWidth={effContentWidth} />
+                </AssistantPaneScope>
               )}
             </PaneErrorBoundary>
             </RetainedPaneContent>
             </div>
             <ResizeHandle
-                paneRef={{ current: paneRefs.current[id] } as React.RefObject<HTMLDivElement>}
+                paneRef={{ current: paneRefs.current[id] ?? null }}
                 onResize={(w) => setPaneWidth(id, w)}
                 onReset={() => setPaneWidth(id, undefined)}
               />

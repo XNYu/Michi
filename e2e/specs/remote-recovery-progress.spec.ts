@@ -2,10 +2,12 @@ import { expect, test } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
 
 test('recovery shows live stages and output before a concrete timeout error', async ({ page }, testInfo) => {
+  await page.clock.install();
   const connection = { id: 'remote-progress', name: 'build+', transport: 'ssh', sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 };
   const report = { id: 'live-attempt', host: 'build+', startedAt: '2026-10-18T08:34:48Z', stage: 'ssh',
     severity: 'info', message: 'Checking the saved remote Michi installation…', log: '[ssh] Checking installation\n', truncated: false };
   let stage: 'ssh' | 'tunnel' | 'error' = 'ssh';
+  let attempts = 0;
   const recovery = () => {
     const diagnostic = stage === 'ssh' ? report : { ...report, stage: 'tunnel',
       severity: stage === 'error' ? 'error' : 'info', code: stage === 'error' ? 'recovery_timeout' : undefined,
@@ -17,6 +19,7 @@ test('recovery shows live stages and output before a concrete timeout error', as
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [connection] } }); return true; }
     if (path.endsWith('/proxy/workspaces/all')) {
+      attempts++;
       await route.fulfill({ status: 502, json: { error: recovery().message, recovery: recovery() } }); return true;
     }
     if (path === '/api/backend-connections/recovery') {
@@ -27,13 +30,13 @@ test('recovery shows live stages and output before a concrete timeout error', as
   } });
   await page.goto('/');
   const notice = page.getByRole('region', { name: 'Remote connection issues' });
-  await expect(notice).toBeVisible();
-  // Recovery diagnostics are also available inline in older shell layouts.
-  const details = notice.getByRole('button', { name: 'Details', exact: true });
-  const compact = await details.count() > 0;
-  if (compact) await details.click();
-  const drawer = compact ? page.getByRole('dialog', { name: 'Remote connections' }) : notice;
-  if (compact) await drawer.getByText('Connection details', { exact: true }).click();
+  await expect.poll(() => attempts).toBeGreaterThanOrEqual(2);
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Remote connection details:/ })).toHaveCount(0);
+  await page.clock.fastForward(5 * 60_000);
+  await page.getByRole('button', { name: /Remote connection details:/ }).click();
+  const drawer = page.getByRole('dialog', { name: 'Remote connections' });
+  await drawer.getByText('Connection details', { exact: true }).click();
   await expect(drawer.getByText('In progress at', { exact: false })).toBeVisible();
   await drawer.getByRole('button', { name: 'View logs' }).click();
   const log = drawer.getByLabel('Connection log');

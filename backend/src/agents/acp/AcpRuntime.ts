@@ -1,3 +1,6 @@
+import { CURSOR_RUNTIME_DESCRIPTOR, GROK_RUNTIME_DESCRIPTOR } from "./acpDescriptor";
+import { hostEventSink } from "michi-runtime/internal/core/hostEventSink";
+import { hostEventUpdate } from "michi-runtime/internal/adapters/kiro/kiroHostEvents";
 import { AcpClient } from "../../services/acp/client";
 import type { AcpInitializeResult, AcpMcpAttach, AcpProfile } from "../../services/acp/types";
 import {
@@ -104,6 +107,7 @@ export class KiroConcurrencyError extends AcpConcurrencyError {
  * on top of this class so each runtime keeps its own process pool.
  */
 export class AcpAgentRuntime implements AgentRuntime {
+    get descriptor() { return this.id === "grok" ? GROK_RUNTIME_DESCRIPTOR : CURSOR_RUNTIME_DESCRIPTOR; }
     public readonly id: string;
     public readonly label: string;
     public readonly capabilities: AgentCapabilities;
@@ -306,7 +310,12 @@ export class AcpAgentRuntime implements AgentRuntime {
             // do not expose it. Satisfy the required callback with a stub.
             onShowImage: () => ({ error: `show_image is not supported on the ${this.label} runtime` }),
             onAskUser: (questions) => this.handleAskUser(getSlotId()!, questions),
-            onMcpToolResult: (toolName, result) => this.handleMcpToolResult(getSlotId()!, toolName, result),
+            onMcpToolResult: (name, result) => this.handleMcpToolResult(getSlotId()!, name, result),
+            sink: hostEventSink((event) => {
+                const slot = this.mcpRegistry?.get(getSlotId()!);
+                if (!slot || slot.parentChatId === '__pending__') return;
+                this.getClient(slot.cwd)?.injectUpdate(slot.parentChatId, hostEventUpdate(event));
+            }),
         };
     }
 
@@ -322,7 +331,7 @@ export class AcpAgentRuntime implements AgentRuntime {
         const cwd = slot.cwd;
         const parentSession = sessionRegistry.getSession(parentNodeId) as AcpSession | undefined;
 
-        const created = await this.bridge.spawnBranches({
+        const created = await this.bridge.spawnBranches?.({
             parentChatId: parentNodeId,
             cwd,
             enableFollowUps: parentSession?.getEnableFollowUps() !== false,
@@ -330,14 +339,7 @@ export class AcpAgentRuntime implements AgentRuntime {
             topics,
         });
 
-        const client = this.getClient(cwd);
-        if (client) {
-            client.injectUpdate(parentSid, {
-                sessionUpdate: "spawn_branches",
-                topics: created,
-            });
-        }
-        return created;
+        return created ?? [];
     }
 
     private handleSaveContext(slotId: string, name: string, body: string): BridgeContextResult | null {
@@ -345,16 +347,8 @@ export class AcpAgentRuntime implements AgentRuntime {
         if (!slot) return null;
         const parentChatId = slot.parentChatId;
         if (parentChatId === "__pending__") return null;
-        const result = this.bridge.saveContext({ cwd: slot.cwd, chatId: parentChatId, ownerUserId: slot.ownerUserId, name, body });
+        const result = this.bridge.saveContext?.({ cwd: slot.cwd, chatId: parentChatId, ownerUserId: slot.ownerUserId, name, body });
         if (!result) return null;
-        const client = this.getClient(slot.cwd);
-        client?.injectUpdate(parentChatId, {
-            sessionUpdate: "artifact_saved",
-            contextId: result.id,
-            name: result.name,
-            filePath: result.filePath,
-            size: result.size,
-        });
         return result;
     }
 
@@ -363,16 +357,8 @@ export class AcpAgentRuntime implements AgentRuntime {
         if (!slot) return null;
         const parentChatId = slot.parentChatId;
         if (parentChatId === "__pending__") return null;
-        const result = this.bridge.updateContext({ cwd: slot.cwd, chatId: parentChatId, ownerUserId: slot.ownerUserId, name, body });
+        const result = this.bridge.updateContext?.({ cwd: slot.cwd, chatId: parentChatId, ownerUserId: slot.ownerUserId, name, body });
         if (!result) return null;
-        const client = this.getClient(slot.cwd);
-        client?.injectUpdate(parentChatId, {
-            sessionUpdate: "artifact_updated",
-            contextId: result.id,
-            name: result.name,
-            filePath: result.filePath,
-            size: result.size,
-        });
         return result;
     }
 

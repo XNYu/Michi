@@ -1,5 +1,5 @@
 /**
- * send_to_thread: same-workspace only, explicit per-message user approval,
+ * send_to_thread: same-workspace only, optional per-message user approval,
  * and delivery through a backend-requested turn in the target thread.
  * Uses a fresh temp SQLite MICHI_DATA_DIR per test (same pattern as
  * paneInspection.test.ts); runtime session and ChatHub are injected fakes.
@@ -11,37 +11,26 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import {
-  THREAD_MESSAGE_BODY_MARKER,
-  THREAD_MESSAGE_MAX_CHARS,
-  applyTurnEvent,
-  createDurableTurn,
-  type ChatStreamEvent,
-} from 'michi-shared';
+import { THREAD_MESSAGE_MAX_CHARS, applyTurnEvent, createDurableTurn, type ChatStreamEvent } from 'michi-shared';
 import { closeDb, getDb, initDb } from '../src/services/db';
-import {
-  beginTurn,
-  finalizeTurn,
-  saveNode,
-  saveTree,
-  saveWorkspace,
-  setAiGlobalContext,
-  type NodeRow,
-} from '../src/services/dbRepository';
-import { inspectPaneTool, readPaneOutputTool, waitPaneTool } from '../src/agents/paneInspectionTools';
-import { DISABLED_MESSAGE } from '../src/services/globalContext';
-import { LOCAL_AGENT_OWNER_ID } from '../src/services/agentOwner';
+import { beginTurn, finalizeTurn, saveNode, saveTree, saveWorkspace, type NodeRow } from '../src/services/dbRepository';
+import { readPaneOutputTool, waitPaneTool } from '../src/agents/paneInspectionTools';
+
 import { McpSlotRegistry, buildMcpServerForSlot } from '../src/services/mcpServer';
 import {
   askUserThreadMessageApprover,
   configureThreadMessaging,
   sendToThreadTool,
+  threadMessageApprovalTitle,
+  type ThreadMessageApprovalRequest,
   type ThreadMessageApprover,
   type ThreadMessageCaller,
   type ThreadMessagingDeps,
 } from '../src/agents/threadMessageTool';
+import { ensureAssistant } from '../src/assistant/store';
 import type { StartRequestedSelfTurnArgs, StartedRequestedSelfTurn } from '../src/agents/chatHub';
 import type { AgentSession } from '../src/agents/types';
+import { runOwner } from './helpers/owners';
 
 const WS = 'ws-1';
 const OTHER_WS = 'ws-2';
@@ -134,34 +123,6 @@ describe('send_to_thread', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('delivers an approved message as an attributed requested turn in the target thread', async () => {
-    const h = harness();
-    const approve = approver({ approved: true });
-    const result = await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'Please review the API section.' }, approve, h.deps);
-
-    assert.equal(result.isError, undefined, text(result));
-    const payload = JSON.parse(text(result));
-    assert.equal(payload.status, 'started');
-    const executionRef = { kind: 'chat_turn', nodeId: 'n-b', turnId: 'turn-1' };
-    assert.deepEqual(payload.executionRef, executionRef);
-    assert.deepEqual(payload.waitPaneArgs, { nodeId: 'n-b', until: 'terminal', executionRef, timeoutMs: 30_000 });
-    assert.deepEqual(payload.readPaneOutputArgs, { nodeId: 'n-b', selection: 'execution', executionRef });
-    assert.equal(approve.calls, 1);
-    assert.deepEqual(h.ensured, [{ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: WS, nodeId: 'n-b' }]);
-    assert.deepEqual(h.locks, ['n-b']);
-    assert.equal(h.started.length, 1);
-    const turn = h.started[0];
-    assert.equal(turn.chatId, 'n-b');
-    assert.equal(turn.nodeId, 'n-b');
-    assert.equal(turn.turnId, 'turn-1');
-    assert.equal(turn.ownerUserId, null);
-    assert.equal(turn.displayText, turn.text, 'stored text must equal what the runtime receives');
-    assert.match(turn.text, /^\[Thread message\] From "Research notes" \(nodeId n-a\)/);
-    assert.match(turn.text, /not typed by the user/);
-    assert.ok(turn.text.endsWith(`${THREAD_MESSAGE_BODY_MARKER}Please review the API section.`));
-    assert.deepEqual(turn.userMetadata, { threadMessage: { fromNodeId: 'n-a', fromTitle: 'Research notes' } });
-  });
-
   test('refuses invalid targets before asking the user', async () => {
     seedNode('n-other', { workspaceId: OTHER_WS });
     seedNode('n-unbound', { bound: false });
@@ -183,6 +144,7 @@ describe('send_to_thread', () => {
       ['agent run caller', caller({ isAgentRun: true, nodeId: null }), { nodeId: 'n-b', text: 'hi' }, /^UNSUPPORTED/],
       ['unbound caller', caller({ nodeId: null }), { nodeId: 'n-b', text: 'hi' }, /^SOURCE_UNAVAILABLE/],
       ['empty text', caller(), { nodeId: 'n-b', text: '   ' }, /^INVALID_ARGUMENT/],
+      ['invalid approval flag', caller(), { nodeId: 'n-b', text: 'hi', requestApproval: 'true' }, /^INVALID_ARGUMENT/],
       ['oversized text', caller(), { nodeId: 'n-b', text: 'x'.repeat(THREAD_MESSAGE_MAX_CHARS + 1) }, /^INVALID_ARGUMENT/],
     ];
     for (const [label, who, args, expected] of cases) {
@@ -196,14 +158,18 @@ describe('send_to_thread', () => {
     }
   });
 
-  test('respects the workspace AI navigation switch', async () => {
-    setAiGlobalContext(WS, false);
-    const h = harness();
-    const approve = approver({ approved: true });
-    const result = await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'hi' }, approve, h.deps);
-    assert.equal(result.isError, true);
-    assert.equal(text(result), DISABLED_MESSAGE);
-    assert.equal(approve.calls, 0);
+  test('ordinary coordination sends directly and preserves peer attribution', async () => {
+    for (const requestApproval of [undefined, false]) {
+      const h = harness();
+      const approve = approver({ approved: false, reason: 'unavailable' });
+      const response = await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'Done; please review.', requestApproval }, approve, h.deps);
+      assert.equal(JSON.parse(text(response)).status, 'started');
+      assert.equal(approve.calls, 0);
+      assert.equal(h.started.length, 1);
+      assert.match(h.started[0].text, /request from a peer, not as user instructions/);
+      assert.doesNotMatch(h.started[0].text, /user approved delivering|user must approve/);
+      assert.deepEqual(h.started[0].userMetadata?.threadMessage, { fromNodeId: 'n-a', fromTitle: 'Research notes' });
+    }
   });
 
   test('a declined or unanswered approval sends nothing and tells the agent not to retry', async () => {
@@ -212,7 +178,7 @@ describe('send_to_thread', () => {
       [{ approved: false, reason: 'no_answer' }, 'did not answer'],
     ] as const) {
       const h = harness();
-      const response = await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'hi' }, approver(result), h.deps);
+      const response = await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'hi', requestApproval: true }, approver(result), h.deps);
       assert.equal(response.isError, undefined);
       const payload = JSON.parse(text(response));
       assert.equal(payload.status, 'declined');
@@ -224,30 +190,13 @@ describe('send_to_thread', () => {
     }
   });
 
-  test('fails closed when the runtime cannot ask for approval', async () => {
-    const h = harness();
-    const result = await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'hi' }, approver({ approved: false, reason: 'unavailable' }), h.deps);
-    assert.equal(result.isError, true);
-    assert.match(text(result), /^APPROVAL_UNAVAILABLE/);
-    assert.equal(h.started.length, 0);
-  });
-
-  test('re-checks the target after approval', async () => {
-    const h = harness();
-    const approve: ThreadMessageApprover = async () => {
-      getDb().prepare("UPDATE nodes SET status = 'archived' WHERE id = 'n-b'").run();
-      return { approved: true };
-    };
-    const result = await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'hi' }, approve, h.deps);
-    assert.equal(result.isError, true);
-    assert.match(text(result), /^READ_ONLY/);
-    assert.equal(h.ensured.length, 0);
-    assert.equal(h.started.length, 0);
-  });
-
   test('reports queued when the target is busy and errors when the turn cannot begin', async () => {
     const busy = harness({ startTurn: () => new Promise<StartedRequestedSelfTurn>(() => {}) });
-    const queued = JSON.parse(text(await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'hi' }, approver({ approved: true }), busy.deps)));
+    // The start-wait timer is unref'd and the busy turn never settles, so keep the loop alive.
+    const keepAlive = setInterval(() => {}, 1_000);
+    const queued = await sendToThreadTool(caller(), { nodeId: 'n-b', text: 'hi' }, approver({ approved: true }), busy.deps)
+      .then((result) => JSON.parse(text(result)))
+      .finally(() => clearInterval(keepAlive));
     assert.equal(queued.status, 'queued');
     assert.deepEqual(queued.executionRef, { kind: 'chat_turn', nodeId: 'n-b', turnId: 'turn-1' });
     assert.deepEqual(queued.inspectPaneArgs, { nodeId: 'n-b' });
@@ -308,21 +257,6 @@ describe('send_to_thread follow-up arguments against the real pane tools', () =>
     assert.match(text(read), /Reply from B/);
   });
 
-  test('the argument shapes a model sent in practice all succeed now', async () => {
-    const ref = { kind: 'chat_turn', nodeId: 'n-b', turnId: 'turn-1' };
-    for (const args of [
-      { until: 'terminal', executionRef: ref, timeoutMs: 30_000 },
-      { until: 'terminal', nodeId: 'n-b', executionRef: { kind: 'chat_turn', turnId: 'turn-1' }, timeoutMs: 30_000 },
-      { until: 'terminal', nodeId: 'n-b', executionRef: ref, timeoutMs: 30_000 },
-    ]) {
-      const waited = await waitPaneTool(binding, args);
-      assert.equal(waited.isError, undefined, `${JSON.stringify(args)}: ${text(waited)}`);
-      assert.match(text(waited), /^reason: terminal$/m);
-    }
-    assert.match(text(readPaneOutputTool(binding, { selection: 'execution', executionRef: ref })), /Reply from B/);
-    assert.match(text(inspectPaneTool(binding, { executionRef: ref })), /chat_turn turn-1 on node n-b status=completed/);
-  });
-
   test('a locator for another pane than its executionRef is still rejected', async () => {
     const result = await waitPaneTool(binding, {
       nodeId: 'n-a', until: 'terminal', executionRef: { kind: 'chat_turn', nodeId: 'n-b', turnId: 'turn-1' },
@@ -349,6 +283,139 @@ describe('askUserThreadMessageApprover', () => {
     assert.deepEqual(await answer('send it later')(request), { approved: false, reason: 'declined', note: 'send it later' });
     assert.deepEqual(await answer(null)(request), { approved: false, reason: 'no_answer' });
     assert.deepEqual(await askUserThreadMessageApprover(undefined)(request), { approved: false, reason: 'unavailable' });
+  });
+
+  test('an exact request shows the whole message as sent, line breaks kept; others a one-line preview', async () => {
+    const long = `${'first paragraph '.repeat(40)}\n\nsecond paragraph\n${'tail '.repeat(3000)}END`;
+    assert.ok(long.length > 15_000 && long.length <= THREAD_MESSAGE_MAX_CHARS);
+    let question = '';
+    const approve = askUserThreadMessageApprover(async (questions) => { question = questions[0].question; return { [question]: 'Send' }; });
+
+    assert.deepEqual(await approve({ ...request, text: long, targetWorkspaceName: 'Project B', exact: true }), { approved: true },
+      'the answer is keyed by the full question');
+    assert.ok(question.startsWith('Send this message to "Implementation" in Project B?\n\n'));
+    assert.ok(question.endsWith(long), 'every character the target will get');
+
+    await approve({ ...request, text: long });
+    assert.ok(question.length < 400);
+    assert.ok(question.endsWith('…”'));
+    assert.doesNotMatch(question, /\n/);
+
+    assert.deepEqual(threadMessageApprovalTitle({ ...request, text: long, exact: true }).detail, long);
+    assert.ok(threadMessageApprovalTitle({ ...request, text: long }).detail.length <= 281);
+  });
+
+  test('the assistant\'s approval is exact; a thread\'s own stays a preview', async () => {
+    const seen: ThreadMessageApprovalRequest[] = [];
+    const record: ThreadMessageApprover = async (r) => { seen.push(r); return { approved: false, reason: 'declined' }; };
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-thread-message-exact-'));
+    process.env.MICHI_DATA_DIR = tmp;
+    closeDb();
+    initDb();
+    try {
+      seedWorkspace(WS);
+      seedNode('n-a', { title: 'Research notes' });
+      seedNode('n-b', { title: 'Implementation' });
+      const deps = harness().deps;
+      await sendToThreadTool({ ownerUserId: null, workspaceId: WS, nodeId: 'n-a', isAgentRun: false }, { nodeId: 'n-b', text: 'hi', requestApproval: true }, record, deps);
+      const assistant = ensureAssistant();
+      await sendToThreadTool({ ownerUserId: null, workspaceId: assistant.workspaceId, nodeId: assistant.nodeId, isAgentRun: false, assistant: true },
+        { nodeId: 'n-b', text: 'hi', requestApproval: true }, record, deps);
+      assert.deepEqual(seen.map((r) => r.exact ?? false), [false, true]);
+    } finally {
+      closeDb();
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the assistant\'s send_to_thread targets', () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-thread-message-system-'));
+    process.env.MICHI_DATA_DIR = tmp;
+    closeDb();
+    initDb();
+  });
+  afterEach(() => {
+    closeDb();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test('no system workspace holds a target, whatever kind it is', async () => {
+    const assistant = ensureAssistant();
+    saveWorkspace({ id: 'ws-sys', name: 'System', created_at: 1, updated_at: 1, settings: null });
+    getDb().prepare('UPDATE workspaces SET settings = ? WHERE id = ?').run(JSON.stringify({ system: 'other' }), 'ws-sys');
+    saveTree({ id: 't-sys', workspace_id: 'ws-sys', root_node_id: 'n-sys', last_active_at: 1, created_at: 1 });
+    saveNode({ id: 'n-sys', workspace_id: 'ws-sys', tree_id: 't-sys', kind: 'chat', title: 'Hidden', status: 'idle', minimized: 0,
+      spawned_by_agent: 0, acp_session_id: 'n-sys', runtime_id: 'claude', created_at: 1 });
+    let asked = 0;
+    const result = await sendToThreadTool(
+      { ownerUserId: null, workspaceId: assistant.workspaceId, nodeId: assistant.nodeId, isAgentRun: false, assistant: true },
+      { nodeId: 'n-sys', text: 'hi' }, async () => { asked += 1; return { approved: true }; }, harness().deps,
+    );
+    assert.equal(result.isError, true);
+    assert.match(text(result), /^INVALID_TARGET/);
+    assert.equal(asked, 0);
+  });
+
+  /** The assistant, and a started chat in another workspace for it to message. */
+  function assistantAndTarget() {
+    const assistant = ensureAssistant();
+    seedWorkspace('ws-user');
+    seedNode('n-target', { workspaceId: 'ws-user', title: 'Release checklist' });
+    const who: ThreadMessageCaller = { ownerUserId: null, workspaceId: assistant.workspaceId, nodeId: assistant.nodeId, isAgentRun: false, assistant: true };
+    return { assistant, who };
+  }
+
+  test('re-checks the target after approval', async () => {
+    const { who } = assistantAndTarget();
+    const h = harness();
+    const approve: ThreadMessageApprover = async () => {
+      getDb().prepare("UPDATE nodes SET status = 'archived' WHERE id = 'n-target'").run();
+      return { approved: true };
+    };
+    const result = await sendToThreadTool(who, { nodeId: 'n-target', text: 'hi', requestApproval: true }, approve, h.deps);
+    assert.equal(result.isError, true);
+    assert.match(text(result), /^READ_ONLY/);
+    assert.equal(h.ensured.length, 0);
+    assert.equal(h.started.length, 0);
+  });
+
+  test('fails closed when the runtime cannot ask for approval', async () => {
+    const { assistant, who } = assistantAndTarget();
+    const h = harness();
+    const direct = await sendToThreadTool(who, { nodeId: 'n-target', text: 'hi', requestApproval: true }, approver({ approved: false, reason: 'unavailable' }), h.deps);
+    assert.equal(direct.isError, true);
+    assert.match(text(direct), /^APPROVAL_UNAVAILABLE/);
+    // An assistant slot offers no send_to_thread, and its start_conversation fails closed the same way without ask_user.
+    configureThreadMessaging(h.deps);
+    try {
+      seedWorkspace('ws-other');
+      const slot = new McpSlotRegistry().create(assistant.nodeId, tmp, null, {
+        onSpawnBranches: async () => [], onSaveArtifact: () => null, onUpdateArtifact: () => null,
+        onShowImage: () => ({ error: 'unsupported in test' }), restricted: true,
+      } as never, { nodeId: assistant.nodeId, workspaceId: assistant.workspaceId });
+      const registered = (buildMcpServerForSlot(slot) as any)._registeredTools;
+      assert.equal(registered['send_to_thread'], undefined, "the assistant's catalog no longer offers it");
+      const viaMcp = await registered['start_conversation'].handler({ workspaceId: 'ws-other', text: 'hi' }, {});
+      assert.match(viaMcp.content[0].text, /^APPROVAL_UNAVAILABLE/);
+    } finally {
+      configureThreadMessaging(null);
+    }
+    assert.equal(h.started.length, 0);
+    assert.equal(h.ensured.length, 0);
+  });
+
+  test('Agent Run slots never register send_to_thread, even assistant-marked and allow-listed', () => {
+    const { assistant } = assistantAndTarget();
+    const slot = new McpSlotRegistry().create('attempt-1', tmp, null, {
+      onSpawnBranches: async () => [], onSaveArtifact: () => null, onUpdateArtifact: () => null,
+      onShowImage: () => ({ error: 'unsupported in test' }), onAskUser: async () => ({}),
+      owner: runOwner('run-1', 'attempt-1'),
+      exposedToolNames: new Set(['send_to_thread']), restricted: true,
+    } as never, { nodeId: null, workspaceId: assistant.workspaceId });
+    assert.equal((buildMcpServerForSlot(slot) as any)._registeredTools['send_to_thread'], undefined);
   });
 });
 
@@ -382,43 +449,15 @@ describe('send_to_thread MCP registration', () => {
     };
   }
 
-  test('chat slots route approval through the slot ask_user channel', async () => {
-    const h = harness();
-    configureThreadMessaging(h.deps);
-    let answer = "Don't send";
-    const slot = new McpSlotRegistry().create('n-a', tmpDir, null,
-      callbacks(async (questions) => ({ [questions[0].question]: answer })) as never,
-      { nodeId: 'n-a', workspaceId: WS });
-    const tool = (buildMcpServerForSlot(slot) as any)._registeredTools['send_to_thread'];
-    assert.ok(tool, 'send_to_thread must be registered on chat slots');
-
-    const declined = await tool.handler({ nodeId: 'n-b', text: 'hi' }, {});
-    assert.equal(JSON.parse(declined.content[0].text).status, 'declined');
-    assert.equal(h.started.length, 0);
-
-    answer = 'Send';
-    const sent = await tool.handler({ nodeId: 'n-b', text: 'hi' }, {});
-    assert.equal(JSON.parse(sent.content[0].text).status, 'started');
-    assert.equal(h.started.length, 1);
-    assert.equal(h.started[0].userMetadata?.threadMessage?.fromNodeId, 'n-a');
-  });
-
-  test('chat slots without an ask_user channel never send', async () => {
+  test('chat slots send without ask_user, but explicit approval still fails closed', async () => {
     const h = harness();
     configureThreadMessaging(h.deps);
     const slot = new McpSlotRegistry().create('n-a', tmpDir, null, callbacks() as never, { nodeId: 'n-a', workspaceId: WS });
     const tool = (buildMcpServerForSlot(slot) as any)._registeredTools['send_to_thread'];
-    const result = await tool.handler({ nodeId: 'n-b', text: 'hi' }, {});
+    const sent = await tool.handler({ nodeId: 'n-b', text: 'hi' }, {});
+    assert.equal(JSON.parse(sent.content[0].text).status, 'started');
+    const result = await tool.handler({ nodeId: 'n-b', text: 'hi', requestApproval: true }, {});
     assert.match(result.content[0].text, /^APPROVAL_UNAVAILABLE/);
-    assert.equal(h.started.length, 0);
-  });
-
-  test('Agent Run slots never register send_to_thread, even when allow-listed', () => {
-    const slot = new McpSlotRegistry().create('attempt-1', tmpDir, LOCAL_AGENT_OWNER_ID, {
-      ...callbacks(async () => ({})),
-      owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-      exposedToolNames: new Set(['send_to_thread']),
-    } as never, { nodeId: null, workspaceId: WS });
-    assert.equal((buildMcpServerForSlot(slot) as any)._registeredTools['send_to_thread'], undefined);
+    assert.equal(h.started.length, 1);
   });
 });

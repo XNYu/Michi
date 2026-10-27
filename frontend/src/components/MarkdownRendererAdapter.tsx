@@ -1,5 +1,5 @@
 import ReactMarkdown from 'react-markdown';
-import type { Components as ReactMarkdownComponents } from 'react-markdown';
+import type { Components as ReactMarkdownComponents, UrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 interface MarkdownRendererAdapterProps {
@@ -8,6 +8,8 @@ interface MarkdownRendererAdapterProps {
   legacyRemarkPlugins?: unknown[];
   legacyRehypePlugins: unknown[];
   legacyComponents?: ReactMarkdownComponents;
+  /** Omitted: react-markdown's default, which keeps only web-safe URL schemes. */
+  urlTransform?: UrlTransform;
 }
 
 export default function MarkdownRendererAdapter({
@@ -16,6 +18,7 @@ export default function MarkdownRendererAdapter({
   legacyRemarkPlugins,
   legacyRehypePlugins,
   legacyComponents,
+  urlTransform,
 }: MarkdownRendererAdapterProps) {
   return (
     <ReactMarkdown
@@ -26,6 +29,7 @@ export default function MarkdownRendererAdapter({
       ]}
       rehypePlugins={legacyRehypePlugins as any[]}
       components={legacyComponents}
+      {...(urlTransform ? { urlTransform } : {})}
     >
       {text}
     </ReactMarkdown>

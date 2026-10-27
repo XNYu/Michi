@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR, leaveSettings, openSettings } from '../fixtures/shell';
 
 test('links and agent requests follow the saved Browser preference', async ({ page }) => {
   let pendingUrl: string | null = null;
@@ -22,7 +23,7 @@ test('links and agent requests follow the saved Browser preference', async ({ pa
     return false;
   } });
   await bootWithWorkspace(page);
-  await page.locator('[contenteditable="true"]').first().fill('links');
+  await page.locator(COMPOSER_EDITOR).first().fill('links');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   const clickLink = async (url: string) => {
     await page.evaluate(href => {
@@ -36,12 +37,10 @@ test('links and agent requests follow the saved Browser preference', async ({ pa
   await clickLink('https://example.com/internal');
   await expect(page.getByRole('textbox', { name: 'Browser address' })).toHaveValue('https://example.com/internal');
   await expect.poll(() => page.evaluate(() => (window as any).externalUrls)).toEqual([]);
-  await page.getByRole('complementary').getByText('Settings', { exact: true }).click();
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-  await settings.getByRole('button', { name: 'Browser', exact: true }).click();
+  const settings = await openSettings(page, 'General');
   await expect(settings.getByRole('combobox', { name: 'Open links in' })).toHaveValue('internal');
   await settings.getByRole('combobox', { name: 'Open links in' }).selectOption('external');
-  await page.keyboard.press('Escape');
+  await leaveSettings(page);
   await clickLink('https://example.com/external');
   await expect.poll(() => page.evaluate(() => (window as any).externalUrls)).toEqual(['https://example.com/external']);
   pendingUrl = 'https://example.com/agent';

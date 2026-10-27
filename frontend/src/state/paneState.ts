@@ -87,12 +87,41 @@ export function prunePaneMaps(
   };
 }
 
+/**
+ * Single-page mode keeps every slot pane as a tab and shows one page: the
+ * focused tab, else the last one. Browser items live in the dock, not in tabs.
+ */
+export function singlePageVisiblePanes(
+  panes: string[],
+  items: Record<string, PaneItem>,
+  focused: string | null,
+): string[] {
+  const tabs = panes.filter((id) => items[id]?.kind !== 'browser');
+  if (tabs.length <= 1) return panes;
+  const page = focused && tabs.includes(focused) ? focused : tabs[tabs.length - 1];
+  return panes.filter((id) => id === page || items[id]?.kind === 'browser');
+}
+
+/**
+ * Motion scope for the pane strip. A new scope reads as a new view: panes swap
+ * without enter/exit or width motion (thread switches). Single-page mode adds
+ * the page pane so switching tabs moves like a thread switch, not open + close.
+ */
+export function paneScopeKey(
+  project: Pick<Project, 'id' | 'activeTreeId'> | null | undefined,
+  pagePane = '',
+): string {
+  const base = `${project?.id ?? ''}::${project?.activeTreeId ?? ''}`;
+  return pagePane ? `${base}::${pagePane}` : base;
+}
+
 interface UsePaneStateArgs {
   projects: Project[];
   activeProjectId: string | null;
+  singlePage?: boolean;
 }
 
-export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
+export function usePaneState({ projects, activeProjectId, singlePage = false }: UsePaneStateArgs) {
   const [openPanesMap, setOpenPanesMap] = useState<Record<string, string[]>>(
     () => readPaneMap<Record<string, string[]>>(PANE_OPEN_KEY, {}),
   );
@@ -114,8 +143,20 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
   const paneKeyRef = useRef(paneKey);
   paneKeyRef.current = paneKey;
 
-  const openPanes = paneKey ? openPanesMap[paneKey] ?? [] : [];
+  const slotPanes = paneKey ? openPanesMap[paneKey] : undefined;
   const focusedPane = paneKey ? focusedPaneMap[paneKey] ?? null : null;
+  const openPanes = useMemo(
+    () => singlePage
+      ? singlePageVisiblePanes(slotPanes ?? [], paneItems, focusedPane)
+      : slotPanes ?? [],
+    [singlePage, slotPanes, paneItems, focusedPane],
+  );
+  // Single-page mode only: every slot pane except browser items, in order.
+  const tabPanes = useMemo(
+    () => singlePage ? (slotPanes ?? []).filter((id) => paneItems[id]?.kind !== 'browser') : undefined,
+    [singlePage, slotPanes, paneItems],
+  );
+  const pagePane = singlePage ? openPanes.find((id) => paneItems[id]?.kind !== 'browser') ?? '' : '';
 
   const setOpenPanes = useCallback((updater: PaneUpdater<string[]>) => {
     const key = paneKeyRef.current;
@@ -340,6 +381,8 @@ export function usePaneState({ projects, activeProjectId }: UsePaneStateArgs) {
 
   return {
     openPanes,
+    tabPanes,
+    pagePane,
     focusedPane,
     focusNonce,
     paneItems,

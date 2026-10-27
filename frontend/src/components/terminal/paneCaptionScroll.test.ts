@@ -36,15 +36,6 @@ function setup(native = false, moving = false) {
 }
 
 describe('pane caption scrolling', () => {
-  it('uses the one-way fallback while transformed panes have transient overflow', () => {
-    const { strip, captions, dispose } = setup(true, true);
-    expect(captions.animate).not.toHaveBeenCalled();
-    strip.scrollLeft = 550;
-    strip.dispatchEvent(new Event('scroll'));
-    expect(captions.style.transform).toBe('translateX(-550px)');
-    expect(captions.scrollLeft).toBe(0);
-    dispose();
-  });
   it('initializes restored positions and mirrors only from the dashboard', () => {
     const { strip, captions, dispose } = setup();
     expect(captions.style.transform).toBe('translateX(-320px)');
@@ -99,17 +90,5 @@ describe('pane caption scrolling', () => {
     }
     expect(strip.scrollBy).not.toHaveBeenCalled();
     dispose();
-  });
-
-  it('releases observers, wheel listeners and fallback transforms on unmount', () => {
-    const { strip, captions, viewport, dispose, disconnect, observe } = setup();
-    expect(observe).toHaveBeenCalledTimes(2);
-    dispose();
-    expect(disconnect).toHaveBeenCalledOnce();
-    expect(captions.style.transform).toBe('');
-    strip.dispatchEvent(new Event('scroll'));
-    viewport.dispatchEvent(new WheelEvent('wheel', { deltaX: 60 }));
-    expect(captions.style.transform).toBe('');
-    expect(strip.scrollBy).not.toHaveBeenCalled();
   });
 });

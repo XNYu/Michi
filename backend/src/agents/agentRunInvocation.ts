@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { ParentInvocationAnchorV1 } from 'michi-shared';
+import type { AgentRunToolSessionBinding } from 'michi-runtime/internal/contract/tools';
+import { LOCAL_AGENT_OWNER_ID } from '../services/agentOwner';
+import { hostOwner } from './ownerMapping';
 
 export type AgentRunCaller =
   | {
@@ -16,6 +19,34 @@ export type AgentRunCaller =
       parentRunId: string;
       parentAttemptId: string;
     };
+
+/**
+ * Who a runtime session's Agent tools act for: the Run Attempt its owner
+ * stands for, or its conversation (the bound node, else the owner's). Null
+ * without a Workspace. Throws, like hostOwner, for a headless owner that
+ * names no Run.
+ */
+export function agentRunToolsBindingFor(binding: AgentRunToolSessionBinding): AgentRunCaller | null {
+  if (!binding.workspaceId) return null;
+  const ownerUserId = binding.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
+  const owner = hostOwner(binding.owner);
+  if (owner.kind === 'agent_run') {
+    return {
+      kind: 'agent_run',
+      ownerUserId,
+      workspaceId: binding.workspaceId,
+      parentRunId: owner.runId,
+      parentAttemptId: owner.attemptId,
+    };
+  }
+  return {
+    kind: 'conversation',
+    ownerUserId,
+    workspaceId: binding.workspaceId,
+    parentNodeId: binding.nodeId ?? owner.nodeId,
+    runtimeSessionId: binding.sessionId,
+  };
+}
 
 export interface ActiveTurnAnchor {
   turnId: string;

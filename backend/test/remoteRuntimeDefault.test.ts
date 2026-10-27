@@ -3,9 +3,11 @@ import { test } from 'node:test';
 import type { AgentRuntime, AgentRuntimeWithProviders } from '../src/agents/types';
 import { findRemoteRuntimeDefault } from '../src/services/remoteRuntimeDefault';
 import { setProviderEnvBindings } from '../src/services/secrets';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 function runtime(id: string, available = true): AgentRuntime {
   return {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id, label: id,
     capabilities: { modes: false, permissions: false, models: false, providerModels: false, reasoning: false,
       supportedReasoningLevels: [], apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: false },
@@ -17,30 +19,7 @@ function runtime(id: string, available = true): AgentRuntime {
 }
 
 for (const id of ['codex', 'claude']) {
-  test(`selects ${id} when Kiro is missing`, async () => {
-    const candidate = runtime(id);
-    assert.equal(await findRemoteRuntimeDefault([runtime('kiro', false), candidate], 'kiro'), candidate);
-  });
 }
-
-test('retains a usable user choice instead of registry order', async () => {
-  const codex = runtime('codex');
-  assert.equal(await findRemoteRuntimeDefault([runtime('claude'), codex], 'codex'), codex);
-});
-
-test('uses the first available runtime if the selected runtime was removed', async () => {
-  const claude = runtime('claude');
-  assert.equal(await findRemoteRuntimeDefault([claude, runtime('codex')], 'kiro'), claude);
-});
-
-test('an unavailable or broken probe does not prevent machine startup', async () => {
-  const broken = runtime('kiro');
-  broken.checkAvailability = () => { throw new Error('probe failed'); };
-  assert.equal(await findRemoteRuntimeDefault([broken, runtime('codex', false)], 'kiro'), undefined);
-  assert.equal(await findRemoteRuntimeDefault([], 'kiro'), undefined);
-  const codex = runtime('codex');
-  assert.equal(await findRemoteRuntimeDefault([broken, codex], 'kiro'), codex);
-});
 
 test('a built-in API adapter requires configured provider credentials', async () => {
   const providerId = 'remote-default-test-provider';

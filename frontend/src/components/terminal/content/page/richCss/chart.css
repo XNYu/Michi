@@ -1,0 +1,37 @@
+/* Michi rules for the Desk-drawn chart blocks (deskRenderers.tsx): excerpts of agent-desk CSS they read, and fits to Michi's page. Theme tokens only. */
+
+/* Excerpt of agent-desk project-page.css "Charts": every box is a fixed height, since recharts draws nothing in a box that has none. */
+.michi-mantine .desk-chart { width: 100%; }
+.michi-mantine .desk-chart-box { height: 220px; }
+.michi-mantine .desk-chart-box[data-kind='sparkline'] { height: 80px; }
+/* The calendar is a fixed-size SVG: it scrolls rather than shrinks. */
+.michi-mantine .desk-chart-box[data-kind='heatmap'] { height: auto; overflow-x: auto; }
+/* Pie and funnel are squares of their own size. */
+.michi-mantine .desk-chart-box[data-kind='pie'],
+.michi-mantine .desk-chart-box[data-kind='funnel'] { display: flex; justify-content: center; }
+.michi-mantine .desk-chart-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 0; padding: 0; list-style: none; font-size: var(--fs-md); color: var(--term-mid); }
+.michi-mantine .desk-chart-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.michi-mantine .desk-chart-swatch { width: 10px; height: 10px; border-radius: 3px; }
+.michi-mantine .desk-chart-legend b { font-weight: 500; color: var(--term-muted); font-variant-numeric: tabular-nums; }
+
+/* Tooltips (Mantine's chart tooltip and Desk's bubble tip) drawn as Michi's floating surface (components/ui/Menu.css). */
+.michi-mantine .desk-chart-tip,
+.michi-mantine .mantine-ChartTooltip-tooltip {
+  padding: 6px 10px;
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  color: var(--term-mid);
+  background: var(--term-surface);
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+  box-shadow: var(--ui-popover-shadow);
+}
+.michi-mantine .desk-chart-tip { display: flex; flex-direction: column; gap: 2px; }
+.michi-mantine .desk-chart-tip b,
+.michi-mantine .mantine-ChartTooltip-tooltipLabel { color: var(--term-fg); font-weight: 500; }
+.michi-mantine .mantine-ChartTooltip-tooltipItemName,
+.michi-mantine .mantine-ChartTooltip-tooltipItemData { color: var(--term-mid); }
+.michi-mantine .mantine-ChartTooltip-tooltipItemData { font-variant-numeric: tabular-nums; }
+
+/* Mantine's calendar paints days with no value in its own grey (a warm brown on dark pages); here they are the page's quiet fill. */
+.michi-mantine .mantine-Heatmap-root { --heatmap-empty-rect-bg: var(--term-alt); }

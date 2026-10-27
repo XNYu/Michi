@@ -4,6 +4,8 @@ import { extractNodeTree as apiExtractNodeTree } from '../services/api';
 import { buildMessagesByNode, mapTreeRow } from './chatHydration';
 import { descendants, findTreeIdForNode } from './tree';
 import type { ChatNodeState, Project } from './chatTypes';
+import { backendConnectionIdForWorkspace } from '../config/backendConnections';
+import { backendEntityId } from '../config/backendIdentity';
 
 export function useExtractNodeTree({
   projectsRef, activeProjectIdRef, nodesRef, commandsInFlightRef, boundSessionsRef,
@@ -47,7 +49,7 @@ export function useExtractNodeTree({
       return;
     }
     affected.forEach(id => commandsInFlightRef.current.add(id));
-    const treeId = pendingIds.current.get(nodeId) ?? `t-${crypto.randomUUID()}`;
+    const treeId = pendingIds.current.get(nodeId) ?? backendEntityId(backendConnectionIdForWorkspace(project.id), `t-${crypto.randomUUID()}`);
     pendingIds.current.set(nodeId, treeId);
     try {
       await runWorkspaceMutation(project.id, async () => {

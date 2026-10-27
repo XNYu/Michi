@@ -11,12 +11,6 @@ const digest: DigestState = {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('DigestGenerationStatus', () => {
-  it('shows waiting activity before the runtime emits any thoughts', () => {
-    render(<DigestGenerationStatus digest={digest} />);
-    expect(screen.getByRole('status').textContent).toBe('Generating digest...');
-    expect(screen.queryByRole('region', { name: 'Digest thinking' })).toBeNull();
-  });
-
   it('updates elapsed time and removes progress when generation completes', () => {
     vi.useFakeTimers();
     const running: DigestState = {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ComposerPermissionControl } from './ComposerPermissionControl';
 
@@ -50,6 +50,16 @@ describe('ComposerPermissionControl runtime ownership', () => {
   it('preserves the Kiro permission selector', () => {
     render(<ComposerPermissionControl mode="ask" runtimeIds={['kiro']} onChange={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Permissions: Ask' })).toBeTruthy();
+  });
+
+  it('warns on the choices that restart Claude while a workflow runs', async () => {
+    const hint = 'Claude restarts on your next message, which stops the running workflow.';
+    render(<ComposerPermissionControl mode="ask" runtimeIds={['claude']} onChange={vi.fn()} yoloRestartHint={hint} />);
+    const chip = screen.getByRole('button', { name: 'Permissions: Ask' });
+    expect(chip.title).toContain(hint);
+    fireEvent.click(chip);
+    expect((await screen.findByText(/full access where the runtime supports it/)).textContent).toContain(hint);
+    expect(screen.getByText(/Keep the runtime’s existing sandbox/).textContent).not.toContain(hint);
   });
 
   it('keeps the global selector for other registered runtimes alongside Crew', () => {

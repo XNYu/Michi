@@ -4,6 +4,30 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import PermissionBanner from './PermissionBanner';
 
 describe('PermissionBanner source label', () => {
+  it.each([false, true])('preserves existing input focus when mounted (readOnly=%s)', (readOnly) => {
+    const { rerender } = render(<><input aria-label="Message" />{null}</>);
+    const input = screen.getByRole('textbox', { name: 'Message' });
+    input.focus();
+    rerender(<><input aria-label="Message" /><PermissionBanner
+      permission={{ requestId: 1, title: 'Approve bash?', options: [
+        { optionId: 'once', kind: 'allow_once', name: 'Allow Once' },
+      ] }}
+      onRespond={vi.fn()}
+      readOnly={readOnly}
+    /></>);
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByRole('status').textContent).toContain('Approve bash?');
+    if (readOnly) {
+      expect(screen.queryByRole('button')).toBeNull();
+      expect(screen.getByRole('status').textContent).toContain('Viewing only');
+    } else {
+      const allow = screen.getByRole('button', { name: 'Allow Once' });
+      expect(allow.tabIndex).toBe(0);
+      allow.focus();
+      expect(document.activeElement).toBe(allow);
+    }
+  });
+
   it('offers all four choices without approval shortcuts', () => {
     const onRespond = vi.fn();
     render(<PermissionBanner permission={{ requestId: 4, title: 'shell', options: [

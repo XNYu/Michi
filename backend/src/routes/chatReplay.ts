@@ -10,6 +10,9 @@ export function chatReplayUnavailable(nodeId: string, turnId: string): { error: 
             code: 'backend_restarted',
         };
     }
+    if (turn?.status === 'error' && turn.error) {
+        return { error: turn.error, code: 'turn_replay_unavailable' };
+    }
     return {
         error: 'The live reply is no longer available. Reopen the conversation to check its saved state before retrying.',
         code: 'turn_replay_unavailable',

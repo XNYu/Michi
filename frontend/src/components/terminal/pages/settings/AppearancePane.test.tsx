@@ -11,47 +11,22 @@ vi.mock('../../../../state/prefs', async importOriginal => ({
 }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
+describe('Appearance pane heading', () => {
+  it('leaves the page heading to the Settings column', () => {
+    render(<AppearancePane />);
+    expect(screen.queryByRole('heading', { name: 'Appearance' })).toBeNull();
+  });
+});
+
 describe('Appearance pane width modes', () => {
-  it.each(['soft-fade', 'gentle-glide', 'frozen-retract'])('offers %s without changing other preferences', mode => {
-    render(<AppearancePane />);
-    fireEvent.click(screen.getByRole('button', { name: /Advanced/i }));
-    const select = screen.getByRole('combobox', { name: 'Pane animation' }) as HTMLSelectElement;
-    expect(select.options.length).toBe(6);
-    expect(select.value).toBe(DEFAULT_PREFS.paneSpawnAnimation);
-    fireEvent.change(select, { target: { value: mode } });
-    expect(setPref).toHaveBeenCalledExactlyOnceWith('paneSpawnAnimation', mode);
-  });
-  it('offers all three policies and reflects the default', () => {
-    render(<AppearancePane />);
-    fireEvent.click(screen.getByRole('button', { name: /Advanced/i }));
-    const select = screen.getByRole('combobox', { name: 'Pane width mode' }) as HTMLSelectElement;
-    expect(select.value).toBe('half');
-    expect(Array.from(select.options).map(option => option.value)).toEqual(['fixed', 'half', 'adaptive']);
-  });
 
-  it.each(['fixed', 'half', 'adaptive'])('changes the policy to %s without overwriting the configured width', mode => {
+  it('uses the reading width default without rounding it to a 20px step', () => {
     render(<AppearancePane />);
     fireEvent.click(screen.getByRole('button', { name: /Advanced/i }));
-    fireEvent.change(screen.getByLabelText('Pane width mode'), { target: { value: mode } });
-    expect(setPref).toHaveBeenCalledExactlyOnceWith('paneWidthMode', mode);
-  });
-
-  it('keeps the corner radius under Advanced and writes the pref', () => {
-    render(<AppearancePane />);
-    expect(screen.queryByRole('slider', { name: 'Corner radius' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /Advanced/i }));
-    const slider = screen.getByRole('slider', { name: 'Corner radius' }) as HTMLInputElement;
-    expect(slider.value).toBe(String(DEFAULT_PREFS.cornerRadius));
-    fireEvent.change(slider, { target: { value: '9' } });
-    expect(setPref).toHaveBeenCalledExactlyOnceWith('cornerRadius', 9);
-  });
-
-  it('labels the thread limit as a sidebar setting outside Advanced', () => {
-    render(<AppearancePane />);
-    const slider = screen.getByRole('slider', { name: 'Sidebar threads per workspace' }) as HTMLInputElement;
-    expect(slider.value).toBe(String(DEFAULT_PREFS.sidebarThreadLimit));
-    fireEvent.change(slider, { target: { value: '7' } });
-    expect(setPref).toHaveBeenCalledExactlyOnceWith('sidebarThreadLimit', 7);
+    const slider = screen.getByRole('slider', { name: 'Single-pane reading width' });
+    expect((slider as HTMLInputElement).value).toBe('676');
+    fireEvent.change(slider, { target: { value: '720' } });
+    expect(setPref).toHaveBeenCalledExactlyOnceWith('singlePaneContentWidth', 720);
   });
 
   it('retains the shared width slider', () => {
@@ -59,5 +34,23 @@ describe('Appearance pane width modes', () => {
     fireEvent.click(screen.getByRole('button', { name: /Advanced/i }));
     fireEvent.change(screen.getByRole('slider', { name: 'Default pane width' }), { target: { value: '800' } });
     expect(setPref).toHaveBeenCalledExactlyOnceWith('defaultPaneWidth', 800);
+  });
+});
+
+describe('Appearance swatches', () => {
+  it('are buttons the keyboard reaches and presses, saying which one is chosen', () => {
+    render(<AppearancePane />);
+    const gruvbox = screen.getByRole('button', { name: 'gruvbox' });
+    expect(gruvbox.tabIndex).toBe(0);
+    expect(gruvbox.getAttribute('aria-pressed')).toBe(String(DEFAULT_PREFS.terminalPalette === 'gruvbox'));
+    fireEvent.keyDown(gruvbox, { key: 'Enter' });
+    if (DEFAULT_PREFS.terminalPalette !== 'gruvbox') expect(setPref).toHaveBeenCalledWith('terminalPalette', 'gruvbox');
+    setPref.mockClear();
+    const pink = screen.getByRole('button', { name: 'pink' });
+    fireEvent.keyDown(pink, { key: ' ' });
+    expect(setPref).toHaveBeenCalledWith('terminalAccentOverrides', expect.objectContaining({ [DEFAULT_PREFS.terminalPalette]: '#ff2d95' }));
+    setPref.mockClear();
+    fireEvent.keyDown(pink, { key: 'x' });
+    expect(setPref).not.toHaveBeenCalled();
   });
 });

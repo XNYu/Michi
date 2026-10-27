@@ -65,7 +65,7 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_HEARTBEAT_MS = 10_000;
 const DEFAULT_MAINTENANCE_MS = 60_000;
 
-const DEFAULT_PLATFORM_POLICY: AgentPermissionPolicyV1 = {
+export const DEFAULT_PLATFORM_POLICY: AgentPermissionPolicyV1 = {
   version: 1,
   preset: 'build',
   categories: {

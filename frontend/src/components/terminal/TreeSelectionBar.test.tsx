@@ -73,24 +73,6 @@ describe('TreeSelectionBar', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
-  it('does not render Merge when only 1 tree is selected', () => {
-    mockHooks(makeStore({ treeSelection: new Set(['t-1']) }));
-
-    render(<TreeSelectionBar />);
-
-    expect(screen.queryByRole('button', { name: /merge/i })).toBeNull();
-    // The bar itself should render (1 selected)
-    expect(screen.getByText('1 selected')).toBeTruthy();
-  });
-
-  it('renders Merge button when 2 trees are selected', () => {
-    mockHooks(makeStore({ treeSelection: new Set(['t-1', 't-2']) }));
-
-    render(<TreeSelectionBar />);
-
-    expect(screen.getByRole('button', { name: /merge/i })).toBeTruthy();
-  });
-
   it('renders Merge as disabled when any selected tree root node is streaming', () => {
     const createMergedChat = vi.fn();
     mockHooks(

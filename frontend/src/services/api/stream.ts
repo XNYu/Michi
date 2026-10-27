@@ -6,11 +6,34 @@ import {
 import type { CancelRecoveryStatus, StreamHandlers } from '../chatStreamEvents';
 import { startupMark } from '../startupTrace';
 import { backendApiBase, nodeBackendApiBase } from '../../config/backendConnections';
+import { backendFetch } from './backendRequest';
 import { SseHttpError, readSseStream } from './sseParser';
 import { fetchStream } from './streamTransport';
-import type { ChatStreamEnvelope, ChatStreamPayloads, SteerMessageOptions } from 'michi-shared';
+import { metaAgentTurnContextFor } from './assistant';
+import type {
+  ChatStreamEnvelope,
+  ChatStreamEvent,
+  ChatStreamPayloads,
+  ScheduledJobRunEvent,
+  ScheduledJobsChangedEvent,
+  SteerMessageOptions,
+} from 'michi-shared';
+import {
+  isScheduledJobRunEvent,
+  isScheduledJobsChangedEvent,
+  SCHEDULED_JOB_RUN_EVENT,
+  SCHEDULED_JOBS_CHANGED_EVENT,
+} from 'michi-shared';
 
 let cachedStreamProbeEnabled: boolean | null = null;
+
+/**
+ * The terminal `error` frame a turn ends with (StreamHandlers.onErrorPayload).
+ * `code` is META_AGENT_GUARD_ERROR_CODE (`meta_agent_guard_failed`) when a
+ * Meta agent run stopped on its restriction check; GET /api/meta-agent then
+ * carries the details in `guard`.
+ */
+export type ChatStreamErrorPayload = ChatStreamPayloads['error'] & ChatStreamEnvelope;
 
 function streamProbeEnabled(): boolean {
   if (cachedStreamProbeEnabled !== null) return cachedStreamProbeEnabled;
@@ -72,6 +95,7 @@ export function streamMessage(
     enableKiroSidecarTitle?: boolean;
     userMetadata?: {
       quotedText?: string;
+      quoteSource?: import('../../lib/quoteFormat').AnyQuoteSource;
       attachments?: Array<{ name: string; absPath: string }>;
       comments?: Array<Record<string, unknown>>;
     };
@@ -121,6 +145,7 @@ export function streamMessage(
       ...handlers,
       onEnvelope: acceptEnvelope,
       onDone: (...args) => { terminalSeen = true; handlers.onDone?.(...args); },
+      onErrorPayload: handlers.onErrorPayload ? (data) => { terminalSeen = true; handlers.onErrorPayload?.(data); } : undefined,
       onError: (...args) => { terminalSeen = true; handlers.onError?.(...args); },
     }, { turnId: resumeTurnId, seq: resumeSeq + 1 }, {
       onOpen: () => { resumeAttempt = 0; },
@@ -129,7 +154,7 @@ export function streamMessage(
         if (terminalSeen || cancelledByUser || settled) return;
         if (!result.retryable) {
           settleError(result.error?.message ?? 'turn replay unavailable',
-            result.error instanceof SseHttpError ? result.error.code : undefined);
+            result.error instanceof SseHttpError && result.error.code ? result.error.code : 'turn_outcome_unknown');
           return;
         }
         const delay = Math.min(5_000, 250 * (2 ** resumeAttempt++));
@@ -152,7 +177,8 @@ export function streamMessage(
     if (settled || terminalSeen) return;
     settled = true;
     clearWatchdog();
-    if (code) handlers.onError?.(message, undefined, undefined, code);
+    if (handlers.onErrorPayload) handlers.onErrorPayload({ message, ...(code ? { code } : {}), ...(resumeTurnId ? { turnId: resumeTurnId } : {}) });
+    else if (code) handlers.onError?.(message, undefined, undefined, code);
     else handlers.onError?.(message);
   }
   function settleAborted(): void {
@@ -180,6 +206,8 @@ export function streamMessage(
         payload.enableKiroSidecarTitle = durable.enableKiroSidecarTitle;
       }
       if (durable?.userMetadata) payload.userMetadata = durable.userMetadata;
+      const metaAgentContext = nodeId ? metaAgentTurnContextFor(nodeId) : undefined;
+      if (metaAgentContext) payload.metaAgentContext = metaAgentContext;
       const requestBody = JSON.stringify(payload);
       const startedAt = Date.now();
       startupMark('stream_request_start', { chatId: nodeId, nodeId, textLen: text.length });
@@ -218,7 +246,7 @@ export function streamMessage(
           continue;
         }
         const message = body && typeof body.error === 'string' ? body.error : `stream failed: ${res.status}`;
-        throw Object.assign(new Error(message), { code: typeof body?.code === 'string' ? body.code : undefined });
+        throw Object.assign(new Error(message), { code: typeof body?.code === 'string' ? body.code : undefined, rejected: true });
       }
       sawFirstByte = true;
       startupMark('stream_response_headers', { chatId: nodeId, nodeId, status: res.status, durMs: Date.now() - startedAt });
@@ -282,10 +310,11 @@ export function streamMessage(
       if (err?.name === 'AbortError') {
         // A user/navigation abort finalizes as aborted. A watchdog abort with
         // no stamped turn id cannot safely resume.
-        if (watchdogTimedOut) settleError('stream stalled — no data received');
-        else settleAborted();
+        if (watchdogTimedOut) settleError('stream stalled — no data received', clientTurnId ? 'turn_outcome_unknown' : undefined);
+        else if (cancelledByUser) settleAborted();
+        else settleError('The connection changed before the turn outcome could be confirmed.', clientTurnId ? 'turn_outcome_unknown' : undefined);
       } else {
-        settleError(err?.message || String(err), err?.code);
+        settleError(err?.message || String(err), err?.code ?? (!err?.rejected && clientTurnId ? 'turn_outcome_unknown' : undefined));
       }
     } finally {
       clearWatchdog();
@@ -317,7 +346,7 @@ export async function steerChat(
   text: string,
   options?: SteerMessageOptions,
 ): Promise<{ accepted: boolean; pending?: boolean; reason?: string; message?: ChatStreamPayloads['steer_accepted'] & ChatStreamEnvelope }> {
-  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/steer`, {
+  const res = await backendFetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/steer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -345,7 +374,7 @@ export async function compactChat(
   chatId: string,
   instructions?: string,
 ): Promise<{ started: boolean; detail?: string }> {
-  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/compact`, {
+  const res = await backendFetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/compact`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -364,7 +393,7 @@ export async function compactChat(
 
 export async function cancelChat(chatId: string, turnId?: string, signal?: AbortSignal): Promise<void> {
   if (!turnId) throw new Error('A turn ID is required to cancel this chat');
-  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/cancel`, {
+  const res = await backendFetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/cancel`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -475,6 +504,8 @@ export function subscribeChat(
   from: { turnId?: string; seq?: number } = {},
   opts: {
     onOpen?: () => void;
+    /** Read-only observer of accepted wire events, used to reconstruct one original turn. */
+    onEvent?: (event: ChatStreamEvent) => void;
     onDisconnect?: (result: ChatStreamDisconnect) => void;
     onError?: (err: Error) => void;
   } = {},
@@ -516,7 +547,10 @@ export function subscribeChat(
       armWatchdog();
       await readSseStream(reader, (evt, data) => {
         const parsed = parseChatStreamEvent(evt, data);
-        if (parsed) dispatchChatStreamEvent(parsed, handlers);
+        if (parsed) {
+          opts.onEvent?.(parsed);
+          dispatchChatStreamEvent(parsed, handlers);
+        }
       }, { onRead: () => armWatchdog(), shouldStop: () => stopped });
     } catch (err) {
       const original = err instanceof Error ? err : new Error(String(err));
@@ -560,6 +594,13 @@ export interface SubscribeBackgroundOptions {
     gap: { chatId: string; nodeId?: string; turnId: string; seq: number },
     signal: AbortSignal,
   ) => void | Promise<void>;
+  /**
+   * A scheduled run started, finished or needs attention. Not awaited: the
+   * thread it created is installed asynchronously and must not stall the feed.
+   */
+  onScheduledJobRun?: (event: ScheduledJobRunEvent) => void;
+  /** A job was created, edited or deleted (another window or an agent tool). */
+  onScheduledJobsChanged?: (event: ScheduledJobsChangedEvent) => void;
 }
 
 const OBSERVER_SILENCE_TIMEOUT_MS = 30_000;
@@ -608,6 +649,24 @@ export function subscribeBackground(
       const reader = res.body.getReader();
       armWatchdog();
       await readSseStream(reader, (evt, data) => {
+        if (evt === SCHEDULED_JOB_RUN_EVENT) {
+          try {
+            const event: unknown = JSON.parse(data);
+            if (isScheduledJobRunEvent(event)) opts.onScheduledJobRun?.(event);
+          } catch {
+            // Malformed control frames are ignored like malformed events.
+          }
+          return;
+        }
+        if (evt === SCHEDULED_JOBS_CHANGED_EVENT) {
+          try {
+            const event: unknown = JSON.parse(data);
+            if (isScheduledJobsChangedEvent(event)) opts.onScheduledJobsChanged?.(event);
+          } catch {
+            // Malformed control frames are ignored like malformed events.
+          }
+          return;
+        }
         if (evt === 'background_sync_required') {
           let gap: Record<string, unknown> | null = null;
           try {

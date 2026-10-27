@@ -1,97 +1,19 @@
-import type { CapabilityDescriptor, ModelReasoningCapabilities } from 'michi-shared';
+import { backendFetch } from './backendRequest';
+import { normalizeAgentStatus, normalizeAgentModels, normalizeRuntimeCatalog } from 'michi-shared';
+import type {
+  AgentStatus, AgentOptionsPatch, AgentModelsResponse, RuntimeCatalogResponse,
+} from 'michi-shared';
+export type {
+  AgentReasoning, RuntimeId, AgentCapabilities, AgentProviderInfo,
+  WebSearchProviderInfo, AgentRuntimeOption, AgentStatus, AgentModelInfo,
+  AgentOptionsPatch, AgentModelsResponse, RuntimeCatalogResponse,
+} from 'michi-shared';
 import { activeBackendApiBase, backendApiBase } from '../../config/backendConnections';
+import { backendConnectionGeneration } from '../../config/backendConnectionState';
+import { connectionIdFromApiUrl } from '../../config/backendIdentity';
 import { createCatalogRequestCache } from '../catalogRequestCache';
 
 // === Agent runtime API ===
-
-export type AgentReasoning = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-export type RuntimeId = string;
-
-export interface AgentCapabilities {
-  modes: boolean;
-  permissions: boolean;
-  models?: boolean;
-  providerModels: boolean;
-  reasoning: boolean;
-  /** Reasoning levels this runtime accepts. Empty when reasoning=false. Optional for backward-compat. */
-  supportedReasoningLevels?: AgentReasoning[];
-  apiKeys: boolean;
-  warmSessions: boolean;
-  saveContext: boolean;
-  spawnBranches: boolean;
-  /** True iff loadSession() restores meaningful agent-side state (vs. SQLite replay). Optional for backward-compat. */
-  nativeResume?: boolean;
-}
-
-export interface AgentProviderInfo extends ModelReasoningCapabilities {
-  id: string;
-  label: string;
-  keyLabel: string;
-  envVars: string[];
-  defaultModel: string;
-  keyUrl?: string;
-  supportsReasoning: boolean;
-  hasKey?: boolean;
-  requiresUserKey?: boolean;
-  modelLocked?: boolean;
-}
-
-export interface WebSearchProviderInfo {
-  id: string;
-  label: string;
-  keyLabel: string;
-  keyUrl: string;
-  description: string;
-  hasKey: boolean;
-}
-
-export interface AgentRuntimeOption {
-  id: RuntimeId;
-  label: string;
-  available: boolean;
-  /**
-   * Why the runtime is unavailable (missing CLI, missing credentials). Present
-   * only when `available` is false. Backed by a real local probe per runtime —
-   * before that probe existed the backend always sent `available: true`.
-   */
-  unavailableReason?: string;
-  /** True iff this runtime needs a user-supplied API key before it can run. */
-  requiresApiKey?: boolean;
-}
-
-export interface AgentStatus {
-  runtime: RuntimeId;
-  label: string;
-  /** Optional routes must not be polled on older or feature-disabled backends. */
-  customAgentsEnabled?: boolean;
-  capabilities: AgentCapabilities;
-  availableRuntimes: AgentRuntimeOption[];
-  provider?: string;
-  providers?: AgentProviderInfo[];
-  webSearchProvider?: string | null;
-  webSearchProviders?: WebSearchProviderInfo[];
-  /** Per-runtime last-used provider (only meaningful for provider runtimes like Pi). */
-  providerByRuntime?: Record<string, string>;
-  /** Resolved model id for the active runtime. */
-  model?: string;
-  /** Per-runtime model overrides set by the user. */
-  modelByRuntime?: Record<string, string>;
-  /** Resolved reasoning level for the active runtime. */
-  reasoning?: AgentReasoning;
-  /** Per-runtime reasoning overrides set by the user. */
-  reasoningByRuntime?: Record<string, AgentReasoning>;
-  nativeResumeByRuntime?: Record<string, boolean>;
-  nativeForkByRuntime?: Record<string, boolean>;
-  hasRequiredKey: boolean;
-  capabilityDescriptor?: CapabilityDescriptor;
-}
-
-export interface AgentModelInfo extends ModelReasoningCapabilities {
-  id: string;
-  label?: string;
-  description?: string;
-  isDefault?: boolean;
-}
 
 export interface VerifyProviderKeyResult {
   ok: boolean;
@@ -103,9 +25,9 @@ export interface VerifyProviderKeyResult {
 
 export async function fetchAgentStatus(connectionId?: string, signal?: AbortSignal): Promise<AgentStatus> {
   const base = connectionId === undefined ? activeBackendApiBase() : backendApiBase(connectionId);
-  const res = await fetch(`${base}/agent/status`, { signal });
+  const res = await backendFetch(`${base}/agent/status`, { signal });
   if (!res.ok) throw new Error(`fetchAgentStatus failed: ${res.status}`);
-  return res.json();
+  return normalizeAgentStatus(await res.json());
 }
 
 export type ReadyStatus = 'pending' | 'ready' | 'failed';
@@ -116,7 +38,7 @@ export interface ReadyResponse {
 }
 
 export async function fetchReady(): Promise<ReadyResponse> {
-  const res = await fetch(`${activeBackendApiBase()}/ready`);
+  const res = await backendFetch(`${activeBackendApiBase()}/ready`);
   if (!res.ok) throw new Error(`fetchReady failed: ${res.status}`);
   const body = await res.json();
   return {
@@ -126,27 +48,10 @@ export async function fetchReady(): Promise<ReadyResponse> {
   };
 }
 
-export interface AgentOptionsPatch {
-  nativeResumeByRuntime?: Record<string, boolean>;
-  nativeForkByRuntime?: Record<string, boolean>;
-  runtime?: RuntimeId;
-  provider?: string;
-  /** null disables web search. */
-  webSearchProvider?: string | null;
-  model?: string;
-  reasoning?: AgentReasoning;
-  /**
-   * The active runtime the caller's provider/model/effort choice was made
-   * for. The backend rejects the save (409, code `runtime_mismatch`) when its
-   * active runtime differs, so one runtime's ids are not stored under another.
-   */
-  expectedRuntime?: RuntimeId;
-}
-
 export async function saveAgentOptions(
   patch: AgentOptionsPatch,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/options`, {
+  const res = await backendFetch(`${activeBackendApiBase()}/agent/options`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
@@ -158,36 +63,23 @@ export async function saveAgentOptions(
   return res.json();
 }
 
-export interface AgentModelsResponse {
-  models: AgentModelInfo[];
-  sanitizedModel: string | null;
-}
-
 const agentModelsCache = createCatalogRequestCache<AgentModelsResponse>();
 
-export async function listAgentModels(opts?: { provider?: string; runtime?: string; refresh?: boolean }): Promise<AgentModelsResponse> {
-  const base = activeBackendApiBase();
+export async function listAgentModels(opts?: { provider?: string; runtime?: string; refresh?: boolean; connectionId?: string }): Promise<AgentModelsResponse> {
+  const base = opts?.connectionId === undefined ? activeBackendApiBase() : backendApiBase(opts.connectionId);
+  const generation = backendConnectionGeneration(connectionIdFromApiUrl(base));
   const url = new URL(`${base}/agent/models`, window.location.href);
   if (opts?.provider) url.searchParams.set('provider', opts.provider);
+  if (opts?.runtime) url.searchParams.set('expectedRuntime', opts.runtime);
   const load = async (): Promise<AgentModelsResponse> => {
-    const res = await fetch(url.toString());
+    const res = await backendFetch(url.toString());
     if (!res.ok) throw new Error(`listAgentModels failed: ${res.status}`);
-    const body = await res.json();
-    return {
-      models: Array.isArray(body.models) ? body.models : [],
-      sanitizedModel: typeof body.sanitizedModel === 'string' ? body.sanitizedModel : null,
-    };
+    return normalizeAgentModels(await res.json());
   };
   // Unscoped callers cannot safely cache an endpoint whose runtime is implicit.
   return opts?.runtime
-    ? agentModelsCache.load(JSON.stringify([base, opts.runtime, opts.provider ?? '']), load, opts.refresh)
+    ? agentModelsCache.load(JSON.stringify([base, generation, opts.runtime, opts.provider ?? '']), load, opts.refresh)
     : load();
-}
-
-export interface RuntimeCatalogResponse {
-  providers: AgentProviderInfo[];
-  models: AgentModelInfo[];
-  capabilities: AgentCapabilities | null;
 }
 
 /**
@@ -197,20 +89,16 @@ export interface RuntimeCatalogResponse {
  */
 const runtimeCatalogCache = createCatalogRequestCache<RuntimeCatalogResponse>((value) => value.capabilities !== null);
 
-export async function fetchRuntimeCatalog(runtimeId: string, provider?: string, opts?: { refresh?: boolean }): Promise<RuntimeCatalogResponse> {
-  const base = activeBackendApiBase();
+export async function fetchRuntimeCatalog(runtimeId: string, provider?: string, opts?: { refresh?: boolean; connectionId?: string }): Promise<RuntimeCatalogResponse> {
+  const base = opts?.connectionId === undefined ? activeBackendApiBase() : backendApiBase(opts.connectionId);
+  const generation = backendConnectionGeneration(connectionIdFromApiUrl(base));
   const url = new URL(`${base}/agent/runtime-catalog`, window.location.href);
   url.searchParams.set('runtime', runtimeId);
   if (provider) url.searchParams.set('provider', provider);
-  return runtimeCatalogCache.load(JSON.stringify([base, runtimeId, provider ?? '']), async () => {
-    const res = await fetch(url.toString());
+  return runtimeCatalogCache.load(JSON.stringify([base, generation, runtimeId, provider ?? '']), async () => {
+    const res = await backendFetch(url.toString());
     if (!res.ok) throw new Error(`fetchRuntimeCatalog failed: ${res.status}`);
-    const body = await res.json();
-    return {
-      providers: Array.isArray(body.providers) ? body.providers : [],
-      models: Array.isArray(body.models) ? body.models : [],
-      capabilities: body.capabilities && typeof body.capabilities === 'object' ? body.capabilities : null,
-    };
+    return normalizeRuntimeCatalog(await res.json());
   }, opts?.refresh);
 }
 
@@ -218,7 +106,7 @@ export async function saveProviderKey(
   provider: string,
   key: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/provider-key`, {
+  const res = await backendFetch(`${activeBackendApiBase()}/agent/provider-key`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, key }),
@@ -233,7 +121,7 @@ export async function saveProviderKey(
 export async function clearProviderKey(
   provider: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(
+  const res = await backendFetch(
     `${activeBackendApiBase()}/agent/provider-key/${encodeURIComponent(provider)}`,
     { method: 'DELETE' },
   );
@@ -248,7 +136,7 @@ export async function verifyProviderKey(
   provider: string,
   opts?: { key?: string; model?: string },
 ): Promise<VerifyProviderKeyResult> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/provider-key/verify`, {
+  const res = await backendFetch(`${activeBackendApiBase()}/agent/provider-key/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, key: opts?.key, model: opts?.model }),
@@ -262,7 +150,7 @@ export async function saveWebSearchKey(
   provider: string,
   key: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/search-key`, {
+  const res = await backendFetch(`${activeBackendApiBase()}/agent/search-key`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider, key }),
@@ -277,7 +165,7 @@ export async function saveWebSearchKey(
 export async function clearWebSearchKey(
   provider: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(
+  const res = await backendFetch(
     `${activeBackendApiBase()}/agent/search-key/${encodeURIComponent(provider)}`,
     { method: 'DELETE' },
   );
@@ -318,7 +206,7 @@ export interface BedrockConfigInput {
 }
 
 export async function getBedrockConfig(): Promise<BedrockConfigSanitized> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/bedrock-config`);
+  const res = await backendFetch(`${activeBackendApiBase()}/agent/bedrock-config`);
   if (!res.ok) throw new Error(`getBedrockConfig failed: ${res.status}`);
   return res.json();
 }
@@ -326,7 +214,7 @@ export async function getBedrockConfig(): Promise<BedrockConfigSanitized> {
 export async function saveBedrockConfig(
   cfg: BedrockConfigInput,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/bedrock-config`, {
+  const res = await backendFetch(`${activeBackendApiBase()}/agent/bedrock-config`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cfg),
@@ -339,7 +227,7 @@ export async function saveBedrockConfig(
 }
 
 export async function clearBedrockConfig(): Promise<{ ok: true } | { ok: false; error: string }> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/bedrock-config`, {
+  const res = await backendFetch(`${activeBackendApiBase()}/agent/bedrock-config`, {
     method: 'DELETE',
   });
   if (!res.ok) {
@@ -350,7 +238,7 @@ export async function clearBedrockConfig(): Promise<{ ok: true } | { ok: false; 
 }
 
 export async function verifyBedrockConfig(): Promise<VerifyProviderKeyResult> {
-  const res = await fetch(`${activeBackendApiBase()}/agent/bedrock-config/verify`, {
+  const res = await backendFetch(`${activeBackendApiBase()}/agent/bedrock-config/verify`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),

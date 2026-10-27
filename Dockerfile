@@ -15,13 +15,16 @@ ENV npm_config_registry=https://registry.npmjs.org/
 
 # Install workspace deps first (better cache: source changes don't bust this layer)
 COPY package.json package-lock.json ./
+COPY shared/package.json shared/
+COPY runtime/package.json runtime/
 COPY frontend/package.json frontend/
 COPY backend/package.json backend/
 COPY shared/package.json shared/
 
 RUN npm ci --workspaces --include-workspace-root=false --include=dev --no-audit --no-fund
 
-# Source
+# Source. This includes runtime/src: michi-runtime ships TypeScript
+# source (no build step) and the backend esbuild bundle inlines it.
 COPY . .
 
 # Frontend feature flags. Vite inlines VITE_* env vars at build time, so
@@ -52,7 +55,8 @@ ENV NODE_ENV=production \
     MICHI_ENABLED_RUNTIMES=pi \
     MICHI_DEFAULT_RUNTIME=pi \
     MICHI_DATA_DIR=/data \
-    MICHI_REQUIRE_AUTH=true
+    MICHI_REQUIRE_AUTH=true \
+    MICHI_CLOUD=1
 
 # /data is the SQLite + agent-config volume mount in production
 RUN mkdir -p /data && chown node:node /data

@@ -1,6 +1,7 @@
+import { formatFileSnapshotContext } from '../state/fileFeedback';
 import type { PendingComment } from '../state/chatTypes';
 import type { TextSelector } from './textSelector';
-import { formatQuoteBlock, formatQuotedSelectionContext } from './quoteFormat';
+import { formatQuoteBlock, formatQuotedSelectionContext, type AnyQuoteSource } from './quoteFormat';
 
 /**
  * Soft cap for how much of a quoted passage we echo back into the outgoing
@@ -53,7 +54,9 @@ export function truncateQuotePreview(
  * so the agent can precisely locate the passage.
  */
 export function renderComment(c: PendingComment): string {
-  const preview = truncateQuotePreview(c.quotedText.trim());
+  const preview = c.source?.snapshot
+    ? (c.source.selector?.exact ?? c.quotedText).trim()
+    : truncateQuotePreview(c.quotedText.trim());
   const body = c.body.trim();
 
   if (c.source?.type === 'artifact') {
@@ -75,7 +78,9 @@ export function renderComment(c: PendingComment): string {
       : '';
     const attribution = `From ${label} at \`${c.source.filePath}\`${locationSuffix}:`;
     const quoted = formatQuoteBlock(preview);
-    const readHint = sel?.startLine !== undefined
+    const readHint = c.source.snapshot
+      ? formatFileSnapshotContext(c.source.snapshot)
+      : sel?.startLine !== undefined
       ? `The full document is available at \`${c.source.filePath}\`. Read lines ${sel.startLine}-${sel.endLine ?? sel.startLine} for the exact passage.`
       : `The full document is available at \`${c.source.filePath}\`. Read it if you need more context.`;
     const parts = [attribution, '', quoted];
@@ -121,17 +126,34 @@ export function joinMessageParts(
   commentBlock: string | null,
   quoted: string | null,
   userText: string,
+  /** Where the quote came from, when not a selection from the previous reply. */
+  quoteSource?: AnyQuoteSource,
+): string {
+  return joinMessageQuotes(commentBlock, quoted ? [{ text: quoted, source: quoteSource }] : [], userText);
+}
+
+/**
+ * joinMessageParts with several quotes (queued sends flushed as one turn),
+ * each framed by its own source, in order.
+ */
+export function joinMessageQuotes(
+  commentBlock: string | null,
+  quotes: ReadonlyArray<{ text: string; source?: AnyQuoteSource }>,
+  userText: string,
 ): string {
   const parts: string[] = [];
   const trimmedBlock = commentBlock?.trim() ?? '';
   if (trimmedBlock) parts.push(trimmedBlock);
-  const trimmedQuote = quoted?.trim() ?? '';
-  if (trimmedQuote) {
-    parts.push(formatQuotedSelectionContext(trimmedQuote));
+  let quotedAny = false;
+  for (const quote of quotes) {
+    const trimmedQuote = quote.text.trim();
+    if (!trimmedQuote) continue;
+    parts.push(formatQuotedSelectionContext(trimmedQuote, quote.source));
+    quotedAny = true;
   }
   const trimmedText = userText.trim();
   if (trimmedText) {
-    parts.push(trimmedQuote ? `User's reply:\n${trimmedText}` : trimmedText);
+    parts.push(quotedAny ? `User's reply:\n${trimmedText}` : trimmedText);
   }
   return parts.join('\n\n');
 }

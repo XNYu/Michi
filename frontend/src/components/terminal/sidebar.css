@@ -1,0 +1,15 @@
+/* Chat's section labels are shared by every area; geometry comes from Sidebar. */
+.sidebar-section-label,
+.area-side__section {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: var(--sb-section-padding);
+  margin-top: var(--sb-section-top);
+  font-family: var(--ui-font);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  letter-spacing: var(--sb-section-tracking);
+  text-transform: uppercase;
+  color: var(--term-muted);
+}

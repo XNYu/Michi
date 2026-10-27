@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { leaveSettings, openSettings } from '../fixtures/shell';
 
 test('local boot, fonts, drawers and optional pages do not produce console errors', async ({ page }, info) => {
   const issues: string[] = [];
@@ -27,15 +28,14 @@ test('local boot, fonts, drawers and optional pages do not produce console error
   expect(fonts.some(font => font.family === 'IBM Plex Mono')).toBe(true);
   expect(fonts.every(font => font.status === 'loaded')).toBe(true);
 
-  await page.locator('.terminal-sidebar').getByText('Settings', { exact: true }).click();
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+  const settings = await openSettings(page);
   await expect(settings).toBeVisible();
-  for (const name of ['Appearance', 'Model', 'Connections', 'Notifications', 'Shortcuts']) {
-    await settings.getByRole('button', { name, exact: true }).click();
+  for (const name of ['Appearance', 'Runtime (global)', 'General', 'Meta agent', 'Assistant', 'Components', 'Data & backup'] as const) {
+    await openSettings(page, name);
     await expect(settings.getByRole('region', { name, exact: true })).toBeVisible();
   }
   await page.screenshot({ path: info.outputPath('settings-desktop.png') });
-  await page.keyboard.press('Escape');
+  await leaveSettings(page);
   await expect(settings).toHaveCount(0);
 
   const trigger = page.getByRole('button', { name: 'Artifacts', exact: true });
@@ -56,15 +56,20 @@ test('local boot, fonts, drawers and optional pages do not produce console error
   await expect(page.locator('.terminal-sidebar').getByText('Agents', { exact: true })).toHaveCount(0);
   await page.keyboard.press('ControlOrMeta+,');
   await expect(settings).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Settings sections' }).getByText(/custom agents/i)).toHaveCount(0);
   await expect(settings.getByText(/custom agents/i)).toHaveCount(0);
-  await page.keyboard.press('Escape');
-  await expect(settings).toHaveCount(0);
+  await leaveSettings(page);
   expect(requests.filter(path => /^\/api\/(?:auth\/|agents(?:\/|$)|agent-runs(?:\/|$))/.test(path))).toEqual([]);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  // Home focuses its composer again, and shortcuts typed into it are text.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press('ControlOrMeta+,');
   await expect(settings).toBeVisible();
   await expect(settings).toBeInViewport();
+  // Measure at rest: while anything slides in, translated edges are
+  // rounded separately (float32), so the width can read 390.00003.
+  await expect.poll(() => settings.evaluate(el => el.getAnimations({ subtree: true }).length)).toBe(0);
   const bounds = await settings.boundingBox();
   expect(bounds!.width).toBeLessThanOrEqual(390);
   await page.screenshot({ path: info.outputPath('settings-narrow.png') });

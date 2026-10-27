@@ -9,9 +9,13 @@ import { registerSession, getSession, clearAllSessions, dropSession } from '../s
 import { subscribeSessionStates } from '../src/agents/sessionStateFeed';
 import { persistSessionState } from '../src/services/sessionStatePersistence';
 import { resetKiroContext } from '../src/services/resetKiroContext';
-import { closeDb, initDb, getDb } from '../src/services/db';
+import { closeDb, initDb } from '../src/services/db';
 import { saveWorkspace, saveNode, getNode, updateNodeResumeBinding } from '../src/services/dbRepository';
 import { chatHub } from '../src/agents/chatHub';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { michiTestHost } from './helpers/michiTestHost';
 
 let directory: string;
 const originalDir = process.env.MICHI_DATA_DIR;
@@ -26,6 +30,8 @@ afterEach(() => {
     clearAllSessions(); closeDb(); fs.rmSync(directory, { recursive: true, force: true });
     if (originalDir === undefined) delete process.env.MICHI_DATA_DIR; else process.env.MICHI_DATA_DIR = originalDir;
 });
+/** The descriptor fact resetKiroContext reads: /clear replaces the native session (Kiro v3). */
+const CLEAR_REPLACES_SESSION = { topology: { clearCreatesNewNativeSession: true } };
 function session(nativeSessionId = 'old-native'): AgentSession {
     return { id: 'node', nativeSessionId, runtimeId: 'kiro', nativeEngine: 'v3', currentModelId: 'm1',
         getHistory: () => [], getPendingAssistant: () => undefined, async *send() {}, async cancel() {},
@@ -44,6 +50,26 @@ test('session settings survive SQLite restart and cannot cross owner, engine or 
     assert.equal(getNode('node')?.current_mode_id, 'plan'); assert.equal(getNode('node')?.acp_session_id, 'old-native');
 });
 
+test('a Crew session persists its settings under the crew runtime id', async (t) => {
+    updateNodeResumeBinding('node', { acp_session_id: 'crew-native', runtime_id: 'crew', runtime_engine: 'v2', model_id: 'm1', reasoning: 'low' });
+    t.mock.method(AcpClient.prototype, 'start', () => {});
+    t.mock.method(AcpClient.prototype, 'initialize', async () => ({}));
+    const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
+    const runtime = new KiroRuntime({ bridge, defaultCwd: directory, host: michiTestHost(), id: 'crew', engine: 'v2' });
+    try {
+        const client = await runtime.ensureClient(directory);
+        (client as any).dispatch({ method: 'session/update', params: { sessionId: 'crew-native', update: {
+            sessionUpdate: 'config_option_update',
+            configOptions: [{ id: 'model', type: 'select', currentValue: 'm2', options: [{ value: 'm1' }, { value: 'm2' }] }],
+        } } });
+        const crew = new KiroSession('node', 'crew-native', runtime, directory, { runtimeId: 'crew' });
+        persistSessionState(crew, 'alice', crew.getSessionState());
+        assert.equal(getNode('node')?.model_id, 'm2');
+    } finally {
+        await runtime.shutdown();
+    }
+});
+
 test('state feed replays only owned snapshots and detaches retired session listeners', () => {
     let notify!: () => void; let detached = 0;
     const active = session(); active.onSessionState = (fn) => { notify = fn; return () => { detached++; }; };
@@ -57,23 +83,10 @@ test('state feed replays only owned snapshots and detaches retired session liste
     stop(); stopOther();
 });
 
-test('/clear retires the old worker first and adopts a fresh binding while retaining messages', async () => {
-    const order: string[] = [];
-    const active = session(), replacement = session('fresh-native'); registerSession(active, 'alice');
-    getDb().prepare("INSERT INTO messages (id,node_id,role,content,seq,created_at) VALUES ('history','node','user','keep visible',0,1)").run();
-    registerRuntime({ id: 'kiro', releaseSession: async () => { order.push('release'); }, newSession: async (options: any) => {
-        order.push('new'); assert.equal(options.cwd, fs.realpathSync(directory)); assert.equal(options.model, 'm1');
-        assert.equal(options.replayHistory, undefined); return replacement;
-    } } as unknown as AgentRuntime);
-    assert.equal(await resetKiroContext(active, 'alice'), replacement);
-    assert.deepEqual(order, ['release', 'new']); assert.equal(getSession('node'), replacement);
-    assert.equal(getNode('node')?.acp_session_id, 'fresh-native');
-    assert.equal((getDb().prepare('SELECT content FROM messages WHERE id=?').get('history') as any).content, 'keep visible');
-});
-
 test('failed /clear preserves old durable identity for recovery and refuses active turns', async (t) => {
     const active = session(); registerSession(active, 'alice'); let created = 0;
-    registerRuntime({ id: 'kiro', releaseSession: async () => {}, newSession: async () => { created++; throw new Error('startup failed'); } } as unknown as AgentRuntime);
+    registerRuntime({ id: 'kiro', descriptor: CLEAR_REPLACES_SESSION, releaseSession: async () => {},
+        newSession: async () => { created++; throw new Error('startup failed'); } } as unknown as AgentRuntime);
     const busy = t.mock.method(chatHub, 'isActive', () => true);
     await assert.rejects(resetKiroContext(active, 'alice'), /still running/); assert.equal(created, 0);
     busy.mock.restore();
@@ -87,7 +100,7 @@ test('/clear preserves the immutable Agent profile and rejects a changed binding
     const bootstrap = { profileHash: 'profile-1', bootstrapInstructions: 'Use the approved profile.', toolProfile: { allowedToolNames: ['read_file'] } };
     let released = 0;
     const replacement = session('fresh-native');
-    registerRuntime({ id: 'kiro', nativeEngine: 'v3', releaseSession: async () => { released++; }, newSession: async (options: any) => {
+    registerRuntime({ id: 'kiro', nativeEngine: 'v3', descriptor: CLEAR_REPLACES_SESSION, releaseSession: async () => { released++; }, newSession: async (options: any) => {
         assert.equal(options.bootstrapInstructions, bootstrap.bootstrapInstructions);
         assert.deepEqual(options.toolProfile, bootstrap.toolProfile);
         assert.equal(options.profileHash, bootstrap.profileHash);

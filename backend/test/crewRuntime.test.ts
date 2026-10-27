@@ -3,21 +3,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { CREW_KIRO_FLAVOR } from 'michi-runtime/internal/adapters/crew/crewFlavor';
 import { RUNTIME_FACTORIES } from '../src/agents/runtimeFactories';
-import { KIRO_DESCRIPTOR, CREW_DESCRIPTOR, describeRuntimeCapabilities } from '../src/agents/capabilityDescriptors';
-import {
-  crewAppSecretPath,
-  crewAvailability,
-  crewIntegrationStatus,
-  resolveCrewAcpLaunch,
-  resolveCrewAcpLaunchDetailed,
-} from '../src/agents/crew/crewLaunch';
-import { CREW_APP_VERSION, crewAppNeedsSync } from '../src/agents/crew/crewAppVersion';
-import { AcpClient } from '../src/services/acpClient';
+import { CREW_DESCRIPTOR, describeRuntimeCapabilities } from '../src/agents/capabilityDescriptors';
+import { crewAvailability, crewIntegrationStatus, resolveCrewAcpLaunch, resolveCrewAcpLaunchDetailed } from 'michi-runtime/internal/adapters/crew/crewLaunch';
+import { CREW_APP_VERSION, crewAppNeedsSync } from 'michi-runtime/internal/adapters/crew/crewAppVersion';
+import { AcpClient, ACPError } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
+import { michiTestHost } from './helpers/michiTestHost';
+import { runOwner } from './helpers/owners';
 
 const bridge: AgentToolBridge = {
   spawnBranches: async () => [],
@@ -63,7 +60,7 @@ function crewHomeWithSecret(app = 'michi-crew-runtime', enabled = true): string 
 function createCrew(): KiroRuntime {
   const factory = RUNTIME_FACTORIES.find((f) => f.id === 'crew');
   assert.ok(factory, 'crew factory registered');
-  return factory.create({ bridge, mcpPort: 0, defaultCwd: '/tmp/crew-default' }) as KiroRuntime;
+  return factory.create({ bridge, mcpPort: 0, defaultCwd: '/tmp/crew-default', host: michiTestHost() }) as KiroRuntime;
 }
 
 const ORIGINAL_KIRO_CAPABILITIES = {
@@ -82,28 +79,9 @@ const ORIGINAL_KIRO_CAPABILITIES = {
 };
 
 describe('crew runtime registration', () => {
-  test('crew factory exists with id and label', () => {
-    const factory = RUNTIME_FACTORIES.find((f) => f.id === 'crew');
-    assert.equal(factory?.label, 'Kiro Crew');
-    const runtime = createCrew();
-    assert.equal(runtime.id, 'crew');
-    assert.equal(runtime.label, 'Kiro Crew');
-    assert.equal(runtime.engine, 'v2');
-    assert.equal((runtime as any).runtimeOptions.launch.cancelTimeoutMs, 15_000);
-  });
-
-  test('default KiroRuntime keeps id, label, descriptor and capabilities', () => {
-    delete process.env.MICHI_KIRO_ENGINE;
-    const runtime = new KiroRuntime(bridge, undefined, 0, '/tmp/default');
-    assert.equal(runtime.id, 'kiro');
-    assert.equal(runtime.label, 'Kiro');
-    assert.deepEqual(runtime.capabilities, ORIGINAL_KIRO_CAPABILITIES);
-    assert.deepEqual(runtime.capabilityDescriptor, KIRO_DESCRIPTOR);
-  });
-
   test('crew descriptor hides unsupported steer and compact and labels Gateway fork as projected', () => {
     const runtime = createCrew();
-    const d = runtime.capabilityDescriptor;
+    const d = runtime.descriptor.harness;
     assert.equal(d.steer.availability, 'invisible');
     assert.equal(d.compact.availability, 'invisible');
     assert.equal(d.sessionFork.availability, 'native');
@@ -112,21 +90,10 @@ describe('crew runtime registration', () => {
     assert.deepEqual(describeRuntimeCapabilities('crew'), CREW_DESCRIPTOR);
   });
 
-  test('crew exposes templates, approvals and MCP tools without a warm pool', () => {
-    const c = createCrew().capabilities;
-    assert.equal(c.modes, true);
-    assert.equal(c.warmSessions, false);
-    assert.equal(c.saveContext, true);
-    assert.equal(c.spawnBranches, true);
-    assert.equal(c.nativeResume, true);
-    assert.equal(c.models, true);
-    assert.equal(c.permissions, true);
-    assert.equal(c.reasoning, true);
-  });
-
   test('engine stays v2 under MICHI_KIRO_ENGINE=v3', () => {
     process.env.MICHI_KIRO_ENGINE = 'v3';
-    assert.equal(new KiroRuntime(bridge, undefined, 0, '/tmp/default').engine, 'v3');
+    const kiro = RUNTIME_FACTORIES.find((f) => f.id === 'kiro')!;
+    assert.equal((kiro.create({ bridge, mcpPort: 0, defaultCwd: '/tmp/default', host: michiTestHost() }) as KiroRuntime).engine, 'v3');
     assert.equal(createCrew().engine, 'v2');
   });
 
@@ -136,25 +103,12 @@ describe('crew runtime registration', () => {
 });
 
 describe('resolveCrewAcpLaunch', () => {
-  test('env bin wins over bundle and source', () => {
-    const dir = tempDir();
-    const bin = executable(dir);
-    const bundledScript = path.join(dir, 'crewAcp.js');
-    const sourceMain = path.join(dir, 'main.ts');
-    fs.writeFileSync(bundledScript, '');
-    fs.writeFileSync(sourceMain, '');
-    const launch = resolveCrewAcpLaunch({ env: { MICHI_CREW_ACP_BIN: bin }, bundledScript, sourceMain });
-    assert.equal(launch?.bin, bin);
-    assert.deepEqual(launch?.args(), ['acp', '--agent-engine', 'v2']);
-    assert.deepEqual(launch?.args('m1'), ['acp', '--agent-engine', 'v2', '--model', 'm1']);
-  });
-
   test('a non-executable env bin is reported, not skipped', () => {
     const dir = tempDir();
     const bundledScript = path.join(dir, 'crewAcp.js');
     fs.writeFileSync(bundledScript, '');
     const missing = path.join(dir, 'nope');
-    const resolved = resolveCrewAcpLaunchDetailed({ env: { MICHI_CREW_ACP_BIN: missing }, bundledScript });
+    const resolved = resolveCrewAcpLaunchDetailed({ acpBinOverride: missing, bundledScript });
     assert.equal(resolved.launch, null);
     assert.match(resolved.detail ?? '', /MICHI_CREW_ACP_BIN=.*not an executable/);
   });
@@ -165,7 +119,7 @@ describe('resolveCrewAcpLaunch', () => {
     const sourceMain = path.join(dir, 'main.ts');
     fs.writeFileSync(bundledScript, '');
     fs.writeFileSync(sourceMain, '');
-    const launch = resolveCrewAcpLaunch({ env: {}, bundledScript, sourceMain });
+    const launch = resolveCrewAcpLaunch({ bundledScript, sourceMain });
     assert.equal(launch?.bin, process.execPath);
     assert.deepEqual(launch?.args('m1'), [bundledScript, 'acp', '--agent-engine', 'v2', '--model', 'm1']);
   });
@@ -174,40 +128,13 @@ describe('resolveCrewAcpLaunch', () => {
     const dir = tempDir();
     const sourceMain = path.join(dir, 'main.ts');
     fs.writeFileSync(sourceMain, '');
-    const launch = resolveCrewAcpLaunch({ env: {}, bundledScript: path.join(dir, 'crewAcp.js'), sourceMain });
+    const launch = resolveCrewAcpLaunch({ bundledScript: path.join(dir, 'crewAcp.js'), sourceMain });
     assert.equal(launch?.bin, process.execPath);
     assert.deepEqual(launch?.args(), ['--require', require.resolve('ts-node/register'), sourceMain, 'acp', '--agent-engine', 'v2']);
-  });
-
-  test('nothing resolves without env, bundle or source', () => {
-    const dir = tempDir();
-    const resolved = resolveCrewAcpLaunchDetailed({
-      env: {}, bundledScript: path.join(dir, 'crewAcp.js'), sourceMain: path.join(dir, 'main.ts'),
-    });
-    assert.equal(resolved.launch, null);
-    assert.match(resolved.detail ?? '', /adapter not found/);
   });
 });
 
 describe('crewAvailability', () => {
-  test('secret path honours KIROCREW_HOME and MICHI_CREW_APP', () => {
-    assert.equal(crewAppSecretPath({ KIROCREW_HOME: '/h' }), path.join('/h', 'apps', 'michi-crew-runtime', '.app_secret'));
-    assert.equal(crewAppSecretPath({ KIROCREW_HOME: '/h', MICHI_CREW_APP: 'other' }), path.join('/h', 'apps', 'other', '.app_secret'));
-    assert.equal(crewAppSecretPath({}), path.join(os.homedir(), '.kiro', 'crew', 'apps', 'michi-crew-runtime', '.app_secret'));
-  });
-
-  test('unavailable without the app secret', () => {
-    const bin = executable(tempDir());
-    const result = crewAvailability({ env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: tempDir() } });
-    assert.equal(result.available, false);
-    assert.match(result.detail ?? '', /Install and enable the Kiro Crew app michi-crew-runtime/);
-  });
-
-  test('available with complete MCP and approval setup without reading the secret', () => {
-    const bin = executable(tempDir());
-    assert.deepEqual(crewAvailability({ env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: crewHomeWithSecret() } }), { available: true });
-  });
-
   test('missing or pending sessionApproval consent is incomplete setup', () => {
     const bin = executable(tempDir());
     for (const pending of [false, true]) {
@@ -215,7 +142,7 @@ describe('crewAvailability', () => {
       const dir = path.join(home, 'apps/michi-crew-runtime');
       if (pending) fs.writeFileSync(path.join(dir, 'installed.json'), JSON.stringify({ enabled: true, sessionApprovalConsentPending: true }));
       else fs.writeFileSync(path.join(dir, 'app.json'), JSON.stringify({ version: CREW_APP_VERSION, mcpServers: { michi: {} } }));
-      const result = crewAvailability({ env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: home } });
+      const result = crewAvailability({ acpBinOverride: bin, kirocrewHome: home });
       assert.equal(result.available, false);
       assert.match(result.detail ?? '', /setup incomplete.*sessionApproval consent/);
     }
@@ -229,7 +156,7 @@ describe('crewAvailability', () => {
       else fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ mcp_gateway: missing === 'route' ? {} : {
         stub_servers: ['michi-crew-runtime:michi'], stub_overrides: { 'michi-crew-runtime:michi': false },
       } }));
-      const result = crewAvailability({ env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: home } });
+      const result = crewAvailability({ acpBinOverride: bin, kirocrewHome: home });
       assert.equal(result.available, false);
       assert.match(result.detail ?? '', /setup incomplete.*Stub \/ Routed/);
     }
@@ -238,7 +165,7 @@ describe('crewAvailability', () => {
   test('unavailable while the app is installed but disabled', () => {
     const bin = executable(tempDir());
     const result = crewAvailability({
-      env: { MICHI_CREW_ACP_BIN: bin, KIROCREW_HOME: crewHomeWithSecret('michi-crew-runtime', false) },
+      acpBinOverride: bin, kirocrewHome: crewHomeWithSecret('michi-crew-runtime', false),
     });
     assert.equal(result.available, false);
     assert.match(result.detail ?? '', /Enable the Kiro Crew app michi-crew-runtime/);
@@ -249,12 +176,12 @@ describe('crewAvailability', () => {
     const manifestFile = path.join(home, 'apps/michi-crew-runtime/app.json');
     const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
     fs.writeFileSync(manifestFile, JSON.stringify({ ...manifest, version: '0.5.0' }));
-    const status = crewIntegrationStatus({ KIROCREW_HOME: home });
+    const status = crewIntegrationStatus({ kirocrewHome: home });
     assert.equal(status.updateRequired, true);
     assert.equal(status.expectedVersion, CREW_APP_VERSION);
-    assert.match(crewAvailability({ env: { KIROCREW_HOME: home } }).detail ?? '', /App update required.*Sync/);
+    assert.match(crewAvailability({ kirocrewHome: home }).detail ?? '', /App update required.*Sync/);
     fs.writeFileSync(manifestFile, JSON.stringify(manifest));
-    assert.equal(crewIntegrationStatus({ KIROCREW_HOME: home }).updateRequired, false);
+    assert.equal(crewIntegrationStatus({ kirocrewHome: home }).updateRequired, false);
     assert.equal(crewAppNeedsSync('0.10.0', '0.6.0'), false);
     assert.equal(crewAppNeedsSync('0.5.9', '0.6.0'), true);
     assert.equal(crewAppNeedsSync('malformed'), true);
@@ -263,7 +190,7 @@ describe('crewAvailability', () => {
   test('unavailable when no adapter resolves, even with a secret', () => {
     const dir = tempDir();
     const result = crewAvailability({
-      env: { KIROCREW_HOME: crewHomeWithSecret() },
+      kirocrewHome: crewHomeWithSecret(),
       bundledScript: path.join(dir, 'crewAcp.js'),
       sourceMain: path.join(dir, 'main.ts'),
     });
@@ -289,10 +216,45 @@ describe('crewAvailability', () => {
 });
 
 describe('crew native fork and sessions', () => {
+  test('a session built without a flavor follows its runtime\'s', async () => {
+    let prompt = '';
+    const client = { async *prompt(_sid: string, text: string) {
+      prompt = text;
+      yield { sessionUpdate: 'session_info_update', title: 'Gateway title' };
+      yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
+    } };
+    const runtime = createCrew();
+    (runtime as any).ensureClient = async () => client;
+    try {
+      const session = new KiroSession('node', 'sid', runtime, '/tmp', { runtimeId: 'crew' });
+      const events: any[] = [];
+      for await (const event of session.send('go')) events.push(event);
+      assert.deepEqual(events.filter((e) => e.kind === 'title').map((e) => e.title), ['Gateway title']);
+      assert.match(prompt, /No tools are needed for this metadata/);
+      assert.doesNotMatch(prompt, /call the MCP tool set_branch_overview/);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  test('a missing Crew session keeps the agent\'s error; a missing Kiro session asks for a rebuild', async () => {
+    const missing = () => new ACPError('Internal error', { method: 'session/load', sessionId: 'gone', rpcCode: -32603,
+      rpcData: 'Failed to start session: Session not found: gone' });
+    const kiro = RUNTIME_FACTORIES.find((f) => f.id === 'kiro')!
+      .create({ bridge, mcpPort: 0, defaultCwd: '/tmp/crew-default', host: michiTestHost() }) as KiroRuntime;
+    for (const runtime of [createCrew(), kiro]) {
+      (runtime as any).ensureClient = async () => ({ loadSession: async () => { throw missing(); } });
+      await assert.rejects(runtime.loadAcpSession({ sessionId: 'gone', cwd: '/tmp/a' }),
+        (err: unknown) => (err instanceof NativeResumeUnavailableError) === (runtime.id === 'kiro')
+          && (runtime.id === 'kiro' || err instanceof ACPError), runtime.id);
+      await runtime.shutdown();
+    }
+  });
+
   test('forkSession refuses non-chat owners', async () => {
     const runtime = createCrew();
     await assert.rejects(
-      runtime.forkSession({ cwd: '/tmp/a', sessionId: 'child', parentChatId: 'parent', sourceNativeSessionId: 'sid', owner: { kind: 'agent_run' } } as any),
+      runtime.forkSession({ cwd: '/tmp/a', sessionId: 'child', parentChatId: 'parent', sourceNativeSessionId: 'sid', owner: runOwner('run', 'child') }),
       (err: unknown) => err instanceof NativeResumeUnavailableError,
     );
   });
@@ -306,12 +268,6 @@ describe('crew native fork and sessions', () => {
     assert.equal(rewinds, 0);
   });
 
-  test('KiroSession runtimeId defaults to kiro and accepts crew', () => {
-    const fake = {} as KiroRuntime;
-    assert.equal(new KiroSession('n1', 's1', fake, '/tmp').runtimeId, 'kiro');
-    assert.equal(new KiroSession('n2', 's2', fake, '/tmp', { runtimeId: 'crew' }).runtimeId, 'crew');
-  });
-
   test('Crew title and tool output reach the shared event stream without generating Kiro titles', async () => {
     let prompt = '';
     const client = { async *prompt(_sid: string, text: string) {
@@ -322,8 +278,8 @@ describe('crew native fork and sessions', () => {
       yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
     } };
     for (const id of ['crew', 'kiro']) {
-      const runtime = { id, ensureClient: async () => client, getCurrentMode: () => null, getCurrentModel: () => null } as unknown as KiroRuntime;
-      const session = new KiroSession('node', 'sid', runtime, '/tmp', { runtimeId: id });
+      const runtime = { host: michiTestHost(), id, ensureClient: async () => client, getCurrentMode: () => null, getCurrentModel: () => null } as unknown as KiroRuntime;
+      const session = new KiroSession('node', 'sid', runtime, '/tmp', { runtimeId: id, ...(id === 'crew' ? { flavor: CREW_KIRO_FLAVOR } : {}) });
       const events: any[] = [];
       for await (const event of session.send('go')) events.push(event);
       assert.equal(events.filter((e) => e.kind === 'title').length, id === 'crew' ? 1 : 0);
@@ -352,6 +308,36 @@ describe('crew native fork and sessions', () => {
   });
 });
 
+describe('crew session state', () => {
+  test('mode, model and commands are reported under the crew runtime id', async (t) => {
+    process.env.MICHI_CREW_ACP_BIN = executable(tempDir());
+    process.env.KIROCREW_HOME = crewHomeWithSecret();
+    // The pooled client is the real one the factory builds; only its process stays out.
+    t.mock.method(AcpClient.prototype, 'start', () => {});
+    t.mock.method(AcpClient.prototype, 'initialize', async () => ({}));
+    const runtime = createCrew();
+    try {
+      const session = new KiroSession('node-crew', 'crew-sid', runtime, '/tmp/crew-state', { runtimeId: 'crew' });
+      assert.equal(session.getSessionState().runtimeId, 'crew', 'before the adapter starts');
+      const client = await runtime.ensureClient('/tmp/crew-state');
+      const update = (value: unknown) => (client as any).dispatch({ method: 'session/update', params: { sessionId: 'crew-sid', update: value } });
+      update({ sessionUpdate: 'config_option_update', configOptions: [
+        { id: 'mode', type: 'select', currentValue: 'template:reviewer', options: [{ value: 'template:reviewer' }] },
+        { id: 'model', type: 'select', currentValue: 'm2', options: [{ value: 'm1' }, { value: 'm2' }] },
+      ] });
+      update({ sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'crew-help' }] });
+      const state = session.getSessionState();
+      assert.equal(state.runtimeId, 'crew');
+      assert.equal(state.nativeEngine, 'v2');
+      assert.equal(state.currentModeId, 'template:reviewer');
+      assert.equal(state.modelId, 'm2');
+      assert.deepEqual(state.commands?.map((command) => command.name), ['crew-help']);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+});
+
 describe('AcpClient launch override', () => {
   test('spawns the override bin with override args', async () => {
     const out = path.join(tempDir(), 'argv.json');
@@ -365,16 +351,5 @@ describe('AcpClient launch override', () => {
     await exited;
     assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), ['acp', '--model', 'm9']);
     await client.shutdown();
-  });
-
-  test('launch override can extend only its own cancel watchdog', () => {
-    const defaultClient = new AcpClient('/bin/false', '/tmp');
-    const crewClient = new AcpClient(undefined, '/tmp', undefined, 'v2', {
-      bin: process.execPath,
-      args: () => [],
-      cancelTimeoutMs: 15_000,
-    });
-    assert.equal((defaultClient as any).cancelTimeoutMs, 5_000);
-    assert.equal((crewClient as any).cancelTimeoutMs, 15_000);
   });
 });

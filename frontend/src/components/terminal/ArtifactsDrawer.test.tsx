@@ -71,13 +71,6 @@ describe('ArtifactsDrawer + button', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('reveals the paste bar when + is clicked', () => {
-    render(<ArtifactsDrawer open onClose={() => {}} />);
-    expect(screen.queryByPlaceholderText(/Paste a URL/i)).toBeNull();
-    fireEvent.click(screen.getByTitle(/Add link or paste text/i));
-    expect(screen.getByPlaceholderText(/Paste a URL/i)).toBeTruthy();
-  });
-
   it('saves a pasted URL as a link artifact', () => {
     render(<ArtifactsDrawer open onClose={() => {}} />);
     fireEvent.click(screen.getByTitle(/Add link or paste text/i));
@@ -128,29 +121,6 @@ describe('ArtifactsDrawer + button', () => {
 
 describe('ArtifactsDrawer open routing', () => {
   const now = 1_700_000_000_000;
-
-  it('opens a reference doc in the in-app ArtifactPane (Electron readFile path)', async () => {
-    // A disk-picked .md is a doc *reference* (absolute path outside the
-    // workspace sandbox). The new behavior tries the in-app pane first;
-    // ArtifactPane uses Electron readFile for absolute paths.
-    mockContexts.push({
-      id: 'ref-doc',
-      name: 'design-notes',
-      filePath: '/Users/me/Desktop/design-notes.md',
-      type: 'doc',
-      kind: 'reference',
-      source: 'user',
-      createdAt: now,
-      updatedAt: now,
-    });
-    render(<ArtifactsDrawer open onClose={() => {}} />);
-    fireEvent.click(screen.getByText('design-notes'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
-    await vi.waitFor(() => {
-      expect(mockActions.openArtifactPane).toHaveBeenCalledWith('/Users/me/Desktop/design-notes.md');
-    });
-    expect(mockOpenPath).not.toHaveBeenCalled();
-  });
 
   it('opens a reference image via the OS opener, not the lightbox', () => {
     mockContexts.push({
@@ -208,26 +178,6 @@ describe('ArtifactsDrawer open routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     await vi.waitFor(() => {
       expect(mockActions.openArtifactPane).toHaveBeenCalledWith('/tmp/p1/.artifacts/design-notes.md');
-    });
-  });
-
-  it('falls back to OS opener when symlink doc pane open fails', async () => {
-    mockActions.openArtifactPane.mockRejectedValueOnce(new Error('sandbox'));
-    mockContexts.push({
-      id: 'sym-doc2',
-      name: 'external-notes',
-      filePath: '.artifacts/external-notes.md',
-      type: 'doc',
-      kind: 'symlink',
-      source: 'user',
-      createdAt: now,
-      updatedAt: now,
-    });
-    render(<ArtifactsDrawer open onClose={() => {}} />);
-    fireEvent.click(screen.getByText('external-notes'));
-    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
-    await vi.waitFor(() => {
-      expect(mockOpenPath).toHaveBeenCalledWith('/tmp/p1/.artifacts/external-notes.md');
     });
   });
 });

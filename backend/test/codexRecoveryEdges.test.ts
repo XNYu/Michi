@@ -1,13 +1,18 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { CodexRuntime } from '../src/agents/codex/CodexRuntime';
-import { CodexSession } from '../src/agents/codex/CodexSession';
-import type { CodexAppServerClient, NotificationHandler, ServerRequestHandler } from '../src/agents/codex/CodexAppServerClient';
-import { generateCodexTitle } from '../src/agents/codex/codexTitleGenerator';
+import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
+import { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSession';
+import type { CodexAppServerClient, NotificationHandler, ServerRequestHandler } from 'michi-runtime/internal/adapters/codex/CodexAppServerClient';
+import { generateCodexTitle } from 'michi-runtime/internal/adapters/codex/codexTitleGenerator';
 import type { NewAgentSessionOptions, RuntimePermissionDecision } from '../src/agents/types';
-import type { McpSlotRegistry } from '../src/services/mcpServer';
+import type { McpSlot, McpSlotRegistry } from '../src/services/mcpServer';
+import { fakeMcpRegistry, type FakeMcpRegistry } from './helpers/fakeMcpRegistry';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import * as db from '../src/services/dbRepository';
+import { michiTestHost } from './helpers/michiTestHost';
+import { chatOwner, runOwner } from './helpers/owners';
+import { codexTestOptions } from './helpers/codexTestOptions';
+import { michiCodexHostText } from '../src/agents/michiCodexOptions';
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function deferred<T>() {
@@ -74,22 +79,21 @@ class Client {
 }
 
 const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
-function registry(): McpSlotRegistry {
+function registry(): FakeMcpRegistry {
   let sequence = 0;
-  return {
-    create: (_id: string, _cwd: string, _owner: unknown, callbacks: object) => ({ slotId: `slot-${++sequence}`, ...callbacks }),
-    dispose: async () => {},
+  return fakeMcpRegistry({
+    create: (_id, _cwd, _owner, callbacks) => ({ slotId: `slot-${++sequence}`, ...callbacks }) as McpSlot,
     get: () => undefined,
-  } as unknown as McpSlotRegistry;
+  }, { mcpPort: 1 });
 }
 function runtime(t: TestContext, client = new Client()) {
-  const value = new CodexRuntime(bridge, registry(), 1, { client: client.transport, followUpsHookPocEnabled: false });
+  const value = new CodexRuntime({ ...codexTestOptions(), bridge, mcpSlots: registry() }, { client: client.transport, followUpsHookPocEnabled: false });
   t.after(async () => { client.shutdownError = null; await value.shutdown(); });
   return { runtime: value, client };
 }
 function options(id: string): NewAgentSessionOptions & { sessionId: string } {
   return { sessionId: id, cwd: '/tmp', model: 'test-model', profileHash: 'profile',
-    owner: { kind: 'agent_run', runId: `run-${id}`, attemptId: id } };
+    owner: runOwner(`run-${id}`, id) };
 }
 async function create(value: CodexRuntime, id: string): Promise<CodexSession> {
   return await value.newSession(options(id)) as CodexSession;
@@ -243,7 +247,7 @@ for (const status of ['interrupted', 'failed']) {
     client.respond = ({ method, params }) => method === 'turn/start' && (params.input as Array<{ text: string }>)[0].text.startsWith('A\n')
       ? gate.promise : undefined;
     const session = new CodexSession({ nodeId: 'node', threadId: 'original', cwd: '/tmp', workspaceId: null,
-      client: client.transport, bridge, mcpRegistry: registry(), mcpPort: 1, cancelTimeoutMs: 10 });
+      client: client.transport, host: michiTestHost(), hostText: michiCodexHostText(), bridge, mcpRegistry: registry(), cancelTimeoutMs: 10 });
     session.wireNotifications();
     t.after(() => session.dispose());
     const first = drain(session.send('A'));
@@ -273,7 +277,8 @@ test('title timeout latches interruption for a late native ID without touching t
   const gate = deferred<unknown>();
   client.respond = ({ method }) => method === 'turn/start' ? gate.promise : undefined;
   const remembered: string[] = [];
-  const title = assert.rejects(generateCodexTitle({ client: client.transport, cwd: '/tmp', model: 'title-model', userText: 'title',
+  const title = assert.rejects(generateCodexTitle({ client: client.transport, cwd: '/tmp', model: 'title-model',
+    instructions: michiCodexHostText().titleInstructions!(), userText: 'title',
     timeoutMs: 10, signal: new AbortController().signal, onTurnStarted: (_thread, id) => remembered.push(id) }), /timed out/);
   await tick();
   t.mock.timers.tick(10);
@@ -315,7 +320,7 @@ for (const decision of ['allow_once', 'allow_always', 'ask'] as const) {
 test('a consumer stopping at runtime_error does not leave a terminal marker in the next turn', async (t) => {
   const client = new Client();
   const session = new CodexSession({ nodeId: 'failure-boundary', threadId: 'failure-native', cwd: '/tmp', workspaceId: null,
-    client: client.transport, bridge, mcpRegistry: registry(), mcpPort: 1 });
+    client: client.transport, host: michiTestHost(), hostText: michiCodexHostText(), bridge, mcpRegistry: registry() });
   session.wireNotifications();
   t.after(() => session.dispose());
   const first = (async () => {
@@ -337,7 +342,7 @@ test('a consumer stopping at runtime_error does not leave a terminal marker in t
 test('late permission and user-input continuations cannot persist grants or leak resolved events', async (t) => {
   const client = new Client();
   const session = new CodexSession({ nodeId: 'controls', threadId: 'controls-native', cwd: '/tmp', workspaceId: 'workspace',
-    client: client.transport, bridge, mcpRegistry: registry(), mcpPort: 1 });
+    client: client.transport, host: michiTestHost(), hostText: michiCodexHostText(), bridge, mcpRegistry: registry() });
   session.wireNotifications();
   t.after(() => session.dispose());
   let grants = 0;
@@ -373,7 +378,7 @@ test('active-turn MCP user input and approvals still resolve normally', async (t
     return originalCreate(...args);
   });
   const session = new CodexSession({ nodeId: 'active-controls', threadId: 'active-native', cwd: '/tmp', workspaceId: null,
-    client: client.transport, bridge, mcpRegistry: mcp, mcpPort: 1 });
+    client: client.transport, host: michiTestHost(), hostText: michiCodexHostText(), bridge, mcpRegistry: mcp });
   session.createMcpSlot();
   session.wireNotifications();
   t.after(() => session.dispose());
@@ -405,8 +410,9 @@ test('existing and pending sessions enforce canonical owner and profile on new/l
   client.respond = ({ method }) => method === 'thread/start' ? gate.promise : undefined;
   const opts = options('guarded');
   const first = value.newSession({ ...opts, sessionId: 'public-alias-a' });
-  const wrongOwner = assert.rejects(value.newSession({ ...opts, sessionId: 'public-alias-b',
-    owner: { kind: 'agent_run', runId: 'other-run', attemptId: 'guarded' } }), /Owner mismatch/);
+  // A chat keyed like the pending Run session: the same public id under another owner.
+  const wrongOwner = assert.rejects(value.newSession({ ...opts, sessionId: 'guarded',
+    owner: chatOwner('guarded') }), /Owner mismatch/);
   const wrongProfile = assert.rejects(value.loadSession({ ...opts, profileHash: 'other-profile', nativeResumeToken: 'original' }), /profile hash mismatch/);
   await tick();
   gate.resolve({ thread: { id: 'original' } });
@@ -414,7 +420,7 @@ test('existing and pending sessions enforce canonical owner and profile on new/l
   await Promise.all([wrongOwner, wrongProfile]);
   assert.equal(client.calls.filter((call) => call.method === 'thread/start').length, 1);
   assert.equal(await value.newSession(opts), session);
-  await assert.rejects(value.loadSession({ ...opts, owner: { kind: 'chat_node', nodeId: 'guarded' } }), /Owner mismatch/);
+  await assert.rejects(value.loadSession({ ...opts, owner: chatOwner('guarded') }), /Owner mismatch/);
   await assert.rejects(value.newSession({ ...opts, profileHash: null }), /profile hash mismatch/);
 });
 

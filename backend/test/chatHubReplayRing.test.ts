@@ -330,3 +330,28 @@ describe('ChatHub replay ring', () => {
     release();
   });
 });
+
+it('an explicitly identified old resolution cannot clear a reused runtime request handle', async () => {
+  const chatHub = hub();
+  const questions = [{ question: 'Continue?', options: [], multiSelect: false }];
+  let checkedPending = false;
+  const finished = new Promise<void>(resolve => {
+    chatHub.subscribe('reused-chat', { send: event => {
+      if (event.event === 'user_input_resolved' && event.data.interactionId === 'first' && event.data.answers.length === 0) {
+        assert.equal(chatHub.getPendingUserInput('reused-chat')?.interactionId, 'second');
+        checkedPending = true;
+      }
+      if (event.event === 'done') resolve();
+    }, close: () => {} });
+  });
+  chatHub.startSelfTurn({ chatId: 'reused-chat', nodeId: 'reused-node', events: iterator([
+    { kind: 'user_input_request', requestId: 7, interactionId: 'first', questions },
+    { kind: 'user_input_resolved', requestId: 7, interactionId: 'first', answers: [{ question: 'Continue?', answer: 'Yes' }], outcome: 'answered' },
+    { kind: 'user_input_request', requestId: 7, interactionId: 'second', questions },
+    { kind: 'user_input_resolved', requestId: 7, interactionId: 'first', answers: [] },
+    { kind: 'user_input_resolved', requestId: 7, interactionId: 'second', answers: [], outcome: 'skipped' },
+    { kind: 'turn_end', stopReason: 'end_turn' },
+  ]) });
+  await finished;
+  assert.equal(checkedPending, true);
+});

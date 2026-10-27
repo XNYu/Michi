@@ -1,3 +1,5 @@
+import { serverEntityId } from '../../config/backendIdentity';
+import { backendFetch } from './backendRequest';
 import type {
   AgentCapabilityCatalogEntryV1,
   AgentDefinitionDtoV1,
@@ -73,8 +75,8 @@ export async function listAgentDefinitions(
   signal?: AbortSignal,
 ): Promise<Array<LocatedAgentResource<AgentDefinitionDtoV1>>> {
   const target = initialDefinitionBase(workspaceId);
-  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
-  const payload = await jsonResponse(await fetch(`${target.base}/agents${query}`, { signal }), 'listAgentDefinitions');
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(serverEntityId(workspaceId))}` : '';
+  const payload = await jsonResponse(await backendFetch(`${target.base}/agents${query}`, { signal }), 'listAgentDefinitions');
   return definitionListPayload(payload).map((definition, index) => locatedAgentResource(
     target.backendConnectionId,
     parseAgentDefinitionDtoV1(definition, `definitions[${index}]`),
@@ -85,7 +87,7 @@ export async function getAgentDefinition(
   identity: AgentResourceIdentity,
   signal?: AbortSignal,
 ): Promise<LocatedAgentResource<AgentDefinitionDtoV1>> {
-  const payload = await jsonResponse(await fetch(
+  const payload = await jsonResponse(await backendFetch(
     `${backendApiBase(identity.backendConnectionId)}/agents/${encodeURIComponent(identity.id)}`,
     { signal },
   ), 'getAgentDefinition');
@@ -100,7 +102,7 @@ export async function createAgentDefinition(
   const target = request.scope === 'global' && globalBackendConnectionId
     ? { base: backendApiBase(globalBackendConnectionId), backendConnectionId: globalBackendConnectionId }
     : initialDefinitionBase(request.scope === 'workspace' ? request.workspaceId : null);
-  const payload = await jsonResponse(await fetch(`${target.base}/agents`, {
+  const payload = await jsonResponse(await backendFetch(`${target.base}/agents`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal,
   }), 'createAgentDefinition');
   return locatedAgentResource(target.backendConnectionId, parseAgentDefinitionDtoV1(definitionPayload(payload)));
@@ -111,14 +113,14 @@ export async function updateAgentDefinition(
   request: UpdateAgentDefinitionRequestV1,
   signal?: AbortSignal,
 ): Promise<LocatedAgentResource<AgentDefinitionDtoV1>> {
-  const payload = await jsonResponse(await fetch(`${backendApiBase(identity.backendConnectionId)}/agents/${encodeURIComponent(identity.id)}`, {
+  const payload = await jsonResponse(await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agents/${encodeURIComponent(identity.id)}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal,
   }), 'updateAgentDefinition');
   return locatedAgentResource(identity.backendConnectionId, parseAgentDefinitionDtoV1(definitionPayload(payload)));
 }
 
 async function definitionAction(identity: AgentResourceIdentity, action: 'enable' | 'disable' | 'duplicate', signal?: AbortSignal): Promise<LocatedAgentResource<AgentDefinitionDtoV1>> {
-  const payload = await jsonResponse(await fetch(`${backendApiBase(identity.backendConnectionId)}/agents/${encodeURIComponent(identity.id)}/${action}`, { method: 'POST', signal }), `${action}AgentDefinition`);
+  const payload = await jsonResponse(await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agents/${encodeURIComponent(identity.id)}/${action}`, { method: 'POST', signal }), `${action}AgentDefinition`);
   return locatedAgentResource(identity.backendConnectionId, parseAgentDefinitionDtoV1(definitionPayload(payload)));
 }
 
@@ -127,7 +129,7 @@ export const disableAgentDefinition = (identity: AgentResourceIdentity, signal?:
 export const duplicateAgentDefinition = (identity: AgentResourceIdentity, signal?: AbortSignal) => definitionAction(identity, 'duplicate', signal);
 
 export async function deleteAgentDefinition(identity: AgentResourceIdentity, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`${backendApiBase(identity.backendConnectionId)}/agents/${encodeURIComponent(identity.id)}`, { method: 'DELETE', signal });
+  const response = await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agents/${encodeURIComponent(identity.id)}`, { method: 'DELETE', signal });
   if (!response.ok) throw new Error(`deleteAgentDefinition failed: ${response.status}`);
 }
 
@@ -139,11 +141,12 @@ export async function deleteAgentDefinition(identity: AgentResourceIdentity, sig
 export async function listAgentCapabilities(
   workspaceId?: string | null,
   signal?: AbortSignal,
+  connectionId?: string,
 ): Promise<AgentCapabilityCatalogEntryV1[]> {
-  const target = initialDefinitionBase(workspaceId);
-  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+  const target = connectionId === undefined ? initialDefinitionBase(workspaceId) : { base: backendApiBase(connectionId) };
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(serverEntityId(workspaceId))}` : '';
   const payload = await jsonResponse(
-    await fetch(`${target.base}/agent-capabilities${query}`, { signal }),
+    await backendFetch(`${target.base}/agent-capabilities${query}`, { signal }),
     'listAgentCapabilities',
   );
   if (!payload || typeof payload !== 'object' || !('capabilities' in payload) || !Array.isArray(payload.capabilities)) {

@@ -6,9 +6,9 @@ export interface SlashItem {
   name: string;
   /** Optional one-line description. */
   description?: string;
-  /** 'local' = client-side (branch/fanout); 'kiro' = agent-advertised;
+  /** 'local' = client-side (branch/fanout); 'runtime' = runtime-advertised;
    *  'agent' = an agent/mode pick surfaced under /agent. */
-  source: 'local' | 'kiro' | 'agent';
+  source: 'local' | 'runtime' | 'agent';
   /** When present, the popup inserts `/<name> ` and keeps the cursor at the end
    *  (so the user can type arguments). When false, we insert `/<name>`. */
   takesArgs: boolean;
@@ -111,26 +111,26 @@ export function buildAgentItems(
   return [...prefix, ...rest];
 }
 
-/** Merge local + kiro commands and filter by prefix (case-insensitive on name). */
+/** Merge local + runtime commands and filter by prefix (case-insensitive on name). */
 export function buildSlashItems(
   agentCommands: AgentCommand[] | undefined,
   query: string,
 ): SlashItem[] {
-  const kiroItems: SlashItem[] = (agentCommands ?? []).map((c) => ({
+  const runtimeItems: SlashItem[] = (agentCommands ?? []).map((c) => ({
     name: c.name,
     description: c.description,
-    source: 'kiro',
+    source: 'runtime',
     // AvailableCommandInput.type === 'unstructured' means free text after the
     // command. Absent `input` means no args. Either way we insert a trailing
     // space so the user can type args if they want; it's a no-op if they don't.
     takesArgs: !!c.input,
   }));
-  // Dedupe: if kiro publishes a command with the same name as a local one, the
+  // Dedupe: if the runtime publishes a command with the same name as a local one, the
   // local version wins (we own its semantics). This is rare but possible.
   const seen = new Set(LOCAL_COMMANDS.map((c) => c.name));
   const merged = [
     ...LOCAL_COMMANDS,
-    ...kiroItems.filter((c) => !seen.has(c.name)),
+    ...runtimeItems.filter((c) => !seen.has(c.name)),
   ];
   const q = query.toLowerCase();
   if (!q) return merged;

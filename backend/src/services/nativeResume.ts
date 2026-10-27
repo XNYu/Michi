@@ -1,33 +1,28 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import type { AgentRuntime, AgentSession, LoadAgentSessionOptions } from '../agents/types';
+import { NativeResumeFailedError, NativeResumeUnavailableError } from 'michi-runtime/internal/contract/errors';
+import type { AgentRuntime, AgentSession, LoadAgentSessionOptions, RuntimeResumeBinding } from '../agents/types';
 import { dropSession, getSession } from '../agents/sessionRegistry';
 import { isNativeResumeEnabled } from './agentConfig';
+import { KiroSignedOutError } from '../agents/kiro/kiroAuth';
 
-export function nativeResumeId(runtimeId: string, binding: { id?: string; acp_session_id?: string | null; external_session_id?: string | null } | null | undefined): string | null {
-  const id = (runtimeId === 'claude' || runtimeId === 'codex'
-    ? binding?.external_session_id ?? binding?.acp_session_id
-    : binding?.acp_session_id ?? binding?.external_session_id) ?? null;
-  // Claude has no native identity until init. Its public node placeholder is
-  // not a resumable CLI session, even though it occupies the legacy ACP column.
-  return runtimeId === 'claude' && id === binding?.id ? null : id;
+/**
+ * The native session id a node binding resumes for `runtime`. A runtime that
+ * reads its own binding (AgentRuntime.resumeTokenFromBinding: Codex, Claude)
+ * decides, its null included: Claude's placeholder id in the ACP column is not
+ * a session. For the rest the host reads the ACP column, then the external one.
+ */
+export function nativeResumeIdFor(
+  runtime: Pick<AgentRuntime, 'id' | 'resumeTokenFromBinding'>,
+  binding: RuntimeResumeBinding | null | undefined,
+): string | null {
+  return runtime.resumeTokenFromBinding
+    ? runtime.resumeTokenFromBinding(binding)
+    : binding?.acp_session_id ?? binding?.external_session_id ?? null;
 }
 
-/** Only adapters with positive evidence of unavailable native state may throw this. */
-export class NativeResumeUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'NativeResumeUnavailableError';
-  }
-}
-
-export class NativeResumeFailedError extends Error {
-  readonly cause: unknown;
-  constructor(cause: unknown, message = 'Native session restore could not complete. The original session binding has been retained. Please retry; check the runtime connection and authentication if this persists.') {
-    super(message);
-    this.name = 'NativeResumeFailedError';
-    this.cause = cause;
-  }
-}
+// The error classes are part of the runtime contract; re-exported so existing
+// importers of this module keep the same class objects.
+export { NativeResumeUnavailableError, NativeResumeFailedError };
 
 // Foreground, background and explicit load paths must read the binding inside
 // this lock, and keep it until registration AND durable persistence complete.
@@ -67,6 +62,8 @@ export async function loadNativeSession(
       }
       return session;
     } catch (error) {
+      // Keep the binding, but preserve the actionable reason for the scheduler and UI.
+      if (error instanceof KiroSignedOutError) throw new NativeResumeFailedError(error, error.message);
       if (error instanceof NativeResumeFailedError) throw error;
       if (error instanceof NativeResumeUnavailableError) return null;
       if (attempt >= 2 || !runtime.isNativeResumeRetryable?.(error)) {

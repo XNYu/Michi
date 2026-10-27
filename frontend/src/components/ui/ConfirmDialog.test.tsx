@@ -1,9 +1,22 @@
 import React from 'react';
 import { describe, expect, it, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { ConfirmDialogHost, confirmDialog } from './ConfirmDialog';
+import { DrawerShell } from './DrawerShell';
 
 afterEach(cleanup);
+
+function DrawerWithConfirmHost() {
+  const [open, setOpen] = React.useState(true);
+  return (
+    <>
+      <DrawerShell open={open} motion="instant" onClose={() => setOpen(false)} title="Artifacts">
+        Artifact list
+      </DrawerShell>
+      <ConfirmDialogHost />
+    </>
+  );
+}
 
 describe('ConfirmDialog', () => {
   it('resolves true when the confirm button is clicked', async () => {
@@ -28,18 +41,30 @@ describe('ConfirmDialog', () => {
     await expect(result!).resolves.toBe(false);
   });
 
-  it('resolves the superseded confirm as false when a new one opens', async () => {
-    render(<ConfirmDialogHost />);
-    let first: Promise<boolean>;
+  it('cancels only the confirmation on the first Escape and closes its drawer on the next', async () => {
+    render(<DrawerWithConfirmHost />);
+    let result: Promise<boolean>;
     act(() => {
-      first = confirmDialog({ message: 'first' });
+      result = confirmDialog({ title: 'Delete artifact', message: 'Delete this artifact?' });
     });
-    act(() => {
-      void confirmDialog({ message: 'second' });
-    });
-    // The first promise must not hang — it resolves false when superseded.
-    await expect(first!).resolves.toBe(false);
-    // The second dialog is the one now showing.
-    await waitFor(() => expect(screen.getByText('second')).toBeTruthy());
+    expect(screen.getByRole('dialog', { name: 'Delete artifact' })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await expect(result!).resolves.toBe(false);
+    expect(screen.queryByRole('dialog', { name: 'Delete artifact' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Artifacts' })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Artifacts' })).toBeNull();
+  });
+
+  it('lets Escape close the drawer when no confirmation is pending', () => {
+    render(<DrawerWithConfirmHost />);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'Artifacts' })).toBeNull();
   });
 });

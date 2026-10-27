@@ -2,6 +2,8 @@
 
 Applies to: ordinary chats with the relevant Michi tools available. Source checked: 2026-10-16. These are example workflows, not claims that a task has already run. Custom Agent Runs require the separate experimental feature.
 
+Pages-related sections checked against source on 2026-10-26; other topics retain the review scope above.
+
 ## Research alternatives and make a decision
 
 Goal: compare alternatives, preserve evidence and keep the final choice with you.
@@ -57,9 +59,19 @@ Example:
 
 Success check: the agent confirms current state before acting. Saved history, a handoff summary and native Memory have different scopes; none removes the need to verify drift-prone facts.
 
+## Maintain a source-backed Page
+
+1. Open a local workspace page in **Pages**, or ask a workspace chat with native Page tools to create a page when the task needs one. Read the page and current revisions before changing it.
+2. Set page-local **Layout preferences** for organization. Ask the Assistant to preserve manual edits, use native blocks, and cite the exact conversations it read.
+3. Publish complete groups of related edits. Inspect applied/proposed/rejected receipts; a suggestion is not an applied change. Use **Sources** to inspect the original evidence.
+4. Enable workspace **Conversation maintenance** and explicitly exclude page trees that should not participate. Existing non-excluded trees are eligible too. Check **Settings → Meta agent**, exclusions and progress; older history needs an explicit initial read or supported catch-up.
+5. For a missing native capability, read `page-component-design` and the component contract before generating source. Inspect a preview and the actual host when UI tools are available; saving alone does not prove rendering.
+
+Success check: the saved page reflects the intended content, manual changes remain protected, Sources resolve to actual evidence, and maintenance status distinguishes completed decisions from unaccepted suggestions. These are local Pages operations, not remote Pages support or a complete task-management system.
+
 ## Share a result or hand it to another chat
 
-Use a reviewed Artifact for the deliverable and thread Export for a readable transcript. Remove private content before sharing externally. If asking an agent to message another chat through `send_to_thread`, expect the user approval workflow; tool access alone is not authorization to dispatch work elsewhere.
+Use a reviewed Artifact for the deliverable and thread Export for a readable transcript. Remove private content before sharing externally. Agents use `send_to_thread` directly for coordination within your task, including progress reports and replies to a parent thread. They can set `requestApproval=true` when a user decision is needed or you asked to review messages first. A received message stays attributed to its sending agent and does not authorize work beyond your request.
 
 When experimental Runs are enabled, Continue as Branch can import selected Run task/result/transcript material. It does not merge a Run worktree automatically. See `custom-agents`.
 

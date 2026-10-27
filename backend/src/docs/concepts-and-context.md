@@ -2,6 +2,8 @@
 
 Applies to: ordinary Michi chats across registered runtimes; Custom Agent exceptions are identified below. Source checked: 2026-10-16. Native memory and context limits depend on the runtime/version.
 
+Pages-related sections checked against source on 2026-10-26; other topics retain the review scope above.
+
 ## What belongs where?
 
 | Term | Meaning | Example |
@@ -15,6 +17,8 @@ Applies to: ordinary Michi chats across registered runtimes; Custom Agent except
 | Overview | Branch journal of recorded progress | Catching up before reading the transcript |
 | Digest | Synthesis connected to selected conversation sources | A research comparison |
 | Artifact | Reusable material registered in the workspace | Requirements or a report |
+| Page | A native, revisioned document with blocks and optional database references | A workspace home, research summary or child page |
+| Pages Assistant / Meta agent | Restricted conversation and background tools for organizing Michi work | Summarizing a page or maintaining it from completed conversations |
 
 A workspace can contain several trees. Switching trees changes your view; it does not combine every conversation into one agent context. Closing a pane does not delete its history or request cancellation.
 
@@ -35,6 +39,12 @@ An agent receives the request, applicable instructions, session context and supp
 Current node references inline short conversations; longer conversations use a summary and retrieval hint. If a detail matters, ask: “Read the original messages in that referenced chat and cite the relevant passage.” Available tools include `search_messages`, `read_node` and `read_node_overview`.
 
 Artifact favorites/pins affect UI ordering. The send path injects explicit `@` references, not all favorites. The Artifact manifest advertises names/locations rather than every document's full contents.
+
+## Pages, preferences and scope
+
+Native Pages use Michi SQLite records rather than project Markdown files or an external Desk service. A Page can show native blocks, database views and versioned components. Pages Home summarizes workspace homes; its automatic summary does not independently read every original conversation. The current Pages interface is local-only.
+
+Each page has independent **Layout preferences** and layout rules. Preferences guide future organization; they do not grant permissions, trigger a model on save or replace program-applied section limits. A page’s content and Sources remain evidence to read, not higher-priority instructions. The Pages Assistant’s conversation history is distinct from ordinary workspace chats; initial generation and automatic maintenance also have their own restricted processing paths. See `pages-and-components` and `pages-maintenance`.
 
 ## What does a branch inherit?
 

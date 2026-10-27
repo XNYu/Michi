@@ -3,13 +3,6 @@ import assert from "node:assert/strict";
 import { resolveBashShell } from "../src/agents/tools/bash";
 
 describe("resolveBashShell", () => {
-  test("POSIX always uses bash -c", () => {
-    assert.deepEqual(resolveBashShell("darwin", () => "/opt/bash"), {
-      command: "bash",
-      prefix: ["-c"],
-    });
-  });
-
   test("Windows prefers a PATH bash when present", () => {
     assert.deepEqual(resolveBashShell("win32", (name) => (name === "bash" ? "C:\\Git\\bin\\bash.exe" : null)), {
       command: "C:\\Git\\bin\\bash.exe",

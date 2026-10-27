@@ -42,44 +42,74 @@ describe('DrawerShell presence', () => {
     act(() => vi.advanceTimersByTime(500));
     expect(document.querySelector('.drawer-shell-panel')).toBeNull();
   });
+});
 
-  it('removes keyboard-triggered exits immediately and reports unmounts', () => {
-    const presence = vi.fn();
-    const drawer = (open: boolean) => <DrawerShell open={open} motion="instant" onClose={vi.fn()} title="Settings" onPresenceChange={presence}>Content</DrawerShell>;
-    const view = render(drawer(true));
-    view.rerender(drawer(false));
-    expect(document.querySelector('.drawer-shell-panel')).toBeNull();
-    expect(presence).toHaveBeenLastCalledWith(false);
-    view.rerender(drawer(true));
-    view.unmount();
-    expect(presence).toHaveBeenLastCalledWith(false);
-  });
-
-  it('releases a retiring panel immediately when reduced motion is enabled', () => {
-    const media = Object.assign(new EventTarget(), { matches: false });
-    vi.stubGlobal('matchMedia', () => media);
-    const drawer = (open: boolean) => <DrawerShell open={open} onClose={vi.fn()} title="Settings">Content</DrawerShell>;
-    const view = render(drawer(true));
-    view.rerender(drawer(false));
-    act(() => { media.matches = true; media.dispatchEvent(new Event('change')); });
-    expect(document.querySelector('.drawer-shell-panel')).toBeNull();
-  });
-
-  it('restores focus before making the closing panel inert and respects nested Escape handlers', () => {
-    const trigger = document.createElement('button');
-    document.body.appendChild(trigger);
-    trigger.focus();
+describe('DrawerShell non-modal', () => {
+  it('leaves the page usable: no scrim, no aria-modal, no outside-click close', () => {
     const close = vi.fn();
-    const drawer = (open: boolean, closeOnEscape = true) => <DrawerShell open={open} closeOnEscape={closeOnEscape} onClose={close} title="Settings">Content</DrawerShell>;
-    const view = render(drawer(true, false));
-    expect(document.activeElement).toBe(screen.getByRole('dialog'));
-    fireEvent.keyDown(window, { key: 'Escape' });
+    render(
+      <>
+        <button type="button">Page card</button>
+        <DrawerShell open modal={false} onClose={close} title="Thread">Content</DrawerShell>
+      </>,
+    );
+    const panel = screen.getByRole('dialog', { name: 'Thread' });
+    expect(panel.hasAttribute('aria-modal')).toBe(false);
+    expect(document.querySelector('.drawer-shell-scrim')).toBeNull();
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Page card' }));
     expect(close).not.toHaveBeenCalled();
+  });
+
+  it('takes focus on open and returns it on close to where the user last was on the page', () => {
+    const drawer = (open: boolean) => (
+      <>
+        <button type="button">First card</button>
+        <button type="button">Second card</button>
+        <DrawerShell open={open} modal={false} onClose={vi.fn()} title="Thread">Content</DrawerShell>
+      </>
+    );
+    const view = render(drawer(false));
+    screen.getByRole('button', { name: 'First card' }).focus();
     view.rerender(drawer(true));
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(close).toHaveBeenCalledOnce();
+    const panel = screen.getByRole('dialog');
+    expect(document.activeElement).toBe(panel);
+    // The user moves on to another card while the drawer stays open…
+    screen.getByRole('button', { name: 'Second card' }).focus();
+    // …then comes back into the drawer and closes it.
+    panel.focus();
     view.rerender(drawer(false));
-    expect(document.activeElement).toBe(trigger);
-    trigger.remove();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Second card' }));
+  });
+});
+
+describe('DrawerShell modal focus', () => {
+  it('cycles Tab within the panel and returns to its opener without resetting focus on rerender', () => {
+    const drawer = (open: boolean) => <><button type="button">Open settings</button><DrawerShell open={open} onClose={() => {}} title="Settings"><input aria-label="Last field" /></DrawerShell></>;
+    const view = render(drawer(false));
+    const opener = screen.getByRole('button', { name: 'Open settings' });
+    opener.focus();
+    view.rerender(drawer(true));
+    const panel = screen.getByRole('dialog');
+    const first = screen.getByRole('button', { name: 'Close' });
+    const last = screen.getByRole('textbox', { name: 'Last field' });
+    expect(document.activeElement).toBe(panel);
+    fireEvent.keyDown(panel, { key: 'Tab' });
+    expect(document.activeElement).toBe(first);
+    first.focus();
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    view.rerender(drawer(true));
+    expect(document.activeElement).toBe(last);
+    fireEvent.keyDown(last, { key: 'Tab' });
+    expect(document.activeElement).toBe(first);
+    view.rerender(drawer(false));
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('does not trap Tab in a non-modal peek', () => {
+    render(<DrawerShell open modal={false} onClose={() => {}} title="Thread"><input aria-label="Peek field" /></DrawerShell>);
+    const field = screen.getByRole('textbox');
+    field.focus();
+    expect(fireEvent.keyDown(field, { key: 'Tab' })).toBe(true);
   });
 });

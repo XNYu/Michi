@@ -1,8 +1,10 @@
 import React from 'react';
+import { Button } from '../../ui/controls';
 import type { AgentCapabilityCatalogEntryV1, AgentDefinitionDtoV1 } from 'michi-shared';
 import { MAX_RUN_TTL_MS, MIN_RUN_TTL_MS } from 'michi-shared';
 import AgentPermissionFields, { defaultPermissionPolicyDraft, type PermissionPolicyDraft } from './AgentPermissionFields';
-import AgentRuntimeProfileFields, { agentFieldStyle, emptyRuntimeProfileDraft, type RuntimeFieldCatalog, type RuntimeProfileDraft } from './AgentRuntimeProfileFields';
+import AgentRuntimeProfileFields, { catalogKey, emptyRuntimeProfileDraft, type RuntimeFieldCatalog, type RuntimeProfileDraft } from './AgentRuntimeProfileFields';
+import { resolveProfileReasoning, supportedProfileReasoning } from '../../../lib/runtimeProfile';
 
 export interface AgentDefinitionFormValue {
   scope: 'global' | 'workspace';
@@ -52,7 +54,7 @@ function positiveInteger(value: string, min: number, max: number): boolean {
   const parsed = Number(value); return Number.isSafeInteger(parsed) && parsed >= min && parsed <= max;
 }
 
-export function validateAgentDefinitionForm(value: AgentDefinitionFormValue): AgentDefinitionFormErrors {
+export function validateAgentDefinitionForm(value: AgentDefinitionFormValue, catalog?: RuntimeFieldCatalog | null): AgentDefinitionFormErrors {
   const errors: AgentDefinitionFormErrors = {};
   if (!value.name.trim()) errors.name = 'Name is required.';
   if (!value.description.trim()) errors.description = 'Describe what this Agent does and when to use it.';
@@ -69,6 +71,16 @@ export function validateAgentDefinitionForm(value: AgentDefinitionFormValue): Ag
     else if (seen.has(key)) errors[`fallback.${index}`] = 'Duplicate fallback profile.';
     seen.add(key);
   });
+  const checkReasoning = (profile: RuntimeProfileDraft, key: string) => {
+    if (!profile.reasoning || errors[key]) return;
+    const provider = catalog?.providersFor[profile.runtimeId]?.find((entry) => entry.id === profile.providerId);
+    const options = resolveProfileReasoning(catalog?.capabilitiesFor?.[profile.runtimeId], catalog?.modelsFor[catalogKey(profile.runtimeId, profile.providerId)], profile.modelId, provider);
+    if (options.known && !supportedProfileReasoning(profile.reasoning, options.levels)) {
+      errors[key] = `Reasoning level ${profile.reasoning} is unavailable for the selected model. Choose runtime default or a supported level.`;
+    }
+  };
+  checkReasoning(value.runtimeProfile, 'runtimeProfile');
+  value.fallbackChain.forEach((profile, index) => checkReasoning(profile, `fallback.${index}`));
   if (!positiveInteger(value.maxContextChars, 1, 1_000_000)) errors.maxContextChars = 'Context limit must be 1–1,000,000 characters.';
   if (!positiveInteger(value.permissionPolicy.maxDelegationDepth, 0, 16)) errors.maxDelegationDepth = 'Use 0–16.';
   if (!positiveInteger(value.permissionPolicy.maxConcurrentRuns, 1, 64)) errors.maxConcurrentRuns = 'Use 1–64.';
@@ -96,17 +108,17 @@ interface Props {
   runtimeCatalog?: RuntimeFieldCatalog | null;
 }
 
-export default function AgentDefinitionForm({ value, onChange, errors = validateAgentDefinitionForm(value), capabilities = null, runtimeCatalog = null }: Props) {
+export default function AgentDefinitionForm({ value, onChange, capabilities = null, runtimeCatalog = null, errors = validateAgentDefinitionForm(value, runtimeCatalog) }: Props) {
   const set = <K extends keyof AgentDefinitionFormValue>(key: K, next: AgentDefinitionFormValue[K]) => onChange({ ...value, [key]: next });
   return (
     <form aria-label="Agent definition" onSubmit={(event) => event.preventDefault()} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {/* Identity fields carry their own labels — no section caption needed. */}
       <Section plain>
         <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: 10 }}>
-          <label style={labelStyle}>Scope<select aria-label="agent scope" value={value.scope} onChange={(event) => { const scope = event.target.value as AgentDefinitionFormValue['scope']; onChange({ ...value, scope, workspaceId: scope === 'global' ? null : value.workspaceId }); }} style={agentFieldStyle}><option value="workspace">Workspace</option><option value="global">Global</option></select></label>
-          <Field label="Name" error={errors.name}><input aria-label="agent name" value={value.name} onChange={(event) => set('name', event.target.value)} style={agentFieldStyle} /></Field>
+          <label style={labelStyle}>Scope<select className="ui-select" aria-label="agent scope" value={value.scope} onChange={(event) => { const scope = event.target.value as AgentDefinitionFormValue['scope']; onChange({ ...value, scope, workspaceId: scope === 'global' ? null : value.workspaceId }); }}><option value="workspace">Workspace</option><option value="global">Global</option></select></label>
+          <Field label="Name" error={errors.name}><input className="ui-input" aria-label="agent name" value={value.name} onChange={(event) => set('name', event.target.value)} /></Field>
         </div>
-        <Field label="Description · what it does, when to call it" error={errors.description}><textarea aria-label="agent description" value={value.description} onChange={(event) => set('description', event.target.value)} rows={3} style={{ ...agentFieldStyle, resize: 'vertical' }} /></Field>
+        <Field label="Description · what it does, when to call it" error={errors.description}><textarea className="ui-input" aria-label="agent description" value={value.description} onChange={(event) => set('description', event.target.value)} rows={3} style={{ resize: 'vertical' }} /></Field>
         <p style={hintStyle}>Other agents read the description to decide whether to delegate here.</p>
       </Section>
 
@@ -115,7 +127,7 @@ export default function AgentDefinitionForm({ value, onChange, errors = validate
       </Section>
 
       <Section title="Instructions" aside="optional" description="Method and standards, not the task. “Implement with TDD.” “Prefer primary sources over summaries.” The parent supplies the task each run; empty is fine.">
-        <Field label="System instructions"><textarea aria-label="agent instructions" value={value.instructions} onChange={(event) => set('instructions', event.target.value)} rows={6} placeholder="Optional — leave empty to let the delegated task stand alone." style={{ ...agentFieldStyle, fontFamily: 'var(--font-mono)', resize: 'vertical' }} /></Field>
+        <Field label="System instructions"><textarea className="ui-input" aria-label="agent instructions" value={value.instructions} onChange={(event) => set('instructions', event.target.value)} rows={6} placeholder="Optional — leave empty to let the delegated task stand alone." style={{ fontFamily: 'var(--font-mono)', resize: 'vertical' }} /></Field>
       </Section>
 
       <Section title="Tools, Skills & MCP" description="This list is the whole surface the agent can touch — the parent’s capabilities are not inherited. Credentials remain in Backend bindings.">
@@ -137,7 +149,7 @@ export default function AgentDefinitionForm({ value, onChange, errors = validate
           <Check label="Files" checked={value.allowFileContext} onChange={(next) => set('allowFileContext', next)} />
           <Check label="Artifacts" checked={value.allowArtifactContext} onChange={(next) => set('allowArtifactContext', next)} />
         </div>
-        <Field label="Maximum estimated characters" error={errors.maxContextChars}><input aria-label="maximum context characters" value={value.maxContextChars} onChange={(event) => set('maxContextChars', event.target.value)} inputMode="numeric" style={{ ...agentFieldStyle, maxWidth: 240 }} /></Field>
+        <Field label="Maximum estimated characters" error={errors.maxContextChars}><input className="ui-input" aria-label="maximum context characters" value={value.maxContextChars} onChange={(event) => set('maxContextChars', event.target.value)} inputMode="numeric" style={{ maxWidth: 240 }} /></Field>
       </Section>
 
       <Section title="Permissions" description="A Definition is a ceiling. Parent restrictions can only reduce it.">
@@ -145,8 +157,8 @@ export default function AgentDefinitionForm({ value, onChange, errors = validate
       </Section>
 
       <Section title="Fallback" description="Ordered profiles tried only after a classified failure.">
-        {value.fallbackChain.map((profile, index) => <div key={index} style={{ border: '1px solid var(--term-line)', padding: 12 }}><AgentRuntimeProfileFields prefix={`fallback ${index + 1}`} compact value={profile} onChange={(next) => set('fallbackChain', value.fallbackChain.map((item, itemIndex) => itemIndex === index ? next : item))} errors={errors[`fallback.${index}`] ? { runtimeId: errors[`fallback.${index}`] } : {}} catalog={runtimeCatalog} /><button type="button" onClick={() => set('fallbackChain', value.fallbackChain.filter((_, itemIndex) => itemIndex !== index))} style={textButtonStyle}>remove fallback</button></div>)}
-        <button type="button" onClick={() => set('fallbackChain', [...value.fallbackChain, emptyRuntimeProfileDraft()])} style={outlineButtonStyle}>+ add fallback profile</button>
+        {value.fallbackChain.map((profile, index) => <div key={index} style={{ border: '1px solid var(--term-line)', padding: 12 }}><AgentRuntimeProfileFields prefix={`fallback ${index + 1}`} compact value={profile} onChange={(next) => set('fallbackChain', value.fallbackChain.map((item, itemIndex) => itemIndex === index ? next : item))} errors={errors[`fallback.${index}`] ? { runtimeId: errors[`fallback.${index}`] } : {}} catalog={runtimeCatalog} /><Button variant="ghost" size="sm" onClick={() => set('fallbackChain', value.fallbackChain.filter((_, itemIndex) => itemIndex !== index))} style={{ alignSelf: 'flex-start', marginTop: 7 }}>remove fallback</Button></div>)}
+        <Button onClick={() => set('fallbackChain', [...value.fallbackChain, emptyRuntimeProfileDraft()])} style={{ alignSelf: 'flex-start', fontSize: 'var(--fs-sm)' }}>+ add fallback profile</Button>
       </Section>
 
       <Section title="Advanced" description="Retention is indefinite unless a bounded default is explicitly selected.">
@@ -154,7 +166,7 @@ export default function AgentDefinitionForm({ value, onChange, errors = validate
           <Check type="radio" name="retention" label="Indefinite" checked={value.retention === 'indefinite'} onChange={() => onChange({ ...value, retention: 'indefinite', defaultRunTtlMs: '' })} />
           <Check type="radio" name="retention" label="Bounded default" checked={value.retention === 'bounded'} onChange={() => set('retention', 'bounded')} />
         </div>
-        {value.retention === 'bounded' && <Field label="Default Run TTL (milliseconds)" error={errors.defaultRunTtlMs}><input aria-label="default run TTL milliseconds" value={value.defaultRunTtlMs} onChange={(event) => set('defaultRunTtlMs', event.target.value)} inputMode="numeric" style={{ ...agentFieldStyle, maxWidth: 280 }} /></Field>}
+        {value.retention === 'bounded' && <Field label="Default Run TTL (milliseconds)" error={errors.defaultRunTtlMs}><input className="ui-input" aria-label="default run TTL milliseconds" value={value.defaultRunTtlMs} onChange={(event) => set('defaultRunTtlMs', event.target.value)} inputMode="numeric" style={{ maxWidth: 280 }} /></Field>}
       </Section>
     </form>
   );
@@ -235,8 +247,8 @@ function CapabilityPicker({ value, capabilities, onChange }: { value: AgentDefin
             </span>
           );
         })}
-        <select aria-label="add capability" value="" onChange={(event) => add(event.target.value)}
-          style={{ ...agentFieldStyle, width: 'auto', fontSize: 'var(--fs-sm)', borderStyle: 'dashed', color: 'var(--term-muted)' }}>
+        <select className="ui-select" aria-label="add capability" value="" onChange={(event) => add(event.target.value)}
+          style={{ width: 'auto', fontSize: 'var(--fs-sm)', borderStyle: 'dashed', color: 'var(--term-muted)' }}>
           <option value="">+ browse capabilities</option>
           {available.map((entry) => (
             <option key={`${entry.kind}:${entry.id}`} value={`${entry.kind}:${entry.id}`}>
@@ -251,8 +263,6 @@ function CapabilityPicker({ value, capabilities, onChange }: { value: AgentDefin
 
 const hintStyle: React.CSSProperties = { margin: 0, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)' };
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) { return <label style={labelStyle}>{label}{children}{error && <span role="alert" style={{ color: 'var(--danger, var(--term-danger))', fontSize: 'var(--fs-xs)', letterSpacing: 0, textTransform: 'none' }}>{error}</span>}</label>; }
-function RefField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) { return <Field label={label}><textarea aria-label={label.toLowerCase()} value={value} onChange={(event) => onChange(event.target.value)} rows={4} style={{ ...agentFieldStyle, fontFamily: 'var(--font-mono)', resize: 'vertical' }} /></Field>; }
+function RefField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) { return <Field label={label}><textarea className="ui-input" aria-label={label.toLowerCase()} value={value} onChange={(event) => onChange(event.target.value)} rows={4} style={{ fontFamily: 'var(--font-mono)', resize: 'vertical' }} /></Field>; }
 function Check({ label, checked, onChange, type = 'checkbox', name }: { label: string; checked: boolean; onChange: (value: boolean) => void; type?: 'checkbox' | 'radio'; name?: string }) { return <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-md)' }}><input type={type} name={name} checked={checked} onChange={(event) => onChange(event.target.checked)} />{label}</label>; }
 const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase' };
-export const outlineButtonStyle: React.CSSProperties = { alignSelf: 'flex-start', border: '1px solid var(--term-line)', background: 'transparent', color: 'var(--term-fg)', padding: '6px 10px', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)', cursor: 'pointer' };
-const textButtonStyle: React.CSSProperties = { ...outlineButtonStyle, border: 0, padding: '7px 0 0', color: 'var(--term-muted)' };

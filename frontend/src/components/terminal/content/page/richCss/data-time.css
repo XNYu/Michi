@@ -1,0 +1,7 @@
+/* Michi rules for the Desk-drawn data-time blocks (deskRenderers.tsx): excerpts of agent-desk CSS they read, and fits to Michi's page. Theme tokens only. */
+
+/* ring: Mantine puts the label in an absolute box but leaves its alignment to the caller. */
+.michi-mantine .mantine-RingProgress-label { text-align: center; }
+
+/* gantt: a month tick at the edge of the axis can be only a few days wide; cut its label with an ellipsis so "Sep 2026" is not read as "Sep 2". */
+.michi-mantine .desk-bars-ticks[data-row=major] .desk-bars-tick { text-overflow: ellipsis; }

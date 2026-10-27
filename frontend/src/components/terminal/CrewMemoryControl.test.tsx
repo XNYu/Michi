@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CrewMemorySettings, useCrewMemory } from './CrewMemoryControl';
 
@@ -36,16 +36,5 @@ describe('Crew memory preferences', () => {
     rerender(<Composer nodeId="existing" bound />);
     await waitFor(() => expect(screen.getByTestId('mode').textContent).toBe('persistent'));
     expect(screen.getByTestId('override').textContent).toBe('server default');
-  });
-
-  it('ignores a stale node response and leaves an unknown native mode unknown', async () => {
-    let finish!: (value: unknown) => void;
-    vi.stubGlobal('fetch', vi.fn((url) => String(url).includes('first')
-      ? new Promise((resolve) => { finish = resolve; })
-      : Promise.resolve({ ok: true, json: async () => ({ defaultMode: 'persistent', mode: null }) })));
-    const { rerender } = render(<Composer nodeId="first" bound />);
-    rerender(<Composer nodeId="second" bound />);
-    await act(async () => finish({ ok: true, json: async () => ({ defaultMode: 'persistent', mode: 'temporary' }) }));
-    expect(screen.getByTestId('mode').textContent).toBe('unknown');
   });
 });

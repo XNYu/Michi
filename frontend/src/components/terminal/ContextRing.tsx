@@ -140,17 +140,38 @@ interface TooltipProps {
   summary?: ContextRingProps['usageSummary'];
 }
 
+const VIEWPORT_MARGIN = 8;
+const ANCHOR_GAP = 8;
+
 function ContextRingTooltip({ anchorRef, pct, color, summary }: TooltipProps) {
+  const surfaceRef = React.useRef<HTMLDivElement>(null);
   const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null);
 
-  React.useLayoutEffect(() => {
+  // The surface hugs its content, so centre it on the ring using its measured
+  // width. The first pass (nothing mounted yet) places it at the ring's centre;
+  // the pass after mount corrects it before paint.
+  const measure = React.useCallback(() => {
     const el = anchorRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    // Position above the ring, centered horizontally
-    const width = Math.min(288, window.innerWidth - 16);
-    setPos({ left: Math.max(8, Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - width - 8)), top: r.top - 8 });
+    const width = surfaceRef.current?.offsetWidth ?? 0;
+    const left = Math.max(
+      VIEWPORT_MARGIN,
+      Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - width - VIEWPORT_MARGIN),
+    );
+    const top = r.top - ANCHOR_GAP;
+    setPos((prev) => (
+      prev !== null && Math.abs(prev.left - left) < 0.5 && Math.abs(prev.top - top) < 0.5
+        ? prev
+        : { left, top }
+    ));
   }, [anchorRef]);
+
+  // Re-measure after mount and whenever the text (and so the width) changes.
+  const hasPosition = pos !== null;
+  React.useLayoutEffect(() => {
+    measure();
+  }, [measure, hasPosition, pct, summary]);
 
   if (!pos) return null;
 
@@ -161,6 +182,7 @@ function ContextRingTooltip({ anchorRef, pct, color, summary }: TooltipProps) {
 
   return (
     <PopoverSurface
+      ref={surfaceRef}
       variant="tooltip"
       menuKind="usage"
       className="michi-menu-usage"

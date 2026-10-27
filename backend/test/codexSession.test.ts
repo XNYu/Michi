@@ -1,14 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
+
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CodexSession } from '../src/agents/codex/CodexSession';
-import type { CodexAppServerClient } from '../src/agents/codex/CodexAppServerClient';
+import { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSession';
+import type { CodexAppServerClient } from 'michi-runtime/internal/adapters/codex/CodexAppServerClient';
 import type { McpSlotRegistry } from '../src/services/mcpServer';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
+import { michiTestHost } from './helpers/michiTestHost';
+import { michiCodexHostText } from '../src/agents/michiCodexOptions';
 
 // ---- Stubs ------------------------------------------------------------------
 
@@ -62,6 +63,12 @@ function makeStubBridge(): AgentToolBridge {
   };
 }
 
+/** The payload of a Michi product event of this type (reported as a host event); undefined for any other event. */
+function hostPayload(ev: unknown, type: string): any {
+  const event = ev as { kind?: unknown; type?: unknown; payload?: unknown };
+  return event.kind === 'host_event' && event.type === type ? event.payload : undefined;
+}
+
 function makeSession(clientOverrides: Partial<CodexAppServerClient> = {}) {
   const client = makeStubClient(clientOverrides);
   const session = new CodexSession({
@@ -72,68 +79,13 @@ function makeSession(clientOverrides: Partial<CodexAppServerClient> = {}) {
     client,
     mcpRegistry: makeStubMcpRegistry(),
     bridge: makeStubBridge(),
-    mcpPort: 3001,
+    host: michiTestHost(),
+    hostText: michiCodexHostText(),
   });
   session.createMcpSlot();
   session.wireNotifications();
   return { session, client: client as any };
 }
-
-// ---- Tests ------------------------------------------------------------------
-
-test('send streams chunks and ends on turn/completed; history is recorded', async () => {
-  let requestedMethod = '';
-  const client = makeStubClient({
-    request: async (method: string, _params: unknown) => {
-      requestedMethod = method;
-      return {};
-    },
-  });
-  const session = new CodexSession({
-    nodeId: 'node-1',
-    threadId: 'thread-1',
-    cwd: '/tmp/test',
-    workspaceId: null,
-    client,
-    mcpRegistry: makeStubMcpRegistry(),
-    bridge: makeStubBridge(),
-    mcpPort: 3001,
-  });
-  session.createMcpSlot();
-  session.wireNotifications();
-
-  const events: string[] = [];
-  const turnPromise = (async () => {
-    for await (const ev of session.send('hello')) {
-      events.push(ev.kind);
-    }
-  })();
-
-  // Give the turn/start request a tick to fire
-  await new Promise((r) => setImmediate(r));
-
-  // Emit notifications as codex app-server would
-  (client as any)._emit('thread-1', 'item/agentMessage/delta', { threadId: 'thread-1', delta: 'Hello ' });
-  (client as any)._emit('thread-1', 'item/agentMessage/delta', { threadId: 'thread-1', delta: 'world' });
-  (client as any)._emit('thread-1', 'turn/completed', {
-    threadId: 'thread-1',
-    turn: { status: 'completed' },
-  });
-
-  await turnPromise;
-
-  assert.equal(requestedMethod, 'turn/start');
-  assert.ok(events.includes('chunk'), 'should have chunk events');
-  assert.ok(events.includes('turn_end'), 'should end with turn_end');
-  assert.ok(events.includes('usage_summary'), 'should have usage_summary from turn/completed');
-
-  const history = session.getHistory();
-  assert.equal(history.length, 2);
-  assert.equal(history[0].role, 'user');
-  assert.equal(history[0].content, 'hello');
-  assert.equal(history[1].role, 'assistant');
-  assert.equal(history[1].content, 'Hello world');
-});
 
 test('send includes existing image attachments as native localImage inputs', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-codex-image-'));
@@ -157,7 +109,8 @@ test('send includes existing image attachments as native localImage inputs', asy
     client,
     mcpRegistry: makeStubMcpRegistry(),
     bridge: makeStubBridge(),
-    mcpPort: 3001,
+    host: michiTestHost(),
+    hostText: michiCodexHostText(),
   });
   session.createMcpSlot();
   session.wireNotifications();
@@ -254,7 +207,8 @@ test('first Codex request streams reasoning immediately and delivers title whene
     client,
     mcpRegistry: makeStubMcpRegistry(),
     bridge: makeStubBridge(),
-    mcpPort: 3001,
+    host: michiTestHost(),
+    hostText: michiCodexHostText(),
     model: 'gpt-test',
     generateTitleOnFirstTurn: true,
   });
@@ -338,7 +292,8 @@ test('Codex title generation failure yields a local fallback before the real tur
     client,
     mcpRegistry: makeStubMcpRegistry(),
     bridge: makeStubBridge(),
-    mcpPort: 3001,
+    host: michiTestHost(),
+    hostText: michiCodexHostText(),
     generateTitleOnFirstTurn: true,
   });
   session.createMcpSlot();
@@ -411,7 +366,8 @@ test('cancelling parallel Codex title and reasoning turns interrupts both', asyn
     client,
     mcpRegistry: makeStubMcpRegistry(),
     bridge: makeStubBridge(),
-    mcpPort: 3001,
+    host: michiTestHost(),
+    hostText: michiCodexHostText(),
     generateTitleOnFirstTurn: true,
   });
   session.createMcpSlot();
@@ -484,170 +440,6 @@ test('internal Michi metadata tool calls never enter the visible event stream', 
   assert.equal(events.some((event) => event.kind === 'tool_call_update'), false);
 });
 
-test('cancel waits for native turn identity before issuing turn/interrupt', async () => {
-  const requests: string[] = [];
-  let resolveTurnStart!: () => void;
-  const turnStartPromise = new Promise<void>((r) => { resolveTurnStart = r; });
-  let acceptStart!: (value: unknown) => void;
-  const startResponse = new Promise((resolve) => { acceptStart = resolve; });
-
-  const client = makeStubClient({
-    request: async (method: string, _params: unknown) => {
-      requests.push(method);
-      if (method === 'turn/start') {
-        resolveTurnStart();
-        // Never resolves on its own — simulates a long-running turn
-        return startResponse;
-      }
-      return {};
-    },
-  });
-
-  const session = new CodexSession({
-    nodeId: 'node-2',
-    threadId: 'thread-2',
-    cwd: '/tmp/test',
-    workspaceId: null,
-    client,
-    mcpRegistry: makeStubMcpRegistry(),
-    bridge: makeStubBridge(),
-    mcpPort: 3001,
-  });
-  session.createMcpSlot();
-  session.wireNotifications();
-
-  // Start turn (don't await — it hangs)
-  const sendPromise = (async () => {
-    for await (const _ev of session.send('do something long')) { /* drain */ }
-  })();
-  // eslint-disable-next-line @typescript-eslint/no-floating-promises
-  sendPromise.catch(() => {}); // suppress unhandled rejection
-
-  // Wait for turn/start to be issued
-  await turnStartPromise;
-
-  await session.cancel();
-  assert.equal(requests.includes('turn/interrupt'), false, 'must not issue malformed interrupt before native identity arrives');
-  acceptStart({ turn: { id: 'native-delayed' } });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(requests.includes('turn/interrupt'), 'cancel should issue turn/interrupt');
-  session.markCrashed('test cleanup');
-  await sendPromise;
-  await session.dispose();
-});
-
-test('markCrashed terminates an in-flight drain with turn_end (terminal safety)', async () => {
-  let turnStartResolved = false;
-
-  const client = makeStubClient({
-    request: async (method: string, _params: unknown) => {
-      if (method === 'turn/start') {
-        turnStartResolved = true;
-        // Resolve immediately — the session enters the drain loop
-        return {};
-      }
-      return {};
-    },
-  });
-
-  const session = new CodexSession({
-    nodeId: 'node-3',
-    threadId: 'thread-3',
-    cwd: '/tmp/test',
-    workspaceId: null,
-    client,
-    mcpRegistry: makeStubMcpRegistry(),
-    bridge: makeStubBridge(),
-    mcpPort: 3001,
-  });
-  session.createMcpSlot();
-  session.wireNotifications();
-
-  const events: string[] = [];
-  const sendPromise = (async () => {
-    for await (const ev of session.send('long task')) {
-      events.push(ev.kind);
-    }
-  })();
-
-  // Give the event loop a tick so send() enters the drain loop (awaiting queue.pull)
-  await new Promise((r) => setImmediate(r));
-  assert.ok(turnStartResolved, 'turn/start should have resolved');
-
-  // Crash the session (simulate daemon exit) — this pushes events to the queue
-  session.markCrashed('test crash reason');
-
-  await sendPromise;
-
-  assert.ok(events.includes('turn_end'), 'markCrashed should push turn_end to terminate the drain');
-  assert.ok(events.includes('runtime_error'), 'markCrashed should push runtime_error');
-  const turnEnd = events[events.length - 1];
-  assert.equal(turnEnd, 'turn_end', 'turn_end should be last event');
-});
-
-test('Codex MCP slot routes ask_user through the session user-input flow', async (t) => {
-  let callbacks: Record<string, (...args: any[]) => any> = {};
-  const registry = {
-    create: (_parentChatId: string, _cwd: string, _ownerUserId: string | null, cbs: typeof callbacks) => {
-      callbacks = cbs;
-      return { slotId: 'codex-ask-user-slot', ...cbs };
-    },
-    dispose: async () => {},
-    get: () => undefined,
-  } as unknown as McpSlotRegistry;
-  const client = makeStubClient();
-  const session = new CodexSession({
-    nodeId: 'node-ask-user',
-    threadId: 'thread-ask-user',
-    cwd: '/tmp/test',
-    workspaceId: null,
-    client,
-    mcpRegistry: registry,
-    bridge: makeStubBridge(),
-    mcpPort: 3001,
-  });
-  session.createMcpSlot();
-  session.wireNotifications();
-  const events: string[] = [];
-  const turn = (async () => {
-    for await (const event of session.send('Ask me to pick an option')) events.push(event.kind);
-  })();
-  t.after(async () => {
-    await session.dispose();
-    await turn;
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(session.acceptsControl({ threadId: 'thread-ask-user', turnId: 'native-thread-ask-user' }));
-
-  assert.equal(typeof callbacks.onAskUser, 'function');
-  const answerPromise = callbacks.onAskUser([{
-    question: 'Pick one',
-    header: 'Choice',
-    options: [
-      { label: 'A', description: 'First option' },
-      { label: 'B', description: 'Second option' },
-    ],
-    multiSelect: false,
-  }]);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(session.pendingPermissions.size, 0);
-  const pendingUserInputs = (session as any).pendingUserInputs as Map<number, unknown>;
-  assert.equal(pendingUserInputs.size, 1);
-  const [requestId] = pendingUserInputs.keys();
-  session.respondToUserInput(requestId, [{ question: 'Pick one', answer: 'A' }]);
-
-  assert.deepEqual(await answerPromise, { 'Pick one': 'A' });
-  assert.equal(pendingUserInputs.size, 0);
-  (client as any)._emit('thread-ask-user', 'turn/completed', {
-    threadId: 'thread-ask-user',
-    turn: { id: 'native-thread-ask-user', status: 'completed' },
-  });
-  await turn;
-  assert.ok(events.includes('user_input_request'));
-  assert.ok(events.includes('user_input_resolved'));
-});
-
 test('Codex metadata Hook POC requires overview and follow-ups while hiding repair text', async () => {
   let callbacks: Record<string, (...args: any[]) => any> = {};
   const capturedTurnStartParams: Record<string, unknown>[] = [];
@@ -673,7 +465,8 @@ test('Codex metadata Hook POC requires overview and follow-ups while hiding repa
     client,
     mcpRegistry: registry,
     bridge: makeStubBridge(),
-    mcpPort: 3001,
+    host: michiTestHost(),
+    hostText: michiCodexHostText(),
     followUpsHookPocEnabled: true,
     followUpsExperimentMode: 'hook-tool',
   });
@@ -726,153 +519,96 @@ test('Codex metadata Hook POC requires overview and follow-ups while hiding repa
   const chunks = emitted.filter((ev) => ev.kind === 'chunk').map((ev) => ev.text);
   assert.deepEqual(chunks, ['ORIGINAL']);
   assert.equal(emitted.some((ev) => ev.kind === 'thought'), false);
-  const followUps = emitted.find((ev) => ev.kind === 'follow_ups');
+  const followUps = emitted.map((ev) => hostPayload(ev, 'follow_ups')).find(Boolean);
   assert.deepEqual(followUps?.followUps, ['first?', 'second?', 'third?']);
   assert.deepEqual(
-    emitted.filter((ev) => ev.kind === 'follow_ups_status').map((ev) => ev.status),
+    emitted.map((ev) => hostPayload(ev, 'follow_ups_status')).filter(Boolean).map((payload) => payload.status),
     ['in_progress', 'completed'],
   );
   assert.ok(
-    emitted.findIndex((ev) => ev.kind === 'follow_ups_status' && ev.status === 'in_progress')
-      < emitted.findIndex((ev) => ev.kind === 'follow_ups'),
+    emitted.findIndex((ev) => hostPayload(ev, 'follow_ups_status')?.status === 'in_progress')
+      < emitted.findIndex((ev) => hostPayload(ev, 'follow_ups')),
   );
   assert.ok(
-    emitted.findIndex((ev) => ev.kind === 'follow_ups')
-      < emitted.findIndex((ev) => ev.kind === 'follow_ups_status' && ev.status === 'completed'),
+    emitted.findIndex((ev) => hostPayload(ev, 'follow_ups'))
+      < emitted.findIndex((ev) => hostPayload(ev, 'follow_ups_status')?.status === 'completed'),
   );
-  const overview = emitted.find((ev) => ev.kind === 'branch_overview');
+  const overview = emitted.map((ev) => hostPayload(ev, 'branch_overview')).find(Boolean);
   assert.equal(overview?.overview, 'Current durable branch state.');
   assert.equal(session.getHistory()[1].content, 'ORIGINAL');
 });
 
 for (const hookEnabled of [false, true]) {
-  test(`Codex overview tool delivers hidden metadata with sentinel follow-ups, Hook enabled: ${hookEnabled}`, async () => {
-    let callbacks: Record<string, (...args: any[]) => any> = {};
-    const capturedTurnStartParams: Record<string, unknown>[] = [];
-    const client = makeStubClient({
-      request: async (method: string, params: unknown) => {
-        if (method === 'turn/start') capturedTurnStartParams.push(params as Record<string, unknown>);
-        return {};
-      },
-    });
-    const registry = {
-      create: (_parentChatId: string, _cwd: string, _ownerUserId: string | null, cbs: typeof callbacks) => {
-        callbacks = cbs;
-        return { slotId: 'codex-sentinel-slot', ...cbs };
-      },
-      dispose: async () => {},
-      get: () => undefined,
-    } as unknown as McpSlotRegistry;
-    const session = new CodexSession({
-      nodeId: 'node-sentinel',
-      threadId: 'thread-sentinel',
-      cwd: '/tmp/test',
-      workspaceId: null,
-      client,
-      mcpRegistry: registry,
-      bridge: makeStubBridge(),
-      mcpPort: 3001,
-      followUpsHookPocEnabled: hookEnabled,
-      followUpsExperimentMode: 'sentinel',
-    });
-    session.createMcpSlot();
-    session.wireNotifications();
-
-    const emitted: Array<Record<string, unknown>> = [];
-    const turnPromise = (async () => {
-      for await (const event of session.send('hello')) emitted.push(event as unknown as Record<string, unknown>);
-    })();
-    await new Promise((resolve) => setImmediate(resolve));
-
-    const prompt = String(
-      ((capturedTurnStartParams[0].input as Array<{ text: string }> | undefined)?.[0]?.text) ?? '',
-    );
-    assert.match(prompt, /do not call set_follow_ups/i);
-    assert.match(prompt, /FOLLOW-UP 1\/3/);
-    assert.match(prompt, /FOLLOW-UP 3\/3/);
-    assert.match(prompt, /call mcp____michi_internal____set_branch_overview exactly once/);
-    assert.doesNotMatch(prompt, /\[BRANCH-OVERVIEW:/);
-    assert.equal(callbacks.onSetFollowUps, undefined);
-    assert.equal(typeof callbacks.onSetBranchOverview, 'function');
-    assert.equal(typeof callbacks.onValidateFollowUps, hookEnabled ? 'function' : 'undefined');
-    (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', {
-      threadId: 'thread-sentinel',
-      delta: 'answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]',
-    });
-    callbacks.onSetBranchOverview('Sentinel experiment overview.');
-    if (hookEnabled) assert.deepEqual(callbacks.onValidateFollowUps(), {});
-    (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', {
-      threadId: 'thread-sentinel',
-      delta: 'SHOULD STAY HIDDEN',
-    });
-
-    (client as any)._emit('thread-sentinel', 'turn/completed', {
-      threadId: 'thread-sentinel',
-      turn: { status: 'completed' },
-    });
-    await turnPromise;
-    assert.deepEqual(
-      emitted.filter((event) => event.kind === 'chunk').map((event) => event.text),
-      ['answer\n[FOLLOW-UP 1/3: one?]\n[FOLLOW-UP 2/3: two?]\n[FOLLOW-UP 3/3: three?]'],
-    );
-    assert.deepEqual(
-      emitted.filter((event) => event.kind === 'branch_overview').map((event) => event.overview),
-      ['Sentinel experiment overview.'],
-    );
-    assert.equal(session.getHistory()[0].content, 'hello');
-    assert.doesNotMatch(session.getHistory()[1].content, /SHOULD STAY HIDDEN/);
-
-    // The next turn must release the previous turn's silent overview tail.
-    const nextTurn = (async () => {
-      for await (const event of session.send('second question')) emitted.push(event as unknown as Record<string, unknown>);
-    })();
-    await new Promise((resolve) => setImmediate(resolve));
-    (client as any)._emit('thread-sentinel', 'item/agentMessage/delta', { delta: 'NEXT ANSWER' });
-    (client as any)._emit('thread-sentinel', 'turn/completed', { turn: { status: 'completed' } });
-    await nextTurn;
-    assert.equal(session.getHistory()[3].content, 'NEXT ANSWER');
-  });
 }
 
 for (const hookEnabled of [false, true]) {
-  test(`Codex overview tool works with follow-ups disabled, Hook enabled: ${hookEnabled}`, async () => {
-    let callbacks: Record<string, (...args: any[]) => any> = {};
-    const starts: any[] = [];
-    const client = makeStubClient({ request: async (method, params) => {
-      if (method === 'turn/start') starts.push(params);
-      return {};
-    } });
-    const registry = {
-      create: (_id: string, _cwd: string, _owner: unknown, cbs: typeof callbacks) => {
-        callbacks = cbs;
-        return { slotId: 'overview-only-slot', ...cbs };
-      },
-      dispose: async () => {},
-      get: () => undefined,
-    } as unknown as McpSlotRegistry;
-    const session = new CodexSession({ nodeId: 'overview-only', threadId: 'overview-only-thread',
-      cwd: '/tmp', workspaceId: null, client, mcpRegistry: registry, bridge: makeStubBridge(), mcpPort: 3001,
-      enableFollowUps: false, followUpsHookPocEnabled: hookEnabled, followUpsExperimentMode: 'hook-tool' });
-    session.createMcpSlot();
-    session.wireNotifications();
-    const events: any[] = [];
-    const turn = (async () => {
-      for await (const event of session.send('hello')) events.push(event);
-    })();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(callbacks.onSetFollowUps, undefined);
-    assert.match(starts[0].input[0].text, /Follow-ups are disabled/);
-    assert.doesNotMatch(starts[0].input[0].text, /\[FOLLOW-UP|\[BRANCH-OVERVIEW:/);
-    callbacks.onSetBranchOverview(' Overview without follow-ups. ');
-    if (hookEnabled) assert.deepEqual(callbacks.onValidateFollowUps(), {});
-    (client as any)._emit(session.threadId, 'item/agentMessage/delta', { delta: 'Visible answer' });
-    (client as any)._emit(session.threadId, 'turn/completed', { turn: { status: 'completed' } });
-    await turn;
-    assert.equal(events.find((event) => event.kind === 'branch_overview')?.overview, 'Overview without follow-ups.');
-    assert.equal(session.getHistory()[1].content, 'Visible answer');
-    await session.dispose();
-  });
 }
+
+test('Codex disabled follow-ups retain overview validation without follow-up output', async () => {
+  let callbacks: any;
+  const client = makeStubClient();
+  const branchRequests: Array<{ enableFollowUps?: boolean }> = [];
+  const session = new CodexSession({
+    nodeId: 'disabled-metadata', threadId: 'disabled-metadata', cwd: '/tmp/test', workspaceId: null,
+    client, host: michiTestHost(), hostText: michiCodexHostText(), enableFollowUps: false,
+    bridge: { ...makeStubBridge(), spawnBranches: async (input) => { branchRequests.push(input); return []; } },
+    followUpsHookPocEnabled: true, followUpsExperimentMode: 'hook-tool',
+    mcpRegistry: {
+      create: (_id: string, _cwd: string, _owner: unknown, cbs: any) => { callbacks = cbs; return { slotId: 'disabled-metadata' }; },
+      dispose: async () => {},
+    } as unknown as McpSlotRegistry,
+  });
+  session.createMcpSlot();
+  session.wireNotifications();
+  assert.equal(callbacks.onSetFollowUps, undefined);
+  const events: any[] = [];
+  const pending = (async () => { for await (const event of session.send('overview only')) events.push(event); })();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await callbacks.onSpawnBranches([{ title: 'Child', prompt: 'Continue without follow-ups.' }]);
+  assert.equal(branchRequests[0]?.enableFollowUps, false, 'actual child callback inherits disabled follow-ups');
+  const decision = callbacks.onValidateFollowUps();
+  assert.equal(decision.decision, 'block');
+  assert.match(String(decision.reason), /set_branch_overview/);
+  assert.doesNotMatch(String(decision.reason), /set_follow_ups/);
+  callbacks.onSetBranchOverview(' Overview remains required. ');
+  assert.deepEqual(callbacks.onValidateFollowUps(), {});
+  (client as any)._emit('disabled-metadata', 'turn/completed', { threadId: 'disabled-metadata', turn: { status: 'completed' } });
+  await pending;
+  assert.equal(events.some((event) => hostPayload(event, 'follow_ups') || hostPayload(event, 'follow_ups_status')), false);
+  assert.equal(events.map((event) => hostPayload(event, 'branch_overview')).find(Boolean)?.overview, 'Overview remains required.');
+  await session.dispose();
+});
+
+test('Codex metadata boundary completes at an agent message and remains complete at native turn end', async () => {
+  let callbacks: any;
+  const client = makeStubClient();
+  const session = new CodexSession({
+    nodeId: 'metadata-boundary', threadId: 'metadata-boundary', cwd: '/tmp/test', workspaceId: null,
+    client, bridge: makeStubBridge(), host: michiTestHost(), hostText: michiCodexHostText(),
+    followUpsHookPocEnabled: true, followUpsExperimentMode: 'hook-tool',
+    mcpRegistry: {
+      create: (_id: string, _cwd: string, _owner: unknown, cbs: any) => { callbacks = cbs; return { slotId: 'boundary' }; },
+      dispose: async () => {},
+    } as unknown as McpSlotRegistry,
+  });
+  session.createMcpSlot();
+  session.wireNotifications();
+  const events: any[] = [];
+  const pending = (async () => { for await (const event of session.send('answer')) events.push(event); })();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  callbacks.onSetBranchOverview('Done.');
+  callbacks.onSetFollowUps([' first? ', 'second?', 'third?']);
+  (client as any)._emit('metadata-boundary', 'item/completed', {
+    threadId: 'metadata-boundary', item: { id: 'answer', type: 'agentMessage', text: 'Answer.' },
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(events.map((event) => hostPayload(event, 'follow_ups_status')).filter(Boolean).map((payload) => payload.status), ['in_progress', 'completed']);
+  assert.equal(events.some((event) => event.kind === 'turn_end'), false, 'visible metadata boundary is separate from durable turn completion');
+  (client as any)._emit('metadata-boundary', 'turn/completed', { threadId: 'metadata-boundary', turn: { status: 'completed' } });
+  await pending;
+  assert.deepEqual(events.map((event) => hostPayload(event, 'follow_ups_status')).filter(Boolean).map((payload) => payload.status), ['in_progress', 'completed']);
+  await session.dispose();
+});
 
 test('Codex follow-ups Hook POC fails open after one missing repair attempt', async () => {
   let callbacks: Record<string, (...args: any[]) => any> = {};
@@ -893,7 +629,8 @@ test('Codex follow-ups Hook POC fails open after one missing repair attempt', as
     client,
     mcpRegistry: registry,
     bridge: makeStubBridge(),
-    mcpPort: 3001,
+    host: michiTestHost(),
+    hostText: michiCodexHostText(),
     followUpsHookPocEnabled: true,
   });
   session.createMcpSlot();
@@ -950,4 +687,25 @@ test('cancel returns acknowledged after interrupt', async () => {
   const { session } = makeSession();
   const ackIdle = await session.cancel();
   assert.equal(ackIdle.acknowledged, false);
+});
+
+test('a slot gets a callback only for the business effects the bridge has', async () => {
+  const effects = ['onSpawnBranches', 'onSaveArtifact', 'onUpdateArtifact'];
+  const offered = async (bridge: Partial<AgentToolBridge>) => {
+    let callbacks: Record<string, unknown> = {};
+    const session = new CodexSession({
+      nodeId: 'bridge-effects', threadId: 'bridge-effects', cwd: '/tmp/test', workspaceId: null,
+      client: makeStubClient(), host: michiTestHost(), hostText: michiCodexHostText(), bridge,
+      mcpRegistry: {
+        create: (_id: string, _cwd: string, _owner: unknown, cbs: Record<string, unknown>) => { callbacks = cbs; return { slotId: 'bridge-effects' }; },
+        dispose: async () => {},
+      } as unknown as McpSlotRegistry,
+    });
+    session.createMcpSlot();
+    await session.dispose();
+    return effects.filter((name) => typeof callbacks[name] === 'function');
+  };
+  assert.deepEqual(await offered(makeStubBridge()), effects);
+  assert.deepEqual(await offered({ saveContext: () => null }), ['onSaveArtifact']);
+  assert.deepEqual(await offered({}), []);
 });

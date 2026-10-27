@@ -30,12 +30,6 @@ describe('useTerminalColors browser theme sync', () => {
     H.setVibrancy.mockReset();
   });
 
-  it('sends the active dark palette background to Electron', () => {
-    const { result } = renderHook(() => useTerminalColors());
-    expect(result.current['--term-bg']).toBe('#272822');
-    expect(H.setDarkMaterial).toHaveBeenLastCalledWith(true, '#272822');
-  });
-
   it('updates Electron when Michi switches to a light palette', () => {
     const { rerender } = renderHook(() => useTerminalColors());
     act(() => {

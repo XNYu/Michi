@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useChatStore, useChatNodesSnapshot, selectAllChats } from '../../state/chatStore';
+import { isVisibleConversationNode } from '../../state/conversationVisibility';
 import { buildCommands, filterCommands, Command, PageId } from '../../state/commands';
 import { type MessageMatch } from '../../state/search';
-import { useServerSearch } from '../../state/useServerSearch';
 import { useNodeSearch } from '../../state/useNodeSearch';
 import { type NodeGroupedResult } from '../../services/api';
 import { relativeTime } from '../../lib/relativeTime';
@@ -13,6 +13,9 @@ import { MenuItem } from '../ui/Popover';
 import { kbd } from '../../lib/platform';
 import { TreePrefetchContext, TREE_PREFETCH_INTENT_MS } from '../../state/treePrefetch';
 import { CommandIconGlyph } from './commandIcons';
+import { isSystemWorkspace, systemWorkspaceIds, withoutSystemWorkspaces } from '../../state/assistant/systemWorkspace';
+import { openAssistantPanel, useAssistantSnapshot } from '../../state/assistant/assistantStore';
+import { requestAllTasks } from '../../state/pages/allTasksNav';
 
 function renderSnippetWithMark(text: string, range: [number, number]) {
   const [s, e] = range;
@@ -202,14 +205,25 @@ export default function CommandPalette({
     return () => clearTimeout(t);
   }, [query]);
 
+  // The assistant's system workspace is never offered: not as a workspace,
+  // a chat or a search hit. Navigation still resolves it (navDeps).
+  // The assistant's own id counts too: search can find its messages before
+  // this window has loaded its workspace.
+  const assistant = useAssistantSnapshot();
+  const assistantWorkspaceId = assistant.info?.workspaceId ?? null;
+  const userProjects = useMemo(() => withoutSystemWorkspaces(projects), [projects]);
+  const hiddenWorkspaceIds = useMemo(() => {
+    const ids = systemWorkspaceIds(projects);
+    return assistantWorkspaceId && !ids.has(assistantWorkspaceId) ? new Set([...ids, assistantWorkspaceId]) : ids;
+  }, [projects, assistantWorkspaceId]);
+
   // Server-side FTS search — node-grouped, time-sorted, with breadcrumbs.
   // Each result is one unique node with up to 3 best-matching snippets.
   const nodeSearch = useNodeSearch(debouncedQuery);
-  const nodeResults = nodeSearch.nodes;
-
-  // Keep the old flat search available for backward compat / fallback.
-  const searchResult = useServerSearch(debouncedQuery, projects);
-  const searchMatches = searchResult.matches;
+  const nodeResults = useMemo(
+    () => nodeSearch.nodes.filter((r) => !hiddenWorkspaceIds.has(r.workspaceId) && isVisibleConversationNode(nodesSnapshot[r.nodeId])),
+    [nodeSearch.nodes, hiddenWorkspaceIds, nodesSnapshot],
+  );
 
   const navDeps = useMemo(
     () => ({
@@ -255,16 +269,20 @@ export default function CommandPalette({
     onClose();
   }, [navDeps, setPage, onClose, query, setSearchHighlightTerm]);
 
-  const allChats = useMemo(() => selectAllChats({ projects, nodes: nodesSnapshot }), [projects, nodesSnapshot]);
+  const allChats = useMemo(() => selectAllChats({ projects: userProjects, nodes: nodesSnapshot }), [userProjects, nodesSnapshot]);
 
   // Live workspaces offered as direct jump targets — exclude deleted/archived
   // and the currently-active one (jumping to where you already are is a no-op).
   const workspaces = useMemo(
     () =>
-      projects
+      userProjects
         .filter((p) => !p.deletedAt && !p.archivedAt && p.id !== activeProject?.id)
         .map((p) => ({ id: p.id, name: p.name })),
-    [projects, activeProject],
+    [userProjects, activeProject],
+  );
+  const openAssistant = useMemo(
+    () => (assistant.status === 'unsupported' ? undefined : () => { onClose(); openAssistantPanel(); }),
+    [assistant.status, onClose],
   );
 
   const switchWorkspace = useCallback(
@@ -274,13 +292,17 @@ export default function CommandPalette({
     [selectProject, setPage, onClose],
   );
 
+  // With the assistant's hidden workspace active (its conversation opened as
+  // a pane) the palette offers none of that workspace's threads: archiving
+  // the assistant's thread would start a new conversation behind the panel.
+  const threadProject = isSystemWorkspace(activeProject) ? null : activeProject;
   const liveTrees = useMemo(
-    () => (activeProject?.trees ?? []).filter((t) => !t.archivedAt).map((t) => ({ id: t.id, name: t.name || nodesSnapshot[t.rootNodeId]?.title || 'Untitled' })),
-    [activeProject, nodesSnapshot],
+    () => (threadProject?.trees ?? []).filter((t) => !t.archivedAt).map((t) => ({ id: t.id, name: t.name || nodesSnapshot[t.rootNodeId]?.title || 'Untitled' })),
+    [threadProject, nodesSnapshot],
   );
   const archivedTrees = useMemo(
-    () => (activeProject?.trees ?? []).filter((t) => !!t.archivedAt).map((t) => ({ id: t.id, name: t.name || nodesSnapshot[t.rootNodeId]?.title || 'Untitled' })),
-    [activeProject, nodesSnapshot],
+    () => (threadProject?.trees ?? []).filter((t) => !!t.archivedAt).map((t) => ({ id: t.id, name: t.name || nodesSnapshot[t.rootNodeId]?.title || 'Untitled' })),
+    [threadProject, nodesSnapshot],
   );
 
   const cmds = useMemo<Command[]>(
@@ -323,12 +345,14 @@ export default function CommandPalette({
         activateTree: (treeId) => { activateTree(treeId); onClose(); },
         archiveTree: (treeId) => { archiveTree(treeId); onClose(); },
         unarchiveTree: (treeId) => { unarchiveTree(treeId); onClose(); },
-        activeTreeId: activeProject?.activeTreeId ?? null,
+        activeTreeId: threadProject?.activeTreeId ?? null,
         liveTrees,
         archivedTrees,
         customAgentsEnabled: agentStatus?.customAgentsEnabled === true,
+        openAssistant,
+        openAllTasks: () => { requestAllTasks(); onClose(); },
       }),
-    [activePage, selection, allChats, navDeps, selectProject, activeProject, agentStatus?.customAgentsEnabled, setPage, onClose, clearSelection, createDigest, openPane, createMergedChat, createThread, activateTree, archiveTree, unarchiveTree, liveTrees, archivedTrees, workspaces, switchWorkspace],
+    [activePage, selection, allChats, navDeps, selectProject, activeProject, threadProject?.activeTreeId, agentStatus?.customAgentsEnabled, setPage, onClose, clearSelection, createDigest, openPane, createMergedChat, createThread, activateTree, archiveTree, unarchiveTree, liveTrees, archivedTrees, workspaces, switchWorkspace, openAssistant],
   );
   const visible = useMemo(() => {
     const q = query.trim();
@@ -345,7 +369,6 @@ export default function CommandPalette({
   }, [cmds, query]);
   const showRecents = !query.trim();
 
-  // Flat list of keyboard-navigable rows = commands + node search results.
   const totalRows = visible.length + (showRecents ? 0 : nodeResults.length);
   const prefetchTree = React.useContext(TreePrefetchContext);
   const activeCommand = visible[active];
@@ -417,7 +440,7 @@ export default function CommandPalette({
     runRowAtIndex(active);
   }, [runRowAtIndex, active]);
 
-  const onKey = (e: React.KeyboardEvent) => {
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const isModifier = e.metaKey || e.ctrlKey;
     if (!showRecents && isModifier && !e.shiftKey && !e.altKey && e.key >= '1' && e.key <= '9') {
       e.preventDefault();

@@ -13,9 +13,11 @@ require('ts-node/register');
 const express = require('express');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
-const { AcpClient } = require('../src/services/acpClient');
-const { CrewGatewayClient } = require('../src/agents/crew/acp/gatewayClient');
-const { parseCrewAcpConfig } = require('../src/agents/crew/acp/main');
+const { AcpClient } = require('michi-runtime/internal/adapters/kiro/acpClient');
+const { CrewGatewayClient } = require('michi-runtime/internal/adapters/crew/acp/gatewayClient');
+const { parseCrewAcpConfig } = require('michi-runtime/internal/adapters/crew/acp/main');
+const { createMichiRuntimeHost } = require('../src/agents/michiRuntimeHost');
+const { observability } = createMichiRuntimeHost();
 const gateway = new CrewGatewayClient(parseCrewAcpConfig([], process.env).gateway);
 const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-crew-bridge-'));
 const clients = [], slots = [], hits = [];
@@ -30,7 +32,7 @@ async function client() {
     process.env.MICHI_CREW_MEMORY_MODE = 'temporary';
     const c = new AcpClient(undefined, cwd, undefined, 'v2', { bin: process.execPath,
         args: () => [path.join(root, 'backend/dist/crewAcp.js'), '--model', process.env.MICHI_CREW_LIVE_MODEL || 'claude-sonnet-4.6'],
-        standardFork: true, cancelTimeoutMs: 15000 });
+        standardFork: true, cancelTimeoutMs: 15000 }, undefined, { observability });
     clients.push(c);
     try { c.start(); } finally { if (previous === undefined) delete process.env.MICHI_CREW_MEMORY_MODE; else process.env.MICHI_CREW_MEMORY_MODE = previous; }
     await c.initialize(); return c;

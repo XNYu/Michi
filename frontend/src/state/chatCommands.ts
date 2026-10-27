@@ -9,7 +9,11 @@ export interface ChatCommand { name: string; value?: string }
  * remain messages. Unknown Kiro commands get an explicit unsupported result. */
 export function parseChatCommand(text: string, runtimeId?: string, engine?: string): ChatCommand | null {
   const match = text.trim().match(/^\/([\w-]+)(?:[ \t]+([^\r\n]*))?$/);
-  if (!match || (runtimeId !== 'kiro' && match[1] !== 'compact')) return null;
+  if (!match) return null;
+  if (runtimeId === 'claude' && ['status', 'model', 'context', 'mcp'].includes(match[1])) {
+    return { name: match[1], value: match[2]?.trim() || undefined };
+  }
+  if (runtimeId !== 'kiro' && match[1] !== 'compact') return null;
   if (['branch', 'fork', 'fan'].includes(match[1])) return null;
   if (runtimeId === 'kiro' && engine === 'v2' && !['compact', 'tools', 'context', 'effort', 'clear'].includes(match[1])) return null;
   return { name: match[1], value: match[2]?.trim() || undefined };

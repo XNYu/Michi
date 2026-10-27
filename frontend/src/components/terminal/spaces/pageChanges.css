@@ -1,0 +1,88 @@
+.page-changes { display: grid; gap: 12px; color: var(--color-fg); }
+.page-changes-history { border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-surface); }
+.page-changes-history > summary { cursor: pointer; padding: 9px 11px; color: var(--color-fg-muted); font-size: 12px; }
+.page-changes-history[open] > summary { border-bottom: 1px solid var(--color-line); }
+.page-changes-history > .page-change-batch { border: 0; border-radius: 0; background: transparent; }
+.page-change-targets { display: grid; gap: 6px; margin: 8px 0 0; }
+.page-change-batch { border: 1px solid var(--color-line, var(--line)); border-radius: 10px; overflow: hidden; background: var(--color-surface, var(--surface)); }
+.page-change-batch__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; border-bottom: 1px solid var(--color-line); color: var(--color-fg-muted); font-size: 12px; }
+.page-change-card { display: grid; gap: 9px; padding: 11px; border-bottom: 1px solid var(--color-line, var(--line)); font-size: 13px; }
+.page-change-card:last-child { border-bottom: 0; }
+.page-change-card__header, .page-change-card__title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.page-change-card__header { justify-content: space-between; }
+.page-change-card__header time { flex: none; color: var(--color-fg-muted); font-size: 11px; }
+.page-change-card__title > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.page-change-tag { flex: none; border: 1px solid var(--color-line); border-radius: 999px; padding: 2px 7px; color: var(--color-fg-muted); font-size: 10px; }
+.page-change-card__why, .page-change-card__error { margin: 0; color: var(--color-fg-muted); font-size: 12px; }
+.page-change-card__error, .page-changes-status--error { color: var(--color-danger); }
+.page-change-source { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; color: var(--color-fg-muted); font-size: 11px; }
+.page-change-preview { max-height: 130px; overflow: auto; white-space: pre-wrap; margin: 0; border-left: 2px solid var(--color-line); padding: 5px 8px; color: var(--color-fg-muted); font-family: inherit; font-size: 12px; line-height: 1.45; }
+.page-change-card__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.page-change-card button, .page-change-batch__header button { border: 1px solid var(--color-line); border-radius: 6px; background: transparent; color: var(--color-fg); padding: 4px 8px; font: inherit; font-size: 11px; cursor: pointer; }
+.page-change-card button:hover:not(:disabled), .page-change-batch__header button:hover:not(:disabled) { background: var(--color-surface-hover); }
+.page-change-card button:disabled, .page-change-batch__header button:disabled { opacity: .55; cursor: default; }
+.page-changes-load-more { justify-self: start; margin: 10px 11px; border: 1px solid var(--color-line); border-radius: 6px; background: transparent; color: var(--color-fg); padding: 5px 9px; font: inherit; font-size: 11px; cursor: pointer; }
+.page-changes-load-more:hover:not(:disabled) { background: var(--color-surface-hover); }
+.page-changes-load-more:disabled { opacity: .55; cursor: default; }
+.page-change-card .page-change-primary { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-accent-fg); }
+.page-change-card .page-change-link { border: 0; padding: 0; color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px; }
+.page-change-edit, .page-change-edit label { display: grid; gap: 5px; color: var(--color-fg-muted); font-size: 11px; }
+.page-change-edit { gap: 9px; }
+.page-change-edit textarea { width: 100%; box-sizing: border-box; resize: vertical; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-app); color: var(--color-fg); padding: 8px; font: 12px/1.45 var(--font-mono, monospace); }
+.page-changes-status { padding: 12px; color: var(--color-fg-muted); font-size: 12px; }
+
+/* Inline: one quiet line under a changed block, or a suggestion card */
+.page-change-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; color: var(--term-muted); font: var(--fs-sm)/1.5 var(--ui-font); }
+.page-change-line > svg { color: var(--term-accent); flex: none; }
+.page-change-line__lead { color: var(--term-accent); }
+.page-change-line[data-state='reverted'] .page-change-line__lead,
+.page-change-line[data-state='dismissed'] .page-change-line__lead { color: var(--term-muted); }
+.page-change-line[data-state='reverted'] > svg,
+.page-change-line[data-state='dismissed'] > svg { color: var(--term-faint); }
+.page-change-line[data-state='accepted'] .page-change-line__lead { color: var(--term-digest); }
+/* Routine provenance stays with the block controls. Preserve a small stable
+   action row so pointer and keyboard access never moves the document text. */
+.page-change-targets:has(> .page-change-line[data-quiet='true']):not(:has(> .page-change-prop)) { margin-top: 0; }
+:is(.michi-doc-block, .spaces-home-section) .page-change-line[data-quiet='true']:is([data-state='applied'], [data-state='accepted']) {
+  opacity: 0; pointer-events: none; transition: opacity var(--t-quick) ease;
+}
+:is(.michi-doc-block, .spaces-home-section):is(:hover, :focus-within, [data-active='true']) .page-change-line[data-quiet='true'],
+:is(.michi-doc-block, .spaces-home-section) .page-change-line[data-quiet='true']:has([role='alert']) { opacity: 1; pointer-events: auto; }
+@media (hover: none) {
+  :is(.michi-doc-block, .spaces-home-section) .page-change-line[data-quiet='true'] { opacity: 1; pointer-events: auto; }
+}
+.page-change-line .page-change-link,
+.page-change-prop .page-change-link {
+  padding: 0; border: 0; background: transparent; color: var(--term-fg); font: inherit; cursor: pointer;
+  text-decoration: underline; text-decoration-color: var(--term-line-s); text-underline-offset: 3px;
+}
+.page-change-line .page-change-link:hover:not(:disabled),
+.page-change-prop .page-change-link:hover:not(:disabled) { color: var(--term-accent); text-decoration-color: currentColor; }
+.page-change-prop { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--term-line); border-left: 2px solid var(--term-select); background: var(--term-surface); font-size: var(--fs-md); }
+.page-change-prop__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--term-muted); font-size: var(--fs-sm); }
+.page-change-prop__head > svg { color: var(--term-mauve); }
+.page-change-prop__head strong { color: var(--term-fg); font-weight: 600; }
+/* Only the changed pieces show, formatted: the old ones struck, the new ones on a light green ground. */
+.page-change-prop__body { display: grid; gap: 4px; font-size: var(--fs-xl); line-height: 1.6; overflow-wrap: anywhere; }
+.page-change-prop__body :is(del, ins) { display: block; }
+.page-change-prop__old { color: var(--term-faint); text-decoration: line-through; text-decoration-color: var(--term-line-s); }
+.page-change-prop__new {
+  padding: 4px 8px; border-radius: var(--ui-radius-sm); text-decoration: none; line-height: 1.7;
+  background: color-mix(in srgb, var(--term-digest-f) 25%, var(--term-surface)); color: var(--term-fg);
+}
+.page-change-prop__body p,
+.page-change-prop__body .prose :is(p, ul, ol, li, blockquote, pre, table) { margin: 0; }
+.page-change-prop__body .prose :is(h1, h2, h3, h4, h5, h6) { margin: 0; color: inherit; font-size: inherit; font-weight: 600; line-height: inherit; }
+.page-change-prop__body .prose :is(strong, a, code, blockquote) { color: inherit; }
+.page-change-prop__body .prose > * + * { margin-top: 2px; }
+.page-change-prop__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 2px; }
+.page-change-prop__actions > button {
+  height: 26px; padding: 0 10px; border: 1px solid var(--term-line-s); border-radius: var(--ui-radius);
+  background: var(--term-surface); color: var(--term-fg); font: 500 var(--fs-sm)/1 var(--ui-font); cursor: pointer;
+}
+.page-change-prop__actions > button:hover:not(:disabled) { background: var(--term-alt); }
+.page-change-prop__actions > .page-change-primary { border-color: var(--term-accent); background: var(--term-accent); color: var(--term-bg); }
+.page-change-prop__actions > .page-change-primary:hover:not(:disabled) { background: var(--term-accent); filter: brightness(1.05); }
+.page-change-prop__actions > .page-change-quiet { border-color: transparent; background: transparent; color: var(--term-mid); }
+.page-change-prop__actions > button:disabled { opacity: .55; cursor: default; }
+.page-change-prop__from { display: inline-flex; gap: 5px; margin-left: auto; color: var(--term-muted); font-size: var(--fs-sm); }

@@ -11,8 +11,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CrewMcpBindings } from '../src/agents/crew/crewMcpBinding';
+import { CrewMcpBindings } from 'michi-runtime/internal/adapters/crew/crewMcpBinding';
 import manifest from '../../crew-app/app.json';
+import { CREW_MCP_HOST, CREW_MCP_MAIN } from './helpers/adapterPaths';
 
 const python = process.env.MICHI_CREW_TEST_PYTHON || 'python3';
 const pythonCheck = spawnSync(python, ['--version'], { encoding: 'utf8' });
@@ -28,8 +29,8 @@ test('production manifest launches stdio MCP from default home with spaces and n
     // The normal backend suite builds shared, not dist. Bundle current source so
     // this check never tests a stale build or changes the checkout's dist.
     const { build } = await import('esbuild');
-    for (const [source, output] of [['crewMcpMain.ts', 'crewMcp.js'], ['crewMcpHost.ts', 'crewMcpHost.js']]) {
-        await build({ entryPoints: [path.join(root, 'backend/src/agents/crew', source)], outfile: path.join(dist, output),
+    for (const [source, output] of [[CREW_MCP_MAIN, 'crewMcp.js'], [CREW_MCP_HOST, 'crewMcpHost.js']]) {
+        await build({ entryPoints: [source], outfile: path.join(dist, output),
             bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['node:*'], logLevel: 'silent' });
     }
     await fs.writeFile(path.join(dist, 'crew-node.json'), JSON.stringify({ schemaVersion: 1, node: process.execPath }));

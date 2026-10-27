@@ -1,5 +1,6 @@
 import React from 'react';
 import './DrawerShell.css';
+import { useOverlayFocus } from './useOverlayFocus';
 
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 const EXIT_TIMEOUT_MS = 220;
@@ -31,6 +32,10 @@ export interface DrawerShellProps {
   closeOnEscape?: boolean;
   /** Override the default CSS width (440px). Applied as an inline style. */
   width?: number;
+  /** Default true. False keeps the page usable beside the drawer: no scrim,
+   *  no outside-click close, no aria-modal (still a labelled dialog that takes
+   *  focus on open and gives it back on close). */
+  modal?: boolean;
   'aria-label'?: string;
   children: React.ReactNode;
 }
@@ -45,12 +50,13 @@ export function DrawerShell({
   titleBadge,
   closeOnEscape = true,
   width,
+  modal = true,
   children,
   ...rest
 }: DrawerShellProps) {
   const ariaLabel = rest['aria-label'];
   const panelRef = React.useRef<HTMLDivElement>(null);
-  const returnFocusRef = React.useRef<HTMLElement | null>(null);
+  useOverlayFocus({ open, panelRef, trap: modal, initialFocus: 'panel', trackOutsideFocus: !modal });
   const reduced = React.useSyncExternalStore(subscribeMotionPreference, prefersReducedMotion, () => false);
   const instant = motion === 'instant' || reduced;
   const [retained, setRetained] = React.useState(open);
@@ -76,27 +82,6 @@ export function DrawerShell({
     return () => window.clearTimeout(timer);
   }, [open, instant, retained]);
 
-  React.useLayoutEffect(() => {
-    const panel = panelRef.current;
-    if (open) {
-      const previous = document.activeElement;
-      if (previous instanceof HTMLElement && !panel?.contains(previous)) returnFocusRef.current = previous;
-      panel?.focus({ preventScroll: true });
-    } else {
-      const previous = returnFocusRef.current;
-      // Restore after React's DOM/selection commit, not in layout cleanup.
-      if (previous?.isConnected && (panel?.contains(document.activeElement) || document.activeElement === document.body)) {
-        previous.focus({ preventScroll: true });
-      }
-      returnFocusRef.current = null;
-    }
-  }, [open]);
-
-  React.useEffect(() => () => {
-    const previous = returnFocusRef.current;
-    if (previous?.isConnected && document.activeElement === document.body) previous.focus({ preventScroll: true });
-  }, []);
-
   React.useEffect(() => {
     if (!open || !closeOnEscape) return;
     const onKey = (e: KeyboardEvent) => {
@@ -113,21 +98,23 @@ export function DrawerShell({
 
   return (
     <>
-      <div
-        className="ui-scrim ui-scrim--drawer drawer-shell-scrim"
-        data-state={open ? 'open' : 'closed'}
-        onMouseDown={onClose}
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-      />
+      {modal && (
+        <div
+          className="ui-scrim ui-scrim--drawer drawer-shell-scrim"
+          data-state={open ? 'open' : 'closed'}
+          onMouseDown={onClose}
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        />
+      )}
       <div
         ref={panelRef}
         className="ui-drawer-panel term-glass drawer-shell-panel"
         data-state={open ? 'open' : 'closed'}
         data-motion={instant ? 'instant' : 'standard'}
         tabIndex={-1}
-        {...(!open ? { inert: '' } : {})}
+        inert={!open}
         role="dialog"
-        aria-modal="true"
+        aria-modal={modal || undefined}
         aria-hidden={!open || undefined}
         aria-label={typeof title === 'string' ? title : ariaLabel}
         style={width ? { width } : undefined}

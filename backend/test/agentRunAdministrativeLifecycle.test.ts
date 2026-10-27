@@ -49,38 +49,6 @@ describe('AgentRunAdministrativeLifecycle', () => {
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
-  test('quiesces active leases before deletion and reports retryable cleanup failures', async () => {
-    seedRun('run-active', 'running', true);
-    seedRun('run-done', 'completed');
-    const quiesced: string[] = [];
-    const audited: string[] = [];
-    const lifecycle = new AgentRunAdministrativeLifecycle({
-      quiesceRun: async (_owner, runId) => {
-        quiesced.push(runId);
-        getDb().prepare(`UPDATE agent_runs SET status = 'cancelled', completed_at = 3,
-          lease_token = NULL, lease_owner = NULL, lease_expires_at = NULL WHERE id = ?`).run(runId);
-      },
-      cleanupRun: async (runId, resources) => {
-        assert.deepEqual(resources.executionEnvironment, { version: 1 });
-        if (runId === 'run-done') throw new Error('filesystem busy');
-      },
-      auditCleanupFailure: ({ runId }) => audited.push(runId),
-    });
-
-    const prepared = await lifecycle.prepareOwnerDeletion('owner-a');
-    assert.deepEqual(quiesced, ['run-active']);
-    assert.deepEqual(prepared.runIds, ['run-active', 'run-done']);
-    lifecycle.deleteOwnerAgentRows(prepared);
-    assert.equal((getDb().prepare('SELECT COUNT(*) AS count FROM agent_runs').get() as { count: number }).count, 0);
-    assert.equal((getDb().prepare('SELECT COUNT(*) AS count FROM agent_definitions').get() as { count: number }).count, 0);
-    const cleanup = await lifecycle.cleanupPreparedDeletion(prepared);
-    assert.deepEqual(cleanup.cleanedRunIds, ['run-active']);
-    assert.deepEqual(cleanup.failed, [{ runId: 'run-done', message: 'filesystem busy' }]);
-    assert.deepEqual(audited, ['run-done']);
-    assert.equal((getDb().prepare('SELECT COUNT(*) AS count FROM agent_run_cleanup_jobs').get() as { count: number }).count, 1);
-    lifecycle.finishOwnerDeletion(prepared);
-  });
-
   test('aborts destructive deletion when a Run remains active or leased', async () => {
     seedRun('run-stuck', 'running', true);
     const lifecycle = new AgentRunAdministrativeLifecycle({

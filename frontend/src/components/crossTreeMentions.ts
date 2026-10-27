@@ -1,6 +1,7 @@
 import type { ChatNodeState, Project } from '../state/chatTypes';
 import { chatLabel } from '../state/chatStore';
 import { findTreeIdForNode } from '../state/tree';
+import { isVisibleConversationNode } from '../state/conversationVisibility';
 import type { CrossTreeGroup } from './mentionItems';
 
 /** Upper bound on cross-tree candidates so the @ popup stays scannable. */
@@ -12,7 +13,8 @@ export const EMPTY_CROSS_TREE_GROUPS: CrossTreeGroup[] = [];
 /**
  * Collect @-mentionable nodes from threads OTHER than `excludeTreeId`, grouped
  * by thread and ordered by the thread's `lastActiveAt` descending. Archived
- * threads, deleted nodes, non-chat nodes and empty nodes are skipped. Total
+ * threads, deleted nodes, non-chat nodes, empty nodes, page helpers and Meta
+ * agent maintenance runs are skipped. Total
  * candidates are capped at CROSS_TREE_MENTION_CAP.
  *
  * Pass `excludeTreeId: null` to include every thread — the Home composer has
@@ -37,7 +39,7 @@ export function collectCrossTreeGroups(
     for (const nid of project.chatIds) {
       if (totalCount + treeNodes.length >= CROSS_TREE_MENTION_CAP) break;
       const nd = nodesMap[nid];
-      if (!nd || nd.deletedAt || nd.kind !== 'chat') continue;
+      if (!nd || nd.deletedAt || nd.kind !== 'chat' || !isVisibleConversationNode(nd)) continue;
       if (nd.messages.length === 0) continue;
       if (findTreeIdForNode(nid, project) !== tree.id) continue;
       treeNodes.push(nd);

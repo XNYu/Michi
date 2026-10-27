@@ -8,6 +8,7 @@ import { Button } from './ui/controls';
 import { RemoteRuntimeSummary } from './RemoteRuntimeSummary';
 import { RemoteDesktopConnect } from './RemoteDesktopConnect';
 import { RemoteFolderPicker } from './RemoteFolderPicker';
+import { RemoteUpdateNotice } from './RemoteUpdateNotice';
 import { listBackendConnections } from '../services/api';
 import {
   getKnownBackendConnections,
@@ -327,6 +328,9 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
         style={{ padding: '0 14px', color: 'var(--term-muted)', fontSize: 'var(--fs-md)', lineHeight: 1.5 }}>{warning}</p>)}
 
       {!addingRemote && remoteDiagnostic && <div className="remote-workspace-diagnostic"><RemoteDiagnostics key={remoteDiagnostic.id} report={remoteDiagnostic} /></div>}
+
+      {!addingRemote && isRemote && <RemoteUpdateNotice key={connectionId} connectionId={connectionId}
+        name={connections.find(connection => connection.id === connectionId)?.name ?? connectionId} />}
 
       {/* Folders section */}
       {!addingRemote && (isRemote ? (

@@ -12,6 +12,7 @@ import {
   type UserInputQuestion,
   type UserInputRequestPayload,
 } from 'michi-shared';
+import { recordBackendObservation } from './backendClock';
 
 export { CHAT_STREAM_EVENTS, parseChatStreamEvent };
 export type {
@@ -36,11 +37,11 @@ export interface StreamHandlers {
   /** Runs before the event-specific callback. Returning false drops a replay. */
   onEnvelope?: (envelope: ChatStreamEnvelope) => boolean | void;
   onTurnStart?: (data: ChatStreamPayloads['turn_start']) => void;
-  onChunk?: (text: string, seq?: number, assistantId?: string, turnId?: string) => void;
-  onThought?: (text: string, seq?: number, assistantId?: string, turnId?: string) => void;
+  onChunk?: (text: string, seq?: number, assistantId?: string, turnId?: string, observedAt?: number) => void;
+  onThought?: (text: string, seq?: number, assistantId?: string, turnId?: string, observedAt?: number) => void;
   onPlan?: (entries: PlanEntry[]) => void;
-  onToolCall?: (t: ToolCallStreamPayload) => void;
-  onToolCallUpdate?: (t: ToolCallStreamPayload) => void;
+  onToolCall?: (t: ToolCallStreamPayload & ChatStreamEnvelope) => void;
+  onToolCallUpdate?: (t: ToolCallStreamPayload & ChatStreamEnvelope) => void;
   onHeartbeat?: (idleMs: number) => void;
   onSpawnBranches?: (topics: SpawnBranchTopic[]) => void;
   onTitle?: (title: string) => void;
@@ -54,8 +55,8 @@ export interface StreamHandlers {
   onImage?: (data: ChatStreamPayloads['image']) => void;
   onPermissionResolved?: (data: ChatStreamPayloads['permission_resolved']) => void;
   onPermissionRequest?: (data: ChatStreamPayloads['permission_request']) => void;
-  onUserInputRequest?: (data: ChatStreamPayloads['user_input_request']) => void;
-  onUserInputResolved?: (data: ChatStreamPayloads['user_input_resolved']) => void;
+  onUserInputRequest?: (data: ChatStreamPayloads['user_input_request'] & ChatStreamEnvelope) => void;
+  onUserInputResolved?: (data: ChatStreamPayloads['user_input_resolved'] & ChatStreamEnvelope) => void;
   onSubagentListUpdate?: (data: ChatStreamPayloads['subagent_list_update']) => void;
   onSubagentToolActivity?: (data: ChatStreamPayloads['subagent_tool_activity']) => void;
   onContextUsage?: (data: ChatStreamPayloads['context_usage']) => void;
@@ -69,6 +70,9 @@ export interface StreamHandlers {
   onRetryStart?: (data: ChatStreamPayloads['retry_start']) => void;
   onRetryEnd?: (data: ChatStreamPayloads['retry_end']) => void;
   onHarnessLifecycle?: (data: ChatStreamPayloads['harness_lifecycle']) => void;
+  onWarning?: (data: ChatStreamPayloads['warning']) => void;
+  /** Complete wire error; preferred over the legacy positional callback. */
+  onErrorPayload?: (data: ChatStreamPayloads['error'] & ChatStreamEnvelope) => void;
   onMcpServerError?: (data: ChatStreamPayloads['mcp_server_error']) => void;
   onDone?: (stopReason?: string, assistantId?: string, turnId?: string, persisted?: boolean, completedAt?: number) => void;
   onAborted?: () => void;
@@ -85,16 +89,19 @@ export function dispatchChatStreamEvent(
   streamEvent: ChatStreamEvent,
   handlers: StreamHandlers,
 ): void {
+  // Sampled ahead of the replay gate: a re-delivered frame only yields a
+  // larger sample than its first delivery, so it cannot lower the estimate.
+  recordBackendObservation(streamEvent.data.assistantId, streamEvent.data.observedAt);
   if (handlers.onEnvelope?.(streamEvent.data) === false) return;
   switch (streamEvent.event) {
     case CHAT_STREAM_EVENTS.turnStart:
       handlers.onTurnStart?.(streamEvent.data);
       return;
     case CHAT_STREAM_EVENTS.chunk:
-      handlers.onChunk?.(streamEvent.data.text, streamEvent.data.seq, streamEvent.data.assistantId, streamEvent.data.turnId);
+      handlers.onChunk?.(streamEvent.data.text, streamEvent.data.seq, streamEvent.data.assistantId, streamEvent.data.turnId, streamEvent.data.observedAt);
       return;
     case CHAT_STREAM_EVENTS.thought:
-      handlers.onThought?.(streamEvent.data.text, streamEvent.data.seq, streamEvent.data.assistantId, streamEvent.data.turnId);
+      handlers.onThought?.(streamEvent.data.text, streamEvent.data.seq, streamEvent.data.assistantId, streamEvent.data.turnId, streamEvent.data.observedAt);
       return;
     case CHAT_STREAM_EVENTS.plan:
       handlers.onPlan?.(streamEvent.data.entries);
@@ -204,6 +211,9 @@ export function dispatchChatStreamEvent(
     case CHAT_STREAM_EVENTS.harnessLifecycle:
       handlers.onHarnessLifecycle?.(streamEvent.data);
       return;
+    case CHAT_STREAM_EVENTS.warning:
+      handlers.onWarning?.(streamEvent.data);
+      return;
     case CHAT_STREAM_EVENTS.mcpServerError:
       handlers.onMcpServerError?.(streamEvent.data);
       return;
@@ -227,7 +237,8 @@ export function dispatchChatStreamEvent(
       }
       return;
     case CHAT_STREAM_EVENTS.error:
-      handlers.onError?.(streamEvent.data.message, streamEvent.data.assistantId, streamEvent.data.turnId, streamEvent.data.code);
+      if (handlers.onErrorPayload) handlers.onErrorPayload(streamEvent.data);
+      else handlers.onError?.(streamEvent.data.message, streamEvent.data.assistantId, streamEvent.data.turnId, streamEvent.data.code);
       return;
     default:
       assertNever(streamEvent);

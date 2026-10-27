@@ -1,31 +1,17 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CAPABILITY_KEYS, shouldSteerInsteadOfQueue, usageIsUnverifiable } from 'michi-shared';
+import { CAPABILITY_KEYS } from 'michi-shared';
 import {
-  absorbAcpCapabilities,
-  ANTIGRAVITY_DESCRIPTOR,
-  CLAUDE_DESCRIPTOR,
-  CODEX_DESCRIPTOR,
-  CURSOR_DESCRIPTOR,
+  CREW_DESCRIPTOR,
   describeRuntimeCapabilities,
-  GROK_DESCRIPTOR,
   KIRO_DESCRIPTOR,
+  UNKNOWN_DESCRIPTOR,
 } from '../src/agents/capabilityDescriptors';
 
-const RUNTIMES = ['pi', 'codex', 'claude', 'kiro', 'cursor', 'grok', 'antigravity'] as const;
+const RUNTIMES = ['pi', 'codex', 'claude', 'kiro', 'crew'] as const;
 
 describe('capabilityDescriptor', () => {
-  test('only wired native fork adapters advertise native branching', () => {
-    assert.equal(CODEX_DESCRIPTOR.sessionFork.availability, 'native');
-    assert.equal(CLAUDE_DESCRIPTOR.sessionFork.availability, 'native');
-    assert.equal(KIRO_DESCRIPTOR.sessionFork.availability, 'native');
-    assert.equal(KIRO_DESCRIPTOR.steer.availability, 'native');
-    assert.equal(shouldSteerInsteadOfQueue(KIRO_DESCRIPTOR), true);
-    assert.equal(describeRuntimeCapabilities('pi').sessionFork.availability, 'michi_simulated');
-    assert.equal(describeRuntimeCapabilities('grok').sessionFork.availability, 'native');
-    assert.equal(CURSOR_DESCRIPTOR.sessionFork.availability, 'michi_simulated');
-  });
-  test('every advertised runtime has all capability slots', () => {
+  test('every registered runtime has all capability slots', () => {
     for (const id of RUNTIMES) {
       const descriptor = describeRuntimeCapabilities(id);
       for (const key of CAPABILITY_KEYS) {
@@ -35,69 +21,17 @@ describe('capabilityDescriptor', () => {
     }
   });
 
-  test('Claude and Antigravity do not advertise native steer', () => {
-    assert.equal(CLAUDE_DESCRIPTOR.steer.availability, 'invisible');
-    assert.equal(ANTIGRAVITY_DESCRIPTOR.steer.availability, 'invisible');
-    assert.equal(ANTIGRAVITY_DESCRIPTOR.compact.availability, 'invisible');
-    assert.equal(ANTIGRAVITY_DESCRIPTOR.permissions.availability, 'invisible');
-    assert.equal(shouldSteerInsteadOfQueue(CLAUDE_DESCRIPTOR), false);
-  });
-
-  test('Codex advertises native steer and compact', () => {
-    assert.equal(CODEX_DESCRIPTOR.steer.availability, 'native');
-    assert.equal(CODEX_DESCRIPTOR.compact.availability, 'native');
-    assert.equal(shouldSteerInsteadOfQueue(CODEX_DESCRIPTOR), true);
-    assert.equal(CODEX_DESCRIPTOR.subagents.availability, 'native');
-    assert.equal(CODEX_DESCRIPTOR.subagents.confidence, 'projected');
-  });
-
-  test('Pi advertises native steer regardless of the SDK flag', () => {
-    // PiSession.steer now calls pi-agent-core's Agent.steer directly, so steer
-    // no longer depends on PiSdkSession — which is never constructed in
-    // production anyway, because @earendil-works/pi-coding-agent is not a
-    // dependency. The descriptor must not swing on the flag alone: doing so
-    // advertised a Steer affordance that could only ever 409.
-    for (const flag of [undefined, '1']) {
-      const prev = process.env.MICHI_PI_SESSION_SDK;
-      if (flag === undefined) delete process.env.MICHI_PI_SESSION_SDK;
-      else process.env.MICHI_PI_SESSION_SDK = flag;
-      try {
-        const pi = describeRuntimeCapabilities('pi');
-        assert.equal(pi.steer.availability, 'native', `flag=${flag}`);
-        assert.equal(shouldSteerInsteadOfQueue(pi), true, `flag=${flag}`);
-        // followUp/compact stay honest: followUp has no Michi caller, and
-        // pi-agent-core exposes no compaction API at any layer.
-        assert.equal(pi.followUp.availability, 'native_unwired', `flag=${flag}`);
-        assert.equal(pi.compact.availability, 'invisible', `flag=${flag}`);
-      } finally {
-        if (prev === undefined) delete process.env.MICHI_PI_SESSION_SDK;
-        else process.env.MICHI_PI_SESSION_SDK = prev;
-      }
-    }
-  });
-
-  test('ACP absorption upgrades Kiro experimental slots without inventing Tangent', () => {
-    const absorbed = absorbAcpCapabilities(KIRO_DESCRIPTOR, {
-      loadSession: true,
-      image: true,
-      kiroCompaction: true,
-      kiroTerminate: true,
-    });
-    assert.equal(absorbed.nativeResume.availability, 'native');
-    // Kiro compact is native now that KiroSession.compact() drives the ACP
-    // compact command; absorbAcpCapabilities only forces 'experimental' when
-    // the initialize handshake advertised the compaction extension.
-    assert.equal(absorbed.compact.availability, 'experimental');
+  test('crew keeps Kiro basics but hides Kiro private extensions', () => {
+    assert.equal(describeRuntimeCapabilities('kiro'), KIRO_DESCRIPTOR);
+    assert.equal(describeRuntimeCapabilities('crew'), CREW_DESCRIPTOR);
     assert.equal(KIRO_DESCRIPTOR.compact.availability, 'native');
-    assert.equal(absorbed.subagents.availability, 'experimental');
-    assert.equal(absorbed.steer.availability, 'native');
-    assert.equal(CURSOR_DESCRIPTOR.compact.availability, 'invisible');
-    assert.equal(GROK_DESCRIPTOR.steer.availability, 'invisible');
+    assert.equal(CREW_DESCRIPTOR.compact.availability, 'invisible');
+    assert.equal(CREW_DESCRIPTOR.steer.availability, 'invisible');
   });
 
-  test('usage without native source is unverifiable', () => {
-    assert.equal(usageIsUnverifiable('native', 12), false);
-    assert.equal(usageIsUnverifiable('unknown', 12), true);
-    assert.equal(usageIsUnverifiable(undefined, 0), true);
+  test('unregistered runtime ids fall back to the unknown descriptor', () => {
+    for (const id of ['nope', 'constructor', '__proto__']) {
+      assert.equal(describeRuntimeCapabilities(id), UNKNOWN_DESCRIPTOR, id);
+    }
   });
 });

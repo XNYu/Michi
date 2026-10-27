@@ -1,0 +1,294 @@
+/* Michi thread peek drawer (MichiThreadDrawer). Palette tokens only. */
+
+.michi-peek__hint {
+  margin-right: 4px;
+  color: var(--term-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.michi-peek__head-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-mid);
+  cursor: pointer;
+}
+.michi-peek__head-btn:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+
+.michi-peek__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 20px;
+  font-family: var(--ui-font);
+}
+.michi-peek__title {
+  margin: 0;
+  font-size: var(--fs-3xl);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.michi-peek__facts {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  row-gap: 8px;
+  column-gap: 12px;
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.michi-peek__facts dt {
+  color: var(--term-muted);
+}
+/* The columns the user added in All threads: right under Michi's facts, as one
+   list, their names in full ink so they read as the user's own. */
+.michi-peek__facts--own {
+  margin-top: -10px;
+}
+.michi-peek__facts--own dt {
+  color: var(--term-fg);
+}
+.michi-peek__facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+.michi-peek__mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.michi-peek__muted {
+  color: var(--term-muted);
+}
+.michi-peek__link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.michi-peek__link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.michi-peek__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.michi-peek__caption {
+  margin: 0;
+  color: var(--term-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.michi-peek__caption-count {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+}
+.michi-peek__caption-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.michi-peek__caption-btn:hover {
+  color: var(--term-fg);
+}
+.michi-peek__text {
+  margin: 0;
+  font-size: var(--fs-lg);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.michi-peek__recent {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.michi-peek__line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.michi-peek__role {
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+/* A recent line as compact Markdown: one text size, tight blocks, and at
+   most four lines of it, ending on a whole line with an ellipsis (Michi clips
+   long messages already). The clamp counts lines through the Markdown's
+   paragraphs and list items. */
+.michi-peek__line-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.michi-peek__md.prose {
+  max-width: none;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+.michi-peek__md :is(h1, h2, h3, h4, h5, h6, p, ul, ol, pre, blockquote, table) {
+  margin: 0 0 4px;
+  font-size: inherit;
+  line-height: inherit;
+}
+.michi-peek__md :is(h1, h2, h3, h4, h5, h6) {
+  color: var(--term-fg);
+  font-weight: 600;
+}
+.michi-peek__md :is(li) {
+  margin: 0;
+}
+.michi-peek__md pre {
+  padding: 4px 6px;
+}
+/* Code in the message face's mono, as a message shows it; its ink comes from
+   the prose variables MichiThreadDrawer sets (the palette's foreground). */
+.michi-peek__md :is(code, pre) {
+  font-family: var(--message-code-font);
+  font-variant-ligatures: none;
+}
+.michi-peek__sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.michi-peek__source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-md);
+}
+.michi-peek__source .michi-peek__mono {
+  overflow: hidden;
+  color: var(--term-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-peek__error {
+  margin: 0;
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+}
+
+.michi-peek__footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--term-line);
+  font-family: var(--ui-font);
+}
+.michi-peek__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.michi-peek__ghost,
+.michi-peek__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 26px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.michi-peek__ghost {
+  padding: 0 10px;
+}
+.michi-peek__icon-btn {
+  width: 26px;
+  padding: 0;
+  color: var(--term-mid);
+}
+.michi-peek__ghost:hover,
+.michi-peek__icon-btn:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+/* Its app can't resume this conversation: still focusable, its title says why. */
+.michi-peek__ghost[aria-disabled='true'] {
+  color: var(--term-muted);
+  cursor: default;
+}
+.michi-peek__ghost[aria-disabled='true']:hover {
+  background: transparent;
+  color: var(--term-muted);
+}
+.michi-peek__links {
+  display: flex;
+  gap: 14px;
+}
+.michi-peek__text-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--term-muted);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.michi-peek__text-btn:hover {
+  color: var(--term-fg);
+}
+.michi-peek__head-btn:focus-visible,
+.michi-peek__link:focus-visible,
+.michi-peek__caption-btn:focus-visible,
+.michi-peek__ghost:focus-visible,
+.michi-peek__icon-btn:focus-visible,
+.michi-peek__text-btn:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: 1px;
+}

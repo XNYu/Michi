@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getDb } from '../services/db';
 import { getMichiDataDir } from '../services/dataDir';
 import { recordAudit } from '../services/audit';
+import { requireAdmin } from './middleware/admin';
 import { listUserProviderKeys } from '../services/userKeys';
 import {
   exportAgentRunBackup,
@@ -24,6 +25,7 @@ export interface AdminRouteDeps {
 
 export function setupAdminRoutes(deps: AdminRouteDeps = {}): Router {
 const router = Router();
+router.use(requireAdmin);
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,9 +39,10 @@ function getAuthDb(): DatabaseSync {
 }
 
 function actorFromReq(req: any): { id: string | null; email: string | null } {
+  const principal = req.authUser ?? req.user;
   return {
-    id: req.user?.id ?? null,
-    email: req.user?.email ?? null,
+    id: principal?.id ?? null,
+    email: principal?.email ?? null,
   };
 }
 
@@ -101,8 +104,12 @@ router.get('/users', async (req, res) => {
     const dataDb = getDb();
 
     // Read all users from auth.sqlite
+    // Current Better Auth migrations use camelCase; older deployments used
+    // snake_case. Choose only a known schema identifier, never request input.
+    const columns = authDb.prepare('PRAGMA table_info("user")').all() as Array<{ name: string }>;
+    const createdColumn = columns.some(column => column.name === 'createdAt') ? 'createdAt' : 'created_at';
     const authUsers = authDb.prepare(
-      'SELECT id, email, name, created_at AS createdAt FROM "user" ORDER BY created_at DESC'
+      `SELECT id, email, name, "${createdColumn}" AS createdAt FROM "user" ORDER BY "${createdColumn}" DESC`
     ).all() as Array<{ id: string; email: string; name: string; createdAt: number }>;
     authDb.close();
 

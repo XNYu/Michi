@@ -82,24 +82,28 @@ export function TrashPreview({ entry, nodes, ttl, now, busy, onClose, onRestore,
   onPreview: (entry: TrashEntry) => void;
 }) {
   const days = entry.kind === 'thread' ? remainingDays(entry.group, ttl, now) : null;
-  const liveTrees = entry.project.trees.filter(tree => !nodes[tree.rootNodeId]?.deletedAt);
+  const liveTrees = entry.kind === 'workspace' ? entry.project.trees.filter(tree => !nodes[tree.rootNodeId]?.deletedAt) : [];
   return <ModalShell open onClose={onClose} title="Trash preview" width={570}>
     <div className="trash-preview">
       <div className="trash-preview-scroll term-scrollbar">
-        <div className="trash-preview-eyebrow">{entry.kind === 'thread' ? <MessageSquare size={15} aria-hidden="true" /> : <Folder size={15} aria-hidden="true" />}
-          {entry.kind === 'thread' ? 'Thread' : 'Workspace'}<span><LockKeyhole size={12} aria-hidden="true" />Read only</span>
+        <div className="trash-preview-eyebrow">{entry.kind === 'workspace' ? <Folder size={15} aria-hidden="true" /> : <MessageSquare size={15} aria-hidden="true" />}
+          {entry.kind === 'thread' ? 'Thread' : entry.kind === 'page' ? 'Page' : 'Workspace'}<span><LockKeyhole size={12} aria-hidden="true" />Read only</span>
         </div>
         <h2>{entryTitle(entry)}</h2>
         <dl>
-          <dt>{entry.kind === 'thread' ? 'Workspace' : 'Location'}</dt><dd>{entry.kind === 'thread' ? entry.project.name : entry.project.cwd || 'No folder'}</dd>
+          <dt>{entry.kind === 'workspace' ? 'Location' : 'Workspace'}</dt><dd>{entry.kind === 'workspace' ? entry.project.cwd || 'No folder' : entry.project.name}</dd>
           <dt>Deleted</dt><dd>{entryDeletedAt(entry) ? new Date(entryDeletedAt(entry)).toLocaleString() : 'Unknown date'}</dd>
-          <dt>Contains</dt><dd>{entry.kind === 'thread' ? plural(entry.group.members.length, 'node') : plural(liveTrees.length + entry.groups.length, 'thread')}</dd>
+          <dt>Contains</dt><dd>{entry.kind === 'thread' ? plural(entry.group.members.length, 'node') : entry.kind === 'page' ? plural(entry.page.pages.length, 'page') : plural(liveTrees.length + entry.groups.length, 'thread')}</dd>
           {entry.kind === 'thread' && <><dt>Auto-delete</dt><dd className={days !== null && days <= 3 ? 'trash-expiry' : undefined}>{days === null ? 'Off' : days === 0 ? 'Due for deletion' : `In ${plural(days, 'day')}`}</dd></>}
         </dl>
         {entry.kind === 'thread' ? <>
           <h3>Conversation preview <span>{plural(entry.group.root.messagesLoaded === true ? entry.group.root.messages.length : entry.group.root.messageCount ?? entry.group.root.messages.length, 'message')}</span></h3>
           <ConversationPreview key={entry.group.root.nodeId} node={entry.group.root} />
           {entry.group.members.length > 1 && <><h3>Included nodes</h3><ul className="trash-preview-nodes">{entry.group.members.map(node => <li key={node.nodeId}><MessageSquare size={14} aria-hidden="true" /><span>{node.title || 'Untitled node'}</span></li>)}</ul></>}
+        </> : entry.kind === 'page' ? <>
+          <h3>Included pages <span>{plural(entry.page.pages.length, 'page')}</span></h3>
+          <ul className="trash-preview-nodes">{entry.page.pages.map(page => <li key={page.id}><MessageSquare size={14} aria-hidden="true" /><span>{page.title}</span>{page.id === entry.page.root.id && <small>Root</small>}</li>)}</ul>
+          {entry.page.databases.length > 0 && <p className="trash-preview-empty">Includes {plural(entry.page.databases.length, 'database')} moved to Trash with this page.</p>}
         </> : <>
           <h3>Threads <span>{liveTrees.length + entry.groups.length}</span></h3>
           <ul className="trash-preview-nodes">

@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, test, type TestContext } from 'node:test';
+// Must precede application imports: config and credential paths are captured at load time.
+import { isolatedIntegrationDataDir, resetIntegrationConfig } from './isolatedIntegrationEnvironment';
+import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
@@ -13,12 +14,14 @@ import * as dbWorkerClient from '../src/services/dbWorkerClient';
 import { loadAgentConfig, updateAgentConfig } from '../src/services/agentConfig';
 import { registerRuntime } from '../src/agents/registry';
 import { clearAllSessions, getSession } from '../src/agents/sessionRegistry';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import type { AgentRuntime, LoadAgentSessionOptions, NewAgentSessionOptions } from '../src/agents/types';
-import { AcpClient } from '../src/services/acpClient';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import { chatHub } from '../src/agents/chatHub';
+import { michiTestHost } from './helpers/michiTestHost';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 let directory: string;
 let server: ReturnType<typeof express.application.listen>;
@@ -37,15 +40,11 @@ let currentModel: string;
 const originalDataDir = process.env.MICHI_DATA_DIR;
 const originalCloud = process.env.MICHI_CLOUD;
 
-beforeEach(async (t) => {
-  directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-cancel-route-'));
-  const writeFile = fs.writeFileSync;
-  (t as TestContext).mock.method(fs, 'writeFileSync', (...args: Parameters<typeof fs.writeFileSync>) => {
-    if (args[0] === path.join(os.homedir(), '.michi', 'config.json')) return;
-    return writeFile(...args);
-  });
+beforeEach(async () => {
+  directory = fs.mkdtempSync(path.join(isolatedIntegrationDataDir, 'cancel-route-'));
   process.env.MICHI_DATA_DIR = directory;
   delete process.env.MICHI_CLOUD;
+  resetIntegrationConfig();
   closeDb();
   initDb();
   loadAgentConfig();
@@ -81,6 +80,7 @@ beforeEach(async (t) => {
     completePrompt();
   };
   const adapter = {
+    host: michiTestHost(),
     ensureClient: async () => client,
     getClient: () => client,
     getCurrentMode: () => null,
@@ -89,6 +89,7 @@ beforeEach(async (t) => {
     recoverSession: async () => { throw new Error('cancel must not recover'); },
   } as unknown as KiroRuntime;
   runtime = {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id: 'kiro', label: 'Kiro cancellation test',
     capabilities: { modes: false, permissions: false, models: true, providerModels: false, reasoning: false,
       supportedReasoningLevels: [], apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: true },

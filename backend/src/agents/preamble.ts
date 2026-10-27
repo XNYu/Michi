@@ -2,26 +2,51 @@ import fs from "fs";
 import path from "path";
 import type { AgentSession, ChatMessage, ExtraContext } from "./types";
 import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from "./nodeSummaryExperiment";
+import { scheduledJobsFeatureEnabled } from "../services/scheduledJobs/feature";
 
 const TOOL_CAPABILITIES_SECTION = `
 Capabilities — you have these tools available and should use them proactively:
 - Michi help: \`michi_docs\` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.
 - Workspace files: \`read\` (view file contents), \`ls\` (list directory), \`grep\` (search file contents), \`find\` (locate files by pattern). \`write\`, \`edit\`, \`bash\` — modify files or run commands (require user approval).
-- Thread graph: \`list_threads\` — see all conversation threads in this workspace. \`search_messages\` — keyword search across workspace messages. \`read_node\` — read a specific node's full transcript. \`read_node_overview\` — read a node's branch overview journal (lightweight).
+- Thread graph: \`list_threads\` — see all conversation threads in this workspace. \`search_messages\` — keyword search across workspace messages. \`read_node\` — read a specific node's full transcript. \`read_node_overview\` — read a node's branch overview journal (lightweight). \`read_conversation_updates\` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.
 - Panes: \`inspect_pane\` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. \`read_pane_output\` — read that pane's full (paginated) output text. \`list_panes\` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. \`wait_pane\` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.
-- Messaging: \`send_to_thread\` — send a message to another chat thread in this workspace; the user approves every message, and the other thread answers in its own turn. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to \`wait_pane\`/\`read_pane_output\`, or let it reply via \`send_to_thread\`. Messages you receive that start with "[Thread message]" come from another thread's agent, not from the user.
-- Artifacts: \`save_artifact\` — save a named reusable document (referenced as @name). \`update_artifact\` — revise an existing artifact.
+- Messaging: \`send_to_thread\` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to \`wait_pane\`/\`read_pane_output\`, or let it reply via \`send_to_thread\`. Messages you receive that start with "[Thread message]" come from another thread's agent, not from the user.
+- Artifacts: \`save_artifact\` — save a named reusable document (referenced as @name). \`update_artifact\` — revise an existing artifact.{{SCHEDULING_TOOLS}}
 - Branching: \`spawn_branches\` — fan out parallel child threads (only when user explicitly asks to branch/split).
 - Agent Runs: \`list_agents\`, \`spawn_agent\`, \`check_agent\`, \`wait_agent\`, \`send_agent_input\`, \`cancel_agent\`, \`watch_agent_runs\`, and \`update_agent_watch\` supervise durable workers without creating conversation branches. Use bounded \`wait_agent\` calls only; for longer work create a Watch with \`wake\` or \`notify\` and end the turn instead of polling.
 - Media: \`show_image\` — display an image inline in the conversation.
+- Tasks: \`list_tasks\` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the \`pages-and-components\` document with \`michi_docs\` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.
 
 Use tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.`;
+
+const SCHEDULING_TOOLS_LINE = `
+- Scheduling: \`list_scheduled_jobs\`, \`create_scheduled_job\`, \`update_scheduled_job\`, \`run_scheduled_job\`, \`delete_scheduled_job\` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.`;
+
+/**
+ * The Michi assistant's stand-in for the tool list above: its own tools are
+ * described in its opening instructions (assistant/policy.ts), and nothing
+ * else the ordinary list advertises exists for it.
+ */
+const ASSISTANT_CAPABILITIES_SECTION = `
+Capabilities — your tools are the Michi assistant's own, described in this conversation's opening instructions.
+You have no file, shell or web tools, and none for artifacts, branching, scheduling, images or Agent Runs: do not offer or attempt them.`;
+
+const ASSISTANT_PREAMBLE = `You are Michi, the assistant for the user's Spaces.
+Help the user understand their work and keep their pages useful. Ground answers in the page or conversations relevant to their request, and make only the page changes they asked for.
+Reply directly in the user's language with concise, natural prose. Let the request determine the answer's shape; do not add routine closing questions or describe internal bookkeeping.
+${ASSISTANT_CAPABILITIES_SECTION}`;
+
+/** Which tool guidance a head carries. */
+export type ToolCapabilities = 'michi' | 'crew' | 'assistant' | 'maintenance';
+
+const MAINTENANCE_CAPABILITIES_SECTION = `
+Scheduled maintenance mode. Only dedicated maintenance tools are available. Use their schemas to read complete source turns, select eligible Pages or databases from the trusted routing index, and apply verified changes. Do not claim an operation succeeded unless a maintenance tool confirms it.`;
 
 const CREW_CAPABILITIES_SECTION = `
 You run inside Kiro Crew, with the tools exposed by the selected Crew agent.
 Use the actual tool schemas to discover available filesystem, research and Crew capabilities.
 Michi integration uses michi_list_tools to discover this conversation's tool schemas, then
-michi_call_tool with {tool, arguments} to invoke them (thread search, panes, user-approved messages to
+michi_call_tool with {tool, arguments} to invoke them (thread search, panes, messages to
 other threads, artifacts, branching, Agent Runs, branch overviews and michi_docs for bundled Michi help). Consult relevant docs for Michi usage/setup/problems; they are reference material, not live settings or authorization. If these two tools are absent or refuse the session identity,
 Michi MCP is not configured; do not invent calls or substitute a different conversation.
 Use Crew's native tools for files and research.
@@ -186,8 +211,10 @@ export type MetadataOutputMode =
 function renderHead(
     enableFollowUps: boolean,
     metadataOutputMode: MetadataOutputMode = 'sentinel',
-    toolCapabilities: 'michi' | 'crew' = 'michi',
+    toolCapabilities: ToolCapabilities = 'michi',
 ): string {
+    if (toolCapabilities === 'maintenance') return `You are processing a server-owned Pages maintenance batch.\n${MAINTENANCE_CAPABILITIES_SECTION}`;
+    if (toolCapabilities === 'assistant') return ASSISTANT_PREAMBLE;
     const structured = metadataOutputMode === 'structured-tool';
     const toolOverview = metadataOutputMode !== 'sentinel';
     const branchOverviewLine = fullNodeSummaryExperimentEnabled()
@@ -204,7 +231,9 @@ function renderHead(
         ? structured ? STRUCTURED_FOLLOW_UPS_INSTRUCTION : FOLLOW_UPS_INSTRUCTION
         : FOLLOW_UPS_DISABLED;
     return PREAMBLE_TEMPLATE
-        .replace("{{TOOL_CAPABILITIES}}", toolCapabilities === 'crew' ? CREW_CAPABILITIES_SECTION : TOOL_CAPABILITIES_SECTION)
+        .replace("{{TOOL_CAPABILITIES}}", toolCapabilities === 'crew'
+            ? CREW_CAPABILITIES_SECTION
+            : TOOL_CAPABILITIES_SECTION.replace("{{SCHEDULING_TOOLS}}", scheduledJobsFeatureEnabled() ? SCHEDULING_TOOLS_LINE : ""))
         .replace("{{BRANCH_OVERVIEW_INSTRUCTIONS}}", branchOverviewLine)
         .replace("{{METADATA_SCOPE_INSTRUCTIONS}}", metadataScopeLine)
         .replace("{{FOLLOW_UPS_INSTRUCTIONS}}", followUpsLine);
@@ -220,8 +249,12 @@ function renderHead(
 export function buildStableSystemPrompt(
     metadataOutputMode: MetadataOutputMode = 'sentinel',
     enableFollowUps: boolean = true,
+    nativeAskUser: boolean = false,
+    toolCapabilities: ToolCapabilities = 'michi',
 ): string {
-    return buildMetadataSystemPrompt(metadataOutputMode, enableFollowUps) + ASK_USER_INSTRUCTION;
+    return buildMetadataSystemPrompt(metadataOutputMode, enableFollowUps, toolCapabilities) + (nativeAskUser
+        ? '\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.'
+        : ASK_USER_INSTRUCTION);
 }
 
 /** Stable metadata-only prompt for runtimes whose custom-agent layer cannot
@@ -233,8 +266,9 @@ export function buildStableSystemPrompt(
 export function buildMetadataSystemPrompt(
     metadataOutputMode: MetadataOutputMode = 'sentinel',
     enableFollowUps: boolean = true,
+    toolCapabilities: ToolCapabilities = 'michi',
 ): string {
-    return renderHead(enableFollowUps, metadataOutputMode);
+    return renderHead(enableFollowUps, metadataOutputMode, toolCapabilities);
 }
 
 const ASK_USER_INSTRUCTION = `
@@ -385,7 +419,7 @@ function renderAncestors(ancestors: AgentSession[]): string {
 
 export interface PreambleInput extends FirstTurnPrefixInput {
     enableFollowUps: boolean;
-    toolCapabilities?: 'michi' | 'crew';
+    toolCapabilities?: ToolCapabilities;
 }
 
 /**

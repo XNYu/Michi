@@ -19,7 +19,7 @@
 
 import { ChildProcess } from "node:child_process";
 import { killProcessTree, spawnAgentProcess } from "../src/agents/processTree";
-import { findKiroCli } from "../src/services/acpClient";
+import { findKiroCli } from "michi-runtime/internal/adapters/kiro/acpClient";
 
 interface Pending {
     resolve: (v: any) => void;
@@ -184,7 +184,7 @@ async function runTurn(client: MiniAcpClient, sessionId: string, text: string): 
 }
 
 async function main() {
-    const bin = findKiroCli();
+    const bin = findKiroCli({ kiroCliBin: process.env.KIRO_CLI_BIN, localAppData: process.env.LOCALAPPDATA });
     const cwd = process.cwd();
     console.log(`[probe] kiro-cli: ${bin}`);
     console.log(`[probe] cwd: ${cwd}\n`);

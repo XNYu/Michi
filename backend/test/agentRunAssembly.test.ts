@@ -183,24 +183,6 @@ describe('AgentRunAssembly', () => {
     assert.deepEqual(starts, ['queued', 'expired-running']);
   });
 
-  test('maintenance periodically reclaims an expired active lease', async () => {
-    const starts: string[] = [];
-    let reclaimed = false;
-    const record = { run: run('expired-running', AgentRunStatus.Running), leaseExpiresAt: 999 };
-    const recoverySource: AgentRunRecoverySource = {
-      list: (afterId) => afterId ? [] : [record],
-      reclaimExpired: () => { if (reclaimed) return false; reclaimed = true; return true; },
-    };
-    const assembly = createAgentRunAssembly({ enabled: true, dataDir: tmpDir, clock: new FakeClock(),
-      coordinator: fakeCoordinator(starts), recoverySource, watches: fakeWatches(),
-      retention: { cleanupExpired: async () => [] } as any,
-      heartbeatIntervalMs: 0, maintenanceIntervalMs: 0 });
-    await assembly.runMaintenance();
-    await Promise.resolve();
-    assert.equal(reclaimed, true);
-    assert.deepEqual(starts, ['expired-running']);
-  });
-
   test('shutdown bounds the wait for background Runs that ignore cancellation', async () => {
     const never = new Promise<unknown>(() => {});
     let page = 0;

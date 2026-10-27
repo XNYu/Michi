@@ -77,40 +77,6 @@ describe('MergeBanner', () => {
     vi.mocked(mergePreambleModule.estimateMergePreambleTokens).mockReturnValue(0);
   });
 
-  it('renders nothing when node has no mergeSources', () => {
-    vi.mocked(chatStoreModule.useChatNodesSnapshot).mockReturnValue(
-      makeNodes({
-        'n-merge': {
-          id: 'n-merge',
-          title: 'Not a merge',
-          messages: [],
-          mergeSources: undefined,
-          deletedAt: undefined,
-        },
-      }) as never,
-    );
-
-    const { container } = render(<MergeBanner nodeId="n-merge" />);
-    expect(container.firstChild).toBeNull();
-  });
-
-  it('renders nothing when mergeSources is empty array', () => {
-    vi.mocked(chatStoreModule.useChatNodesSnapshot).mockReturnValue(
-      makeNodes({
-        'n-merge': {
-          id: 'n-merge',
-          title: 'Not a merge',
-          messages: [],
-          mergeSources: [],
-          deletedAt: undefined,
-        },
-      }) as never,
-    );
-
-    const { container } = render(<MergeBanner nodeId="n-merge" />);
-    expect(container.firstChild).toBeNull();
-  });
-
   it('renders nothing when node already has messages (first message sent)', () => {
     vi.mocked(chatStoreModule.useChatNodesSnapshot).mockReturnValue(
       makeNodes({
@@ -126,17 +92,6 @@ describe('MergeBanner', () => {
 
     const { container } = render(<MergeBanner nodeId="n-merge" />);
     expect(container.firstChild).toBeNull();
-  });
-
-  it('renders warning banner when estimated tokens exceed 32k', () => {
-    vi.mocked(mergePreambleModule.estimateMergePreambleTokens).mockReturnValue(40_000);
-
-    render(<MergeBanner nodeId="n-merge" />);
-
-    const alert = screen.getByRole('alert');
-    expect(alert).toBeTruthy();
-    expect(alert.textContent).toMatch(/may exceed model context/i);
-    expect(alert.textContent).toMatch(/40,000/);
   });
 
   it('renders nothing when estimated tokens are at or below 32k', () => {

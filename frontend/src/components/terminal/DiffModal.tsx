@@ -1,3 +1,5 @@
+import { serverEntityId } from '../../config/backendIdentity';
+import { backendFetch } from '../../services/api/backendRequest';
 import React, { useEffect, useState } from 'react';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
 import { ModalShell } from '../ui/ModalShell';
@@ -38,8 +40,8 @@ export function DiffModal({ workspaceId, filePath, onClose }: DiffModalProps) {
     const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch(
-          `${workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(workspaceId)}/diff?path=${encodeURIComponent(filePath)}`,
+        const res = await backendFetch(
+          `${workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(serverEntityId(workspaceId))}/diff?path=${encodeURIComponent(filePath)}`,
           { signal: controller.signal },
         );
         if (cancelled) return;

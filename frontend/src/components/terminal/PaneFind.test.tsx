@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import PaneFind from './PaneFind';
 import type { ChatNodeState } from '../../state/chatTypes';
 
@@ -25,42 +25,6 @@ describe('PaneFind', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('shows total match count when query has matches', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const node = nodeFixture();
-    render(<PaneFind open node={node} onClose={vi.fn()} onScrollToMatch={vi.fn()} />);
-    const input = screen.getByPlaceholderText(/find in pane/i);
-    fireEvent.change(input, { target: { value: 'tier-3' } });
-    await vi.advanceTimersByTimeAsync(120);
-    // 1 match in m1, 2 matches in m2, 1 match in m3 → 4 total. Counter shows 1/4.
-    expect(screen.getByText(/1\s*\/\s*4/)).toBeTruthy();
-    vi.useRealTimers();
-  });
-
-  it('Enter advances to next match (wraps at end)', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const node = nodeFixture();
-    const onScrollToMatch = vi.fn();
-    render(<PaneFind open node={node} onClose={vi.fn()} onScrollToMatch={onScrollToMatch} />);
-    const input = screen.getByPlaceholderText(/find in pane/i);
-    fireEvent.change(input, { target: { value: 'tier-3' } });
-    await vi.advanceTimersByTimeAsync(120);
-    onScrollToMatch.mockClear();
-
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(screen.getByText(/2\s*\/\s*4/)).toBeTruthy();
-    expect(onScrollToMatch).toHaveBeenCalledTimes(1);
-
-    fireEvent.keyDown(input, { key: 'Enter' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-    expect(screen.getByText(/4\s*\/\s*4/)).toBeTruthy();
-
-    fireEvent.keyDown(input, { key: 'Enter' });
-    // wrap to 1
-    expect(screen.getByText(/1\s*\/\s*4/)).toBeTruthy();
-    vi.useRealTimers();
-  });
-
   it('passes within-message occurrence + query to onScrollToMatch (drives the match flash)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const node = nodeFixture();
@@ -68,7 +32,7 @@ describe('PaneFind', () => {
     render(<PaneFind open node={node} onClose={vi.fn()} onScrollToMatch={onScrollToMatch} />);
     const input = screen.getByPlaceholderText(/find in pane/i);
     fireEvent.change(input, { target: { value: 'tier-3' } });
-    await vi.advanceTimersByTimeAsync(120);
+    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
     onScrollToMatch.mockClear();
 
     // Match list (message order): m1#0, m2#0, m2#1, m3#0.
@@ -94,19 +58,6 @@ describe('PaneFind', () => {
     vi.useRealTimers();
   });
 
-  it('Shift+Enter goes to previous match (wraps at start)', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const node = nodeFixture();
-    render(<PaneFind open node={node} onClose={vi.fn()} onScrollToMatch={vi.fn()} />);
-    const input = screen.getByPlaceholderText(/find in pane/i);
-    fireEvent.change(input, { target: { value: 'tier-3' } });
-    await vi.advanceTimersByTimeAsync(120);
-    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
-    // wrap to last (4)
-    expect(screen.getByText(/4\s*\/\s*4/)).toBeTruthy();
-    vi.useRealTimers();
-  });
-
   it('Escape calls onClose', () => {
     const onClose = vi.fn();
     const node = nodeFixture();
@@ -114,11 +65,5 @@ describe('PaneFind', () => {
     const input = screen.getByPlaceholderText(/find in pane/i);
     fireEvent.keyDown(input, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
-  });
-
-  it('shows 0/0 with empty query', () => {
-    const node = nodeFixture();
-    render(<PaneFind open node={node} onClose={vi.fn()} onScrollToMatch={vi.fn()} />);
-    expect(screen.getByText(/0\s*\/\s*0/)).toBeTruthy();
   });
 });

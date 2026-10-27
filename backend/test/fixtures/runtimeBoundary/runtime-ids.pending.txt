@@ -1,0 +1,2 @@
+# feat/pages-spaces integrated: its runtime dependencies are injected through host ports.
+# No pending exceptions remain.

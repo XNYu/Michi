@@ -17,27 +17,100 @@ interface Anchor {
   highlightRects: ViewRect[];
   /** Selected plain text. */
   text: string;
-  /** Cloned Range so we can recompute the bounding box on scroll/resize. */
-  range: Range;
+  /** Cloned Range for scroll/resize; absent for a restored immutable draft. */
+  range?: Range;
+  /** Caller-owned snapshot captured when this native selection is established. */
+  context?: unknown;
+  hasContext: boolean;
 }
 
 export interface SelectionActionsProps {
-  containerRef: React.RefObject<HTMLElement>;
-  /** Quote-reply to the current pane/node. */
-  onQuote: (quoted: string, range?: Range) => void;
-  /** Branch: create a child thread seeded with the quote + a prompt. */
-  onBranch: (quoted: string, prompt: string, anchorMessageId?: string, range?: Range) => void;
+  containerRef: React.RefObject<HTMLElement | null>;
+  /** Opt-in resource identity for serializable file drafts; callers must also key this component. */
+  selectionDraftKey?: string;
+  /** Quote-reply to the current pane/node. Return false to keep the action open. */
+  onQuote: (quoted: string, range?: Range, context?: unknown) => void | boolean;
+  /** Branch: create a child thread seeded with the quote + a prompt. False retains the draft. */
+  onBranch: (quoted: string, prompt: string, anchorMessageId?: string, range?: Range, context?: unknown) => void | boolean;
   /**
    * Comment: queue a reply-to-selection on the current node. Unlike
    * Quote / Branch this does not send or branch anything - the comment
    * sits in the node's pendingComments until the next outgoing prompt
    * is submitted, at which point TPane flushes them all into a
-   * prepended markdown block.
+   * prepended markdown block. Return false to retain the draft after validation fails.
    */
-  onComment: (quoted: string, body: string, range?: Range) => void;
+  onComment: (quoted: string, body: string, range?: Range, context?: unknown) => void | boolean;
+  /** Capture source identity and destination once; return a new immutable token. */
+  captureSelectionContext?: (text: string, range: Range) => unknown;
+  /** Render current status / destination controls. Only explicit replacement changes the token. */
+  renderSelectionContext?: (context: unknown, replaceContext: (context: unknown) => void) => React.ReactNode;
 }
 
 type ComposerMode = 'closed' | 'branch' | 'comment';
+interface SelectionDraft {
+  text: string;
+  context?: unknown;
+  hasContext: boolean;
+  mode: Exclude<ComposerMode, 'closed'>;
+  prompt: string;
+}
+
+const DRAFT_STORAGE_KEY = 'michi:selection-drafts:v1';
+const MAX_DRAFTS = 12;
+const MAX_DRAFT_CHARS = 2_000_000;
+// Serialized entries keep this fallback bounded even when browser storage is unavailable.
+const selectionDrafts = new Map<string, string>();
+let draftsHydrated = false;
+
+function readDraft(key: string): SelectionDraft | null {
+  try {
+    const entries: unknown = draftsHydrated ? [] : JSON.parse(sessionStorage.getItem(DRAFT_STORAGE_KEY) || '[]');
+    draftsHydrated = true;
+    if (Array.isArray(entries)) {
+      for (const entry of entries.slice(-MAX_DRAFTS)) {
+        if (Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'string'
+          && entry[0].length + entry[1].length <= MAX_DRAFT_CHARS) selectionDrafts.set(entry[0], entry[1]);
+      }
+    }
+  } catch { /* Memory fallback covers unavailable / full sessionStorage. */ }
+  trimDrafts();
+  try {
+    const draft = JSON.parse(selectionDrafts.get(key) || 'null') as SelectionDraft | null;
+    return draft && typeof draft.text === 'string' && typeof draft.prompt === 'string'
+      && (draft.mode === 'comment' || draft.mode === 'branch') && typeof draft.hasContext === 'boolean'
+      ? draft : null;
+  } catch { return null; }
+}
+
+function trimDrafts() {
+  let total = [...selectionDrafts].reduce((sum, [key, value]) => sum + key.length + value.length, 0);
+  while (selectionDrafts.size > MAX_DRAFTS || total > MAX_DRAFT_CHARS) {
+    const oldest = selectionDrafts.entries().next().value;
+    if (!oldest) break;
+    total -= oldest[0].length + oldest[1].length;
+    selectionDrafts.delete(oldest[0]);
+  }
+}
+
+function writeDraft(key: string, draft: SelectionDraft | null) {
+  try {
+    if (draft) {
+      const serialized = JSON.stringify(draft);
+      selectionDrafts.delete(key);
+      selectionDrafts.set(key, serialized);
+    } else selectionDrafts.delete(key);
+    trimDrafts();
+    sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify([...selectionDrafts]));
+  } catch { /* Opt-in contexts must be serializable; browser storage is best effort. */ }
+}
+
+function restoreDraftAnchor(draft: SelectionDraft, container: HTMLElement): Anchor {
+  const rect = container.getBoundingClientRect();
+  const left = Math.max(VIEWPORT_MARGIN, Math.min(rect.left, window.innerWidth - COMPOSER_WIDTH - VIEWPORT_MARGIN));
+  const top = Math.max(VIEWPORT_MARGIN, Math.min(rect.top, window.innerHeight - COMPOSER_MIN_HEIGHT - VIEWPORT_MARGIN));
+  return { bounds: { left, top, right: left, bottom: top, width: 0, height: 0 },
+    highlightRects: [], text: draft.text, context: draft.context, hasContext: draft.hasContext };
+}
 
 const POPUP_GAP = 16;
 const BAR_APPROX_WIDTH = 280;
@@ -67,14 +140,22 @@ const POSITION_DEADZONE = 8;
  */
 export default function SelectionActions({
   containerRef,
+  selectionDraftKey,
   onQuote,
   onBranch,
   onComment,
+  captureSelectionContext,
+  renderSelectionContext,
 }: SelectionActionsProps) {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const [composerMode, setComposerMode] = useState<ComposerMode>('closed');
   const [prompt, setPrompt] = useState('');
+  const [hiddenDraft, setHiddenDraft] = useState<SelectionDraft | null>(null);
+  const hiddenDraftRef = useRef(false);
+  hiddenDraftRef.current = hiddenDraft !== null;
   const [measuredSize, setMeasuredSize] = useState<{ width: number; height: number } | null>(null);
+  const captureContextRef = useRef(captureSelectionContext);
+  captureContextRef.current = captureSelectionContext;
   const popupRef = useRef<HTMLDivElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   // Ref mirrors composerMode so the selectionchange handler always reads
@@ -99,13 +180,30 @@ export default function SelectionActions({
   >(null);
 
   useEffect(() => {
+    if (!selectionDraftKey || !containerRef.current) return;
+    const draft = readDraft(selectionDraftKey);
+    if (!draft) return;
+    setAnchor(restoreDraftAnchor(draft, containerRef.current));
+    setComposerMode(draft.mode);
+    setPrompt(draft.prompt);
+  }, [selectionDraftKey, containerRef]);
+
+  useEffect(() => {
+    if (!selectionDraftKey || !anchor || composerMode === 'closed') return;
+    writeDraft(selectionDraftKey, { text: anchor.text, context: anchor.context,
+      hasContext: anchor.hasContext, mode: composerMode, prompt });
+    // Geometry changes during scrolling do not change the saved draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectionDraftKey, anchor?.text, anchor?.context, anchor?.hasContext, composerMode, prompt]);
+
+  useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const STABLE_THRESHOLD = 80; // ms — content must be unchanged this long
 
     const updateFromSelection = () => {
-      if (composerOpenRef.current) { return; }
+      if (composerOpenRef.current || hiddenDraftRef.current) { return; }
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
         // Selection cleared → immediately hide, reset stability tracking
@@ -145,6 +243,11 @@ export default function SelectionActions({
           highlightRects: measured.highlightRects,
           text,
           range: range.cloneRange(),
+          // Native selectionchange also fires without a selection edit (for
+          // example after focus changes). Do not recapture a different target.
+          ...(sameSelection(anchor, text, range)
+            ? { context: anchor.context, hasContext: anchor.hasContext }
+            : { context: captureContextRef.current?.(text, range), hasContext: !!captureContextRef.current }),
         });
       } else {
         // Bar not yet visible → wait for content to stabilize.
@@ -168,6 +271,8 @@ export default function SelectionActions({
               highlightRects: freshMeasured.highlightRects,
               text: freshText,
               range: freshRange.cloneRange(),
+              context: captureContextRef.current?.(freshText, freshRange),
+              hasContext: !!captureContextRef.current,
             });
           }, STABLE_THRESHOLD);
         }
@@ -193,6 +298,18 @@ export default function SelectionActions({
     let frame: number | null = null;
     const recompute = () => {
       try {
+        if (!anchor.range) {
+          const container = containerRef.current;
+          if (container) {
+            stickyPlacementRef.current = null;
+            setAnchor((previous) => previous ? { ...previous, bounds: restoreDraftAnchor({
+              text: previous.text, hasContext: previous.hasContext, mode: 'comment', prompt: '',
+            }, container).bounds } : previous);
+          }
+          return;
+        }
+        if (!containerRef.current?.contains(anchor.range.commonAncestorContainer)
+          || anchor.range.toString().trim() !== anchor.text) return;
         const measured = measureRange(anchor.range, containerRef.current);
         if (!measured) return;
         // Scroll / resize must track the text 1:1. The dead-zone exists for
@@ -219,14 +336,17 @@ export default function SelectionActions({
       window.removeEventListener('scroll', schedule, true);
       window.removeEventListener('resize', schedule);
     };
-  }, [anchor?.range]);
+  }, [anchor?.range, !!anchor]);
 
   const close = useCallback(() => {
+    if (selectionDraftKey) writeDraft(selectionDraftKey, null);
+    hiddenDraftRef.current = false;
+    setHiddenDraft(null);
     setAnchor(null);
     setComposerMode('closed');
     setPrompt('');
     window.getSelection()?.removeAllRanges();
-  }, []);
+  }, [selectionDraftKey]);
 
   // Close on outside mousedown (anywhere except the popup itself).
   useEffect(() => {
@@ -234,13 +354,23 @@ export default function SelectionActions({
     const onMouseDown = (e: MouseEvent) => {
       const popup = popupRef.current;
       if (popup && popup.contains(e.target as Node)) return;
-      close();
+      if (selectionDraftKey && composerMode !== 'closed') {
+        const draft: SelectionDraft = { text: anchor.text, context: anchor.context,
+          hasContext: anchor.hasContext, mode: composerMode, prompt };
+        writeDraft(selectionDraftKey, draft);
+        hiddenDraftRef.current = true;
+        setHiddenDraft(draft);
+        setAnchor(null);
+        setComposerMode('closed');
+        setPrompt('');
+        window.getSelection()?.removeAllRanges();
+      } else close();
     };
     // Use mousedown (not click) so the selection change that follows a
     // click outside doesn't race with the next selectionchange handler.
     window.addEventListener('mousedown', onMouseDown);
     return () => window.removeEventListener('mousedown', onMouseDown);
-  }, [anchor, close]);
+  }, [anchor, close, selectionDraftKey, composerMode, prompt]);
 
   const openComposer = useCallback(
     (mode: Exclude<ComposerMode, 'closed'>) => {
@@ -256,21 +386,31 @@ export default function SelectionActions({
     if (!anchor) return;
     const p = prompt.trim();
     if (!p) return;
+    let result: void | boolean;
     if (composerMode === 'branch') {
-      onBranch(anchor.text, p, findMessageIdForRange(anchor.range), anchor.range);
+      const args: Parameters<typeof onBranch> = [anchor.text, p, anchor.range ? findMessageIdForRange(anchor.range) : undefined, anchor.range];
+      if (anchor.hasContext) args.push(anchor.context);
+      result = onBranch(...args);
     } else if (composerMode === 'comment') {
-      onComment(anchor.text, p, anchor.range);
+      const args: Parameters<typeof onComment> = [anchor.text, p, anchor.range];
+      if (anchor.hasContext) args.push(anchor.context);
+      result = onComment(...args);
     } else {
       return;
     }
-    close();
+    if (result !== false) close();
   }, [anchor, prompt, composerMode, onBranch, onComment, close]);
 
   const fireQuote = useCallback(() => {
     if (!anchor) return;
-    onQuote(anchor.text, anchor.range);
-    close();
+    const args: Parameters<typeof onQuote> = [anchor.text, anchor.range];
+    if (anchor.hasContext) args.push(anchor.context);
+    if (onQuote(...args) !== false) close();
   }, [anchor, onQuote, close]);
+
+  const replaceContext = useCallback((context: unknown) => {
+    setAnchor((previous) => previous ? { ...previous, context, hasContext: true } : previous);
+  }, []);
 
   // Global hotkeys while the bar / composer is active.
   useEffect(() => {
@@ -301,7 +441,7 @@ export default function SelectionActions({
   // re-measure with the new layout instead of carrying stale dimensions.
   useLayoutEffect(() => {
     setMeasuredSize(null);
-  }, [composerMode, anchor?.text]);
+  }, [composerMode, anchor?.text, anchor?.context, renderSelectionContext]);
 
   // Drop the sticky placement once the popup is dismissed so the next
   // appearance is positioned from scratch instead of inheriting a stale spot.
@@ -345,9 +485,21 @@ export default function SelectionActions({
       }
       return { width: w, height: h };
     });
-  }, [anchor?.text, composerMode, prompt]);
+  }, [anchor?.text, anchor?.context, composerMode, prompt, renderSelectionContext]);
 
-  if (!anchor) return null;
+  if (!anchor) return hiddenDraft ? (
+    <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted">
+      <button type="button" className="text-fg underline" onClick={() => {
+        if (!containerRef.current) return;
+        setAnchor(restoreDraftAnchor(hiddenDraft, containerRef.current));
+        setComposerMode(hiddenDraft.mode);
+        setPrompt(hiddenDraft.prompt);
+        hiddenDraftRef.current = false;
+        setHiddenDraft(null);
+      }}>Resume selection {hiddenDraft.mode}</button>
+      <button type="button" onClick={close}>Discard draft</button>
+    </div>
+  ) : null;
 
   const styles = getStyles();
   const composerOpen = composerMode !== 'closed';
@@ -384,7 +536,9 @@ export default function SelectionActions({
 
   return createPortal(
     <>
-      {composerOpen && anchor.highlightRects.length > 0 && (
+      {composerOpen && anchor.range && anchor.highlightRects.length > 0
+        && containerRef.current?.contains(anchor.range.commonAncestorContainer)
+        && anchor.range.toString().trim() === anchor.text && (
         <div className={styles.highlightLayer} aria-hidden="true">
           {anchor.highlightRects.map((rect, i) => (
             <span
@@ -402,19 +556,28 @@ export default function SelectionActions({
       )}
       <div
         ref={popupRef}
+        // Closes on any Esc while up, over every surface ("over"): the ⌘J
+        // panel's Esc always yields to it.
+        data-escape-layer="over"
         key={composerOpen ? `composer-${composerMode}` : 'bar'}
         className={`${composerOpen ? styles.composerWrap : styles.barWrap} sel-actions-enter`}
         style={{
           position: 'fixed',
           left: placement.left,
           top: placement.top,
-          width: composerOpen ? COMPOSER_WIDTH : undefined,
+          width: composerOpen || renderSelectionContext ? COMPOSER_WIDTH : undefined,
+          flexWrap: renderSelectionContext ? 'wrap' : undefined,
           zIndex: 'var(--z-selection)',
           transformOrigin: `left ${originY}`,
           WebkitAppRegion: 'no-drag',
         } as React.CSSProperties}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        {renderSelectionContext && (
+          <div style={{ width: '100%' }}>
+            {renderSelectionContext(anchor.context, replaceContext)}
+          </div>
+        )}
         {composerOpen ? (
           <>
             <div className={styles.composerHeader}>
@@ -513,6 +676,14 @@ export default function SelectionActions({
     </>,
     document.body,
   );
+}
+
+function sameSelection(anchor: Anchor, text: string, range: Range): boolean {
+  return anchor.text === text && !!anchor.range
+    && anchor.range.startContainer === range.startContainer
+    && anchor.range.startOffset === range.startOffset
+    && anchor.range.endContainer === range.endContainer
+    && anchor.range.endOffset === range.endOffset;
 }
 
 // ---------- Geometry helpers ----------

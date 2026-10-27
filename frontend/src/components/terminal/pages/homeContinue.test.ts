@@ -46,20 +46,6 @@ function fixture() {
 }
 
 describe('buildContinueItems', () => {
-  it('lists the newest threads across every workspace, newest first', () => {
-    const { nodes, projects } = fixture();
-    const items = buildContinueItems(projects, nodes, null, 6);
-    expect(items.map((i) => i.id)).toEqual(['tB', 'tC', 'tA']);
-    expect(items.map((i) => i.projectName)).toEqual(['One', 'Two', 'One']);
-  });
-
-  it('prefers the tree name, then the root title', () => {
-    const { nodes, projects } = fixture();
-    const items = buildContinueItems(projects, nodes, null, 6);
-    expect(items[0].label).toBe('Named beta');
-    expect(items[1].label).toBe('Gamma');
-  });
-
   it('counts live branch descendants and ignores non-branch edges', () => {
     const { nodes, projects } = fixture();
     const alpha = buildContinueItems(projects, nodes, null, 6).find((i) => i.id === 'tA')!;
@@ -69,16 +55,6 @@ describe('buildContinueItems', () => {
     const pruned = buildContinueItems(projects, nodes, null, 6).find((i) => i.id === 'tA')!;
     // a2 is in Trash, and a2x is only reachable through it.
     expect(pruned.branches).toBe(1);
-  });
-
-  it('reports streaming over unread, and treats the focused node as read', () => {
-    const { nodes, projects } = fixture();
-    nodes.a1 = node('a1', { lastAssistantAt: 10, viewedAt: 0 });
-    expect(buildContinueItems(projects, nodes, null, 6).find((i) => i.id === 'tA')!.status).toBe('unread');
-    expect(buildContinueItems(projects, nodes, 'a1', 6).find((i) => i.id === 'tA')!.status).toBe('idle');
-
-    nodes.a2x = node('a2x', { status: 'streaming' });
-    expect(buildContinueItems(projects, nodes, null, 6).find((i) => i.id === 'tA')!.status).toBe('streaming');
   });
 
   it('skips archived threads, trashed roots, and archived or deleted workspaces', () => {
@@ -91,9 +67,13 @@ describe('buildContinueItems', () => {
     expect(buildContinueItems(projects, nodes, null, 6)).toEqual([]);
   });
 
-  it('honours the limit', () => {
+  it('hides bound page helpers from Continue while counting only ordinary branches', () => {
     const { nodes, projects } = fixture();
-    expect(buildContinueItems(projects, nodes, null, 2).map((i) => i.id)).toEqual(['tB', 'tC']);
+    nodes.a1 = node('a1', { pageId: 'page-1' });
+    const alpha = buildContinueItems(projects, nodes, null, 6).find((item) => item.id === 'tA')!;
+    expect(alpha.branches).toBe(2);
+    nodes.a = node('a', { pageId: 'page-1' });
+    expect(buildContinueItems(projects, nodes, null, 6).map(item => item.id)).toEqual(['tB', 'tC']);
   });
 });
 

@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { installComposerModels } from '../fixtures/composerModels';
 import { bootWithWorkspace } from '../fixtures/mockApi';
+import { CONVERSATION_COMPOSER } from '../fixtures/shell';
 
 async function bootComposer(page: Page, palette: 'bone' | 'monokai' = 'bone') {
   const { status } = await installComposerModels(page);
@@ -32,7 +33,7 @@ async function assertSendMatchesChips(composer: Locator) {
 }
 
 async function assertControls(page: Page, info: TestInfo, stage: string) {
-  const composer = page.locator('.terminal-composer').first();
+  const composer = page.locator(CONVERSATION_COMPOSER).first();
   const model = composer.getByRole('button', { name: /^Model settings:/ });
   await finishHover(model);
   const fill = await model.evaluate((element) => getComputedStyle(element).backgroundColor);
@@ -63,7 +64,7 @@ for (const palette of ['bone', 'monokai'] as const) {
   test(`${palette}: Home and pane controls share the model hover with topbar corners`, async ({ page }, info) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await bootComposer(page, palette);
-    const composer = page.locator('.terminal-composer').first();
+    const composer = page.locator(CONVERSATION_COMPOSER).first();
     const editor = composer.locator('[contenteditable="true"]');
     await editor.fill('Review the Composer controls');
     await expect(composer.locator('.t-toolbar-chip')).toHaveCount(6);
@@ -97,7 +98,7 @@ for (const palette of ['bone', 'monokai'] as const) {
 
 test('compact controls keep their geometry and respect reduced motion', async ({ page }, info) => {
   await bootComposer(page);
-  const composer = page.locator('.terminal-composer').first();
+  const composer = page.locator(CONVERSATION_COMPOSER).first();
   const editor = composer.locator('[contenteditable="true"]');
   await editor.fill('Start a narrow pane');
   await composer.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
@@ -121,7 +122,7 @@ test('compact controls keep their geometry and respect reduced motion', async ({
 
 test('disabled model settings stay quiet while stop and queued Send keep their styles', async ({ page }, info) => {
   await bootComposer(page, 'monokai');
-  const composer = page.locator('.terminal-composer').first();
+  const composer = page.locator(CONVERSATION_COMPOSER).first();
   const editor = composer.locator('[contenteditable="true"]');
   await editor.fill('Start the conversation');
   await composer.getByRole('button', { name: 'Send (Enter)', exact: true }).click();

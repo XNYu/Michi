@@ -21,9 +21,10 @@ export function ResolvedUserInput({ userInput }: { userInput: UserInputRequest }
     return (
       <div className="ask-card ask-resolved">
         <div className="ask-card-body">
-          <div className="ask-qa-pair">
-            <span className="ask-qa-answer skipped">(skipped)</span>
-          </div>
+          {questions.map((q, i) => <div key={q.id ?? i} className="ask-qa-pair">
+            <div className="ask-qa-question">{q.header || q.question}</div>
+            <span className="ask-qa-answer skipped">{userInput.interrupted ? '(not answered before the turn ended)' : '(skipped)'}</span>
+          </div>)}
         </div>
       </div>
     );
@@ -35,7 +36,7 @@ export function ResolvedUserInput({ userInput }: { userInput: UserInputRequest }
           <div key={i} className="ask-qa-pair">
             <div className="ask-qa-question">{q.header || q.question}</div>
             <div className={`ask-qa-answer${!answers[i]?.answer ? ' skipped' : ''}`}>
-              {answers[i]?.answer || '(skipped)'}
+              {(answers.find(answer => q.id && answer.id === q.id) ?? answers.find(answer => answer.question === q.question) ?? answers[i])?.answer || '(skipped)'}
             </div>
           </div>
         ))}

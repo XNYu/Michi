@@ -1,4 +1,4 @@
-export type PaneItemKind = 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser' | 'agent-run';
+export type PaneItemKind = 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser' | 'agent-run' | 'page' | 'workflow-run';
 export type PaneLauncherChoice = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat';
 
 interface PaneItemBase {
@@ -32,6 +32,8 @@ export interface SourceLocation {
 
 export interface FilePaneItem extends PaneItemBase {
   kind: 'file';
+  /** Initial destination suggestion; an open feedback editor keeps its captured target. */
+  originChatNodeId?: string;
   filePath: string;
   viewMode: 'rendered' | 'source';
   diskState?: 'changed' | 'removed';
@@ -65,6 +67,22 @@ export interface AgentRunPaneItem extends PaneItemBase {
   runId: string;
 }
 
+/** A native Page has an owning resource identity independent of the pane slot
+ * that hosts it. The inherited projectId/treeId always describe that host slot. */
+export interface PagePaneItem extends PaneItemBase {
+  kind: 'page';
+  backendConnectionId: string;
+  workspaceId: string;
+  pageId: string;
+}
+
+/** A Claude Code / Kiro CLI workflow run on a specific Backend. */
+export interface WorkflowRunPaneItem extends PaneItemBase {
+  kind: 'workflow-run';
+  backendConnectionId: string;
+  runId: string;
+}
+
 export type PaneItem =
   | LauncherPaneItem
   | FilesPaneItem
@@ -73,13 +91,15 @@ export type PaneItem =
   | DiffPaneItem
   | TerminalPaneItem
   | BrowserPaneItem
-  | AgentRunPaneItem;
+  | AgentRunPaneItem
+  | PagePaneItem
+  | WorkflowRunPaneItem;
 
 function isPositiveSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
-const KINDS = new Set<PaneItemKind>(['launcher', 'files', 'review', 'file', 'diff', 'terminal', 'browser', 'agent-run']);
+const KINDS = new Set<PaneItemKind>(['launcher', 'files', 'review', 'file', 'diff', 'terminal', 'browser', 'agent-run', 'page', 'workflow-run']);
 
 export function isPaneItem(value: unknown): value is PaneItem {
   if (!value || typeof value !== 'object') return false;
@@ -97,7 +117,8 @@ export function isPaneItem(value: unknown): value is PaneItem {
   if (item.kind === 'files' || item.kind === 'review') return true;
   if (item.kind === 'file') {
     if (
-      typeof item.filePath !== 'string'
+      (item.originChatNodeId !== undefined && typeof item.originChatNodeId !== 'string')
+      || typeof item.filePath !== 'string'
       || (item.viewMode !== 'rendered' && item.viewMode !== 'source')
       || (item.diskState !== undefined && item.diskState !== 'changed' && item.diskState !== 'removed')
     ) return false;
@@ -115,6 +136,12 @@ export function isPaneItem(value: unknown): value is PaneItem {
   if (item.kind === 'diff') return typeof item.filePath === 'string';
   if (item.kind === 'terminal') return typeof item.surfaceId === 'string' && typeof item.cwd === 'string';
   if (item.kind === 'browser') return typeof item.surfaceId === 'string' && typeof item.url === 'string';
+  if (item.kind === 'page') {
+    return typeof item.backendConnectionId === 'string'
+      && typeof item.workspaceId === 'string'
+      && typeof item.pageId === 'string'
+      && item.id === pagePaneId(item.backendConnectionId, item.workspaceId, item.pageId);
+  }
   return typeof item.backendConnectionId === 'string' && typeof item.runId === 'string';
 }
 
@@ -136,6 +163,16 @@ export function agentRunPaneId(backendConnectionId: string, runId: string): stri
   return `pane:agent-run:${encodeURIComponent(backendConnectionId)}:${encodeURIComponent(runId)}`;
 }
 
+/** Stable native Page identity includes its backend and owning workspace. */
+export function pagePaneId(backendConnectionId: string, workspaceId: string, pageId: string): string {
+  return `pane:page:${encodeURIComponent(backendConnectionId)}:${encodeURIComponent(workspaceId)}:${encodeURIComponent(pageId)}`;
+}
+
+/** Stable per-window pane identity for a workflow run on a specific Backend. */
+export function workflowRunPaneId(backendConnectionId: string, runId: string): string {
+  return `pane:workflow-run:${encodeURIComponent(backendConnectionId)}:${encodeURIComponent(runId)}`;
+}
+
 export function uniquePaneId(kind: 'launcher' | 'terminal' | 'browser'): string {
   const token = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -152,6 +189,8 @@ export function paneItemTitle(item: PaneItem): string {
   if (item.kind === 'files') return 'Files';
   if (item.kind === 'review') return 'Review';
   if (item.kind === 'agent-run') return 'Agent Run';
+  if (item.kind === 'page') return 'Page';
+  if (item.kind === 'workflow-run') return 'Workflow';
   return item.kind === 'terminal' ? 'Terminal' : 'Browser';
 }
 

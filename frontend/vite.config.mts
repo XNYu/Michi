@@ -7,8 +7,14 @@ import { dirname } from 'node:path';
 import { frontendManualChunk } from './viteChunks';
 
 const packageRequire = createRequire(import.meta.url);
-const fontAssetDirectories = ['@fontsource/geist', '@fontsource/geist-mono', '@fontsource/ibm-plex-mono']
-  .map(name => dirname(packageRequire.resolve(`${name}/package.json`)));
+const fontAssetDirectories = [
+  '@fontsource/geist',
+  '@fontsource/geist-mono',
+  '@fontsource/ibm-plex-mono',
+  '@fontsource/inter',
+  '@fontsource/ibm-plex-sans',
+  '@fontsource-variable/source-serif-4',
+].map(name => dirname(packageRequire.resolve(`${name}/package.json`)));
 
 function restrictedRuntimeBuildFlag(): string {
   return process.env.VITE_MICHI_RESTRICTED_RUNTIMES ?? '0';

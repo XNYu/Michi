@@ -12,7 +12,7 @@ const SHORTCUT_GROUPS: Group[] = [
       { keys: kbd('mod', 'M'), label: 'Map page' },
       { keys: kbd('mod', 'D'), label: 'Digest page' },
       { keys: kbd('mod', 'O'), label: 'Workspaces page' },
-      { keys: kbd('mod', ','), label: 'Settings page' },
+      { keys: kbd('mod', ','), label: 'Settings drawer' },
     ],
   },
   {
@@ -22,7 +22,6 @@ const SHORTCUT_GROUPS: Group[] = [
       { keys: kbd('mod', 'T'), label: 'New thread (tree root in current workspace)' },
       { keys: kbd('mod', 'alt', 'T'), label: 'New blank branch from focused pane' },
       { keys: kbd('mod', '\\'), label: 'Open next chat not yet in a pane' },
-      { keys: kbd('mod', '1–9'), label: 'Focus pane by tab index' },
       { keys: kbd('ctrl', 'Tab'), label: 'Cycle to next pane (works while typing)' },
       { keys: kbd('ctrl', 'shift', 'Tab'), label: 'Cycle to previous pane' },
     ],

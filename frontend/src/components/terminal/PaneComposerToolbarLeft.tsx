@@ -21,6 +21,8 @@ export interface PaneMenuAnchor {
 
 interface PaneComposerToolbarLeftProps {
   canAttach: boolean;
+  /** Show + (attach) and @ (mention). Off where neither does anything (the Michi assistant). */
+  contextTools?: boolean;
   toolbarTier: 0 | 1 | 2;
   enableAgentChip?: boolean;
   currentMode?: SessionMode;
@@ -36,6 +38,7 @@ interface PaneComposerToolbarLeftProps {
 
 export function PaneComposerToolbarLeft({
   canAttach,
+  contextTools = true,
   toolbarTier,
   enableAgentChip = true,
   currentMode,
@@ -60,27 +63,31 @@ export function PaneComposerToolbarLeft({
 
   return (
     <>
-      <span
-        className="t-toolbar-chip"
-        title={canAttach ? 'Attach file' : 'Open a workspace to attach files'}
-        aria-disabled={!canAttach || undefined}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (canAttach) onPickFile();
-        }}
-        style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}
-      >
-        +
-      </span>
+      {contextTools && (
+        <>
+          <span
+            className="t-toolbar-chip"
+            title={canAttach ? 'Attach file' : 'Open a workspace to attach files'}
+            aria-disabled={!canAttach || undefined}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (canAttach) onPickFile();
+            }}
+            style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}
+          >
+            +
+          </span>
 
-      <span
-        className="t-toolbar-chip"
-        title="Mention context or node"
-        onClick={onInsertMentionTrigger}
-        style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}
-      >
-        @
-      </span>
+          <span
+            className="t-toolbar-chip"
+            title="Mention context or node"
+            onClick={onInsertMentionTrigger}
+            style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}
+          >
+            @
+          </span>
+        </>
+      )}
 
       {showAgentChip && (
         <button

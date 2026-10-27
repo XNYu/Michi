@@ -1,6 +1,6 @@
 {
   "name": "michi-crew-runtime",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "displayName": "Michi Crew Runtime",
   "description": "Use Michi with official Kiro Crew sessions, Memory, tools and approvals. Install this directory from your Michi installation. Approval access includes user-owned Crew chats; Michi restricts its adapter to its own App sessions.",
   "author": "yonghuyu",

@@ -1,0 +1,184 @@
+/**
+ * Path resolution + sandbox enforcement for in-tree tools.
+ *
+ * Two contracts:
+ *   1. `resolveToCwd` produces an absolute path with ~ expansion + leading-@
+ *      stripping (the agent sometimes emits "@/foo/bar" because it learned
+ *      that pattern from chat mention tokens) and unicode-space normalization.
+ *   2. `assertWithinCwd` verifies the resolved path stays inside cwd. ANY tool
+ *      that touches the filesystem MUST call this — the existing preamble.ts
+ *      already enforces this for @-mentioned context files; the new tool
+ *      surface needs the same guarantee.
+ *
+ * macOS NFD / curly-quote / AM-PM screenshot fallbacks (present in
+ * pi-coding-agent's path-utils) are intentionally omitted — rabbitholes is
+ * a research workspace, not a screenshot pipeline, so the user-typed path
+ * is the path.
+ *
+ * Only the pure resolver lives here. The host's per-user sandbox roots
+ * (Michi: backend/src/agents/tools/pathSandbox.ts) stay with the host.
+ */
+
+import path, { isAbsolute, resolve as resolvePath, sep } from "node:path";
+import { homedir } from "node:os";
+import fs from "node:fs";
+
+const UNICODE_SPACES = /[  -   　]/g;
+
+/**
+ * Normalize an LLM-typed path:
+ *   - strip a leading "@" (agent borrowed it from mention tokens)
+ *   - replace non-breaking / ideographic / narrow spaces with ASCII spaces
+ *   - expand ~ and ~/...
+ *
+ * Output is still possibly relative — feed it through resolveToCwd.
+ */
+export function expandPath(filePath: string): string {
+    const stripped = filePath.startsWith("@") ? filePath.slice(1) : filePath;
+    const normalized = stripped.replace(UNICODE_SPACES, " ");
+    if (normalized === "~") return homedir();
+    if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
+        return path.join(homedir(), normalized.slice(2));
+    }
+    return normalized;
+}
+
+/**
+ * Produce an absolute path from `filePath`, resolving relative paths
+ * against `cwd`. Does NOT enforce the sandbox — that's `assertWithinCwd`'s
+ * job.
+ */
+export function resolveToCwd(filePath: string, cwd: string): string {
+    const expanded = expandPath(filePath);
+    if (isAbsolute(expanded)) return expanded;
+    return resolvePath(cwd, expanded);
+}
+
+/**
+ * Canonical cwd used when a session is accepted. `path.resolve` removes
+ * trailing separators; realpath collapses host-specific aliases, such as a
+ * home directory that is a symlink into /local. The fallback keeps this
+ * helper safe for callers that validate existence separately.
+ */
+export function normalizeWorkspaceCwd(cwd: string): string {
+    const resolved = path.resolve(cwd);
+    try {
+        return fs.realpathSync.native(resolved);
+    } catch {
+        return resolved;
+    }
+}
+
+function isWithinRoot(candidate: string, root: string): boolean {
+    const relative = path.relative(root, candidate);
+    return relative === ""
+        || (relative !== ".." && !relative.startsWith(`..${sep}`) && !path.isAbsolute(relative));
+}
+
+/** Resolve symlinks in the longest existing prefix, preserving a missing tail. */
+function canonicalizePathForComparison(inputPath: string): string {
+    const resolved = path.resolve(inputPath);
+    let cursor = resolved;
+    const missingTail: string[] = [];
+
+    for (;;) {
+        try {
+            const realPrefix = fs.realpathSync.native(cursor);
+            return path.join(realPrefix, ...missingTail.reverse());
+        } catch {
+            const parent = path.dirname(cursor);
+            if (parent === cursor) return resolved;
+            missingTail.push(path.basename(cursor));
+            cursor = parent;
+        }
+    }
+}
+
+function isAllowedByRoot(absolutePath: string, cwd: string): boolean {
+    const resolvedPath = path.resolve(absolutePath);
+    const resolvedCwd = path.resolve(cwd);
+
+    // Keep the existing lexical contract first: a symlink deliberately placed
+    // inside a workspace remains usable even if its target is outside.
+    if (isWithinRoot(resolvedPath, resolvedCwd)) return true;
+
+    const canonicalCwd = canonicalizePathForComparison(resolvedCwd);
+    // Common alias case: the agent emitted the canonical spelling while cwd
+    // retained the host alias (for example /local/home vs /home).
+    if (isWithinRoot(resolvedPath, canonicalCwd)) return true;
+
+    const canonicalPath = canonicalizePathForComparison(resolvedPath);
+    return isWithinRoot(canonicalPath, canonicalCwd);
+}
+
+export class PathSandboxError extends Error {
+    constructor(
+        public readonly attemptedPath: string,
+        public readonly cwd: string,
+    ) {
+        super(`access denied: ${attemptedPath} is outside the workspace`);
+        this.name = "PathSandboxError";
+    }
+}
+
+/**
+ * Throw if `absolutePath` is outside `cwd`. Both arguments must already
+ * be absolute and normalized (use resolveToCwd first). Path equality
+ * with cwd itself is allowed (listing the workspace root is fine).
+ *
+ * Note: this is a *prefix* check, not a symlink-resolved check. A
+ * symlink inside cwd that points outside will pass — that's intentional
+ * scope: workspace owners control what they put there. If the tool
+ * caller wants a stricter realpath check, layer it on top.
+ */
+export function assertWithinCwd(absolutePath: string, cwd: string): void {
+    if (isAllowedByRoot(absolutePath, cwd)) return;
+    throw new PathSandboxError(absolutePath, cwd);
+}
+
+/**
+ * Multi-folder variant of assertWithinCwd. Throws if `absolutePath` is not
+ * inside ANY of the provided folder paths. When `folders` is empty, falls
+ * back to `cwd` (single-folder legacy behavior).
+ */
+export function assertPathAllowed(
+    absolutePath: string,
+    folders: Array<{ path: string }>,
+    cwd?: string,
+): void {
+    // Build effective allowlist: all folder paths, plus cwd as fallback
+    const allowlist: string[] = folders.map(f => f.path);
+    if (allowlist.length === 0 && cwd) allowlist.push(cwd);
+    if (allowlist.length === 0) {
+        throw new PathSandboxError(absolutePath, '(no workspace directory)');
+    }
+
+    const allowed = allowlist.some(dir => isAllowedByRoot(absolutePath, dir));
+    if (!allowed) {
+        throw new PathSandboxError(absolutePath, allowlist[0]);
+    }
+}
+
+/**
+ * Convenience: resolve and assert in one step. Returns the absolute
+ * path on success.
+ */
+export function resolveWithinCwd(filePath: string, cwd: string): string {
+    const abs = resolveToCwd(filePath, cwd);
+    assertWithinCwd(abs, cwd);
+    return abs;
+}
+
+/**
+ * Multi-folder convenience: resolve against primary cwd, then assert against
+ * all registered folders. Returns the absolute path on success.
+ */
+export function resolveWithinFolders(
+    filePath: string,
+    cwd: string,
+    folders: Array<{ path: string }>,
+): string {
+    const abs = resolveToCwd(filePath, cwd);
+    assertPathAllowed(abs, folders, cwd);
+    return abs;
+}

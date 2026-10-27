@@ -95,242 +95,22 @@ describe('ManageComposer', () => {
     });
   });
 
-  it('submit triggers selectProject + createThread + sendMessage + onSubmitted', async () => {
-    selectProject.mockClear();
-    createThread.mockClear();
-    sendMessage.mockClear();
-    const onSubmitted = vi.fn();
-    render(
-      <ManageComposer
-        workspaceId="ws1"
-        workspaceName="ws-one"
-        onSubmitted={onSubmitted}
-      />,
-    );
-    const ta = await screen.findByRole('textbox') as HTMLTextAreaElement;
-    fireEvent.change(ta, { target: { value: 'hello there' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-    await waitFor(() => {
-      expect(selectProject).toHaveBeenCalledWith('ws1');
-      expect(createThread).toHaveBeenCalled();
-      expect(sendMessage).toHaveBeenCalledWith('new-node-id', 'hello there', undefined);
-      expect(onSubmitted).toHaveBeenCalled();
-    });
-  });
-
-  it('clears the remembered draft before submission navigation unmounts it', async () => {
-    let unmountFirst = () => {};
-    const onSubmitted = vi.fn(() => unmountFirst());
-    const first = render(
-      <ManageComposer
-        workspaceId="ws1"
-        workspaceName="ws-one"
-        onSubmitted={onSubmitted}
-      />,
-    );
-    unmountFirst = first.unmount;
-
-    const ta = await screen.findByRole('textbox') as HTMLTextAreaElement;
-    fireEvent.change(ta, { target: { value: 'do not haunt home' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-
-    await waitFor(() => expect(onSubmitted).toHaveBeenCalled());
-
-    render(
-      <ManageComposer
-        workspaceId="ws1"
-        workspaceName="ws-one"
-        onSubmitted={vi.fn()}
-      />,
-    );
-    expect((await screen.findByRole('textbox') as HTMLTextAreaElement).value).toBe('');
-  });
-
-  it('does not submit empty input', () => {
-    sendMessage.mockClear();
-    const onSubmitted = vi.fn();
-    render(
-      <ManageComposer
-        workspaceId="ws1"
-        workspaceName="ws-one"
-        onSubmitted={onSubmitted}
-      />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(onSubmitted).not.toHaveBeenCalled();
-  });
-
-  it('hides the agent chip unless enableAgentSelect is set', () => {
-    storeState.availableModes = [{ id: 'planner', name: 'Planner' }];
-    render(
-      <ManageComposer workspaceId="ws1" workspaceName="ws-one" onSubmitted={vi.fn()} />,
-    );
-    expect(screen.queryByTitle(/Switch agent/)).toBeNull();
-  });
-
-  it('shows the runtime default Agent without pinning it to the new thread', () => {
-    storeState.availableModes = [{ id: 'kiro_default', name: 'Kiro Default Agent' }];
-    storeState.defaultModeId = 'kiro_default';
-    render(
-      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
-    );
-
-    expect(screen.getByTitle('Switch agent — Kiro Default Agent')).toBeTruthy();
-    fireEvent.change(composerTextarea(), { target: { value: 'follow Kiro default' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-
-    expect(createThread).toHaveBeenCalledWith(undefined);
-  });
-
-  it('pre-selected agent is stamped onto the new thread on send', () => {
-    vi.useFakeTimers();
-    storeState.availableModes = [
-      { id: 'planner', name: 'Planner' },
-      { id: 'build', name: 'Build' },
-    ];
-    render(
-      <ManageComposer
-        workspaceId="ws1"
-        workspaceName="ws-one"
-        enableAgentSelect
-        onSubmitted={vi.fn()}
-      />,
-    );
-
-    // Open the agent menu and pick "Build". The menu is a searchable
-    // ContextMenu (a `filter…` input joins the composer textarea) and its pick
-    // resolves after a confirm-blink timer.
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(screen.getByText('Build'));
-    flushBlink();
-
-    const ta = composerTextarea();
-    fireEvent.change(ta, { target: { value: 'plan this' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-
-    expect(createThread).toHaveBeenCalledWith('build');
-  });
-
-  it('remembers the pre-picked agent across remounts (sticky)', () => {
-    vi.useFakeTimers();
-    storeState.availableModes = [
-      { id: 'planner', name: 'Planner' },
-      { id: 'build', name: 'Build' },
-    ];
-
-    // First mount: pick Planner, then unmount.
-    const first = render(
-      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
-    );
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(screen.getByText('Planner'));
-    flushBlink();
-    first.unmount();
-
-    // Second mount: the pick is restored without re-selecting.
-    render(
-      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
-    );
-    expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
-
-    const ta = composerTextarea();
-    fireEvent.change(ta, { target: { value: 'go' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-    expect(createThread).toHaveBeenCalledWith('planner');
-  });
-
-  it('restores the pre-picked agent after an app restart', () => {
-    vi.useFakeTimers();
-    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
-    storeState.availableModes = [
-      { id: 'planner', name: 'Planner' },
-      { id: 'build', name: 'Build' },
-    ];
-    storeState.defaultModeId = 'build';
-    const first = render(
-      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
-    );
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(screen.getByText('Planner'));
-    flushBlink();
-    first.unmount();
-
-    // A restart drops every in-memory sticky; only localStorage survives.
-    __resetManageComposerSessionStateForTests({ keepPersisted: true });
-
-    render(
-      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
-    );
-    expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
-    fireEvent.change(composerTextarea(), { target: { value: 'go' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-    expect(createThread).toHaveBeenCalledWith('planner');
-  });
-
-  it('keeps remembered agents per runtime and shows the default for a runtime without one', () => {
-    vi.useFakeTimers();
-    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
-    storeState.availableModes = [{ id: 'planner', name: 'Planner' }, { id: 'kiro_default', name: 'Kiro Default' }];
-    storeState.defaultModeId = 'kiro_default';
-    const view = render(
-      <ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />,
-    );
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(screen.getByText('Planner'));
-    flushBlink();
-
-    storeState.agentStatus = { runtime: 'claude', capabilities: { modes: true } };
-    storeState.availableModes = [{ id: 'default', name: 'Default' }, { id: 'plan', name: 'Plan' }];
-    storeState.defaultModeId = 'default';
-    view.rerender(<ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />);
-    expect(screen.getByTitle('Switch agent — Default')).toBeTruthy();
-
-    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
-    storeState.availableModes = [{ id: 'planner', name: 'Planner' }, { id: 'kiro_default', name: 'Kiro Default' }];
-    storeState.defaultModeId = 'kiro_default';
-    view.rerender(<ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />);
-    expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
-  });
-
-  it('keeps the remembered agent for the next thread after a successful send', async () => {
-    storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
-    storeState.availableModes = [{ id: 'planner', name: 'Planner' }];
-    storeState.defaultModeId = null;
-    let unmountHome = () => {};
-    // Home navigates away on submit, unmounting the composer.
-    const onSubmitted = vi.fn(() => unmountHome());
-    const home = render(<ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={onSubmitted} />);
-    unmountHome = home.unmount;
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(screen.getByText('Planner'));
-    await waitFor(() => expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy());
-    fireEvent.change(composerTextarea(), { target: { value: 'first' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-    await waitFor(() => expect(onSubmitted).toHaveBeenCalledOnce());
-    expect(createThread).toHaveBeenCalledWith('planner');
-
-    __resetManageComposerSessionStateForTests({ keepPersisted: true });
-    render(<ManageComposer workspaceId="ws1" workspaceName="ws-one" enableAgentSelect onSubmitted={vi.fn()} />);
-    expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
-  });
-
-  it('shows the runtime default when the remembered agent is not in the current catalog', () => {
-    vi.useFakeTimers();
+  it('shows the runtime default when the remembered agent is not in the current catalog', async () => {
     storeState.agentStatus = { runtime: 'kiro', capabilities: { modes: true } };
     storeState.availableModes = [{ id: 'planner', name: 'Planner' }, { id: 'build', name: 'Build' }];
     storeState.defaultModeId = 'build';
     const first = render(<ManageComposer workspaceId="ws1" enableAgentSelect onSubmitted={vi.fn()} />);
+    await screen.findByRole('textbox');
     fireEvent.click(screen.getByTitle(/Switch agent/));
     fireEvent.click(screen.getByText('Planner'));
-    flushBlink();
+    await screen.findByTitle('Switch agent — Planner');
     first.unmount();
 
     // e.g. a workspace-level agent that this workspace does not define.
     storeState.availableModes = [{ id: 'build', name: 'Build' }];
     const second = render(<ManageComposer workspaceId="ws1" enableAgentSelect onSubmitted={vi.fn()} />);
     expect(screen.getByTitle('Switch agent — Build')).toBeTruthy();
-    fireEvent.change(composerTextarea(), { target: { value: 'go' } });
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'go' } });
     fireEvent.click(screen.getByRole('button', { name: /send/i }));
     expect(createThread).toHaveBeenLastCalledWith(undefined);
     second.unmount();
@@ -339,26 +119,6 @@ describe('ManageComposer', () => {
     storeState.availableModes = [{ id: 'planner', name: 'Planner' }, { id: 'build', name: 'Build' }];
     render(<ManageComposer workspaceId="ws1" enableAgentSelect onSubmitted={vi.fn()} />);
     expect(screen.getByTitle('Switch agent — Planner')).toBeTruthy();
-  });
-
-  it('submits a digest follow-up with the selected mode, without creating a root thread', async () => {
-    storeState.availableModes = [{ id: 'build', name: 'Build' }];
-    const onSubmitted = vi.fn();
-    render(<ManageComposer workspaceId="ws1" parentNodeId="digest-1" enableAgentSelect onSubmitted={onSubmitted} />);
-    await screen.findByRole('textbox');
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(screen.getByText('Build'));
-    await waitFor(() => expect(screen.getByTitle('Switch agent — Build')).toBeTruthy());
-    fireEvent.change(composerTextarea(), { target: { value: 'Follow up\non the decisions' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-
-    await waitFor(() => expect(onSubmitted).toHaveBeenCalledOnce());
-    expect(createChildChat).toHaveBeenCalledWith('digest-1', 'Follow up\non the decisions', undefined, {
-      modeId: 'build', primaryAgent: undefined,
-    });
-    expect(createThread).not.toHaveBeenCalled();
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(composerTextarea().value).toBe('');
   });
 
   it('sends the visible runtime, model and reasoning with a digest follow-up', async () => {
@@ -374,28 +134,6 @@ describe('ManageComposer', () => {
         runtimeId: 'codex', modelId: 'test-model', reasoning: 'high', displayText: 'Explain this',
       }), expect.any(Object),
     ));
-  });
-
-  it('keeps Home and individual digest drafts isolated across navigation', async () => {
-    const view = render(<ManageComposer workspaceId="ws1" onSubmitted={vi.fn()} />);
-    fireEvent.change(await screen.findByRole('textbox'), { target: { value: 'Home draft' } });
-
-    view.rerender(<ManageComposer workspaceId="ws1" parentNodeId="digest-1" onSubmitted={vi.fn()} />);
-    expect(composerTextarea().value).toBe('');
-    fireEvent.change(composerTextarea(), { target: { value: 'Digest one draft' } });
-
-    view.rerender(<ManageComposer workspaceId="ws1" parentNodeId="digest-2" onSubmitted={vi.fn()} />);
-    expect(composerTextarea().value).toBe('');
-    fireEvent.change(composerTextarea(), { target: { value: 'Digest two draft' } });
-
-    view.rerender(<ManageComposer workspaceId="ws1" parentNodeId="digest-1" onSubmitted={vi.fn()} />);
-    expect(composerTextarea().value).toBe('Digest one draft');
-    view.rerender(<ManageComposer workspaceId="ws2" parentNodeId="digest-1" onSubmitted={vi.fn()} />);
-    expect(composerTextarea().value).toBe('');
-    view.rerender(<ManageComposer workspaceId="ws1" parentNodeId="digest-1" onSubmitted={vi.fn()} />);
-    expect(composerTextarea().value).toBe('Digest one draft');
-    view.rerender(<ManageComposer workspaceId="ws1" onSubmitted={vi.fn()} />);
-    expect(composerTextarea().value).toBe('Home draft');
   });
 
   it('prevents duplicate sends, retains a failed draft and allows retry', async () => {

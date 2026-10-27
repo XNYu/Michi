@@ -1,0 +1,53 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { FileRuntimeCatalogCache as FileRuntimeModelCache } from '../src/core/runtimeModelCache';
+
+test('FileRuntimeModelCache round-trips a model catalog', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-model-cache-'));
+  try {
+    const cache = new FileRuntimeModelCache(dataDir);
+    cache.save('codex', [
+      { id: 'gpt-test', label: 'GPT Test', description: 'cached', isDefault: true },
+    ]);
+
+    assert.deepEqual(cache.load('codex'), [
+      { id: 'gpt-test', label: 'GPT Test', description: 'cached', isDefault: true },
+    ]);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('catalog capabilities survive caching and invalidate unchanged model IDs', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-effort-cache-'));
+  try {
+    const cache = new FileRuntimeModelCache(dataDir);
+    cache.save('codex', [{ id: 'same-model', supportsReasoning: true, supportedReasoningLevels: ['low', 'high'], defaultReasoning: 'high' }]);
+    assert.deepEqual(cache.load('codex')?.[0].supportedReasoningLevels, ['low', 'high']);
+    const changed = cache.saveCatalog('codex', { models: [{ id: 'same-model', supportsReasoning: true, supportedReasoningLevels: ['low', 'high', 'max'], defaultReasoning: 'max' }], providers: [] });
+    assert.equal(changed.written, true);
+    assert.equal(cache.load('codex')?.[0].defaultReasoning, 'max');
+    assert.equal(cache.saveCatalog('codex', { models: changed.snapshot.models, providers: [] }).written, false);
+    cache.save('codex', [{ id: 'same-model', supportsReasoning: false, supportedReasoningLevels: [] }]);
+    assert.deepEqual(cache.load('codex')?.[0].supportedReasoningLevels, []);
+    assert.equal(cache.load('codex')?.[0].supportsReasoning, false);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('FileRuntimeModelCache does not replace a good snapshot with an empty catalog', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-model-cache-'));
+  try {
+    const cache = new FileRuntimeModelCache(dataDir);
+    cache.save('codex', [{ id: 'keep-me' }]);
+    cache.save('codex', []);
+
+    assert.deepEqual(cache.load('codex')?.map((model) => model.id), ['keep-me']);
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

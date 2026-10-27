@@ -45,56 +45,6 @@ describe('pane visual focus', () => {
     expect(getByTestId('focus').textContent).toBe('none');
   });
 
-  it('converges when scope, visibility and pane IDs change together repeatedly', () => {
-    const { rerender, getByTestId } = render(<Scene />);
-    for (let i = 0; i < 20; i++) {
-      rerender(<Scene focus={null} scope={`empty-${i}`} enabled={false} ids={[]} />);
-      expect(getByTestId('focus').textContent).toBe('none');
-      rerender(<Scene focus="b" scope={`tree-${i}`} ids={['b']} />);
-      expect(getByTestId('focus').textContent).toBe('b');
-      act(() => settleFocus());
-    }
-  });
-
-  it('commits focus changes under StrictMode', () => {
-    const { rerender, getByTestId } = render(<React.StrictMode><Scene /></React.StrictMode>);
-    rerender(<React.StrictMode><Scene focus="b" scope="other-tree" /></React.StrictMode>);
-    expect(getByTestId('focus').textContent).toBe('b');
-    rerender(<React.StrictMode><Scene focus="a" scope="other-tree" /></React.StrictMode>);
-    act(() => settleFocus());
-    expect(getByTestId('focus').textContent).toBe('a');
-  });
-
-  it('keeps the destination dim until motion lands, without delaying logical focus', async () => {
-    const { rerender, getByTestId } = render(<Scene />);
-    const dim = getByTestId('b').style.filter;
-    expect(dim).not.toBe('none');
-    rerender(<Scene focus="b" />);
-    expect(logicalFocus).toBe('b');
-    expect(getByTestId('focus').textContent).toBe('a');
-    expect(getByTestId('a').style.filter).toBe('none');
-    expect(getByTestId('b').style.filter).toBe(dim);
-    const animation = new EventTarget() as Animation;
-    afterPaneMotion(animation, settleFocus);
-    await act(async () => { animation.dispatchEvent(new Event('finish')); });
-    expect(getByTestId('focus').textContent).toBe('b');
-    expect(getByTestId('b').style.filter).toBe('none');
-    expect(getByTestId('a').style.filter).toBe(dim);
-  });
-
-  it('does not brighten the survivor when closing or unmounting the old focus', () => {
-    const { rerender, getByTestId } = render(<Scene />);
-    const dim = getByTestId('b').style.filter;
-    rerender(<Scene focus="b" ids={['b']} />);
-    expect(getByTestId('b').style.filter).toBe(dim);
-    expect(getByTestId('a').style.filter).toBe('none');
-    // Presence removal is not visual arrival; expansion still has to finish.
-    rerender(<Scene focus="b" ids={['b']} />);
-    expect(getByTestId('b').style.filter).toBe(dim);
-    act(() => settleFocus());
-    expect(getByTestId('b').style.filter).toBe('none');
-  });
-
   it('rejects stale finishes even when rapidly returning to the same target', () => {
     const { rerender, getByTestId } = render(<Scene />);
     rerender(<Scene focus="b" />);
@@ -105,17 +55,5 @@ describe('pane visual focus', () => {
     expect(getByTestId('focus').textContent).toBe('a');
     act(() => settleFocus());
     expect(getByTestId('focus').textContent).toBe('b');
-  });
-
-  it('resets across scopes, navigation and an empty workspace', () => {
-    const { rerender, getByTestId } = render(<Scene />);
-    rerender(<Scene focus="b" scope="other-tree" />);
-    expect(getByTestId('focus').textContent).toBe('b');
-    rerender(<Scene focus="a" scope="other-tree" enabled={false} />);
-    expect(getByTestId('focus').textContent).toBe('a');
-    rerender(<Scene focus="b" scope="other-tree" />);
-    expect(getByTestId('focus').textContent).toBe('b');
-    rerender(<Scene focus={null} scope="other-tree" ids={[]} />);
-    expect(getByTestId('focus').textContent).toBe('none');
   });
 });

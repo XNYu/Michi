@@ -1,3 +1,4 @@
+import { backendFetch } from './backendRequest';
 import type {
   AgentRunAttemptDtoV1, AgentRunDtoV1, AgentRunEventV1, AgentRunInputRequestV1,
   AgentRunInteractionDtoV1, AgentRunListQueryV1, AgentRunWatchDtoV1,
@@ -68,7 +69,7 @@ export async function listAgentRuns(
   if (query.includeArchived !== undefined) params.set('includeArchived', String(query.includeArchived));
   if (query.limit !== undefined) params.set('limit', String(query.limit));
   if (query.cursor) params.set('cursor', query.cursor);
-  const payload = await jsonResponse(await fetch(`${base}/agent-runs?${params.toString()}`, { signal }), 'listAgentRuns');
+  const payload = await jsonResponse(await backendFetch(`${base}/agent-runs?${params.toString()}`, { signal }), 'listAgentRuns');
   return arrayField(payload, 'runs').map((item, index) => locatedAgentResource(connectionId, parseAgentRunDtoV1(item, `runs[${index}]`)));
 }
 
@@ -81,19 +82,19 @@ export async function spawnAgentRun(request: SpawnAgentRunRequestV1, signal?: Ab
       throw new Error('Parent conversation belongs to a different Backend than the Run Workspace.');
     }
   }
-  const payload = await jsonResponse(await fetch(`${base}/agent-runs`, {
+  const payload = await jsonResponse(await backendFetch(`${base}/agent-runs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal,
   }), 'spawnAgentRun');
   return locatedAgentResource(connectionId, parseAgentRunDtoV1(field(payload, 'run')));
 }
 
 export async function getAgentRun(identity: AgentResourceIdentity, signal?: AbortSignal): Promise<LocatedAgentResource<AgentRunDtoV1>> {
-  const payload = await jsonResponse(await fetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}`, { signal }), 'getAgentRun');
+  const payload = await jsonResponse(await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}`, { signal }), 'getAgentRun');
   return locatedAgentResource(identity.backendConnectionId, parseAgentRunDtoV1(field(payload, 'run')));
 }
 
 export async function getAgentRunDetail(identity: AgentResourceIdentity, signal?: AbortSignal): Promise<LocatedAgentResource<AgentRunDetailV1>> {
-  const payload = await jsonResponse(await fetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}`, { signal }), 'getAgentRunDetail');
+  const payload = await jsonResponse(await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}`, { signal }), 'getAgentRunDetail');
   if (!payload || typeof payload !== 'object') throw new Error('getAgentRunDetail returned a malformed payload');
   const detail = payload as Record<string, unknown>;
   const run = parseAgentRunDtoV1(field(detail, 'run'));
@@ -107,7 +108,7 @@ export async function getAgentRunEvents(identity: AgentResourceIdentity, afterSe
   const events: AgentRunEventV1[] = [];
   let cursor = afterSeq;
   for (let page = 0; page < 100; page += 1) {
-    const payload = await jsonResponse(await fetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}/events?afterSeq=${cursor}`, { signal }), 'getAgentRunEvents');
+    const payload = await jsonResponse(await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agent-runs/${encodeURIComponent(identity.id)}/events?afterSeq=${cursor}`, { signal }), 'getAgentRunEvents');
     const batch = arrayField(payload, 'events').map((event, index) => parseAgentRunEventV1(event, `events[${events.length + index}]`));
     events.push(...batch);
     if (batch.length < 1_000) return events;
@@ -119,29 +120,29 @@ export async function getAgentRunEvents(identity: AgentResourceIdentity, afterSe
 }
 
 export async function sendAgentRunInput(target: AgentRunRouteTarget, request: AgentRunInputRequestV1, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`${actionBase(target)}/agent-runs/${encodeURIComponent(target.identity.id)}/input`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal });
+  const response = await backendFetch(`${actionBase(target)}/agent-runs/${encodeURIComponent(target.identity.id)}/input`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal });
   if (!response.ok) throw new Error(`sendAgentRunInput failed: ${response.status}`);
 }
 
 export async function cancelAgentRun(target: AgentRunRouteTarget, request: CancelAgentRunRequestV1, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`${actionBase(target)}/agent-runs/${encodeURIComponent(target.identity.id)}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal });
+  const response = await backendFetch(`${actionBase(target)}/agent-runs/${encodeURIComponent(target.identity.id)}/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal });
   if (!response.ok) throw new Error(`cancelAgentRun failed: ${response.status}`);
 }
 
 export async function respondAgentRunInteraction(target: AgentRunRouteTarget, interactionId: string, request: RespondAgentRunInteractionRequestV1, signal?: AbortSignal): Promise<void> {
-  const response = await fetch(`${actionBase(target)}/agent-runs/${encodeURIComponent(target.identity.id)}/interactions/${encodeURIComponent(interactionId)}/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal });
+  const response = await backendFetch(`${actionBase(target)}/agent-runs/${encodeURIComponent(target.identity.id)}/interactions/${encodeURIComponent(interactionId)}/respond`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal });
   if (!response.ok) throw new Error(`respondAgentRunInteraction failed: ${response.status}`);
 }
 
 export async function createAgentRunWatch(request: CreateAgentRunWatchRequestV1, signal?: AbortSignal): Promise<LocatedAgentResource<AgentRunWatchDtoV1>> {
   const base = workspaceBackendApiBase(request.workspaceId);
   const connectionId = backendConnectionIdFromApiBase(base);
-  const payload = await jsonResponse(await fetch(`${base}/agent-run-watches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal }), 'createAgentRunWatch');
+  const payload = await jsonResponse(await backendFetch(`${base}/agent-run-watches`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal }), 'createAgentRunWatch');
   return locatedAgentResource(connectionId, parseAgentRunWatchDtoV1(field(payload, 'watch')));
 }
 
 export async function updateAgentRunWatch(identity: AgentResourceIdentity, request: UpdateAgentRunWatchRequestV1, signal?: AbortSignal): Promise<LocatedAgentResource<AgentRunWatchDtoV1>> {
-  const payload = await jsonResponse(await fetch(`${backendApiBase(identity.backendConnectionId)}/agent-run-watches/${encodeURIComponent(identity.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal }), 'updateAgentRunWatch');
+  const payload = await jsonResponse(await backendFetch(`${backendApiBase(identity.backendConnectionId)}/agent-run-watches/${encodeURIComponent(identity.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal }), 'updateAgentRunWatch');
   return locatedAgentResource(identity.backendConnectionId, parseAgentRunWatchDtoV1(field(payload, 'watch')));
 }
 

@@ -1,0 +1,170 @@
+/* Spaces. A Space page is Michi's document (content/page/DocumentShell +
+   michiPage.css) in the workspace homes' column (spaces/home/home.css);
+   these rules only add what a Space has beyond them: the page tree, the
+   title menu, the floating assistant, the compact pane form and the Spaces
+   list. Palette tokens only. */
+
+/* ── Document additions ───────────────────────────────────────── */
+.michi-doc-frame { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
+.michi-doc-frame > .michi-doc { min-width: 0; }
+
+.space-doc__menu { margin-left: auto; }
+.space-doc__notice,
+.space-doc__status { margin: 0; color: var(--term-muted); font-size: var(--fs-sm); }
+.space-doc__notice[role='alert'] { color: var(--term-danger); }
+
+/* Page tree in the outline card */
+.space-outline .space-outline__row { position: relative; display: flex; align-items: center; }
+.space-outline .space-outline__item { display: flex; align-items: center; gap: 8px; padding: 6px 30px 6px 14px; font-weight: 420; }
+.space-outline .space-outline__item.is-current { font-weight: 600; }
+.space-outline .space-outline__item > svg { flex: none; color: var(--term-faint); }
+.space-outline .space-outline__item > span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* On this page: headings, and the titled blocks under them one step in. */
+.space-outline .space-outline__section { display: flex; min-width: 0; }
+.space-outline .space-outline__section[data-depth='2'] { color: var(--term-mid); }
+.space-outline__section-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space-outline__count { margin-left: auto; color: var(--term-accent); font: 500 var(--fs-xs)/1 var(--font-mono); }
+.space-outline__more {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  display: grid; place-items: center; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: var(--ui-radius); background: transparent; color: var(--term-muted);
+  opacity: 0; cursor: pointer; transition: opacity var(--t-quick) ease;
+}
+.space-outline__row:hover .space-outline__more,
+.space-outline__more:focus-visible,
+.space-outline__more[aria-expanded='true'] { opacity: 1; }
+.space-outline__more:hover { background: var(--term-alt); color: var(--term-fg); }
+.space-outline .space-outline__add { color: var(--term-muted); }
+.space-outline__rule { margin: 10px 0; border: 0; border-top: 1px solid var(--term-line); }
+.space-outline__note { padding: 4px 16px 8px; color: var(--term-muted); font-size: var(--fs-sm); }
+
+/* Page controls sit on the document surface, separated by a fine rule. */
+.space-panel { display: grid; gap: 20px; padding: 20px 0; border: 0; border-top: 1px solid var(--term-line); background: transparent; }
+.space-panel__head { display: flex; align-items: center; justify-content: space-between; }
+:where(.space-panel) :where(button:not(.michi-doc-link-btn):not(.page-change-link):not(.branches-directory__item):not(.space-outline__more):not(.component-catalog__preview *)) {
+  height: 26px; padding: 0 10px; border: 1px solid var(--term-line-s); border-radius: var(--ui-radius);
+  background: transparent; color: var(--term-fg); font: 500 var(--fs-sm)/1 var(--ui-font); cursor: pointer;
+}
+:where(.space-panel) :where(button:not(.michi-doc-link-btn):not(.page-change-link):not(.branches-directory__item):not(.space-outline__more):not(.component-catalog__preview *)):hover:not(:disabled) { background: var(--term-alt); }
+.space-panel button:disabled { opacity: .55; cursor: default; }
+.space-panel details > summary { cursor: pointer; color: var(--term-mid); font-size: var(--fs-sm); }
+
+/* A block's own provenance link shows only with the block's chrome. */
+.native-page-sources { display: flex; gap: 8px; margin-top: 6px; font-size: var(--fs-sm); opacity: 0; transition: opacity var(--t-quick) ease; }
+.michi-doc-block:hover .native-page-sources,
+.native-page-sources:focus-within { opacity: 1; }
+
+/* ── Small icon buttons in a page pane's header ────────────────── */
+.space-helper-icon {
+  display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: var(--ui-radius); background: transparent; color: var(--term-mid); cursor: pointer;
+}
+.space-helper-icon:hover:not(:disabled) { background: var(--term-alt); color: var(--term-fg); }
+.space-helper-icon:disabled { opacity: .5; cursor: default; }
+
+/* The block the assistant window targets. */
+.space-doc .michi-doc-block[data-selected='true'] {
+  outline: 1px solid var(--term-accent); border-radius: var(--ui-radius-lg);
+  background: transparent;
+}
+.space-doc .michi-doc-block[data-top] { cursor: default; }
+
+/* ── A Space page: the workspace homes' column and blocks (home.css) ── */
+/* The line under the title reads like a home's source line. */
+.spaces-space .spaces-home__head > .space-doc__source {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0;
+  color: var(--term-muted); font-size: var(--fs-md);
+}
+.spaces-space .space-doc__source > svg { flex: none; }
+/* The outline opened from the page menu sits in the column, not beside it. */
+.space-panel--pages .branches-directory {
+  grid-column: auto; grid-row: auto; position: static; max-height: none; padding: 0; overflow: visible;
+  border: 0; box-shadow: none; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+/* A block's change line already names its source. */
+.spaces-space .michi-doc-block:has(> .page-change-targets) > .native-page-sources { display: none; }
+/* An empty text block (a blank page starts with one) shows nothing; beside other blocks it only leaves a gap. */
+.spaces-space .michi-doc-blocks > .michi-doc-block[data-empty]:not(:only-child):not([data-editing]) { display: none; }
+/* A database block carries its own tag in its heading row. */
+.spaces-space .michi-doc-block:has([data-native-database][data-presentation='page']) > .michi-doc-edited { display: none; }
+
+/* ── Compact form: a page in a pane ───────────────────────────── */
+.michi-doc--compact .branches-layout { width: calc(100% - 28px); padding: 16px 0 40px; grid-template-columns: minmax(0, 1fr); }
+.michi-doc--compact .branches-document { padding: 26px 24px 36px 60px; }
+.michi-doc--compact .michi-doc-title { font-size: 22px; }
+.page-pane { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; color: var(--term-fg); }
+.page-pane-header {
+  display: flex; align-items: center; gap: 8px; height: 34px; flex: none; padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--term-line); background: var(--term-pane-bg, var(--term-surface)); font-size: var(--fs-sm); color: var(--term-muted);
+}
+.page-pane-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.page-pane-heading strong { color: var(--term-fg); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-pane-tag { flex: none; padding: 2px 5px; border-radius: 3px; background: var(--term-alt); color: var(--term-muted); font: 500 10px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+.page-pane-visibility { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); }
+.page-pane-actions { display: flex; gap: 2px; margin-left: auto; flex: none; }
+.page-pane-notice { margin: 8px 16px 0; color: var(--term-muted); font-size: var(--fs-xs); }
+
+/* ── Spaces list (the Workspaces table's form) ────────────────── */
+.spaces-page { flex: 1; min-height: 0; overflow: auto; box-sizing: border-box; padding: 40px clamp(24px, 4vw, 56px); color: var(--term-fg); }
+.spaces-page-inner { max-width: 1160px; margin: 0 auto; }
+.spaces-page-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+.spaces-eyebrow { display: none; }
+.spaces-page h1 { margin: 0 0 4px; font: 600 22px/1.2 var(--ui-font); letter-spacing: var(--ls-tight); }
+.spaces-lede { margin: 0; color: var(--term-muted); font-size: var(--fs-md); }
+.spaces-primary,
+.spaces-secondary {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px;
+  border: 1px solid var(--term-line-s); border-radius: var(--ui-radius); background: var(--term-surface); color: var(--term-fg);
+  font: 500 var(--fs-sm)/1 var(--ui-font); cursor: pointer; white-space: nowrap;
+}
+.spaces-primary { border-color: var(--term-accent); background: var(--term-accent); color: var(--term-bg); }
+.spaces-primary:disabled,
+.spaces-secondary:disabled { opacity: .5; cursor: default; }
+.spaces-secondary:hover:not(:disabled) { background: var(--term-alt); }
+.spaces-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.spaces-toolbar label { display: flex; align-items: center; gap: 8px; color: var(--term-muted); font-size: var(--fs-sm); }
+.spaces-toolbar select,
+.spaces-modal input,
+.spaces-modal select {
+  height: 30px; padding: 0 10px; border: 1px solid var(--term-line); border-radius: var(--ui-radius);
+  background: var(--term-surface); color: var(--term-fg); font: inherit; font-size: var(--fs-md);
+}
+.spaces-table-wrap { overflow: auto; }
+.spaces-table { width: 100%; border-collapse: collapse; text-align: left; font-size: var(--fs-md); }
+.spaces-table th {
+  padding: 0 12px 10px; border-bottom: 1px solid var(--term-line); color: var(--term-muted);
+  font: 500 10.5px/1 var(--ui-font); letter-spacing: var(--ls-caps-wide, .12em); text-transform: uppercase; white-space: nowrap;
+}
+.spaces-table td { height: 54px; padding: 0 12px; border-bottom: 1px solid var(--term-line); color: var(--term-mid); vertical-align: middle; }
+.spaces-table tbody tr:hover td { background: var(--term-alt); }
+.spaces-title-link { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: var(--term-fg); font: 500 var(--fs-lg)/1.3 var(--ui-font); text-align: left; cursor: pointer; }
+.spaces-title-link:hover { color: var(--term-accent); }
+.spaces-color-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.spaces-child-titles { padding: 3px 0 0 18px; color: var(--term-muted); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spaces-pending { color: var(--term-accent); white-space: nowrap; }
+.spaces-synced { color: var(--term-muted); }
+.spaces-state { display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 160px; color: var(--term-muted); }
+.spaces-error,
+.spaces-form-error { color: var(--term-danger); }
+.spaces-state button,
+.spaces-error button { border: 0; background: transparent; color: var(--term-accent); text-decoration: underline; cursor: pointer; }
+.spaces-empty { display: flex; flex-direction: column; align-items: center; padding: clamp(50px, 10vh, 120px) 20px; text-align: center; }
+.spaces-empty-icon { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 18px; border: 1px solid var(--term-line); border-radius: 12px; color: var(--term-mauve); font-size: 22px; }
+.spaces-empty h2 { margin: 0; font: 600 18px/1.2 var(--ui-font); }
+.spaces-empty p { max-width: 390px; margin: 10px 0 22px; color: var(--term-muted); }
+.spaces-modal-backdrop { position: fixed; inset: 0; z-index: var(--z-modal, 1000); display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--term-bg) 55%, transparent); }
+.spaces-modal { display: flex; flex-direction: column; gap: 16px; width: min(440px, 100%); padding: 22px; border: 1px solid var(--term-line); border-radius: 10px; background: var(--term-surface); box-shadow: 0 24px 60px -24px color-mix(in srgb, var(--term-fg) 45%, transparent); }
+.spaces-modal-heading { display: flex; align-items: flex-start; justify-content: space-between; }
+.spaces-modal-heading h2 { margin: 0; font: 600 18px/1.2 var(--ui-font); }
+.spaces-modal-heading > button { border: 0; background: transparent; color: var(--term-muted); font-size: 20px; cursor: pointer; }
+.spaces-modal label { display: flex; flex-direction: column; gap: 6px; color: var(--term-muted); font-size: var(--fs-sm); }
+.spaces-modal input,
+.spaces-modal select { width: 100%; box-sizing: border-box; }
+.spaces-modal footer { display: flex; justify-content: flex-end; gap: 8px; }
+.spaces-form-error { margin: 0; font-size: var(--fs-sm); }
+.spaces-maintenance-status { color: var(--term-muted); font-size: var(--fs-sm); }
+@media (max-width: 760px) {
+  .spaces-page-header { flex-direction: column; align-items: flex-start; }
+  .spaces-table th:nth-child(4),
+  .spaces-table td:nth-child(4) { display: none; }
+}

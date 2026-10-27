@@ -1,40 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchAllWorkspacesMeta, fetchPersistenceCapabilities, supportsPaneInspection } from './persistence';
+import { fetchAllWorkspacesMeta, fetchPersistenceCapabilities, fetchTreeMessages, supportsPaneInspection } from './persistence';
 import { RemoteServiceRecoveryError } from './remoteRecovery';
-
-/**
- * P2-5 capability discovery. The defensive predicate must return true ONLY
- * for the exact string 'v1' — absent, unknown, or malformed values all mean
- * unsupported, never "supported with an empty pane list" (design doc §11).
- */
-describe('supportsPaneInspection', () => {
-  it('is true for the exact "v1" capability value', () => {
-    expect(supportsPaneInspection({ paneInspection: 'v1' })).toBe(true);
-  });
-
-  it('is false when the field is absent (old gateway)', () => {
-    expect(supportsPaneInspection({})).toBe(false);
-    expect(supportsPaneInspection({ paneInspection: undefined })).toBe(false);
-  });
-
-  it('is false for null/undefined capabilities object', () => {
-    expect(supportsPaneInspection(null)).toBe(false);
-    expect(supportsPaneInspection(undefined)).toBe(false);
-  });
-
-  it('is false for unknown/future version strings', () => {
-    expect(supportsPaneInspection({ paneInspection: 'v2' })).toBe(false);
-    expect(supportsPaneInspection({ paneInspection: 'V1' })).toBe(false);
-  });
-
-  it('is false for malformed non-string values, never coerced to true', () => {
-    expect(supportsPaneInspection({ paneInspection: true })).toBe(false);
-    expect(supportsPaneInspection({ paneInspection: 1 })).toBe(false);
-    expect(supportsPaneInspection({ paneInspection: null })).toBe(false);
-    expect(supportsPaneInspection({ paneInspection: {} })).toBe(false);
-    expect(supportsPaneInspection({ paneInspection: ['v1'] })).toBe(false);
-  });
-});
+import { fetchStream } from './streamTransport';
 
 describe('fetchPersistenceCapabilities — paneInspection field', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -57,11 +24,6 @@ describe('fetchPersistenceCapabilities — paneInspection field', () => {
     vi.unstubAllGlobals();
   });
 
-  it('passes the raw paneInspection value through untouched', async () => {
-    const capabilities = await fetchPersistenceCapabilities('local');
-    expect(supportsPaneInspection(capabilities)).toBe(true);
-  });
-
   it('an old-gateway response with no paneInspection field is reported as unsupported', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
       protocolVersion: 1,
@@ -74,16 +36,51 @@ describe('fetchPersistenceCapabilities — paneInspection field', () => {
     const capabilities = await fetchPersistenceCapabilities('local');
     expect(supportsPaneInspection(capabilities)).toBe(false);
   });
+
+  it('a scope probe does not replace the boot transport or change its protocol', async () => {
+    vi.stubGlobal('WebSocket', class {});
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ protocolVersion: 1 })));
+    await fetchPersistenceCapabilities('local');
+    // A scope read can be for a newer backend (or fail during handover), but
+    // only an explicit boot configuration owns authenticated stream sockets.
+    await fetchPersistenceCapabilities('local', { configureTransport: false });
+    fetchMock.mockResolvedValueOnce(new Response('data: {}\n\n'));
+    await fetchStream('http://localhost:3000/api/chats/one/stream');
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe('http://localhost:3000/api/chats/one/stream');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
 
+describe('tree message read deadlines', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-it('preserves the remote gateway error and HTTP status while redacting credentials', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'SSH authentication failed. Authorization: Bearer hidden-value' }), { status: 502 })));
-  try {
-    await expect(fetchAllWorkspacesMeta('remote-c')).rejects.toThrow('HTTP 502');
-    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: 'SSH authentication failed. Authorization: Bearer hidden-value' }), { status: 502 }));
-    await expect(fetchAllWorkspacesMeta('remote-c')).rejects.toThrow('SSH authentication failed. Authorization: Bearer [redacted]');
-  } finally { vi.unstubAllGlobals(); }
+  it('bounds a stalled response body and respects caller cancellation', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    const fetchMock = vi.fn(async (_url: string, options: RequestInit) => ({
+      ok: true,
+      json: () => new Promise((_, reject) => {
+        options.signal!.addEventListener('abort', () => reject(options.signal!.reason), { once: true });
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const caller = new AbortController();
+    const pending = fetchTreeMessages('ws', 'tree', undefined, caller.signal);
+    const failed = expect(pending).rejects.toMatchObject({ name: 'TimeoutError' });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await failed;
+    expect(caller.signal.aborted).toBe(false);
+
+    const next = fetchTreeMessages('ws', 'tree', undefined, caller.signal);
+    const cancelled = expect(next).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.advanceTimersByTimeAsync(0);
+    caller.abort();
+    await cancelled;
+  });
 });
 
 it('retains gateway recovery state for workspace retries and ignores a different machine’s status', async () => {

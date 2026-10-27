@@ -1,0 +1,182 @@
+/* Michi Home: greeting, quick starts and the "Start here" cards. Tokens only. */
+
+.home-page {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 60px 48px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  container-type: inline-size;
+}
+
+.home-greeting {
+  gap: 18px;
+}
+.home-greeting .michi-home-eyebrow {
+  line-height: 1.1;
+}
+.home-greeting__text {
+  margin: 0;
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+  /* No --fs token sits between 22 and 28; the Michi page title uses 26px too. */
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: var(--ls-tight);
+  text-wrap: pretty;
+}
+.home-greeting__detail {
+  display: block;
+  margin-top: 4px;
+  color: var(--term-mid);
+  /* The Michi page's next-step text size: between --fs-xl and --fs-2xl. */
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.home-compose {
+  display: flex;
+  flex-direction: column;
+}
+
+.home-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ui-btn.home-starter {
+  color: var(--term-mid);
+  background: var(--term-surface);
+  padding: 5px 10px;
+}
+.ui-btn.home-starter:hover:not(:disabled) {
+  color: var(--term-fg);
+  border-color: var(--term-line-s);
+  background: var(--term-surface);
+}
+
+.home-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-top: 17px;
+}
+.home-cards__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.home-cards__links {
+  /* Ghost buttons: their padding sits outside the text column. */
+  margin-right: -8px;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ui-btn.home-cards__link {
+  gap: 4px;
+  font-size: var(--fs-md);
+}
+.home-cards__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+/* Four cards (the getting-started set) read better as two rows of two. */
+.home-cards__grid[data-count='4'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@container (max-width: 700px) {
+  .home-cards__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (max-width: 460px) {
+  .home-cards__grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.home-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 150px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--term-surface);
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-soft) var(--t-ease), box-shadow var(--t-soft) var(--t-ease);
+}
+.home-card:hover {
+  border-color: var(--term-line-s);
+  box-shadow: var(--term-composer-shadow-muted);
+}
+.home-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 60%, transparent);
+  outline-offset: 1px;
+}
+.home-card__kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--term-muted);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+}
+.home-card__kind svg { flex: none; }
+.home-card__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-card[data-tone='accent'] .home-card__kind { color: var(--term-accent); }
+.home-card[data-tone='mauve'] .home-card__kind { color: var(--term-mauve); }
+.home-card[data-tone='select'] .home-card__kind { color: var(--term-select); }
+.home-card[data-tone='digest'] .home-card__kind { color: var(--term-digest); }
+.home-card__title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.home-card__reason {
+  flex: 1;
+  color: var(--term-mid);
+  font-size: var(--fs-lg);
+  line-height: 1.55;
+}
+.home-card__go {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--term-accent);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+/* Embedded Page body uses the Home reading width, without a second page shell. */
+.chat-home-document {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Home's 900px reading shell leaves at most 804px for the document, so
+   the general Page grid's 960px desktop breakpoint is unreachable here.
+   Use desktop spans once two useful columns fit; narrower panes keep the
+   normal medium/mobile behavior. The nearest grid container owns the width,
+   so grids nested inside a narrow region still stack. */
+@container (min-width: 720px) {
+  .chat-home-document .michi-doc-grid__region { grid-column: span var(--grid-span); }
+  .chat-home-document .michi-doc-grid__resize { display: block; }
+}

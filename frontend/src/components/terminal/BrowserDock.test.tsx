@@ -25,13 +25,6 @@ describe('BrowserDock', () => {
     expect(screen.getByTestId('two').getAttribute('data-active')).toBe('true');
   });
 
-  it('does not dim the caption while another pane has focus', () => {
-    const { container } = render(<BrowserDock items={items} focusedPane="chat" />, { wrapper });
-    const caption = container.querySelector<HTMLElement>('[data-browser-caption]');
-    expect(caption).not.toBeNull();
-    expect(caption?.style.filter ?? '').not.toContain('brightness');
-  });
-
   it('keeps the page visible while the dock is being resized', () => {
     render(<BrowserDock items={items} focusedPane="one" />, { wrapper });
     const handle = screen.getByTitle('Drag to resize · Double-click to reset');

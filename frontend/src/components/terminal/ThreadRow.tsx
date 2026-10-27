@@ -10,23 +10,15 @@ import type { ContextMenuSection } from '../../lib/threadRowContextMenu';
 import type { ProjectEdge, Tree } from '../../state/chatTypes';
 import type { OpenState } from '../../state/sidebarSelectors';
 import { treeHasUnread, buildBranchChildrenOf } from '../../state/sidebarSelectors';
-import { rowGeom, rowPadding, caretKebabClearance } from './sidebarRowStyle';
+import { rowGeom, rowPadding, caretKebabClearance, CARD_FILL, CARD_FILL_SELECT } from './sidebarRowStyle';
 import { useNewPanePulse } from './useNewPanePulse';
 import { useTreePrefetchIntent } from '../../state/treePrefetch';
 import { deriveTitleFromUserText } from '../../state/assistantParsing';
 
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
 
-/** Card-mode row fills. Deliberately NOT the solid `--term-alt` /
- *  `--term-select-f` tokens: the sidebar is translucent (CSS glass, or the
- *  native macOS vibrancy material under Electron), and painting a light colour
- *  on top of it is ADDITIVE — the row ends up more opaque than its neighbours
- *  and visibly loses the frost. These resolve to low-alpha foreground overlays
- *  that tint what shows through instead; see the `--sb-card-*` block in
- *  index.css, which also dials them down under native vibrancy.
- *  Exported so BranchRow paints selection identically. */
-export const CARD_FILL = 'var(--sb-card-fill)';
-export const CARD_FILL_SELECT = 'var(--sb-card-fill-select)';
+// Card-mode row fills live with the row geometry (sidebarRowStyle); re-exported for the rows that take them from here.
+export { CARD_FILL, CARD_FILL_SELECT } from './sidebarRowStyle';
 
 /** Small star glyph marking a pinned row. Shared by ThreadRow (tree pin) and
  *  BranchRow (node pin) so both levels read identically. */

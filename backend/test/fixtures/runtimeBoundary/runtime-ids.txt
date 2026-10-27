@@ -1,0 +1,26 @@
+# Runtime boundary baseline, runtime-id comparisons.
+# <file>\t<id>\t<count>: runtime-id literal comparisons/case labels outside adapter directories
+# One entry per line, byte-sorted; # lines are comments. New entries fail
+# backend/test/runtimeBoundary.test.ts and the backend build (see AGENTS.md).
+# Regenerate with: node backend/scripts/runtimeBoundary.cjs --write (leaves *.pending.txt alone).
+backend/src/agents/preamble.ts	crew	1
+backend/src/routes/michi.ts	claude	2
+backend/src/routes/michi.ts	codex	1
+backend/src/routes/michi.ts	kiro	2
+backend/src/routes/michi.ts	pi	1
+backend/src/server.ts	kiro	1
+backend/src/services/agentConfig.ts	kiro	1
+backend/src/services/agentConfig.ts	pi	2
+backend/src/services/dbRepository.ts	claude	1
+backend/src/services/dbRepository.ts	codex	1
+backend/src/services/dbRepository.ts	kiro	1
+backend/src/services/dbWorkerThread.ts	claude	1
+backend/src/services/dbWorkerThread.ts	codex	1
+backend/src/services/dbWorkerThread.ts	kiro	1
+backend/src/services/resetKiroContext.ts	kiro	1
+backend/src/services/resumeStrategy.ts	kiro	3
+backend/src/services/titleGeneration.ts	codex	1
+backend/src/services/titleGeneration.ts	kiro	1
+backend/src/services/workflowRunHub.ts	kiro	1
+backend/src/agents/acp/AcpRuntime.ts	kiro	6
+backend/src/services/acp/types.ts	kiro	1

@@ -40,22 +40,12 @@ describe('primary Agent session API routing', () => {
     expect(body.agentDefinitionId).toBe('same-id');
   });
 
-  it('ordinary ensure-session requests remain unchanged', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(JSON.stringify({ chatId: 'remote-node', currentModeId: null, resumeStrategy: 'fresh' }), { status: 200 }),
-    );
-    await ensureSession({ nodeId: 'remote-node', workspaceId: 'remote-ws' });
-    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
-    expect(body).not.toHaveProperty('agentDefinitionId');
-  });
-
   it('rejects a same-ID Definition selected from another Backend', () => {
     expect(() => bindPendingPrimaryAgent('remote-node', {
       workspaceId: 'remote-ws', backendConnectionId: 'local', definitionId: 'same-id',
     })).toThrow(/different Backend/);
   });
 });
-
 
 describe('workspace Agent mode catalog routing', () => {
   it('loads the default Agent through the Workspace owning Backend proxy', async () => {

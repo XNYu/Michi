@@ -1,0 +1,16 @@
+/* Workspace and page rows carry the sidebar row menu (RowKebab). Its fade ends in --term-alt, so the row
+   shows --term-alt while hovered or while its menu is open, as conversation rows do. */
+.spaces-side .area-side__row.t-row-hover:hover,
+.spaces-side .area-side__row.t-row-hover[data-menu-open] { background: var(--term-alt); }
+.spaces-side .area-side__row.is-page[aria-current] .area-side__main > svg { color: var(--term-accent); }
+/* A hidden workspace listed under "Hidden from Spaces" reads quieter than the shown ones. */
+.spaces-side .area-side__row[data-hidden] { color: var(--term-mid); }
+.spaces-side__footer { flex-shrink: 0; flex-direction: column; align-items: stretch; gap: 0; padding: 0 0 var(--sb-nav-py, 6px); }
+.spaces-side__footer > button { width: 100%; border: 0; background: transparent; text-align: left; font: inherit; }
+.spaces-side__footer > [role='status'] { display: flex; align-items: flex-start; gap: var(--sb-icon-gap, 6px); padding: 4px calc(var(--sb-area-right, 16px) + var(--sb-inset, 0px)) 4px calc(var(--sb-area-left, 20px) + var(--sb-inset, 0px)); }
+.spaces-assistant-history { padding-bottom: 4px; }
+.spaces-assistant-history__row { width: calc(100% - 28px); margin-left: 28px; border: 0; background: transparent; text-align: left; }
+.spaces-assistant-history__row time { flex: none; color: var(--sb-row-meta-color, var(--term-muted)); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.spaces-assistant-history__row:disabled { opacity: .5; cursor: default; }
+.spaces-assistant-history__more { margin: 4px 0 4px 38px; padding: 2px 0; border: 0; background: transparent; color: var(--term-muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.spaces-assistant-history__more:hover { color: var(--term-fg); }

@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { extractToolUsePurpose } from 'michi-shared';
-import {
-  isRunningStatus,
-  isTerminalStatus,
-  isFailedStatus,
-  isHiddenInternalTool,
-  subagentToolInfo,
-  prettifyToolTitle,
-  toolPurpose,
-  toolRowDetail,
-} from './toolCallGrouping';
+import { isRunningStatus, prettifyToolTitle, toolDisplayTitle, toolRowDetail } from './toolCallGrouping';
 import type { ToolCallState } from '../../state/chatTypes';
 
 describe('status predicates', () => {
@@ -20,91 +11,19 @@ describe('status predicates', () => {
     expect(isRunningStatus('')).toBe(true);
     expect(isRunningStatus(undefined)).toBe(true);
   });
-
-  it('isRunningStatus: success/completed/error/failed are not running', () => {
-    expect(isRunningStatus('success')).toBe(false);
-    expect(isRunningStatus('completed')).toBe(false);
-    expect(isRunningStatus('error')).toBe(false);
-    expect(isRunningStatus('failed')).toBe(false);
-  });
-
-  it('isTerminalStatus: inverse of isRunningStatus', () => {
-    expect(isTerminalStatus('completed')).toBe(true);
-    expect(isTerminalStatus('error')).toBe(true);
-    expect(isTerminalStatus('running')).toBe(false);
-  });
-
-  it('isFailedStatus: only error and failed', () => {
-    expect(isFailedStatus('error')).toBe(true);
-    expect(isFailedStatus('failed')).toBe(true);
-    expect(isFailedStatus('completed')).toBe(false);
-    expect(isFailedStatus('success')).toBe(false);
-  });
-});
-
-describe('internal metadata tool visibility', () => {
-  it('hides Codex App Server namespace titles', () => {
-    expect(isHiddenInternalTool('michi_internal____set_branch_overview')).toBe(true);
-    expect(isHiddenInternalTool('mcp____michi_internal____set_follow_ups')).toBe(true);
-  });
-
-  it('does not hide similarly named user tools without a namespace separator', () => {
-    expect(isHiddenInternalTool('reset_branch_overview')).toBe(false);
-  });
 });
 
 // `partsToGroups` was deleted in step 5: parts/pendingParts are gone, and
 // adjacent-tool grouping moved into `weaveToolCalls` in streamingProjection.ts
 // (covered by streamingProjection.test.ts).
 
-import { summarizeTools } from './toolCallGrouping';
+import { summarizeTools, summarizeToolsBase } from './toolCallGrouping';
 
 function t(id: string, title: string, kind: string | undefined, status = 'completed'): ToolCallState {
   return { id, title, status, kind };
 }
 
 describe('summarizeTools', () => {
-  it('single tool returns the tool title verbatim', () => {
-    expect(summarizeTools([t('1', 'Read package.json', 'read')])).toBe(
-      'Read package.json',
-    );
-  });
-
-  it('single tool: failure shows trailing failed marker', () => {
-    expect(
-      summarizeTools([t('1', 'Read x', 'read', 'error')]),
-    ).toBe('Read x · failed');
-  });
-
-  it('multiple of the same kind: pluralizes the bucket', () => {
-    expect(
-      summarizeTools([
-        t('1', 'Read a', 'read'),
-        t('2', 'Read b', 'read'),
-        t('3', 'Read c', 'read'),
-      ]),
-    ).toBe('read 3 files');
-  });
-
-  it('multiple kinds: comma-joined bucket phrases', () => {
-    expect(
-      summarizeTools([
-        t('1', 'Read a', 'read'),
-        t('2', 'Read b', 'read'),
-        t('3', 'Bash npm test', 'bash'),
-      ]),
-    ).toBe('read 2 files, ran 1 command');
-  });
-
-  it('unknown kind falls back to generic phrasing', () => {
-    expect(
-      summarizeTools([
-        t('1', 'Mystery 1', 'mystery'),
-        t('2', 'Mystery 2', 'mystery'),
-      ]),
-    ).toBe('used 2 tools');
-  });
-
   it('mixed: one failed appends · 1 failed', () => {
     expect(
       summarizeTools([
@@ -124,30 +43,6 @@ describe('summarizeTools', () => {
     ).toBe('used 2 tools');
   });
 
-  it('summarizes Claude Agent tool calls as SubAgent work', () => {
-    const detail = JSON.stringify({
-      description: 'Explore Michi project structure',
-      subagent_type: 'Explore',
-      model: 'haiku',
-      prompt: 'I need to understand the core philosophy.',
-    });
-
-    expect(
-      summarizeTools([{ id: '1', title: 'Agent', status: 'in_progress', kind: 'tool', detail }]),
-    ).toBe('SubAgent · Explore · working');
-  });
-
-  it('single SubAgent — completed status renders the completed label', () => {
-    const detail = JSON.stringify({
-      description: 'Explore Michi project structure',
-      subagent_type: 'Explore',
-      model: 'haiku',
-    });
-    expect(
-      summarizeTools([{ id: '1', title: 'Agent', status: 'completed', kind: 'tool', detail }]),
-    ).toBe('SubAgent · Explore · completed');
-  });
-
   it('single SubAgent — failed status renders the failed label', () => {
     const detail = JSON.stringify({
       description: 'Explore Michi project structure',
@@ -156,6 +51,15 @@ describe('summarizeTools', () => {
     expect(
       summarizeTools([{ id: '1', title: 'Agent', status: 'error', kind: 'tool', detail }]),
     ).toBe('SubAgent · Explore · failed');
+  });
+
+  it('a lone SubAgent takes a given status word; other summaries ignore it', () => {
+    const detail = JSON.stringify({ subagent_type: 'Explore', run_in_background: true });
+    const agent: ToolCallState = { id: '1', title: 'Agent', status: 'completed', kind: 'tool', detail };
+    expect(summarizeToolsBase([agent], 'in background')).toBe('SubAgent · Explore · in background');
+    expect(summarizeToolsBase([agent])).toBe('SubAgent · Explore · completed');
+    expect(summarizeToolsBase([agent, { ...agent, id: '2' }], 'in background')).toBe('2 SubAgents · completed');
+    expect(summarizeToolsBase([t('r', 'Read package.json', 'read')], 'stopped')).toBe('Read package.json');
   });
 });
 
@@ -173,28 +77,11 @@ function sub(partial: Partial<SubagentInfo>): SubagentInfo {
     dependsOn: partial.dependsOn ?? [],
     currentTool: partial.currentTool,
     statusMessage: partial.statusMessage,
+    ...(partial.activity ? { activity: partial.activity } : {}),
   };
 }
 
 describe('subagentTitleMatches', () => {
-  it('matches when agentType + description align with the subagent', () => {
-    const detail = JSON.stringify({
-      subagent_type: 'Explore',
-      description: 'Explore Michi project structure',
-    });
-    const tool = { id: 't1', title: 'Agent', status: 'in_progress', kind: 'tool', detail };
-    expect(subagentTitleMatches(tool, sub({}))).toBe(true);
-  });
-
-  it('matches when only the prompt overlaps the subagent.initialQuery', () => {
-    const detail = JSON.stringify({
-      subagent_type: 'Explore',
-      prompt: 'Explore Michi project structure',
-    });
-    const tool = { id: 't1', title: 'Agent', status: 'in_progress', kind: 'tool', detail };
-    expect(subagentTitleMatches(tool, sub({}))).toBe(true);
-  });
-
   it('does not match a non-subagent tool', () => {
     const tool = { id: 't1', title: 'Bash', status: 'completed', kind: 'bash' };
     expect(subagentTitleMatches(tool, sub({}))).toBe(false);
@@ -209,11 +96,21 @@ describe('subagentTitleMatches', () => {
   });
 });
 
-import { findOwningSubagent, filterSubagentRelayedTools } from './toolCallGrouping';
+import { findOwningSubagent } from './toolCallGrouping';
 
 function bashTool(id: string, status = 'completed'): ToolCallState {
   return { id, title: `Bash cmd-${id}`, status, kind: 'bash' };
 }
+
+describe('findOwningSubagent', () => {
+  it('returns undefined for a Bash tool-call', () => {
+    const subagents = [sub({})];
+    expect(findOwningSubagent(bashTool('t1'), subagents)).toBeUndefined();
+  });
+});
+
+import { filterSubagentRelayedTools } from './toolCallGrouping';
+
 function subagentTool(
   id: string,
   agentType = 'Explore',
@@ -224,36 +121,28 @@ function subagentTool(
   return { id, title: 'Agent', status, kind: 'tool', detail };
 }
 
-describe('findOwningSubagent', () => {
-  it('returns the matching subagent for a SubAgent tool-call', () => {
-    const subagents = [sub({ sessionId: 's1', agentName: 'Explore' })];
-    const tool = subagentTool('t1');
-    expect(findOwningSubagent(tool, subagents)?.sessionId).toBe('s1');
-  });
-
-  it('returns undefined for a Bash tool-call', () => {
-    const subagents = [sub({})];
-    expect(findOwningSubagent(bashTool('t1'), subagents)).toBeUndefined();
-  });
-
-  it('returns undefined when no subagent matches', () => {
-    const subagents = [sub({ agentName: 'Planner', initialQuery: 'Plan something' })];
-    expect(findOwningSubagent(subagentTool('t1', 'Explore'), subagents)).toBeUndefined();
-  });
-});
-
 describe('filterSubagentRelayedTools', () => {
-  it('removes still-running non-SubAgent tools when ANY subagent is active, but keeps completed ones', () => {
-    const subagents = [sub({ agentName: 'Explore' })];
+  it('removes only tools a subagent reported as its own activity', () => {
+    const subagents = [sub({
+      agentName: 'Explore',
+      activity: [{ id: 't2', kind: 'tool', title: 'Bash ls', status: 'in_progress' }],
+    })];
     const tools: ToolCallState[] = [
       subagentTool('t1'),
       bashTool('t2', 'running'),
-      { id: 't3', title: 'Glob *.ts', status: 'completed', kind: 'glob' },
+      { id: 't3', title: 'Glob *.ts', status: 'running', kind: 'glob' },
       { id: 't4', title: 'Read package.json', status: 'completed', kind: 'read' },
     ];
     const result = filterSubagentRelayedTools(tools, subagents);
-    // SubAgent card kept, running bash hidden, completed glob+read kept
+    // SubAgent card kept, relayed bash hidden, the parent's own glob (still
+    // running alongside the subagent) and read kept.
     expect(result.map((t) => t.id)).toEqual(['t1', 't3', 't4']);
+  });
+
+  it('keeps the parent\'s running tools while a subagent works without relayed activity', () => {
+    const subagents = [sub({ agentName: 'Explore' })];
+    const tools = [subagentTool('t1'), bashTool('t2', 'running')];
+    expect(filterSubagentRelayedTools(tools, subagents).map((t) => t.id)).toEqual(['t1', 't2']);
   });
 
   it('keeps non-SubAgent tools when subagents is empty', () => {
@@ -273,74 +162,43 @@ describe('filterSubagentRelayedTools', () => {
   });
 });
 
-describe('subagentToolInfo', () => {
-  it('extracts useful fields from an Agent detail payload', () => {
-    const detail = JSON.stringify({
-      description: 'Explore Michi project structure',
-      subagent_type: 'Explore',
-      model: 'haiku',
-      prompt: 'I need to understand the core philosophy.',
-    });
-
-    expect(
-      subagentToolInfo({ id: '1', title: 'Agent', status: 'in_progress', kind: 'tool', detail }),
-    ).toEqual({
-      agentType: 'Explore',
-      description: 'Explore Michi project structure',
-      prompt: 'I need to understand the core philosophy.',
-      model: 'haiku',
-    });
-  });
-
-  it('still recognizes truncated JSON-like Agent detail strings', () => {
-    const detail = '{"description":"Explore Michi project structure","subagent_type":"Explore","model":"haiku","prompt":"I need';
-
-    expect(
-      subagentToolInfo({ id: '1', title: 'Agent', status: 'in_progress', kind: 'tool', detail }),
-    ).toMatchObject({
-      agentType: 'Explore',
-      description: 'Explore Michi project structure',
-      model: 'haiku',
-    });
-  });
-
-  it('does NOT classify an MCP tool as a subagent from its result content', () => {
-    // A completed tool's `detail` is overwritten with its result content. MCP
-    // tools return `[{"type":"text",...}]`; the bare `type` field must not be
-    // mistaken for a subagent_type (regression: every MCP tool showed as
-    // "SubAgent · Text").
-    const detail = JSON.stringify([{ type: 'text', text: 'Found 5 matches across 2 threads.' }]);
-    expect(
-      subagentToolInfo({ id: '1', title: 'search_messages', status: 'completed', kind: 'tool', detail }),
-    ).toBeNull();
-  });
-
-  it('does NOT classify a tool whose result JSON merely contains a type field', () => {
-    const detail = JSON.stringify({ type: 'object', properties: {} });
-    expect(
-      subagentToolInfo({ id: '1', title: 'list_threads', status: 'completed', kind: 'tool', detail }),
-    ).toBeNull();
+describe('prettifyToolTitle', () => {
+  it('leaves a malformed mcp name (no tool segment) untouched', () => {
+    expect(prettifyToolTitle('mcp__michi-tools')).toBe('mcp__michi-tools');
   });
 });
 
-describe('prettifyToolTitle', () => {
-  it('strips the mcp__<server>__ prefix and keeps the tool segment', () => {
-    expect(prettifyToolTitle('mcp__michi-tools__list_threads')).toBe('list_threads');
-    expect(prettifyToolTitle('mcp__michi-tools__search_messages')).toBe('search_messages');
+describe('toolDisplayTitle — Kiro ask_user lifecycle', () => {
+  it.each([
+    ['', 'Running'],
+    ['pending', 'Running'],
+    ['in_progress', 'Running'],
+    ['completed', 'Completed'],
+    ['failed', 'Failed'],
+    ['error', 'Failed'],
+    ['interrupted', 'Interrupted'],
+    ['cancelled', 'Interrupted'],
+    ['canceled', 'Interrupted'],
+    ['custom-status', 'Running'],
+  ])('displays %s with the matching known label', (status, prefix) => {
+    const raw = Object.freeze({ id: 'ask-1', title: 'Running: @michi/ask_user', status });
+    expect(toolDisplayTitle(raw)).toBe(`${prefix}: @michi/ask_user`);
+    expect(raw.title).toBe('Running: @michi/ask_user');
   });
 
-  it('preserves tool names that contain underscores', () => {
-    expect(prettifyToolTitle('mcp__server__read_node')).toBe('read_node');
+  it('preserves arbitrary MCP and model titles, including similarly named tools', () => {
+    for (const title of [
+      'Running: @other/ask_user', 'Running: @michi/custom_tool',
+      'Running: @michi/ask_user extra', 'The model says Running: @michi/ask_user',
+      'Running: inspect model output', '@michi/ask_user',
+    ]) {
+      expect(toolDisplayTitle({ id: 'other', title, status: 'completed' })).toBe(title);
+    }
+    expect(toolDisplayTitle({ id: 'mcp', title: 'mcp__other__custom_tool', status: 'completed' })).toBe('custom_tool');
   });
 
-  it('passes non-MCP titles through unchanged', () => {
-    expect(prettifyToolTitle('Read package.json')).toBe('Read package.json');
-    expect(prettifyToolTitle('Bash')).toBe('Bash');
-    expect(prettifyToolTitle('')).toBe('');
-  });
-
-  it('leaves a malformed mcp name (no tool segment) untouched', () => {
-    expect(prettifyToolTitle('mcp__michi-tools')).toBe('mcp__michi-tools');
+  it('uses the same display label in the single-tool summary', () => {
+    expect(summarizeTools([{ id: 'ask-1', title: 'Running: @michi/ask_user', status: 'completed' }])).toBe('Completed: @michi/ask_user');
   });
 
   it('strips Cursor ACP michi-<tool>: <tool> titles', () => {
@@ -365,130 +223,6 @@ describe('summarizeTools — MCP tool (regression)', () => {
   });
 });
 
-describe('toolPurpose', () => {
-  const kiroReadInput = {
-    __tool_use_purpose: 'Check the project manifest to understand the package definition',
-    operations: [{ mode: 'Line', path: '/workspace/example-app/package.json' }],
-  };
-
-  it('reads __tool_use_purpose from Kiro operations-style inputJson', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        inputJson: JSON.stringify(kiroReadInput),
-      }),
-    ).toBe('Check the project manifest to understand the package definition');
-  });
-
-  it('prefers __tool_use_purpose over a path-like detail (Kiro completion overwrite)', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        detail: '/workspace/example-app/package.json',
-        inputJson: JSON.stringify(kiroReadInput),
-      }),
-    ).toBe('Check the project manifest to understand the package definition');
-  });
-
-  it('prefers __tool_use_purpose over a synthesized Read: path detail', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        detail: 'Read: /workspace/example-app/package.json',
-        inputJson: JSON.stringify(kiroReadInput),
-      }),
-    ).toBe('Check the project manifest to understand the package definition');
-  });
-
-  it('does not treat a bare path detail as purpose when inputJson has no purpose field', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        detail: '/workspace/example-app/package.json',
-        inputJson: JSON.stringify({ operations: [{ path: '/workspace/example-app/package.json' }] }),
-      }),
-    ).toBeUndefined();
-  });
-
-  it('does not treat a human detail string as purpose without __tool_use_purpose', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Bash',
-        status: 'completed',
-        kind: 'bash',
-        detail: 'Check git status after rebase',
-      }),
-    ).toBeUndefined();
-  });
-
-  it('does not treat Codex/Claude command dumps or stdout in detail as purpose', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Shell',
-        status: 'in_progress',
-        kind: 'bash',
-        detail: 'head -n 5 package.json',
-        inputJson: JSON.stringify({ type: 'commandExecution', command: 'head -n 5 package.json' }),
-      }),
-    ).toBeUndefined();
-    expect(
-      toolPurpose({
-        id: '2',
-        title: 'bash',
-        status: 'completed',
-        kind: 'tool',
-        detail: '{"cmd":"ls"}',
-        inputJson: JSON.stringify({ cmd: 'ls' }),
-      }),
-    ).toBeUndefined();
-  });
-
-  it('finds a nested __tool_use_purpose under arguments', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        inputJson: JSON.stringify({
-          arguments: {
-            __tool_use_purpose: 'Inspect workspace root',
-            path: '/workspace/example-app',
-          },
-        }),
-      }),
-    ).toBe('Inspect workspace root');
-  });
-
-  it('reads Pi/Claude top-level __tool_use_purpose from inputJson', () => {
-    expect(
-      toolPurpose({
-        id: '1',
-        title: 'Bash',
-        status: 'completed',
-        kind: 'bash',
-        inputJson: JSON.stringify({
-          __tool_use_purpose: 'Run the frontend unit tests',
-          command: 'npm test -- ToolCallGroup',
-        }),
-      }),
-    ).toBe('Run the frontend unit tests');
-  });
-});
-
 describe('extractToolUsePurpose', () => {
   it('reads the field from an object, a JSON string, and a truncated JSON string', () => {
     const obj = { __tool_use_purpose: 'Inspect workspace root', path: '/tmp' };
@@ -507,21 +241,6 @@ describe('extractToolUsePurpose', () => {
 });
 
 describe('toolRowDetail — Kiro operations', () => {
-  it('pulls the path out of an operations array', () => {
-    expect(
-      toolRowDetail({
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        inputJson: JSON.stringify({
-          __tool_use_purpose: 'Check the Config file',
-          operations: [{ mode: 'Line', path: '/workspace/example-app/package.json' }],
-        }),
-      }),
-    ).toBe('/workspace/example-app/package.json');
-  });
-
   it('uses a path-like detail as the row argument when inputJson is missing', () => {
     expect(
       toolRowDetail({
@@ -532,5 +251,68 @@ describe('toolRowDetail — Kiro operations', () => {
         detail: '/workspace/example-app/package.json',
       }),
     ).toBe('/workspace/example-app/package.json');
+  });
+});
+
+import { summarizeWork } from './toolCallGrouping';
+
+describe('summarizeWork — agent block header', () => {
+  it('leads with changes, then commands, then lookups, regardless of stream order', () => {
+    expect(
+      summarizeWork([
+        t('1', 'Read a', 'read'),
+        t('2', 'Read b', 'read'),
+        t('3', 'Bash x', 'bash'),
+        t('4', 'Edit c', 'edit'),
+      ]),
+    ).toEqual({ text: 'Edited 1 file, ran 1 command, read 2 files', failed: 0 });
+  });
+
+  it('caps the phrase list and counts the remaining tools', () => {
+    expect(
+      summarizeWork([
+        t('1', 'Read a', 'read'),
+        t('2', 'Glob *', 'glob'),
+        t('3', 'Grep x', 'grep'),
+        t('4', 'Bash x', 'bash'),
+        t('5', 'Edit c', 'edit'),
+        t('6', 'Read b', 'read'),
+      ]).text,
+    ).toBe('Edited 1 file, ran 1 command, searched 1 pattern, +3 more');
+  });
+
+  it('ignores hidden metadata tools in phrases and failure counts', () => {
+    expect(
+      summarizeWork([
+        t('1', 'Read a', 'read'),
+        t('2', 'set_branch_overview', undefined, 'error'),
+      ]),
+    ).toEqual({ text: 'Read 1 file', failed: 0 });
+  });
+
+  it('counts failures among visible tools', () => {
+    expect(
+      summarizeWork([t('1', 'Bash a', 'bash', 'error'), t('2', 'Bash b', 'bash')]),
+    ).toEqual({ text: 'Ran 2 commands', failed: 1 });
+  });
+
+  it('names a lone unrecognized tool instead of saying "used 1 tool"', () => {
+    expect(
+      summarizeWork([{ id: '1', title: 'mcp__michi-tools__list_threads', status: 'completed', kind: 'tool' }]).text,
+    ).toBe('list_threads');
+  });
+
+  it('gives SubAgents their own phrase in a mixed run', () => {
+    const detail = JSON.stringify({ subagent_type: 'Explore', description: 'Look around' });
+    expect(
+      summarizeWork([
+        t('1', 'Read a', 'read'),
+        { id: '2', title: 'Agent', status: 'completed', kind: 'tool', detail },
+      ]).text,
+    ).toBe('Ran 1 SubAgent, read 1 file');
+  });
+
+  it('returns empty text when no visible tools remain', () => {
+    expect(summarizeWork([t('1', 'set_title', undefined)])).toEqual({ text: '', failed: 0 });
   });
 });

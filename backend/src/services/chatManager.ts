@@ -1,9 +1,10 @@
 import type { NormalizedEvent } from "./chatEvents";
-import type { KiroRuntime } from "../agents/kiro/KiroRuntime";
+import type { KiroRuntime } from "michi-runtime/internal/adapters/kiro/KiroRuntime";
 import type { AgentReasoning, AgentSession, ChatMessage, ExtraContext, NewAgentSessionOptions } from "../agents/types";
 import * as sessionRegistry from "../agents/sessionRegistry";
 import { normalizeWorkspaceCwd } from "../agents/tools/pathSandbox";
 import { getRuntime } from "../agents/registry";
+import { descriptorOf } from "michi-runtime/internal/core/descriptors";
 import { getAgentConfig, isNativeResumeEnabled } from "./agentConfig";
 import {
     getNode,
@@ -11,13 +12,21 @@ import {
     listMessages,
     updateNodeResumeBinding,
 } from "./dbRepository";
-import { workspaceOwnerMatches } from "./agentOwner";
 import { AgentDefinitionService } from "./agentDefinitionService";
 import { getDb } from "./db";
-import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeId } from './nativeResume';
+import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeIdFor } from './nativeResume';
 import { buildCompatibleResumeContext, chooseResumeStrategy, normalizeResumeSignature } from './resumeStrategy';
 import { chatHub } from '../agents/chatHub';
+import { AssistantBindingError, resolveAssistantBindingForSession } from '../assistant/binding';
+import { chatOwner } from '../agents/ownerMapping';
 import { createHash } from "node:crypto";
+import {
+    MAINTENANCE_BOOTSTRAP_INSTRUCTIONS,
+    maintenanceProfileHash,
+    maintenanceRuntimeAvailability,
+    maintenanceToolProfile,
+    MaintenanceRuntimeUnsupportedError,
+} from '../agents/maintenancePolicy';
 import {
     AgentPolicyCategory,
     AgentPolicyDecision,
@@ -48,7 +57,15 @@ export interface PrimaryAgentBinding {
     definitionRevision: number;
     effectiveDefinition: EffectiveAgentDefinitionV1;
     profileHash: string;
+    /** Set for the Michi assistant: its session options come from assistant/binding.ts, not a definition. */
+    sessionOptions?: PrimaryAgentSessionOptions;
 }
+
+/**
+ * Session options a primary binding contributes. Every call site spreads them
+ * after its own fields, so a `cwd` here (the assistant's) replaces the client's.
+ */
+export type PrimaryAgentSessionOptions = Pick<NewAgentSessionOptions, "bootstrapInstructions" | "toolProfile" | "profileHash"> & { cwd?: string };
 
 type PrimaryAgentNodeRow = ReturnType<typeof getNode> & {
     agent_definition_id?: string | null;
@@ -67,8 +84,9 @@ function primaryProfileHash(effectiveDefinition: EffectiveAgentDefinitionV1): st
     return createHash("sha256").update(JSON.stringify(effectiveDefinition)).digest("hex");
 }
 
-export function primaryAgentSessionOptions(binding: PrimaryAgentBinding | null): Pick<NewAgentSessionOptions, "bootstrapInstructions" | "toolProfile" | "profileHash"> {
+export function primaryAgentSessionOptions(binding: PrimaryAgentBinding | null): PrimaryAgentSessionOptions {
     if (!binding) return {};
+    if (binding.sessionOptions) return binding.sessionOptions;
     const definition = binding.effectiveDefinition;
     return {
         bootstrapInstructions: `You are the primary Agent for this conversation.\n\n${definition.instructions}`,
@@ -111,6 +129,16 @@ export class ChatManager {
         nodeId: string;
         definitionId?: string | null;
     }): Promise<PrimaryAgentBinding | null> {
+        // Every chat in the assistant's workspace runs as the assistant; no
+        // Agent Definition can replace that.
+        let assistant: Awaited<ReturnType<typeof resolveAssistantBindingForSession>>;
+        try {
+            assistant = await resolveAssistantBindingForSession(input.nodeId);
+        } catch (error) {
+            if (error instanceof AssistantBindingError) throw new PrimaryAgentBindingError(error.message);
+            throw error;
+        }
+        if (assistant) return { definitionId: null, definitionRevision: 1, ...assistant };
         const readStored = (): PrimaryAgentBinding | null => {
             const row = getNode(input.nodeId) as PrimaryAgentNodeRow;
             if (!row?.agent_definition_revision || !row.agent_effective_definition) return null;
@@ -275,6 +303,8 @@ export class ChatManager {
         ownerUserId: string;
         workspaceId: string;
         nodeId: string;
+        /** Server-owned scheduled maintenance profile; never inferred from user requests. */
+        maintenance?: boolean;
     }): Promise<AgentSession | null> {
         const release = await acquireSessionRestoreLock(input.nodeId);
         try {
@@ -284,29 +314,48 @@ export class ChatManager {
         }
     }
 
-    private async restoreParentSession(input: { ownerUserId: string; workspaceId: string; nodeId: string }): Promise<AgentSession | null> {
-        const owner = { kind: "chat_node" as const, nodeId: input.nodeId };
+    private async restoreParentSession(input: { ownerUserId: string; workspaceId: string; nodeId: string; maintenance?: boolean }): Promise<AgentSession | null> {
+        const owner = chatOwner(input.nodeId);
         const node = getNode(input.nodeId);
         if (!node || node.workspace_id !== input.workspaceId) return null;
-        const workspace = getWorkspace(input.workspaceId);
-        if (!workspace || !workspaceOwnerMatches(workspace.owner_user_id ?? null, input.ownerUserId)) return null;
+        const markedMaintenance = typeof node.maintenance_job_id === 'string' && node.maintenance_job_id.length > 0;
+        if (markedMaintenance !== (input.maintenance === true)) {
+            throw new Error(markedMaintenance
+                ? 'Scheduled maintenance nodes can only be opened by their managed job'
+                : 'Maintenance profile requires a scheduled maintenance node');
+        }
+        if (input.maintenance && !getDb().prepare(`
+            SELECT 1 FROM scheduled_jobs j
+            JOIN page_maintenance_configs c ON c.job_id = j.id AND c.workspace_id = j.workspace_id
+            WHERE j.id = ? AND j.workspace_id = ? AND j.session_mode = 'fresh' AND c.owner_user_id = ?
+        `).get(node.maintenance_job_id!, input.workspaceId, input.ownerUserId)) {
+            throw new Error('Scheduled maintenance job is no longer available');
+        }
+        const workspace = getWorkspace(input.workspaceId, input.ownerUserId);
+        if (!workspace) return null;
         const cwd = normalizeWorkspaceCwd(workspace.cwd ?? this.defaultCwd);
         const configured = getAgentConfig(process.env.MICHI_CLOUD === "1" ? input.ownerUserId : undefined);
-        const primaryAgent = await this.resolvePrimaryAgentBinding({
+        const primaryAgent = input.maintenance ? null : await this.resolvePrimaryAgentBinding({
             ownerUserId: input.ownerUserId,
             workspaceId: input.workspaceId,
             nodeId: input.nodeId,
         });
         const primaryProfile = primaryAgent?.effectiveDefinition.runtimeProfile;
-        const runtimeId = primaryProfile?.runtimeId ?? node.runtime_id ?? configured.runtime;
+        const runtimeId = input.maintenance ? node.runtime_id ?? configured.runtime : primaryProfile?.runtimeId ?? node.runtime_id ?? configured.runtime;
+        if (input.maintenance && !maintenanceRuntimeAvailability(runtimeId).available) {
+            throw new MaintenanceRuntimeUnsupportedError(runtimeId);
+        }
         const runtime = getRuntime(runtimeId);
         if (!runtime) return null;
-        const model = primaryProfile?.modelId ?? node.model_id ?? null;
-        const provider = primaryProfile?.providerId ?? node.provider_id ?? null;
-        const reasoning = (primaryProfile?.reasoning ?? node.reasoning ?? null) as AgentReasoning | null;
-        const bootstrap = primaryAgentSessionOptions(primaryAgent);
+        const model = input.maintenance ? node.model_id ?? null : primaryProfile?.modelId ?? node.model_id ?? null;
+        const provider = input.maintenance ? node.provider_id ?? null : primaryProfile?.providerId ?? node.provider_id ?? null;
+        const reasoning = (input.maintenance ? node.reasoning ?? null : primaryProfile?.reasoning ?? node.reasoning ?? null) as AgentReasoning | null;
+        const maintenanceHash = input.maintenance ? maintenanceProfileHash({ runtimeId, providerId: provider, modelId: model, reasoning }) : null;
+        const bootstrap = input.maintenance
+            ? { bootstrapInstructions: MAINTENANCE_BOOTSTRAP_INSTRUCTIONS, toolProfile: maintenanceToolProfile(), profileHash: maintenanceHash }
+            : primaryAgentSessionOptions(primaryAgent);
         const live = sessionRegistry.getSessionForOwner(input.nodeId, owner, input.ownerUserId);
-        const nativeId = nativeResumeId(runtimeId, node);
+        const nativeId = nativeResumeIdFor(runtime, node);
         const targetSignature = { runtimeId, runtimeEngine: runtime.nativeEngine, modelId: model, providerId: provider, reasoning };
         const existingSignature = normalizeResumeSignature({
             runtimeId: node.runtime_id ?? (node.acp_session_id && node.acp_session_id !== node.id ? 'kiro' : null),
@@ -322,11 +371,16 @@ export class ChatManager {
             nativeResumeSettings: runtime.capabilities.nativeResumeSettings,
             liveSessionMatches: !!live && live.runtimeId === runtimeId
                 && (live.nativeSessionId ?? live.id) === nativeId
-                && (live.runtimeProfileHash ?? null) === (primaryAgent?.profileHash ?? null)
+                && (live.runtimeProfileHash ?? null) === (maintenanceHash ?? primaryAgent?.profileHash ?? null)
                 && (!existingSignature || (existingSignature.reasoning === reasoning && existingSignature.modelId === model)),
         });
         if (decision.strategy === 'live' && live) return live;
-        if (chatHub.isActive(input.nodeId)) throw new NativeResumeFailedError(new Error('Cannot reload an active parent turn'));
+        if (input.maintenance && live && (live.runtimeProfileHash ?? null) !== maintenanceHash) {
+            throw new Error('A different runtime profile is already bound to this scheduled maintenance node');
+        }
+        if (chatHub.isActive(input.nodeId) || chatHub.isOwnerTurnActive(input.nodeId)) {
+            throw new NativeResumeFailedError(new Error('Cannot reload an active parent turn'));
+        }
         if (live) {
             await getRuntime(live.runtimeId)?.releaseSession(live.id);
             sessionRegistry.dropSession(live.id);
@@ -362,7 +416,7 @@ export class ChatManager {
                 provider,
                 reasoning,
                 replayHistory,
-                mergeContexts: runtime.id !== 'pi'
+                mergeContexts: descriptorOf(runtime).topology.historyReplay !== 'messages'
                     ? [buildCompatibleResumeContext(replayHistory, { nodeId: input.nodeId, title: node.title })].filter((value): value is string => !!value)
                     : undefined,
                 ...bootstrap,

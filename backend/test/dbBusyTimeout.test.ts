@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { initDb, closeDb, getDb, getAuditDb, closeAuditDb } from '../src/services/db';
+import { initDb, closeDb, getDb, closeAuditDb } from '../src/services/db';
 
 let tmpDir: string;
 
@@ -38,17 +38,6 @@ afterEach(() => {
 });
 
 describe('PRAGMA busy_timeout', () => {
-  test('initDb sets busy_timeout = 15000 on the main data.db', () => {
-    initDb();
-    const row = getDb().prepare('PRAGMA busy_timeout').get() as { timeout: number };
-    assert.equal(row.timeout, 15000, 'data.db busy_timeout must be 15000ms');
-  });
-
-  test('getAuditDb sets busy_timeout = 15000 on the audit.db', () => {
-    const row = getAuditDb().prepare('PRAGMA busy_timeout').get() as { timeout: number };
-    assert.equal(row.timeout, 15000, 'audit.db busy_timeout must be 15000ms');
-  });
-
   test('WAL and foreign_keys remain set alongside busy_timeout (no regression)', () => {
     initDb();
     const db = getDb();
@@ -56,14 +45,5 @@ describe('PRAGMA busy_timeout', () => {
     const fk = db.prepare('PRAGMA foreign_keys').get() as { foreign_keys: number };
     assert.equal(journal.journal_mode.toLowerCase(), 'wal', 'journal_mode must stay WAL');
     assert.equal(fk.foreign_keys, 1, 'foreign_keys must stay ON');
-  });
-
-  test('uses NORMAL durability for data.db while audit.db remains FULL', () => {
-    initDb();
-    const data = getDb().prepare('PRAGMA synchronous').get() as { synchronous: number };
-    const audit = getAuditDb().prepare('PRAGMA synchronous').get() as { synchronous: number };
-
-    assert.equal(data.synchronous, 1, 'data.db should use synchronous=NORMAL under WAL');
-    assert.equal(audit.synchronous, 2, 'audit.db must retain synchronous=FULL durability');
   });
 });

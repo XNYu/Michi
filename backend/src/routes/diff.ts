@@ -3,12 +3,8 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import {
-    deriveSandboxCwd,
-    resolveWithinCwd,
-    NotFoundError,
-} from "../agents/tools/pathSandbox";
-import { getWorkspace } from "../services/dbRepository";
+import { NotFoundError } from "../agents/tools/pathSandbox";
+import { resolveWorkspaceFileRoot, resolveHttpWorkspacePath, assertWorkspaceRealpath, WORKSPACE_FILE_ID_RE } from "../services/workspaceFiles";
 
 const pexec = promisify(execFile);
 
@@ -28,7 +24,7 @@ const pexec = promisify(execFile);
  *
  * Security:
  *   - workspaceId must match /^[a-zA-Z0-9_-]{1,64}$/ (else 404)
- *   - `path` resolves INSIDE the workspace cwd via resolveWithinCwd
+ *   - `path` resolves INSIDE the canonical workspace cwd via the HTTP path resolver
  *     (`..` traversal → 404); hostile prefixes (~ @ absolute) rejected first
  *   - git is invoked via execFile (no shell), cwd pinned to the workspace
  *   - output capped at 100KB (truncated flag set when clipped)
@@ -37,23 +33,12 @@ const pexec = promisify(execFile);
  * not a git repo / no diff for the file) · 400 (missing path param).
  */
 
-const WORKSPACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const MAX_DIFF_BYTES = 100 * 1024;
 const GIT_TIMEOUT_MS = 10_000;
 
 export interface DiffRouteDeps {
     /** Test seam: resolve workspaceId → absolute workspace cwd. Throws NotFoundError when unknown. */
     resolveCwd?: (req: Request, workspaceId: string) => string;
-}
-
-function defaultResolveCwd(req: Request, workspaceId: string): string {
-    if (process.env.MICHI_CLOUD === "1") {
-        // Ownership-checked per-user sandbox dir (throws NotFoundError → 404).
-        return deriveSandboxCwd(req.user!.id, workspaceId);
-    }
-    const stored = getWorkspace(workspaceId)?.cwd;
-    if (typeof stored === "string" && stored.trim() !== "") return stored;
-    throw new NotFoundError(workspaceId);
 }
 
 async function git(cwd: string, args: string[]): Promise<{ stdout: string; code: number }> {
@@ -86,13 +71,13 @@ async function git(cwd: string, args: string[]): Promise<{ stdout: string; code:
 
 export function setupDiffRoutes(deps: DiffRouteDeps = {}): express.Router {
     const router = express.Router();
-    const resolveCwd = deps.resolveCwd ?? defaultResolveCwd;
+    const resolveCwd = deps.resolveCwd ?? resolveWorkspaceFileRoot;
 
     router.get(
         "/workspaces/:workspaceId/diff",
         async (req: Request, res: Response) => {
             const workspaceId = req.params.workspaceId;
-            if (typeof workspaceId !== "string" || !WORKSPACE_ID_RE.test(workspaceId)) {
+            if (typeof workspaceId !== "string" || !WORKSPACE_FILE_ID_RE.test(workspaceId)) {
                 return res.status(404).json({ error: "not found" });
             }
 
@@ -100,13 +85,6 @@ export function setupDiffRoutes(deps: DiffRouteDeps = {}): express.Router {
             if (typeof rel !== "string" || rel.trim() === "") {
                 return res.status(400).json({ error: "path query param required" });
             }
-            // Reject hostile prefixes BEFORE resolveWithinCwd runs expandPath
-            // (tilde / leading-@ expansion is meant for LLM-typed paths, never
-            // untrusted HTTP input).
-            if (rel.startsWith("~") || rel.startsWith("@")) {
-                return res.status(404).json({ error: "not found" });
-            }
-
             let cwd: string;
             try {
                 cwd = resolveCwd(req, workspaceId);
@@ -120,7 +98,8 @@ export function setupDiffRoutes(deps: DiffRouteDeps = {}): express.Router {
             // Resolve the file inside the workspace; `..` escape → 404.
             let abs: string;
             try {
-                abs = resolveWithinCwd(rel, cwd);
+                abs = resolveHttpWorkspacePath(rel, cwd);
+                assertWorkspaceRealpath(abs, cwd);
             } catch {
                 return res.status(404).json({ error: "not found" });
             }

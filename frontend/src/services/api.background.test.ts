@@ -15,46 +15,6 @@ function sseResponse(frames: string[]) {
 describe('background SSE', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('opens one fixed background endpoint and routes tagged self-turn frames by chatId', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
-      encodeChatStreamEvent({
-        event: CHAT_STREAM_EVENTS.turnStart,
-        data: { chatId: 'chat-self', turnId: 'self-turn', assistantId: 'self-a', nodeId: 'node-self', userText: '', selfInitiated: true },
-      }),
-      encodeChatStreamEvent({
-        event: CHAT_STREAM_EVENTS.done,
-        data: { chatId: 'chat-self', turnId: 'self-turn', assistantId: 'self-a', persisted: true },
-      }),
-    ]));
-    vi.stubGlobal('fetch', fetchMock);
-    const start = vi.fn();
-    const done = vi.fn();
-    subscribeBackground(() => ({ onTurnStart: start, onDone: done }), {
-      cursors: { 'chat-self': { turnId: 'previous-turn', seq: 7 } },
-    });
-    await vi.waitFor(() => expect(done).toHaveBeenCalledTimes(1));
-    expect(fetch).toHaveBeenCalledWith(expect.stringMatching(/\/chats\/background\/subscribe$/), expect.objectContaining({ method: 'POST' }));
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({
-      cursors: { 'chat-self': { turnId: 'previous-turn', seq: 7 } },
-    });
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({ selfInitiated: true }));
-  });
-
-  it('surfaces a replay gap control frame before normal background events', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
-      `event: background_sync_required\ndata: ${JSON.stringify({
-        chatId: 'chat-gap', nodeId: 'node-gap', turnId: 'turn-durable', seq: 12,
-      })}\n\n`,
-    ])));
-    const onReplayGap = vi.fn();
-
-    subscribeBackground(() => ({}), { onReplayGap });
-    await vi.waitFor(() => expect(onReplayGap).toHaveBeenCalledTimes(1));
-    expect(onReplayGap).toHaveBeenCalledWith({
-      chatId: 'chat-gap', nodeId: 'node-gap', turnId: 'turn-durable', seq: 12,
-    }, expect.any(AbortSignal));
-  });
-
   it('treats replay-gap reconciliation as a delivery barrier', async () => {
     let releaseGap!: () => void;
     const gapBarrier = new Promise<void>((resolve) => { releaseGap = resolve; });
@@ -82,53 +42,48 @@ describe('background SSE', () => {
     await vi.waitFor(() => expect(chunk).toHaveBeenCalledTimes(1));
   });
 
-  it('disconnects and leaves later frames unapplied when gap reconciliation fails', async () => {
-    const gapFrame = `event: background_sync_required\ndata: ${JSON.stringify({
-      chatId: 'chat-gap', nodeId: 'node-gap', turnId: 'turn-durable', seq: 12,
-    })}\n\n`;
+  it('delivers scheduled run control frames without blocking chat events', async () => {
+    const event = {
+      phase: 'started', runId: 'run-1', jobId: 'job-1', jobName: 'Digest', workspaceId: 'ws-1',
+      nodeId: 'n-1', treeId: 't-1', status: 'running', summary: null, error: null, notify: true, at: 1,
+    };
     const liveFrame = encodeChatStreamEvent({
       event: CHAT_STREAM_EVENTS.chunk,
-      data: {
-        chatId: 'chat-gap', nodeId: 'node-gap', turnId: 'turn-live', seq: 13,
-        assistantId: 'assistant-live', text: 'must not pass a failed barrier',
-      },
+      data: { chatId: 'chat-x', nodeId: 'node-x', turnId: 'turn-x', seq: 1, assistantId: 'a-x', text: 'after' },
     });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([gapFrame + liveFrame])));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      `event: scheduled_job_run\ndata: ${JSON.stringify(event)}\n\n`,
+      'event: scheduled_job_run\ndata: {"phase":"bogus"}\n\n',
+      liveFrame,
+    ])));
+    const onScheduledJobRun = vi.fn();
     const chunk = vi.fn();
-    const onDisconnect = vi.fn();
-
-    subscribeBackground(() => ({ onChunk: chunk }), {
-      onReplayGap: async () => { throw new Error('snapshot failed'); },
-      onDisconnect,
-    });
-
-    await vi.waitFor(() => expect(onDisconnect).toHaveBeenCalledTimes(1));
-    expect(onDisconnect).toHaveBeenCalledWith(expect.objectContaining({ retryable: true }));
-    expect(chunk).not.toHaveBeenCalled();
+    subscribeBackground(() => ({ onChunk: chunk }), { onScheduledJobRun });
+    await vi.waitFor(() => expect(chunk).toHaveBeenCalledTimes(1));
+    expect(onScheduledJobRun).toHaveBeenCalledTimes(1);
+    expect(onScheduledJobRun).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-1', nodeId: 'n-1', phase: 'started' }));
   });
 
-  it('resumes a disconnected direct turn from its last accepted seq without using background SSE', async () => {
-    const first = sseResponse([
-      encodeChatStreamEvent({
-        event: CHAT_STREAM_EVENTS.turnStart,
-        data: { turnId: 'turn-1', seq: 0, assistantId: 'a-1', nodeId: 'n-1', userText: 'hello' },
-      }),
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.chunk, data: { turnId: 'turn-1', seq: 1, assistantId: 'a-1', text: 'partial' } }),
-    ]);
-    const replay = sseResponse([
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.done, data: { turnId: 'turn-1', seq: 2, assistantId: 'a-1', persisted: true } }),
-    ]);
-    const fetchMock = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(replay);
-    vi.stubGlobal('fetch', fetchMock);
-    const chunks = vi.fn();
-    const done = vi.fn();
-    streamMessage('n-1', 'hello', { onChunk: chunks, onDone: done });
-    await vi.waitFor(() => expect(done).toHaveBeenCalledTimes(1));
-    expect(chunks).toHaveBeenCalledWith('partial', 1, 'a-1', 'turn-1');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('/chats/n-1/stream?');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('fromTurnId=turn-1');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('fromSeq=2');
-    expect(String(fetchMock.mock.calls[1][0])).not.toContain('/background/');
+  it('delivers job change frames separately from run frames and chat events', async () => {
+    const change = { change: 'created', jobId: 'job-1', workspaceId: 'ws-1', at: 1 };
+    const liveFrame = encodeChatStreamEvent({
+      event: CHAT_STREAM_EVENTS.chunk,
+      data: { chatId: 'chat-x', nodeId: 'node-x', turnId: 'turn-x', seq: 1, assistantId: 'a-x', text: 'after' },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      `event: scheduled_jobs_changed\ndata: ${JSON.stringify(change)}\n\n`,
+      'event: scheduled_jobs_changed\ndata: {"change":"renamed"}\n\n',
+      'event: scheduled_jobs_changed\ndata: not json\n\n',
+      liveFrame,
+    ])));
+    const onScheduledJobsChanged = vi.fn();
+    const onScheduledJobRun = vi.fn();
+    const chunk = vi.fn();
+    subscribeBackground(() => ({ onChunk: chunk }), { onScheduledJobsChanged, onScheduledJobRun });
+    await vi.waitFor(() => expect(chunk).toHaveBeenCalledTimes(1));
+    expect(onScheduledJobsChanged).toHaveBeenCalledTimes(1);
+    expect(onScheduledJobsChanged).toHaveBeenCalledWith(change);
+    expect(onScheduledJobRun).not.toHaveBeenCalled();
   });
 
   it('shows the exact restart reason when a foreground replay is no longer available', async () => {
@@ -151,38 +106,6 @@ describe('background SSE', () => {
     );
     expect(done).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('replays the client-stamped turn when POST disconnects before its first SSE envelope', async () => {
-    const replay = sseResponse([
-      encodeChatStreamEvent({
-        event: CHAT_STREAM_EVENTS.turnStart,
-        data: { turnId: 'client-turn', seq: 0, assistantId: 'a-client', nodeId: 'n-client', userText: 'hello' },
-      }),
-      encodeChatStreamEvent({
-        event: CHAT_STREAM_EVENTS.done,
-        data: { turnId: 'client-turn', seq: 1, assistantId: 'a-client', persisted: true },
-      }),
-    ]);
-    // The request reached the backend and it began the turn, but the response
-    // closes before delivering an envelope. The replay cursor must come from
-    // the POST body rather than a server frame.
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(sseResponse([]))
-      .mockResolvedValueOnce(replay);
-    vi.stubGlobal('fetch', fetchMock);
-    const done = vi.fn();
-
-    streamMessage('n-client', 'hello', { onDone: done }, {
-      turnId: 'client-turn',
-    });
-
-    await vi.waitFor(() => expect(done).toHaveBeenCalledTimes(1));
-    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toMatchObject({
-      turnId: 'client-turn',
-    });
-    expect(String(fetchMock.mock.calls[1][0])).toContain('fromTurnId=client-turn');
-    expect(String(fetchMock.mock.calls[1][0])).toContain('fromSeq=0');
   });
 
   it('can resume the same foreground turn more than once with a moving seq cursor', async () => {

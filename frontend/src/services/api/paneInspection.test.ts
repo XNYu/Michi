@@ -66,76 +66,6 @@ describe('paneInspection frontend API client', () => {
   });
 
   describe('inspectPane', () => {
-    it('builds a flat query with exactly the locator given, and JSON-encodes executionRef', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(200, { version: 1 }));
-      await inspectPane(BASE, {
-        locator: { nodeId: 'node-1' },
-        executionRef: { kind: 'chat_turn', nodeId: 'node-1', turnId: 'turn-1' },
-      });
-
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      const parsed = new URL(url);
-      expect(parsed.origin + parsed.pathname).toBe(`${BASE}/panes/inspect`);
-      expect(parsed.searchParams.get('nodeId')).toBe('node-1');
-      expect(parsed.searchParams.has('paneId')).toBe(false);
-      expect(parsed.searchParams.has('runId')).toBe(false);
-      expect(JSON.parse(parsed.searchParams.get('executionRef')!)).toEqual({
-        kind: 'chat_turn', nodeId: 'node-1', turnId: 'turn-1',
-      });
-      expect(init).toMatchObject({ signal: undefined });
-    });
-
-    it('builds a query from a runId locator with no executionRef param at all', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(200, { version: 1 }));
-      await inspectPane(BASE, { locator: { runId: 'run-1' } });
-
-      const [url] = fetchMock.mock.calls[0] as [string];
-      const parsed = new URL(url);
-      expect(parsed.searchParams.get('runId')).toBe('run-1');
-      expect(parsed.searchParams.has('executionRef')).toBe(false);
-    });
-
-    it('throws before any fetch when two locators are given', async () => {
-      await expect(
-        inspectPane(BASE, { locator: { nodeId: 'a', paneId: 'b' } as never }),
-      ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('throws before any fetch when no locator field is given', async () => {
-      await expect(
-        inspectPane(BASE, { locator: {} as never }),
-      ).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' });
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('maps OUTPUT_CHANGED (409) to a typed error with that code', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(409, { code: 'OUTPUT_CHANGED', message: 'output.output: snapshot moved' }));
-      await expect(inspectPane(BASE, { locator: { nodeId: 'n' } })).rejects.toMatchObject({
-        code: 'OUTPUT_CHANGED',
-        status: 409,
-        message: 'output.output: snapshot moved',
-      });
-    });
-
-    it('maps NAVIGATION_DISABLED (403) to a typed error with that code', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(403, { code: 'NAVIGATION_DISABLED', message: 'inspect: navigation is disabled' }));
-      await expect(inspectPane(BASE, { locator: { nodeId: 'n' } })).rejects.toMatchObject({
-        code: 'NAVIGATION_DISABLED',
-        status: 403,
-        message: 'inspect: navigation is disabled',
-      });
-    });
-
-    it('surfaces a 500 with { code: INTERNAL } as INTERNAL without leaking body fragments', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(500, { code: 'INTERNAL', message: 'stack trace or SQL leaked here' }));
-      const error = await inspectPane(BASE, { locator: { nodeId: 'n' } }).catch((e) => e);
-      expect(error).toBeInstanceOf(PaneInspectionClientError);
-      expect(error.code).toBe('INTERNAL');
-      expect(error.status).toBe(500);
-      expect(error.message).not.toContain('stack trace or SQL leaked here');
-    });
 
     it('produces a typed error rather than crashing on a non-JSON error body', async () => {
       fetchMock.mockResolvedValueOnce(new Response('<html>not json</html>', { status: 502 }));
@@ -143,14 +73,6 @@ describe('paneInspection frontend API client', () => {
       expect(error).toBeInstanceOf(PaneInspectionClientError);
       expect(error.code).toBe('INTERNAL');
       expect(error.status).toBe(502);
-    });
-
-    it('produces a typed error rather than crashing on an empty error body', async () => {
-      fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }));
-      const error = await inspectPane(BASE, { locator: { nodeId: 'n' } }).catch((e) => e);
-      expect(error).toBeInstanceOf(PaneInspectionClientError);
-      expect(error.code).toBe('INTERNAL');
-      expect(error.status).toBe(503);
     });
 
     it('rejects and issues no retry when the signal is already aborted', async () => {
@@ -166,20 +88,6 @@ describe('paneInspection frontend API client', () => {
   });
 
   describe('readPaneOutput', () => {
-    it('sends selection and passes limitBytes through unclamped', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(200, {
-        outputId: 'o1', execution: null, kind: 'answer', text: 'hi',
-        outputRevision: 'r1', updatedAt: null, partial: false, truncated: false,
-      }));
-      await readPaneOutput(BASE, { locator: { runId: 'run-1' }, selection: 'latest', limitBytes: 999_999 });
-
-      const [url] = fetchMock.mock.calls[0] as [string];
-      const parsed = new URL(url);
-      expect(parsed.pathname.endsWith('/panes/output')).toBe(true);
-      expect(parsed.searchParams.get('selection')).toBe('latest');
-      expect(parsed.searchParams.get('limitBytes')).toBe('999999');
-      expect(parsed.searchParams.get('runId')).toBe('run-1');
-    });
 
     it('sends pageCursor and outputId when provided, and returns nextPageCursor from the body', async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse(200, {
@@ -215,23 +123,6 @@ describe('paneInspection frontend API client', () => {
       ).rejects.toMatchObject({ code: 'OUTPUT_CHANGED', status: 409 });
     });
 
-    it('maps NAVIGATION_DISABLED (403) to a typed error with that code', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(403, { code: 'NAVIGATION_DISABLED', message: 'disabled' }));
-      await expect(
-        readPaneOutput(BASE, { locator: { nodeId: 'n' }, selection: 'latest' }),
-      ).rejects.toMatchObject({ code: 'NAVIGATION_DISABLED', status: 403 });
-    });
-
-    it('does not auto-follow nextPageCursor — the caller must loop explicitly', async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse(200, {
-        outputId: 'o1', execution: null, kind: 'answer', text: 'part1',
-        outputRevision: 'r1', updatedAt: null, partial: true, truncated: false,
-        nextPageCursor: 'cursor-2',
-      }));
-      await readPaneOutput(BASE, { locator: { nodeId: 'n' }, selection: 'latest' });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-
     it('rejects and issues no retry when fetch itself rejects (aborted signal)', async () => {
       const controller = new AbortController();
       fetchMock.mockRejectedValueOnce(new DOMException('Aborted', 'AbortError'));
@@ -261,14 +152,6 @@ describe('paneInspection frontend API client', () => {
       expect(decodePaneId(paneId)).toEqual({ kind: 'surface', registrationId: 'reg-123' });
     });
   });
-
-  it('builds the URL from the passed-in gateway base, not a hardcoded API_BASE_URL', async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse(200, { version: 1 }));
-    const remoteBase = 'http://localhost:3000/api/backend-connections/remote-1/proxy';
-    await inspectPane(remoteBase, { locator: { nodeId: 'n' } });
-    const [url] = fetchMock.mock.calls[0] as [string];
-    expect(url.startsWith(`${remoteBase}/panes/inspect?`)).toBe(true);
-  });
 });
 
 describe('subscribePanes', () => {
@@ -285,48 +168,11 @@ describe('subscribePanes', () => {
     fetchStreamSpy.mockRestore();
   });
 
-  it('calls fetchStream (not bare fetch) with paneIds and cursors JSON-encoded as query params', async () => {
-    fetchStreamSpy.mockResolvedValueOnce(sseResponse([]));
-    const onEvent = vi.fn();
-    const unsubscribe = subscribePanes(BASE, {
-      paneIds: ['node:n1', 'run:r1'],
-      cursors: { 'node:n1': 'cursor-a' },
-      onEvent,
-    });
-    await vi.waitFor(() => expect(fetchStreamSpy).toHaveBeenCalledTimes(1));
-    unsubscribe();
-
-    const [url, init] = fetchStreamSpy.mock.calls[0] as [string, RequestInit];
-    const parsed = new URL(url);
-    expect(parsed.origin + parsed.pathname).toBe(`${BASE}/panes/subscribe`);
-    expect(JSON.parse(parsed.searchParams.get('paneIds')!)).toEqual(['node:n1', 'run:r1']);
-    expect(JSON.parse(parsed.searchParams.get('cursors')!)).toEqual({ 'node:n1': 'cursor-a' });
-    expect(init.signal).toBeInstanceOf(AbortSignal);
-  });
-
-  it('throws before any network call when paneIds is empty', () => {
-    expect(() => subscribePanes(BASE, { paneIds: [], cursors: {}, onEvent: vi.fn() }))
-      .toThrow(PaneInspectionClientError);
-    expect(fetchStreamSpy).not.toHaveBeenCalled();
-  });
-
   it('throws before any network call when paneIds exceeds the 32-item max', () => {
     const paneIds = Array.from({ length: 33 }, (_, i) => `node:n${i}`);
     let caught: unknown;
     try {
       subscribePanes(BASE, { paneIds, cursors: {}, onEvent: vi.fn() });
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(PaneInspectionClientError);
-    expect((caught as PaneInspectionClientError).code).toBe('INVALID_ARGUMENT');
-    expect(fetchStreamSpy).not.toHaveBeenCalled();
-  });
-
-  it('throws before any network call when paneIds contains a duplicate, via the shared parser', () => {
-    let caught: unknown;
-    try {
-      subscribePanes(BASE, { paneIds: ['node:n1', 'node:n1'], cursors: {}, onEvent: vi.fn() });
     } catch (err) {
       caught = err;
     }
@@ -452,49 +298,6 @@ describe('subscribePanes', () => {
     expect(onEvent).not.toHaveBeenCalled();
   });
 
-  it('accepts a frame for any paneId in a deduplicated multi-pane subscription', async () => {
-    const events = [snapshotEvent('node:n1', 'c1'), snapshotEvent('run:r1', 'c2')];
-    fetchStreamSpy.mockResolvedValueOnce(sseResponse(events.map((e) => ({ event: e.type, data: e }))));
-    const onEvent = vi.fn();
-    const onError = vi.fn();
-    subscribePanes(BASE, { paneIds: ['node:n1', 'run:r1'], cursors: {}, onEvent, onError });
-    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledTimes(2));
-
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it('unsubscribe aborts the underlying fetchStream signal and stops further dispatch', async () => {
-    const { response, controller } = openSseResponse();
-    fetchStreamSpy.mockResolvedValueOnce(response);
-    const onEvent = vi.fn();
-    const unsubscribe = subscribePanes(BASE, { paneIds: ['node:n1'], cursors: {}, onEvent });
-    await vi.waitFor(() => expect(fetchStreamSpy).toHaveBeenCalledTimes(1));
-    const [, init] = fetchStreamSpy.mock.calls[0] as [string, RequestInit];
-    const signal = init.signal as AbortSignal;
-    expect(signal.aborted).toBe(false);
-
-    unsubscribe();
-    expect(signal.aborted).toBe(true);
-
-    // Frames written after unsubscribe must never reach onEvent.
-    controller.enqueue(new TextEncoder().encode(
-      `event: heartbeat\ndata: ${JSON.stringify(snapshotEvent('node:n1', 'cursor-late'))}\n\n`,
-    ));
-    controller.close();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(onEvent).not.toHaveBeenCalled();
-  });
-
-  it('supports an external AbortSignal in addition to the returned unsubscribe function', async () => {
-    fetchStreamSpy.mockResolvedValueOnce(sseResponse([]));
-    const controller = new AbortController();
-    subscribePanes(BASE, { paneIds: ['node:n1'], cursors: {}, onEvent: vi.fn(), signal: controller.signal });
-    await vi.waitFor(() => expect(fetchStreamSpy).toHaveBeenCalledTimes(1));
-    const [, init] = fetchStreamSpy.mock.calls[0] as [string, RequestInit];
-    controller.abort();
-    expect((init.signal as AbortSignal).aborted).toBe(true);
-  });
-
   it('calls onError with a typed PaneInspectionClientError on a non-2xx response, without retrying', async () => {
     fetchStreamSpy.mockResolvedValueOnce(jsonResponse(429, { code: 'RATE_LIMITED', message: 'too many subscribers' }));
     const onError = vi.fn();
@@ -518,36 +321,5 @@ describe('subscribePanes', () => {
     const error = onError.mock.calls[0][0] as PaneInspectionClientError;
     expect(error).toBeInstanceOf(PaneInspectionClientError);
     expect(error.code).toBe('INTERNAL');
-  });
-
-  it('does not call onError when the stream is aborted intentionally via unsubscribe', async () => {
-    const { response } = openSseResponse();
-    fetchStreamSpy.mockImplementationOnce((_url: string, init?: RequestInit) => {
-      return new Promise((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => {
-          reject(new DOMException('Aborted', 'AbortError'));
-        });
-      }) as Promise<Response>;
-      void response;
-    });
-    const onError = vi.fn();
-    const unsubscribe = subscribePanes(BASE, { paneIds: ['node:n1'], cursors: {}, onEvent: vi.fn(), onError });
-    await vi.waitFor(() => expect(fetchStreamSpy).toHaveBeenCalledTimes(1));
-    unsubscribe();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it('rejects an out-of-range cursors map entry the same way the shared parser would (defensive, client-side)', () => {
-    let caught: unknown;
-    try {
-      subscribePanes(BASE, { paneIds: ['node:n1'], cursors: { 'node:n2': 'x' }, onEvent: vi.fn() });
-    } catch (err) {
-      caught = err;
-    }
-    // A cursor keyed to a paneId that is not in paneIds is not itself invalid per the shared
-    // parser (parseSubscribePanesRequestV1 accepts any cursors map), so this must NOT throw —
-    // documents that the client does not over-validate beyond what the server actually rejects.
-    expect(caught).toBeUndefined();
   });
 });

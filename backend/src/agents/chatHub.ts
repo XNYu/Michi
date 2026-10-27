@@ -4,25 +4,37 @@ import {
   CHAT_STREAM_EVENTS,
   createDurableTurn,
   isActiveToolStatus,
+  userInputInteractionId,
+  normalizeUserInputQuestions,
+  normalizeUserInputAnswers,
+  type UserInputAnswer,
   type ChatStreamEvent,
   type SteerMessageOptions,
   type DurableMessageMetadata,
   type DurableTurnSnapshot,
 } from "michi-shared";
-import type { AgentSession, CompactResult, SteerResult } from "./types";
+import type { AgentSession, CompactResult, SteerResult, CancelAck, MaintenanceTurnContext } from "./types";
 import { getRuntime } from "./registry";
 import type { NormalizedEvent } from "../services/chatEvents";
-import { createChatStreamError, toChatStreamEvent } from "../routes/chatStreamEvents";
+import { chatStreamErrorCode, createChatStreamError, toChatStreamEvent, withStreamErrorCode } from "../routes/chatStreamEvents";
+import { decodeMichiHostEvent } from "./hostEvents";
 import { beginTurn, checkpointTurn, finalizeTurn, getNode } from "../services/dbRepository";
 import { getDb } from "../services/db";
 import { extractBranchOverview } from "../services/messageSerialization";
 import { log as appLog } from "../services/logger";
-import { ACPError } from "../services/acpClient";
+import { ACPError } from "michi-runtime/internal/adapters/kiro/acpClient";
 import { CANCEL_TIMEOUT_MS } from "../config/constants";
 import type { HarnessJournal } from "../services/harnessJournal";
 import { createSqliteHarnessJournal } from "../services/harnessJournal";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
 import { RuntimeRecoveryRequiredError } from './runtimeLifecycle';
+import { buildPageManifest } from '../services/pages/pageManifest';
+import { isAssistantNode } from '../assistant/identity';
+import { assistantCwd } from '../assistant/store';
+import { prepareAssistantAttachments } from '../assistant/attachments';
+import { ReportedRuntimeError } from 'michi-runtime/internal/contract/errors';
+import { descriptorOf } from "michi-runtime/internal/core/descriptors";
+import { chatNodeOf, isRunOwner } from './ownerMapping';
 
 export interface HubSubscriber {
   send(ev: ChatStreamEvent): void;
@@ -68,9 +80,12 @@ interface TurnLog {
   checkpointCount: number;
   selfInitiated: boolean;
   ownerUserId: string | null;
-  /** Interaction cards are transient UI state and are not represented by the
-   * durable message snapshot. Keep the currently-unresolved request so a gap
-   * reconciliation can restore it after installing the SQLite projection. */
+  /** See StartTurnArgs.humanOrigin. */
+  humanOrigin?: boolean;
+  /** Stops the runtime turn behind a self-turn (see StartSelfTurnArgs.cancel). */
+  selfCancel?: () => Promise<CancelAck | void> | CancelAck | void;
+  /** Permission handles remain transient. Keep unresolved interaction handles
+   * so gap recovery can restore actionable UI alongside the durable transcript. */
   pendingPermission?: ChatStreamEvent;
   pendingUserInput?: ChatStreamEvent;
   /** Commit accepted input before done/error so queue flushing cannot resend it. */
@@ -141,6 +156,8 @@ export interface StartTurnArgs {
   session: AgentSession;
   turnId?: string;
   ownerUserId?: string | null;
+  /** The text came from a person (the composer route), not from an agent. */
+  humanOrigin?: boolean;
 }
 
 export interface SidecarTitleRequest {
@@ -229,8 +246,17 @@ export interface ChatObservationSnapshot {
 export interface StartSelfTurnArgs {
   chatId: string;
   nodeId: string;
+  /**
+   * Stops the runtime's own turn when the user presses Stop and no session
+   * is attached (see session). Without either, Stop only force-finishes the
+   * turn in Michi after the cancel timeout.
+   */
+  cancel?: () => Promise<CancelAck | void> | CancelAck | void;
   ownerUserId?: string | null;
   events: AsyncIterableIterator<NormalizedEvent>;
+  /** The manager attaches the native owner so Stop also interrupts work
+   * initiated while the runtime was idle. */
+  session?: AgentSession;
 }
 
 export interface StartRequestedSelfTurnArgs {
@@ -246,6 +272,8 @@ export interface StartRequestedSelfTurnArgs {
    * the same turnId must pass the same value. */
   displayText?: string;
   userMetadata?: DurableMessageMetadata;
+  /** Trusted, server-created maintenance plan bindings for an isolated scheduled session. */
+  maintenanceContext?: MaintenanceTurnContext;
 }
 
 export interface StartedRequestedSelfTurn extends StartedTurn {
@@ -270,7 +298,31 @@ const STRUCTURAL_EVENTS = new Set<ChatStreamEvent['event']>([
   CHAT_STREAM_EVENTS.followUps,
   CHAT_STREAM_EVENTS.branchOverview,
   CHAT_STREAM_EVENTS.steerAccepted,
+  CHAT_STREAM_EVENTS.userInputRequest,
+  CHAT_STREAM_EVENTS.userInputResolved,
+  CHAT_STREAM_EVENTS.usageSummary,
+  CHAT_STREAM_EVENTS.warning,
 ]);
+
+/** The runtime reported a non-empty branch overview (set_branch_overview), so the turn need not derive one. */
+function reportsBranchOverview(ev: NormalizedEvent): boolean {
+  if (ev.kind !== "host_event" || ev.type !== "branch_overview") return false;
+  const product = decodeMichiHostEvent(ev);
+  return product?.type === "branch_overview" && product.payload.overview.trim().length > 0;
+}
+
+/** What a turn stops with on a runtime_error event; ReportedRuntimeError keeps its code. */
+function runtimeEventError(ev: Extract<NormalizedEvent, { kind: "runtime_error" }>): Error {
+  return ev.recoveryRequired ? new RuntimeRecoveryRequiredError(ev.error) : new ReportedRuntimeError(ev);
+}
+
+/**
+ * The wire error codes a runtime_error code may set: the error kinds Michi's
+ * UI shows a banner for. Other wire codes (turn_active, turn_persistence_failed
+ * and the like) change what the client does, so a runtime's own code never
+ * reaches them.
+ */
+const RUNTIME_ERROR_KINDS: ReadonlySet<string> = new Set(["connection", "auth", "generic"]);
 
 export class ChatHub {
   private readonly turns = new Map<string, TurnLog>();
@@ -296,6 +348,7 @@ export class ChatHub {
   private readonly cancelRequestedAt = new Map<string, number>();
   /** Force-finish timers keyed by chatId. Cleared when the turn ends naturally. */
   private readonly cancelTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private shuttingDown = false;
   private readonly retentionMs: number;
   private readonly persistence: TurnPersistence;
   private readonly checkpointIntervalMs: number;
@@ -304,6 +357,7 @@ export class ChatHub {
   private readonly lookupDurableTurn: (turnId: string) => DurableTurnIdentity | null;
   private readonly titleGenerator: SidecarTitleGenerator | null;
   private readonly nodeTitle: (nodeId: string) => string | null;
+  private readonly pageManifestBuilder: typeof buildPageManifest;
 
   constructor(opts: {
     retentionMs?: number;
@@ -315,12 +369,15 @@ export class ChatHub {
     /** `null` disables sidecar title generation (tests, agent-run-only hubs). */
     titleGenerator?: SidecarTitleGenerator | null;
     nodeTitle?: (nodeId: string) => string | null;
+    /** Injectable so focused turn tests can verify model-only context wiring. */
+    pageManifestBuilder?: typeof buildPageManifest;
   } = {}) {
     this.retentionMs = opts.retentionMs ?? ENDED_LOG_RETENTION_MS;
     this.persistence = opts.persistence ?? repositoryTurnPersistence;
     this.checkpointIntervalMs = opts.checkpointIntervalMs ?? TURN_CHECKPOINT_INTERVAL_MS;
     this.workspaceIdForNode = opts.workspaceIdForNode
       ?? ((nodeId) => getNode(nodeId)?.workspace_id ?? null);
+    this.pageManifestBuilder = opts.pageManifestBuilder ?? buildPageManifest;
     // A hub built with injected persistence is a test harness; it must not
     // reach into the runtime registry unless the test asks for it.
     this.titleGenerator = opts.titleGenerator === undefined
@@ -345,6 +402,12 @@ export class ChatHub {
         status: row.status,
       } : null;
     });
+  }
+
+  /** Mark intentional teardown before disposing runtime sessions. Their exit
+   * errors must retain the restart reason in the durable receipt. */
+  prepareForShutdown(): void {
+    this.shuttingDown = true;
   }
 
   isActive(chatId: string): boolean {
@@ -493,6 +556,28 @@ export class ChatHub {
     if (this.isActive(args.chatId) || this.isOwnerTurnActive(args.chatId) || this.pendingSelfTurns.has(args.chatId)) {
       throw new Error('a turn is already active for this chat');
     }
+    // Claim the chat before the first await: a self-turn that starts while
+    // this turn persists its first rows must wait for it, not begin beside
+    // it (the later log would replace this one and leave it unfinished).
+    let settleStart!: (completion?: Promise<void>) => void;
+    const starting = new Promise<void>((resolve) => { settleStart = (completion) => resolve(completion); });
+    this.activeTurnCompletions.set(args.chatId, starting);
+    // In the same step, let a turn the runtime started on its own (and has
+    // not shown yet) give way, so it cannot begin showing behind this turn.
+    const releaseClaim = args.session.claimTurn?.();
+    try {
+      const started = await this.beginTurn(args, (done) => settleStart(done.catch(() => {})));
+      void started.done.then(() => releaseClaim?.(), () => releaseClaim?.());
+      return started;
+    } catch (error) {
+      if (this.activeTurnCompletions.get(args.chatId) === starting) this.activeTurnCompletions.delete(args.chatId);
+      settleStart();
+      releaseClaim?.();
+      throw error;
+    }
+  }
+
+  private async beginTurn(args: StartTurnArgs, started: (done: Promise<void>) => void): Promise<StartedTurn> {
     const turnId = args.turnId ?? randomUUID();
     if (this.cancelledTurnIds.delete(turnId)) {
       this.cancelRequestedAt.delete(turnId);
@@ -510,6 +595,7 @@ export class ChatHub {
       selfInitiated: false,
       ownerUserId: args.ownerUserId ?? null,
     });
+    if (args.humanOrigin) log.humanOrigin = true;
     // The durable provisional rows are the prerequisite for both runtime
     // execution and the visible turn_start frame.
     const persistStartedAt = Date.now();
@@ -534,6 +620,7 @@ export class ChatHub {
     if (!this.cancelledTurnIds.has(turnId)) this.maybeGenerateTitle(args, log);
     const done = this.runTurn(args.chatId, log, args.session);
     this.activeTurnCompletions.set(args.chatId, done);
+    started(done);
     void done.then(() => {
       if (this.activeTurnCompletions.get(args.chatId) === done) {
         this.activeTurnCompletions.delete(args.chatId);
@@ -733,7 +820,7 @@ export class ChatHub {
       },
     });
     const session = this.activeSessions.get(chatId);
-    void Promise.resolve(session?.cancel()).then((ack) => {
+    void Promise.resolve(session ? session.cancel() : log.selfCancel?.()).then((ack) => {
       const current = this.turns.get(chatId);
       if (!current || current.turnId !== log.turnId || current.status !== "active") return;
       if (ack && typeof ack === "object" && ack.acknowledged === true) {
@@ -967,11 +1054,19 @@ export class ChatHub {
     return event?.event === CHAT_STREAM_EVENTS.permissionRequest ? event.data : null;
   }
 
-  resolveUserInput(chatId: string, requestId: number): void {
+  getPendingUserInput(chatId: string) {
+    const event = this.turns.get(chatId)?.pendingUserInput;
+    return event?.event === CHAT_STREAM_EVENTS.userInputRequest ? event.data : null;
+  }
+
+  resolveUserInput(chatId: string, requestId: number, answers: UserInputAnswer[] = [], skipped = answers.length === 0): void {
     const log = this.turns.get(chatId);
     const pending = log?.pendingUserInput;
-    if (pending?.event !== CHAT_STREAM_EVENTS.userInputRequest) return;
-    if (pending.data.requestId === requestId) log!.pendingUserInput = undefined;
+    if (!log || pending?.event !== CHAT_STREAM_EVENTS.userInputRequest || pending.data.requestId !== requestId) return;
+    this.append(chatId, log, { event: CHAT_STREAM_EVENTS.userInputResolved, data: {
+      requestId, interactionId: pending.data.interactionId,
+      answers: normalizeUserInputAnswers(pending.data.questions, answers), outcome: skipped ? 'skipped' : 'answered',
+    } });
   }
 
   startSelfTurn(args: StartSelfTurnArgs): void {
@@ -992,6 +1087,9 @@ export class ChatHub {
         // waits for this iterator to finish. If durable setup fails (for
         // example the node was deleted), drain the claimed turn so the pump's
         // single EventQueue waiter and runtime mutex are always released.
+        // A runtime that can stop its turn does so first: nobody will see
+        // it, so nothing it asks for (approvals) could be answered.
+        try { await args.cancel?.(); } catch { /* draining still ends it */ }
         try {
           for await (const discarded of args.events) void discarded;
         } catch {
@@ -1038,6 +1136,10 @@ export class ChatHub {
     }
 
     this.pendingSelfTurns.add(args.chatId);
+    // Queued now, this turn will prompt the session: a turn the runtime
+    // starts on its own meanwhile must give way rather than queue behind it
+    // (its prompt would then wait for that turn). See startTurn.
+    const releaseClaim = args.session.claimTurn?.();
     const previous = this.selfTurnQueues.get(args.chatId) ?? Promise.resolve();
     let started!: StartedRequestedSelfTurn;
     const began = new Promise<void>((resolve, reject) => {
@@ -1046,53 +1148,9 @@ export class ChatHub {
         .then(async () => {
           const activeForeground = this.activeTurnCompletions.get(args.chatId);
           if (activeForeground) await activeForeground.catch(() => {});
-          const existing = this.lookupDurableTurn(args.turnId);
-          if (existing) this.assertRequestedTurnIdentity(existing, args);
-          const assistantId = existing?.assistantId ?? `self-${args.nodeId}-${args.turnId}`;
-          const displayText = args.displayText ?? '';
-          const keepUserMessage = displayText.length > 0;
-          const log = this.createLog({
-            chatId: args.chatId,
-            turnId: args.turnId,
-            assistantId,
-            nodeId: args.nodeId,
-            wireText: args.text,
-            displayText,
-            userMetadata: keepUserMessage ? args.userMetadata : undefined,
-            selfInitiated: true,
-            keepUserMessage,
-            ownerUserId: args.ownerUserId ?? null,
-          });
-          await this.persistence.begin(log.snapshot);
-          this.turns.set(args.chatId, log);
-          this.append(args.chatId, log, {
-            event: CHAT_STREAM_EVENTS.turnStart,
-            data: {
-              turnId: args.turnId,
-              assistantId,
-              nodeId: args.nodeId,
-              userText: displayText,
-              selfInitiated: true,
-              startedAt: log.snapshot.startedAt,
-              ...(keepUserMessage && args.userMetadata ? { userMetadata: args.userMetadata } : {}),
-            },
-          } as ChatStreamEvent, false);
-          const events = keepUserMessage
-            ? args.session.send(args.text, {
-                assistantMessageId: assistantId,
-                userMessageId: log.snapshot.userMessage?.id,
-              })
-            : args.session.send(args.text);
-          const done = this.runSelfTurn(args.chatId, log, events);
-          started = { turnId: args.turnId, assistantId, done, existing: !!existing };
-          this.requestedSelfTurnCompletions.set(args.turnId, done);
-          void done.then(
-            () => this.requestedSelfTurnCompletions.delete(args.turnId),
-            () => this.requestedSelfTurnCompletions.delete(args.turnId),
-          );
-          resolve();
-          await done;
+          await this.runRequestedSelfTurn(args, (value) => { started = value; resolve(); });
         })
+        .finally(() => releaseClaim?.())
         .catch((error) => {
           reject(error);
         });
@@ -1113,6 +1171,73 @@ export class ChatHub {
     return started;
   }
 
+  /** The body of a requested self-turn once its queue position is reached. */
+  private async runRequestedSelfTurn(
+    args: StartRequestedSelfTurnArgs,
+    onStarted: (started: StartedRequestedSelfTurn) => void,
+  ): Promise<void> {
+    const existing = this.lookupDurableTurn(args.turnId);
+    if (existing) this.assertRequestedTurnIdentity(existing, args);
+    const assistantId = existing?.assistantId ?? `self-${args.nodeId}-${args.turnId}`;
+    const displayText = args.displayText ?? '';
+    const keepUserMessage = displayText.length > 0;
+    const log = this.createLog({
+      chatId: args.chatId,
+      turnId: args.turnId,
+      assistantId,
+      nodeId: args.nodeId,
+      wireText: args.text,
+      displayText,
+      userMetadata: keepUserMessage ? args.userMetadata : undefined,
+      selfInitiated: true,
+      keepUserMessage,
+      ownerUserId: args.ownerUserId ?? null,
+    });
+    await this.persistence.begin(log.snapshot);
+    this.turns.set(args.chatId, log);
+    this.activeSessions.set(args.chatId, args.session);
+    this.append(args.chatId, log, {
+      event: CHAT_STREAM_EVENTS.turnStart,
+      data: {
+        turnId: args.turnId,
+        assistantId,
+        nodeId: args.nodeId,
+        userText: displayText,
+        selfInitiated: true,
+        startedAt: log.snapshot.startedAt,
+        ...(keepUserMessage && args.userMetadata ? { userMetadata: args.userMetadata } : {}),
+      },
+    } as ChatStreamEvent, false);
+    const cancelledTurnIds = this.cancelledTurnIds;
+    const pageContext = keepUserMessage && !args.maintenanceContext ? this.pageManifestBuilder({
+      workspaceId: log.snapshot.workspaceId, nodeId: log.nodeId, ownerUserId: log.ownerUserId,
+      now: Date.now(), turnId: log.turnId,
+    }) : '';
+    const events = (async function* (): AsyncIterableIterator<NormalizedEvent> {
+      // Stop can reserve this id while begin() commits, or arrive from
+      // a synchronous turn_start subscriber. Never dispatch that work.
+      if (cancelledTurnIds.has(log.turnId)) {
+        yield { kind: 'turn_end', stopReason: 'cancelled' };
+        return;
+      }
+      yield* args.session.send(args.text, {
+        assistantMessageId: assistantId,
+        ...(log.snapshot.userMessage?.id ? { userMessageId: log.snapshot.userMessage.id } : {}),
+        ...(pageContext ? { pageContext } : {}),
+        ...(args.maintenanceContext ? { maintenanceContext: args.maintenanceContext } : {}),
+        turnId: log.turnId,
+      });
+    })();
+    const done = this.runSelfTurn(args.chatId, log, events, args.session);
+    this.requestedSelfTurnCompletions.set(args.turnId, done);
+    void done.then(
+      () => this.requestedSelfTurnCompletions.delete(args.turnId),
+      () => this.requestedSelfTurnCompletions.delete(args.turnId),
+    );
+    onStarted({ turnId: args.turnId, assistantId, done, existing: !!existing });
+    await done;
+  }
+
   private assertRequestedTurnIdentity(durable: DurableTurnIdentity, args: StartRequestedSelfTurnArgs): void {
     const expectedAssistantId = `self-${args.nodeId}-${args.turnId}`;
     if (durable.nodeId !== args.nodeId || durable.assistantId !== expectedAssistantId) {
@@ -1121,6 +1246,12 @@ export class ChatHub {
   }
 
   private async beginSelfTurn(args: StartSelfTurnArgs): Promise<void> {
+    if (args.session && (
+      args.session.id !== args.chatId
+      || chatNodeOf(args.session.owner) !== args.nodeId
+    )) {
+      throw new Error('self turn runtime does not match its chat node owner');
+    }
     const turnId = randomUUID();
     const assistantId = `self-${args.nodeId}-${turnId}`;
     const log = this.createLog({
@@ -1133,10 +1264,12 @@ export class ChatHub {
       selfInitiated: true,
       ownerUserId: args.ownerUserId ?? null,
     });
+    if (args.cancel) log.selfCancel = args.cancel;
     const persistStartedAt = Date.now();
     await this.persistence.begin(log.snapshot);
     logInfo('self turn begin committed', log, { durationMs: Date.now() - persistStartedAt });
     this.turns.set(args.chatId, log);
+    if (args.session) this.activeSessions.set(args.chatId, args.session);
     this.append(args.chatId, log, {
       event: CHAT_STREAM_EVENTS.turnStart,
       data: {
@@ -1148,7 +1281,7 @@ export class ChatHub {
         startedAt: log.snapshot.startedAt,
       },
     } as ChatStreamEvent, false);
-    await this.runSelfTurn(args.chatId, log, args.events);
+    await this.runSelfTurn(args.chatId, log, args.events, args.session);
   }
 
   private createLog(input: {
@@ -1197,18 +1330,15 @@ export class ChatHub {
     chatId: string,
     log: TurnLog,
     events: AsyncIterableIterator<NormalizedEvent>,
+    session?: AgentSession,
   ): Promise<void> {
     try {
       let branchOverviewPublished = false;
       for await (const ev of events) {
         if (log.status !== 'active' || this.turns.get(chatId) !== log) break;
         if (log.finalization) { await log.finalization; break; }
-        if (ev.kind === "branch_overview") {
-          branchOverviewPublished = ev.overview.trim().length > 0 || branchOverviewPublished;
-        }
-        if (ev.kind === "runtime_error") {
-          throw ev.recoveryRequired ? new RuntimeRecoveryRequiredError(ev.error) : new Error(ev.error);
-        }
+        if (reportsBranchOverview(ev)) branchOverviewPublished = true;
+        if (ev.kind === "runtime_error") throw runtimeEventError(ev);
         if (ev.kind === "turn_end") {
           if (!branchOverviewPublished) {
             branchOverviewPublished = this.publishBranchOverview(chatId, log);
@@ -1220,7 +1350,8 @@ export class ChatHub {
           );
           break;
         }
-        this.append(chatId, log, toChatStreamEvent(ev));
+        const wire = toChatStreamEvent(ev);
+        if (wire) this.append(chatId, log, wire);
       }
       if (log.finalization) await log.finalization;
       if (log.status === 'active' && this.turns.get(chatId) === log) {
@@ -1240,7 +1371,10 @@ export class ChatHub {
     } finally {
       this.cancelledTurnIds.delete(log.turnId);
       this.cancelRequestedAt.delete(log.turnId);
-      if (this.turns.get(chatId) === log) this.clearCancelTimer(chatId);
+      if (this.turns.get(chatId) === log) {
+        this.clearCancelTimer(chatId);
+        if (session && this.activeSessions.get(chatId) === session) this.activeSessions.delete(chatId);
+      }
       this.scheduleEvict(chatId, log);
     }
   }
@@ -1256,12 +1390,25 @@ export class ChatHub {
 
   private stamp(log: TurnLog, ev: ChatStreamEvent): { seq: number; ev: ChatStreamEvent } {
     const seq = log.nextSeq++;
+    if (ev.event === CHAT_STREAM_EVENTS.userInputRequest) {
+      const interactionId = ev.data.interactionId ?? `${userInputInteractionId(log.turnId, ev.data.requestId)}:${seq}`;
+      ev = { ...ev, data: { ...ev.data, interactionId, questions: normalizeUserInputQuestions(interactionId, ev.data.questions) } };
+    } else if (ev.event === CHAT_STREAM_EVENTS.userInputResolved) {
+      const pending = log.pendingUserInput;
+      const requestId = ev.data.requestId;
+      const prior = [...log.snapshot.assistantMessage.blocks].reverse().find(block => block.kind === 'user-input' && block.requestId === requestId);
+      const priorInteractionId = prior?.kind === 'user-input' ? prior.interaction?.interactionId : undefined;
+      const interactionId = ev.data.interactionId ?? (pending?.event === CHAT_STREAM_EVENTS.userInputRequest && pending.data.requestId === ev.data.requestId
+        ? pending.data.interactionId : undefined) ?? priorInteractionId ?? userInputInteractionId(log.turnId, ev.data.requestId);
+      ev = { ...ev, data: { ...ev.data, interactionId } };
+    }
     return {
       seq,
       ev: {
         ...ev,
         data: {
           ...ev.data,
+          observedAt: ev.data.observedAt ?? Date.now(),
           chatId: log.chatId,
           nodeId: log.nodeId,
           turnId: log.turnId,
@@ -1286,7 +1433,7 @@ export class ChatHub {
         confidence: stamped.ev.data.confidence,
         nativeMethod: stamped.ev.data.nativeMethod,
         payload: JSON.stringify(stamped.ev.data),
-        createdAt: Date.now(),
+        createdAt: stamped.ev.data.observedAt ?? 0,
       });
     } catch (err) {
       appLog.warn("chat", "harness journal write failed; snapshot projection continues", {
@@ -1324,6 +1471,7 @@ export class ChatHub {
       event.event === CHAT_STREAM_EVENTS.userInputResolved
       && log.pendingUserInput?.event === CHAT_STREAM_EVENTS.userInputRequest
       && log.pendingUserInput.data.requestId === event.data.requestId
+      && (!event.data.interactionId || log.pendingUserInput.data.interactionId === event.data.interactionId)
     ) {
       log.pendingUserInput = undefined;
     } else if (event.event === CHAT_STREAM_EVENTS.done || event.event === CHAT_STREAM_EVENTS.error) {
@@ -1464,6 +1612,7 @@ export class ChatHub {
   }
 
   private async persistError(chatId: string, log: TurnLog, err: unknown): Promise<void> {
+    const interruptedByShutdown = this.shuttingDown;
     await Promise.allSettled(log.pendingSteers ?? []);
     let message = err instanceof Error ? err.message : String(err);
     // Surface the rpcData detail so the user sees the real reason (e.g.
@@ -1479,17 +1628,30 @@ export class ChatHub {
       }
     }
     // KiroSession tags connection/auth/generic on the thrown error so the UI
-    // can show a class-appropriate banner (retry vs. re-login vs. raw). Absent
-    // for non-Kiro runtimes / non-classified errors — the UI falls back to a
-    // plain error tail.
+    // can show a class-appropriate banner (retry vs. re-login vs. raw). Failing
+    // that, a runtime_error event's own code is used if it is one of those
+    // kinds. Absent for unclassified errors — the UI falls back to a plain
+    // error tail. Whether the runtime called the failure retryable is not
+    // sent: `recoverable` means the turn's output could not be saved, which
+    // is a different thing.
     const acpErrorKind = (err as { acpErrorKind?: string })?.acpErrorKind;
+    const reportedKind = err instanceof ReportedRuntimeError && err.code !== undefined && RUNTIME_ERROR_KINDS.has(err.code)
+      ? err.code
+      : undefined;
+    const code = interruptedByShutdown ? 'backend_restarted' : chatStreamErrorCode(err) ?? acpErrorKind ?? reportedKind;
+    if (interruptedByShutdown) {
+      message = 'Michi restarted while this task was running. Check the conversation before retrying.';
+    }
     try {
       this.emitCancelSettled(chatId, log);
       const stamped = this.stamp(log, {
         event: CHAT_STREAM_EVENTS.error,
-        data: { message, completedAt: Date.now(), ...(acpErrorKind ? { code: acpErrorKind } : {}) },
+        data: { message, completedAt: Date.now(), ...(code ? { code } : {}) },
       });
       const terminalSnapshot = applyTurnEvent(log.snapshot, stamped.ev);
+      // Keep the durable restart marker used by startup recovery and replay;
+      // the live event above carries the human-readable explanation.
+      if (interruptedByShutdown) terminalSnapshot.error = 'backend_restarted';
       await this.persistence.finalize(terminalSnapshot);
       log.snapshot = terminalSnapshot;
       log.events.push(stamped);
@@ -1546,11 +1708,11 @@ export class ChatHub {
    * is dropped — the agent's sentinel or the stored first sentence covers it.
    */
   private maybeGenerateTitle(args: StartTurnArgs, log: TurnLog): void {
-    if (args.session.runtimeId === 'kiro' && args.enableKiroSidecarTitle !== true) return;
+    const runtime = getRuntime(args.session.runtimeId);
+    if (runtime && descriptorOf(runtime).topology.hostTitleRequiresOptIn === true && args.enableKiroSidecarTitle !== true) return;
     const generator = this.titleGenerator;
     if (!generator) return;
-    const owner = args.session.owner;
-    if (owner && owner.kind !== 'chat_node') return;
+    if (isRunOwner(args.session.owner)) return;
     const userText = (args.displayText ?? args.text).trim();
     if (!userText) return;
     const contextText = args.userMetadata?.quotedText?.trim() || undefined;
@@ -1609,19 +1771,29 @@ export class ChatHub {
       }
       let terminalSeen = false;
       let branchOverviewPublished = false;
-      for await (const ev of session.send(log.wireText, {
-        attachments: log.snapshot.userMessage?.metadata?.attachments,
+      const pageContext = this.pageManifestBuilder({
+        workspaceId: log.snapshot.workspaceId,
+        nodeId: log.nodeId,
+        ownerUserId: log.ownerUserId,
+        now: Date.now(),
+        turnId: log.turnId,
+      });
+      const uploaded = log.snapshot.userMessage?.metadata?.attachments;
+      const input = uploaded?.length && isAssistantNode(log.nodeId)
+        ? prepareAssistantAttachments(log.wireText, uploaded, assistantCwd())
+        : { text: log.wireText, attachments: uploaded };
+      for await (const ev of session.send(input.text, {
+        attachments: input.attachments,
         assistantMessageId: log.assistantId,
         userMessageId: log.snapshot.userMessage?.id,
+        ...(pageContext ? { pageContext } : {}),
+        turnId: log.turnId,
+        ...(log.humanOrigin ? { humanOrigin: true } : {}),
       })) {
         if (log.status !== 'active' || this.turns.get(chatId) !== log) return;
         if (log.finalization) { await log.finalization; return; }
-        if (ev.kind === "branch_overview") {
-          branchOverviewPublished = ev.overview.trim().length > 0 || branchOverviewPublished;
-        }
-        if (ev.kind === "runtime_error") {
-          throw ev.recoveryRequired ? new RuntimeRecoveryRequiredError(ev.error) : new Error(ev.error);
-        }
+        if (reportsBranchOverview(ev)) branchOverviewPublished = true;
+        if (ev.kind === "runtime_error") throw runtimeEventError(ev);
         if (ev.kind === "turn_end") {
           if (!branchOverviewPublished) {
             branchOverviewPublished = this.publishBranchOverview(chatId, log);
@@ -1634,7 +1806,8 @@ export class ChatHub {
           terminalSeen = true;
           break;
         }
-        this.append(chatId, log, toChatStreamEvent(ev));
+        const wire = toChatStreamEvent(ev);
+        if (wire) this.append(chatId, log, wire);
       }
       if (!terminalSeen) {
         if (log.status !== 'active' || this.turns.get(chatId) !== log) return;

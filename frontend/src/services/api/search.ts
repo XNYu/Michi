@@ -1,4 +1,5 @@
-import { activeBackendApiBase, workspaceBackendApiBase } from '../../config/backendConnections';
+import { backendFetch } from './backendRequest';
+import { activeBackendApiBase, backendApiBase, workspaceBackendApiBase } from '../../config/backendConnections';
 
 // ── Search API ──
 
@@ -23,7 +24,7 @@ export async function searchMessages(
   const params = new URLSearchParams({ q: query, mode, limit: String(limit) });
   if (workspaceId) params.set('workspaceId', workspaceId);
   const base = workspaceId ? workspaceBackendApiBase(workspaceId) : activeBackendApiBase();
-  const res = await fetch(`${base}/search?${params}`);
+  const res = await backendFetch(`${base}/search?${params}`);
   if (!res.ok) throw new Error(`searchMessages failed: ${res.status}`);
   return res.json();
 }
@@ -52,11 +53,13 @@ export async function searchNodesGrouped(
   query: string,
   workspaceId?: string,
   limit = 30,
+  options?: { connectionId?: string; signal?: AbortSignal },
 ): Promise<{ results: NodeGroupedResult[]; totalNodes: number }> {
   const params = new URLSearchParams({ q: query, mode: 'grouped', limit: String(limit) });
   if (workspaceId) params.set('workspaceId', workspaceId);
-  const base = workspaceId ? workspaceBackendApiBase(workspaceId) : activeBackendApiBase();
-  const res = await fetch(`${base}/search?${params}`);
+  const base = options?.connectionId !== undefined ? backendApiBase(options.connectionId)
+    : workspaceId ? workspaceBackendApiBase(workspaceId) : activeBackendApiBase();
+  const res = await backendFetch(`${base}/search?${params}`, { signal: options?.signal });
   if (!res.ok) throw new Error(`searchNodesGrouped failed: ${res.status}`);
   return res.json();
 }

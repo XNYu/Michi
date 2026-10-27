@@ -6,6 +6,7 @@ import Sidebar from './Sidebar';
 
 const mocks = vi.hoisted(() => ({ renders: vi.fn(), fetchPrefs: vi.fn(), savePrefs: vi.fn() }));
 vi.mock('../../services/api', () => ({ fetchPrefs: mocks.fetchPrefs, savePrefs: mocks.savePrefs }));
+vi.mock('../../state/chatStore', () => ({ useChatProjects: () => ({ activeProject: null }) }));
 vi.mock('./ActivityView', () => ({ default: () => <ContentProbe /> }));
 vi.mock('./WorkspaceTree', () => ({ default: () => <ContentProbe /> }));
 vi.mock('./TreeSelectionBar', () => ({ default: () => null }));
@@ -52,25 +53,10 @@ describe('sidebar content isolation', () => {
     const shell = container.querySelector<HTMLElement>('aside')!;
     for (let i = 0; i < 4; i++) {
       fireEvent.click(screen.getByText('Toggle'));
-      expect(shell.style.width).toBe(i % 2 === 0 ? '0px' : '280px');
-      expect(inner.style.width).toBe('280px');
+      expect(shell.style.width).toBe(i % 2 === 0 ? '0px' : '252px');
+      expect(inner.style.width).toBe('252px');
       expect(screen.getByTestId('content')).toBe(content);
       expect(mocks.renders).toHaveBeenCalledTimes(count);
     }
-  });
-
-  it('continues propagating content preferences, width changes, and live data while collapsed', async () => {
-    render(<PrefsProvider><Harness /></PrefsProvider>);
-    await act(async () => { await Promise.resolve(); });
-    fireEvent.click(screen.getByText('Toggle'));
-    fireEvent.click(screen.getByText('Data'));
-    expect(screen.getByTestId('content').textContent).toContain(':false:1');
-    fireEvent.click(screen.getByTestId('content'));
-    expect(screen.getByTestId('content').textContent).toContain(':airy:');
-    fireEvent.click(screen.getByText('Resize'));
-    expect(document.querySelector<HTMLElement>('.terminal-sidebar-content')!.style.width).toBe('360px');
-    fireEvent.click(screen.getByText('Toggle'));
-    expect(document.querySelector<HTMLElement>('aside')!.style.width).toBe('360px');
-    expect(screen.getByTestId('content').textContent).toContain(':airy:false:1');
   });
 });

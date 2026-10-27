@@ -3,6 +3,9 @@ import { flushSync } from 'react-dom';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Clock3, Ellipsis, Folder, MessageSquare, Search, Trash2, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useChatStore, useChatNodesSnapshot } from '../../../state/chatStore';
+import { LOCAL_BACKEND_CONNECTION_ID } from '../../../config/backendConnections';
+import { listPageTrash, purgePage, restorePage, type PageTrashEntry } from '../../../services/api/pages';
+import { notifyPageChanged } from '../../../state/pages/pageEvents';
 import { usePrefs } from '../../../state/prefs';
 import type { PageId } from '../../../state/commands';
 import { pageBackground } from '../../../lib/pageBackground';
@@ -11,8 +14,9 @@ import { confirmDialog } from '../../ui/ConfirmDialog';
 import { Button } from '../../ui/controls';
 import { TrashHighlight, TrashIconButton, TrashMenu } from './TrashControls';
 import { TrashPreview } from './TrashPreview';
-import { buildTrashSections, entryDeletedAt, entryKey, entryTitle, filterTrashSections, plural, relativeDeletion, remainingDays, trashItemCount, type TrashEntry } from './trashModel';
+import { buildPageTrashEntries, buildTrashSections, entryDeletedAt, entryKey, entryTitle, filterTrashSections, plural, relativeDeletion, remainingDays, trashItemCount, type TrashEntry } from './trashModel';
 import './Trash.css';
+import { withoutSystemWorkspaces } from '../../../state/assistant/systemWorkspace';
 
 export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => void } = {}) {
   const { projects, hydrated, restoreDeletion, purgeDeletionAsync, emptyTrashAsync, openPane, restoreProject, purgeProject, selectProject } = useChatStore();
@@ -27,23 +31,41 @@ export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => voi
   const [menu, setMenu] = useState<{ key: string; anchor: HTMLButtonElement } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pageTrash, setPageTrash] = useState<ReadonlyMap<string, PageTrashEntry[]>>(new Map());
   const [now, setNow] = useState(Date.now);
   const operation = useRef(false);
   const mounted = useRef(true);
   const page = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const previewTrigger = useRef<HTMLElement | null>(null);
-  const focusFrame = useRef<number>();
+  const focusFrame = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     mounted.current = true;
     const timer = setInterval(() => setNow(Date.now()), 60_000);
     return () => { mounted.current = false; clearInterval(timer); if (focusFrame.current) cancelAnimationFrame(focusFrame.current); };
   }, []);
-  const sections = useMemo(() => buildTrashSections(projects, nodes), [projects, nodes]);
+  useEffect(() => {
+    let live = true;
+    const controller = new AbortController();
+    const workspaces = withoutSystemWorkspaces(projects).filter(project => !project.deletedAt);
+    Promise.all(workspaces.map(async project => {
+      try {
+        const items = await listPageTrash(project.id, { backendConnectionId: project.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID, workspaceId: project.id, signal: controller.signal });
+        return [project.id, items] as const;
+      } catch { return [project.id, [] as PageTrashEntry[]] as const; }
+    })).then(results => {
+      if (live) setPageTrash(new Map(results));
+    });
+    return () => { live = false; controller.abort(); };
+  }, [projects]);
+  // The assistant's system workspace keeps its own history out of the trash list.
+  const sections = useMemo(() => buildTrashSections(withoutSystemWorkspaces(projects), nodes), [projects, nodes]);
+  const pageEntries = useMemo(() => buildPageTrashEntries(withoutSystemWorkspaces(projects), pageTrash), [projects, pageTrash]);
   const filtered = useMemo(() => filterTrashSections(sections, query, oldestFirst), [sections, query, oldestFirst]);
-  const total = trashItemCount(sections);
-  const resultCount = trashItemCount(filtered);
+  const total = trashItemCount(sections) + pageEntries.length;
+  const matchingPageEntries = pageEntries.filter(entry => !query.trim() || entryTitle(entry).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) || entry.project.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).sort((a, b) => (oldestFirst ? 1 : -1) * (entryDeletedAt(a) - entryDeletedAt(b)));
+  const resultCount = trashItemCount(filtered) + matchingPageEntries.length;
   const liveSections = filtered.filter(section => !section.project.deletedAt);
   const deletedSections = filtered.filter(section => section.project.deletedAt);
   const entries = useMemo(() => new Map(sections.flatMap(section => {
@@ -56,7 +78,7 @@ export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => voi
       result.push([entryKey(entry), entry]);
     }
     return result;
-  })), [sections]);
+  }).concat(pageEntries.map(entry => [entryKey(entry), entry] as [string, TrashEntry]))), [sections, pageEntries]);
   const preview = previewKey ? entries.get(previewKey) : undefined;
   const menuEntry = menu ? entries.get(menu.key) : undefined;
   const activeCollapsed = query.trim() ? searchCollapsed : collapsed;
@@ -88,6 +110,14 @@ export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => voi
   const restore = (entry: TrashEntry) => {
     if (operation.current) return;
     const refocus = focusNearby(entryKey(entry));
+    if (entry.kind === 'page') {
+      const identity = { backendConnectionId: entry.project.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID, workspaceId: entry.project.id, pageId: entry.page.root.id };
+      void restorePage(entry.page.root.id, identity).then(() => {
+        notifyPageChanged(identity);
+        setPageTrash(current => new Map(current).set(entry.project.id, (current.get(entry.project.id) ?? []).filter(item => item.deletionGroupId !== entry.page.deletionGroupId)));
+      }).catch(reason => setError(`Could not restore this page: ${reason instanceof Error ? reason.message : 'Request failed'}`));
+      setPreviewKey(null); setMenu(null); setError(null); toast.success('Page restored'); refocus(); return;
+    }
     if (entry.project.deletedAt) restoreProject(entry.project.id);
     const root = entry.kind === 'thread' ? restoreDeletion(entry.group.id) : null;
     setPreviewKey(null);
@@ -109,7 +139,7 @@ export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => voi
     const refocus = focusNearby(entry && entryKey(entry));
     const title = entry ? entryTitle(entry) : '';
     const message = entry
-      ? `Permanently delete ${entry.kind} "${title}"${entry.kind === 'workspace' ? ' and all of its contents' : ` (${plural(entry.group.members.length, 'node')})`}? This cannot be undone.`
+      ? `Permanently delete ${entry.kind} "${title}"${entry.kind === 'workspace' ? ' and all of its contents' : entry.kind === 'thread' ? ` (${plural(entry.group.members.length, 'node')})` : ` and ${plural(entry.page.pages.length - 1, 'child page')}`}? This cannot be undone.`
       : `Permanently delete all ${plural(total, 'item')} in Trash, including the contents of deleted workspaces? This cannot be undone.`;
     // Avoid two simultaneous modal focus traps when deleting from a preview.
     const reopenPreview = previewKey;
@@ -124,13 +154,25 @@ export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => voi
       setError(null);
       if (entry?.kind === 'thread') await purgeDeletionAsync(entry.group.id);
       else if (entry?.kind === 'workspace') await purgeProject(entry.project.id);
+      else if (entry?.kind === 'page') {
+        const identity = { backendConnectionId: entry.project.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID, workspaceId: entry.project.id, pageId: entry.page.root.id };
+        await purgePage(entry.page.root.id, identity);
+        notifyPageChanged(identity);
+        setPageTrash(current => new Map(current).set(entry.project.id, (current.get(entry.project.id) ?? []).filter(item => item.deletionGroupId !== entry.page.deletionGroupId)));
+      }
       else {
         // Finish thread purges before deleting their parent workspaces.
         await emptyTrashAsync();
+        for (const entry of pageEntries) {
+          const identity = { backendConnectionId: entry.project.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID, workspaceId: entry.project.id, pageId: entry.page.root.id };
+          await purgePage(entry.page.root.id, identity);
+          notifyPageChanged(identity);
+        }
+        setPageTrash(new Map());
         for (const project of projects.filter(project => project.deletedAt)) await purgeProject(project.id);
       }
       if (mounted.current) {
-        toast.success(entry ? `${entry.kind === 'thread' ? 'Thread' : 'Workspace'} permanently deleted` : 'Trash emptied');
+        toast.success(entry ? `${entry.kind === 'thread' ? 'Thread' : entry.kind === 'page' ? 'Page' : 'Workspace'} permanently deleted` : 'Trash emptied');
         refocus();
       }
     } catch (reason) {
@@ -190,6 +232,10 @@ export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => voi
           <h2 className="trash-group-heading">Deleted workspaces <span className="trash-group-count">{deletedSections.length}</span></h2>
           <div className="trash-group-rows">{deletedSections.map(section => row({ kind: 'workspace', ...section }))}</div>
         </section>}
+        {matchingPageEntries.length > 0 && <section className="trash-group trash-native-pages">
+          <h2 className="trash-group-heading">Deleted Pages <span className="trash-group-count">{matchingPageEntries.length}</span></h2>
+          <div className="trash-group-rows">{matchingPageEntries.map(entry => row(entry))}</div>
+        </section>}
       </>}
     </div>
     {menu && menuEntry && !busy && <TrashMenu anchor={menu.anchor} onClose={() => setMenu(null)} onPreview={() => showPreview(menuEntry)} onRestore={() => restore(menuEntry)} onDelete={() => { void purge(menuEntry); }} />}
@@ -204,16 +250,17 @@ function TrashRow({ entry, nodes, query, ttl, now, busy, menuOpen, onPreview, on
   onPreview: () => void; onRestore: () => void; onMenu: (anchor: HTMLButtonElement) => void;
 }) {
   const thread = entry.kind === 'thread';
+  const page = entry.kind === 'page';
   const title = entryTitle(entry);
   const timestamp = entryDeletedAt(entry);
   const age = relativeDeletion(timestamp, now);
-  const days = thread ? remainingDays(entry.group, ttl, now) : null;
+  const days = entry.kind === 'thread' ? remainingDays(entry.group, ttl, now) : null;
   const expiry = days !== null && days <= 3 ? (days === 0 ? 'Due for deletion' : `${days}d left`) : null;
-  const count = thread ? plural(entry.group.members.length, 'node') : plural(entry.project.trees.filter(tree => !nodes[tree.rootNodeId]?.deletedAt).length + entry.groups.length, 'thread');
-  const extra = thread ? plural(entry.group.messageCount, 'message') : entry.project.cwd;
+  const count = entry.kind === 'thread' ? plural(entry.group.members.length, 'node') : entry.kind === 'page' ? `${entry.page.pages.length} page${entry.page.pages.length === 1 ? '' : 's'}` : plural(entry.project.trees.filter(tree => !nodes[tree.rootNodeId]?.deletedAt).length + entry.groups.length, 'thread');
+  const extra = entry.kind === 'thread' ? plural(entry.group.messageCount, 'message') : entry.kind === 'page' ? `${entry.project.name} · ${entry.project.backendConnectionId ?? 'local'}` : entry.project.cwd;
   return <article className="trash-row" data-trash-key={entryKey(entry)}>
     <button type="button" className="trash-row-open" data-trash-open={entryKey(entry)} aria-label={`Preview ${title}`} onClick={onPreview}>
-      <span className="trash-row-icon">{thread ? <MessageSquare size={16} aria-hidden="true" /> : <Folder size={16} aria-hidden="true" />}</span>
+      <span className="trash-row-icon">{thread || page ? <MessageSquare size={16} aria-hidden="true" /> : <Folder size={16} aria-hidden="true" />}</span>
       <span className="trash-row-content"><span className="trash-row-title"><TrashHighlight text={title} query={query} /></span>
         <span className="trash-row-meta"><span>{count}</span>{extra && <span className="trash-desktop-meta"><span aria-hidden="true"> · </span>{extra}</span>}<span className={`trash-mobile-date${expiry ? ' trash-expiry' : ''}`}><span aria-hidden="true"> · </span>{expiry || age}</span></span>
       </span>

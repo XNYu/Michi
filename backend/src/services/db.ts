@@ -55,6 +55,11 @@ export function getDb(): DatabaseSync {
   return _db;
 }
 
+/** The open database, or null before initDb: for reads that must never open (and migrate) one themselves. */
+export function openDbOrNull(): DatabaseSync | null {
+  return _db;
+}
+
 /** Cache only static SQL owned by hot paths; never pass unbounded dynamic SQL. */
 export function prepareCached(sql: string): StatementSync {
   const existing = statementCache.get(sql);
@@ -62,6 +67,11 @@ export function prepareCached(sql: string): StatementSync {
   const statement = getDb().prepare(sql);
   statementCache.set(sql, statement);
   return statement;
+}
+
+/** Whether the database is open (getDb() opens it again after closeDb()). */
+export function isDbOpen(): boolean {
+  return _db !== null;
 }
 
 export function closeDb(): void {

@@ -4,6 +4,7 @@ import express from 'express';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import type { AgentRuntime, AgentSession, NewAgentSessionOptions } from '../src/agents/types';
 import { registerRuntime } from '../src/agents/registry';
@@ -12,7 +13,8 @@ import { AgentDefinitionService } from '../src/services/agentDefinitionService';
 import { ChatManager } from '../src/services/chatManager';
 import { setupMichiRoutes } from '../src/routes/michi';
 import { LOCAL_AGENT_OWNER_ID } from '../src/services/agentOwner';
-import { clearAllSessions } from '../src/agents/sessionRegistry';
+import { clearAllSessions, registerSession } from '../src/agents/sessionRegistry';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 let tmpDir: string;
 let server: ReturnType<typeof express.application.listen>;
@@ -20,6 +22,7 @@ let baseUrl: string;
 let captured: NewAgentSessionOptions[];
 
 const runtime: AgentRuntime = {
+  descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
   id: 'primary-test', label: 'Primary Test',
   capabilities: {
     modes: false, permissions: true, models: false, providerModels: false,
@@ -79,7 +82,7 @@ async function ensure(nodeId: string, workspaceId: string, agentDefinitionId?: s
 }
 
 describe('primary Agent conversation invocation', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-primary-agent-'));
     process.env.MICHI_DATA_DIR = tmpDir;
     delete process.env.MICHI_CLOUD;
@@ -87,7 +90,7 @@ describe('primary Agent conversation invocation', () => {
     seedWorkspace('ws-a'); seedWorkspace('ws-b');
     seedNode('node-a', 'ws-a'); seedNode('node-default', 'ws-a');
     const app = express(); app.use(express.json()); app.use('/api', setupMichiRoutes(new ChatManager(undefined, tmpDir)));
-    server = app.listen(0);
+    server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
   });
 
@@ -131,6 +134,32 @@ describe('primary Agent conversation invocation', () => {
     const ordinaryRow = getDb().prepare('SELECT agent_definition_id,agent_effective_definition FROM nodes WHERE id=?').get('node-default') as any;
     assert.equal(ordinaryRow.agent_definition_id, null);
     assert.equal(ordinaryRow.agent_effective_definition, null);
+  });
+
+  test('ordinary recovery and message routes reject scheduled maintenance nodes', async () => {
+    getDb().prepare(`INSERT INTO scheduled_jobs(id,workspace_id,name,prompt,schedule,created_at,updated_at)
+      VALUES('maintenance-job','ws-a','Maintenance','Update Pages','{"kind":"every","everySeconds":3600}',1,1)`).run();
+    getDb().prepare("UPDATE nodes SET maintenance_job_id='maintenance-job' WHERE id='node-a'").run();
+    const live = await runtime.newSession({ sessionId: 'node-a', workspaceId: 'ws-a', cwd: tmpDir });
+    registerSession(live, null);
+
+    const ensured = await ensure('node-a', 'ws-a');
+    assert.equal(ensured.response.status, 409);
+    assert.equal(ensured.body.code, 'MAINTENANCE_PROFILE_LOCKED');
+
+    const loaded = await fetch(`${baseUrl}/chats/node-a/load`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: tmpDir, workspaceId: 'ws-a' }),
+    });
+    assert.equal(loaded.status, 409);
+    assert.equal((await loaded.json() as any).code, 'MAINTENANCE_PROFILE_LOCKED');
+
+    const messaged = await fetch(`${baseUrl}/chats/node-a/message`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'ordinary request' }),
+    });
+    assert.equal(messaged.status, 409);
+    assert.equal((await messaged.json() as any).code, 'MAINTENANCE_PROFILE_LOCKED');
   });
 
   test('persists an immutable snapshot and configures the runtime from it', async () => {

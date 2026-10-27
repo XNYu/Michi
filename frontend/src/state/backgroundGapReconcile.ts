@@ -1,4 +1,5 @@
 import { hydrateBackendWorkspaces } from './chatHydration';
+import { remoteEntityIdentity } from '../config/backendIdentity';
 import type { ChatMessage, ChatNodeState, ArtifactEntry, Project, ProjectEdge, Tree } from './chatTypes';
 
 export interface BackgroundReplayGap {
@@ -71,6 +72,7 @@ function mergeProject(server: Project, local: Project): Project {
     && trees.some((tree) => tree.id === local.activeTreeId);
   return {
     ...server,
+    backendConnectionId: local.backendConnectionId,
     chatIds,
     edges,
     trees,
@@ -145,7 +147,53 @@ function mergeGapNode(
     viewedAt: local?.viewedAt ?? server.viewedAt,
     lastAssistantAt: Math.max(local?.lastAssistantAt ?? 0, server.lastAssistantAt ?? 0) || undefined,
     agentCommands: local?.agentCommands,
+    // Workspace rows do not include the native session catalog or the result
+    // of a host command. Retain them while the binding still uses that runtime.
+    sessionState: local?.runtimeId === server.runtimeId ? local?.sessionState : undefined,
+    commandResult: local?.commandResult,
   };
+}
+
+export interface BackendNodeInstallInput {
+  currentProjects: Project[];
+  currentNodes: Record<string, ChatNodeState>;
+  rawWorkspace: unknown;
+  nodeId: string;
+}
+
+/**
+ * Install or refresh a thread the backend created without this renderer (a
+ * scheduled run). Unknown trees/nodes are added; the target node takes the
+ * server's messages and durable cursor, so later background frames continue
+ * from there. Local-only fields (drafts, queue, view state) are kept.
+ */
+export function installBackendWorkspaceNode({
+  currentProjects,
+  currentNodes,
+  rawWorkspace,
+  nodeId,
+}: BackendNodeInstallInput): { projects: Project[]; nodes: Record<string, ChatNodeState> } | null {
+  const hydrated = hydrateBackendWorkspaces([rawWorkspace]);
+  const serverProject = hydrated.projects[0];
+  if (!serverProject) return null;
+  const localProject = currentProjects.find((project) => project.id === serverProject.id);
+  if (!localProject) return null;
+  const serverNode = hydrated.nodes[nodeId];
+  if (!serverNode) return null;
+  const projects = currentProjects.map((project) =>
+    project.id === serverProject.id ? mergeProject(serverProject, localProject) : project,
+  );
+  const nodes = { ...currentNodes };
+  for (const [serverNodeId, node] of Object.entries(hydrated.nodes)) {
+    if (!nodes[serverNodeId]) nodes[serverNodeId] = node;
+  }
+  nodes[nodeId] = mergeGapNode(serverNode, currentNodes[nodeId], {
+    chatId: serverNode.chatId ?? currentNodes[nodeId]?.chatId ?? nodeId,
+    nodeId,
+    turnId: serverNode.lastAppliedBackgroundTurnId ?? '',
+    seq: serverNode.lastAppliedBackgroundSeq ?? -1,
+  }, rawNodeStatus(rawWorkspace, nodeId));
+  return { projects, nodes };
 }
 
 /**
@@ -160,7 +208,9 @@ export function reconcileBackgroundWorkspaceSnapshot({
   rawWorkspace,
   gap,
 }: BackgroundGapReconcileInput): BackgroundGapReconcileResult | null {
-  const hydrated = hydrateBackendWorkspaces([rawWorkspace]);
+  const owner = currentProjects.find(project => project.chatIds.includes(gap.nodeId ?? gap.chatId));
+  const connectionId = owner ? remoteEntityIdentity(owner.id)?.connectionId ?? owner.backendConnectionId ?? 'local' : 'local';
+  const hydrated = hydrateBackendWorkspaces([rawWorkspace], null, connectionId);
   const serverProject = hydrated.projects[0];
   if (!serverProject) return null;
   const localProject = currentProjects.find((project) => project.id === serverProject.id);

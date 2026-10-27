@@ -3,50 +3,19 @@ import { AgentDefinitionStatus } from 'michi-shared';
 import type { AgentDefinitionDtoV1, AgentCapabilityCatalogEntryV1, AgentEnableBlockerV1 } from 'michi-shared';
 import type { AgentResourceIdentity, LocatedAgentResource } from '../../../state/agentIdentity';
 import { listAgentCapabilities } from '../../../services/api/agents';
-import { fetchAgentStatus, fetchRuntimeCatalog, type AgentModelInfo, type AgentProviderInfo, type AgentRuntimeOption } from '../../../services/api/agentRuntime';
 import AgentDefinitionForm, {
-  createAgentDefinitionFormValue, draftSaveBlocked, outlineButtonStyle,
+  createAgentDefinitionFormValue, draftSaveBlocked,
   validateAgentDefinitionForm, type AgentDefinitionFormValue,
 } from './AgentDefinitionForm';
-import { catalogKey, type RuntimeFieldCatalog } from './AgentRuntimeProfileFields';
-
-/**
- * Dropdown data for runtime/provider/model. Runtimes come from one
- * /agent/status call; providers+models load lazily per runtime(+provider)
- * through /agent/runtime-catalog and are cached for the editor session.
- */
-function useRuntimeFieldCatalog(): RuntimeFieldCatalog | null {
-  const [runtimes, setRuntimes] = React.useState<AgentRuntimeOption[] | null>(null);
-  const [providersFor, setProvidersFor] = React.useState<Record<string, AgentProviderInfo[] | undefined>>({});
-  const [modelsFor, setModelsFor] = React.useState<Record<string, AgentModelInfo[] | undefined>>({});
-  const inFlight = React.useRef(new Set<string>());
-  React.useEffect(() => {
-    let cancelled = false;
-    fetchAgentStatus()
-      .then((status) => { if (!cancelled) setRuntimes(status.availableRuntimes ?? []); })
-      .catch(() => { if (!cancelled) setRuntimes(null); });
-    return () => { cancelled = true; };
-  }, []);
-  const request = React.useCallback((runtimeId: string, providerId: string) => {
-    const key = catalogKey(runtimeId, providerId);
-    if (!runtimeId || inFlight.current.has(key)) return;
-    inFlight.current.add(key);
-    fetchRuntimeCatalog(runtimeId, providerId || undefined)
-      .then(({ providers, models }) => {
-        setProvidersFor((current) => current[runtimeId] ? current : { ...current, [runtimeId]: providers });
-        setModelsFor((current) => ({ ...current, [key]: models }));
-      })
-      .catch(() => { inFlight.current.delete(key); });
-  }, []);
-  return React.useMemo(
-    () => (runtimes === null ? null : { runtimes, providersFor, modelsFor, request }),
-    [runtimes, providersFor, modelsFor, request],
-  );
-}
+import { backendConnectionIdForWorkspace } from '../../../config/backendConnections';
+import { useBackendScope } from '../../../hooks/useBackendScope';
+import { useRuntimeFieldCatalog } from './useRuntimeFieldCatalog';
+import { Button } from '../../ui/controls';
 
 interface Props {
   definition?: LocatedAgentResource<AgentDefinitionDtoV1> | null;
   initialScope?: 'global' | 'workspace';
+  backendConnectionId?: string;
   workspaceId?: string | null;
   busy?: boolean;
   error?: string | null;
@@ -61,24 +30,28 @@ interface Props {
 }
 
 export default function AgentEditorPage({
-  definition, initialScope = 'workspace', workspaceId = null, busy = false, error, blockers = null,
+  definition, backendConnectionId, initialScope = 'workspace', workspaceId = null, busy = false, error, blockers = null,
   onSaveDraft, onEnable, onDisable, onDuplicate, onDelete, onCancel,
 }: Props) {
   const [value, setValue] = React.useState(() => createAgentDefinitionFormValue(definition?.value, initialScope, workspaceId));
   const [submitting, setSubmitting] = React.useState<string | null>(null);
   const [capabilities, setCapabilities] = React.useState<AgentCapabilityCatalogEntryV1[] | null>(null);
-  const runtimeCatalog = useRuntimeFieldCatalog();
+  const catalogConnectionId = definition?.backendConnectionId ?? backendConnectionId ?? (workspaceId ? backendConnectionIdForWorkspace(workspaceId) : undefined);
+  const catalogScope = useBackendScope(catalogConnectionId);
+  const runtimeCatalog = useRuntimeFieldCatalog(catalogScope.connectionId);
   React.useEffect(() => setValue(createAgentDefinitionFormValue(definition?.value, initialScope, workspaceId)), [definition?.backendConnectionId, definition?.value.id, initialScope, workspaceId]);
   const effectiveWorkspaceId = definition?.value.workspaceId ?? workspaceId;
   React.useEffect(() => {
     // Catalog is advisory: on failure the form falls back to manual refs.
     const controller = new AbortController();
-    listAgentCapabilities(effectiveWorkspaceId, controller.signal)
-      .then(setCapabilities)
-      .catch(() => setCapabilities(null));
-    return () => controller.abort();
-  }, [effectiveWorkspaceId]);
-  const errors = React.useMemo(() => validateAgentDefinitionForm(value), [value]);
+    let cancelled = false;
+    setCapabilities(null);
+    listAgentCapabilities(effectiveWorkspaceId, controller.signal, catalogScope.connectionId)
+      .then((next) => { if (!cancelled) setCapabilities(next); })
+      .catch(() => { if (!cancelled) setCapabilities(null); });
+    return () => { cancelled = true; controller.abort(); };
+  }, [effectiveWorkspaceId, catalogScope.key, catalogScope.connectionId]);
+  const errors = React.useMemo(() => validateAgentDefinitionForm(value, runtimeCatalog), [value, runtimeCatalog]);
   const identity = definition ? { backendConnectionId: definition.backendConnectionId, id: definition.value.id } : null;
   const status = definition?.value.status ?? AgentDefinitionStatus.Draft;
   const blocked = busy || submitting !== null;
@@ -99,7 +72,7 @@ export default function AgentEditorPage({
             <span>{status}</span>
           </div>
         </div>
-        {onCancel && <button type="button" onClick={onCancel} style={outlineButtonStyle}>close</button>}
+        {onCancel && <Button onClick={onCancel}>close</Button>}
       </header>
 
       {blockers && blockers.length > 0 && (
@@ -124,14 +97,14 @@ export default function AgentEditorPage({
       {/* Outside the scroll area: always flush with the pane bottom; the form
           scrolls underneath it instead of showing text below the buttons. */}
       <footer aria-label="Agent editor actions" style={{ flexShrink: 0, padding: '12px 56px', borderTop: '1px solid var(--term-line)', background: 'var(--term-page-bg, var(--term-bg))', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <button type="button" disabled={blocked || draftSaveBlocked(errors)} onClick={() => { void invoke('draft', () => onSaveDraft(value)); }} style={primaryButtonStyle}>Save Draft</button>
+        <Button style={{ fontSize: 'var(--fs-sm)' }} disabled={blocked || draftSaveBlocked(errors)} onClick={() => { void invoke('draft', () => onSaveDraft(value)); }} variant="primary">Save Draft</Button>
         {status === AgentDefinitionStatus.Enabled ? (
-          <button type="button" disabled={blocked || !identity || !onDisable} onClick={() => identity && onDisable && void invoke('disable', () => onDisable(identity))} style={outlineButtonStyle}>Disable</button>
+          <Button style={{ fontSize: 'var(--fs-sm)' }} disabled={blocked || !identity || !onDisable} onClick={() => identity && onDisable && void invoke('disable', () => onDisable(identity))}>Disable</Button>
         ) : (
-          <button type="button" disabled={blocked || Object.keys(errors).length > 0} onClick={() => { void invoke('enable', () => onEnable(value)); }} title={Object.keys(errors).length > 0 ? 'Resolve validation errors before enabling.' : undefined} style={outlineButtonStyle}>Enable</button>
+          <Button style={{ fontSize: 'var(--fs-sm)' }} disabled={blocked || Object.keys(errors).length > 0} onClick={() => { void invoke('enable', () => onEnable(value)); }} title={Object.keys(errors).length > 0 ? 'Resolve validation errors before enabling.' : undefined}>Enable</Button>
         )}
-        {identity && <button type="button" disabled={blocked || !onDuplicate} onClick={() => onDuplicate && void invoke('duplicate', () => onDuplicate(identity))} style={outlineButtonStyle}>Duplicate</button>}
-        {identity && <button type="button" disabled={blocked || !onDelete} onClick={() => onDelete && void invoke('delete', () => onDelete(identity))} style={{ ...outlineButtonStyle, color: 'var(--danger, var(--term-danger))' }}>Delete</button>}
+        {identity && <Button style={{ fontSize: 'var(--fs-sm)' }} disabled={blocked || !onDuplicate} onClick={() => onDuplicate && void invoke('duplicate', () => onDuplicate(identity))}>Duplicate</Button>}
+        {identity && <Button style={{ fontSize: 'var(--fs-sm)' }} disabled={blocked || !onDelete} onClick={() => onDelete && void invoke('delete', () => onDelete(identity))} danger>Delete</Button>}
         <span aria-live="polite" style={{ marginLeft: 'auto', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-sm)' }}>
           {submitting ? `${submitting}…` : Object.keys(errors).length > 0 ? `${Object.keys(errors).length} validation issue${Object.keys(errors).length === 1 ? '' : 's'}` : 'ready to enable'}
         </span>
@@ -143,5 +116,3 @@ export default function AgentEditorPage({
 function ScopeBadge({ scope }: { scope: 'global' | 'workspace' }) {
   return <span style={{ border: '1px solid var(--term-line)', padding: '2px 6px', color: 'var(--term-fg)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase' }}>{scope}</span>;
 }
-
-const primaryButtonStyle: React.CSSProperties = { ...outlineButtonStyle, background: 'var(--term-fg)', color: 'var(--term-bg)', borderColor: 'var(--term-fg)', fontWeight: 600 };

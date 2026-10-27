@@ -63,6 +63,8 @@ export interface ContextMenuProps {
    *  so the trigger's own click can toggle the menu closed instead of the menu
    *  closing on mousedown and reopening on click. */
   trigger?: HTMLElement | null;
+  /** Extra class on the menu surface, for a caller's own row details. */
+  className?: string;
 }
 
 /**
@@ -132,6 +134,7 @@ export default function ContextMenu({
   searchPlaceholder,
   anchorBottom,
   trigger,
+  className,
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -376,6 +379,7 @@ export default function ContextMenu({
     <PopoverSurface
       ref={ref}
       menuKind={menuKind}
+      className={className}
       role="menu"
       aria-label={menuKind === 'workspace' ? 'Workspaces' : menuKind === 'agents' ? 'Agents' : 'Actions'}
       left={pos.x}

@@ -5,14 +5,21 @@ import test from 'node:test';
 const rootPackage = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const backendPackage = JSON.parse(await readFile(new URL('../backend/package.json', import.meta.url), 'utf8'));
 
-test('remote setup installs only backend and shared workspaces', () => {
+test('remote setup installs only backend, shared and runtime workspaces', () => {
   const command = rootPackage.scripts?.['remote:setup'];
   assert.equal(typeof command, 'string');
   assert.match(command, /npm install/);
   assert.match(command, /--workspace backend/);
   assert.match(command, /--workspace shared/);
+  assert.match(command, /--workspace runtime/);
+  assert.doesNotMatch(command, /--workspace frontend/);
   assert.match(command, /--include-workspace-root=false/);
   assert.match(command, /npm run backend:build/);
+});
+
+test('backend links the runtime workspace by path, not by registry version', () => {
+  assert.ok(rootPackage.workspaces?.includes('runtime'));
+  assert.equal(backendPackage.dependencies?.['michi-runtime'], 'file:../runtime');
 });
 
 test('Electron-only node-pty is not a backend dependency', () => {

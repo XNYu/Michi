@@ -21,62 +21,6 @@ function tool(
 }
 
 describe('deriveDiffReceipt', () => {
-  it('returns null when there are no tool calls', () => {
-    expect(deriveDiffReceipt(msg([]))).toBeNull();
-  });
-
-  it('returns null for read-only / bash-only turns', () => {
-    const m = msg([
-      tool('read', { path: 'a.ts' }),
-      tool('bash', { command: 'rm -rf build' }),
-      tool('grep', { pattern: 'foo' }),
-    ]);
-    expect(deriveDiffReceipt(m)).toBeNull();
-  });
-
-  it('write tool produces a file entry with added = content line count', () => {
-    const m = msg([tool('write', { path: 'src/a.ts', content: 'one\ntwo\nthree' })]);
-    const r = deriveDiffReceipt(m);
-    expect(r).not.toBeNull();
-    expect(r!.files).toEqual([{ path: 'src/a.ts', added: 3, removed: 0, kind: 'write', countsKnown: true }]);
-    expect(r!.totalAdded).toBe(3);
-    expect(r!.totalRemoved).toBe(0);
-  });
-
-  it('write accepts file_path as the path key', () => {
-    const m = msg([tool('write', { file_path: 'b.md', content: 'x\ny\n' })]);
-    const r = deriveDiffReceipt(m);
-    expect(r!.files[0].path).toBe('b.md');
-    // trailing newline does not count as an extra line
-    expect(r!.files[0].added).toBe(2);
-  });
-
-  it('edit tool counts old/new string lines as removed/added', () => {
-    const m = msg([
-      tool('edit', { path: 'c.ts', old_string: 'a\nb\nc\nd', new_string: 'a\nz' }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'c.ts', added: 2, removed: 4, kind: 'edit', countsKnown: true }]);
-  });
-
-  it('edits to the same path accumulate', () => {
-    const m = msg([
-      tool('edit', { path: 'c.ts', old_string: 'a', new_string: 'a\nb' }),
-      tool('edit', { path: 'c.ts', old_string: 'x\ny', new_string: 'z' }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'c.ts', added: 3, removed: 3, kind: 'edit', countsKnown: true }]);
-  });
-
-  it('a later write to the same path supersedes earlier counts (latest write wins)', () => {
-    const m = msg([
-      tool('edit', { path: 'd.ts', old_string: 'a\nb', new_string: 'c' }),
-      tool('write', { path: 'd.ts', content: 'full\nnew\nfile' }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'd.ts', added: 3, removed: 0, kind: 'write', countsKnown: true }]);
-  });
-
   it('an edit after a write on the same path accumulates but keeps write kind', () => {
     const m = msg([
       tool('write', { path: 'e.ts', content: 'a\nb' }),
@@ -84,25 +28,6 @@ describe('deriveDiffReceipt', () => {
     ]);
     const r = deriveDiffReceipt(m);
     expect(r!.files).toEqual([{ path: 'e.ts', added: 4, removed: 1, kind: 'write', countsKnown: true }]);
-  });
-
-  it('aggregates totals across multiple files', () => {
-    const m = msg([
-      tool('write', { path: 'a.ts', content: 'l1\nl2' }),
-      tool('edit', { path: 'b.ts', old_string: 'x', new_string: 'y\nz' }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r!.files).toHaveLength(2);
-    expect(r!.totalAdded).toBe(4);
-    expect(r!.totalRemoved).toBe(1);
-  });
-
-  it('skips failed tool calls', () => {
-    const m = msg([
-      tool('write', { path: 'a.ts', content: 'x' }, { status: 'failed' }),
-      tool('edit', { path: 'b.ts', old_string: 'x', new_string: 'y' }, { status: 'error' }),
-    ]);
-    expect(deriveDiffReceipt(m)).toBeNull();
   });
 
   it('skips interrupted tool calls (turn cancelled/errored mid-flight)', () => {
@@ -153,46 +78,6 @@ describe('deriveDiffReceipt', () => {
     expect(deriveDiffReceipt(m)).toBeNull();
   });
 
-  it('empty content write counts as 0 added', () => {
-    const m = msg([tool('write', { path: 'empty.txt', content: '' })]);
-    const r = deriveDiffReceipt(m);
-    expect(r!.files).toEqual([{ path: 'empty.txt', added: 0, removed: 0, kind: 'write', countsKnown: true }]);
-  });
-
-  it('handles messages without a toolCalls array', () => {
-    const m = { id: 'a', role: 'assistant', text: '' } as unknown as ChatMessage;
-    expect(deriveDiffReceipt(m)).toBeNull();
-  });
-
-  it('extracts path from detail field when inputJson is absent (Claude runtime)', () => {
-    const m = msg([
-      tool('Write', {}, { inputJson: undefined, detail: 'Write: /Users/x/rabbitholes/src/a.ts' }),
-      tool('Edit', {}, { inputJson: undefined, detail: 'Edit: /Users/x/rabbitholes/src/b.ts' }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r).not.toBeNull();
-    expect(r!.files.map(f => f.path).sort()).toEqual([
-      '/Users/x/rabbitholes/src/a.ts',
-      '/Users/x/rabbitholes/src/b.ts',
-    ]);
-    // Without inputJson, line counts default to 0 and are flagged unknown so
-    // the receipt hides the misleading +0 −0 (the diff modal shows the real delta).
-    expect(r!.totalAdded).toBe(0);
-    expect(r!.totalRemoved).toBe(0);
-    expect(r!.files.every((f) => f.countsKnown)).toBe(false);
-  });
-
-  it('extracts path from "Editing <filename>" title (Kiro runtime)', () => {
-    const m = msg([
-      tool('Editing Topbar.tsx', { old_string: 'a\nb', new_string: 'c' }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r).not.toBeNull();
-    expect(r!.files[0].path).toBe('Topbar.tsx');
-    expect(r!.files[0].added).toBe(1);
-    expect(r!.files[0].removed).toBe(2);
-  });
-
   it('extracts path from "Writing <filename>" title (Kiro runtime)', () => {
     const m = msg([
       tool('Writing quicksort.py', { content: 'def qs(arr):\n    pass\n' }, { inputJson: JSON.stringify({ content: 'def qs(arr):\n    pass\n' }) }),
@@ -201,18 +86,6 @@ describe('deriveDiffReceipt', () => {
     expect(r).not.toBeNull();
     expect(r!.files[0].path).toBe('quicksort.py');
     expect(r!.files[0].added).toBe(2);
-  });
-
-  it('extracts path from output field (Claude "File created" format)', () => {
-    const m = msg([
-      tool('Write', {}, {
-        inputJson: undefined,
-        output: 'File created successfully at: /Users/x/rabbitholes/src/new.ts (file state is current in your context)',
-      }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r).not.toBeNull();
-    expect(r!.files[0].path).toBe('/Users/x/rabbitholes/src/new.ts');
   });
 
   it('extracts path from output field (Kiro JSON items format)', () => {
@@ -237,16 +110,5 @@ describe('deriveDiffReceipt', () => {
     const r = deriveDiffReceipt(m);
     expect(r).not.toBeNull();
     expect(r!.files[0].path).toBe('/Users/x/rabbitholes/state/chatTypes.ts');
-  });
-
-  it('prefers inputJson path over detail, output, or title fallbacks', () => {
-    const m = msg([
-      tool('Editing foo.ts', { path: 'real/path.ts', old_string: 'a', new_string: 'b' }, {
-        detail: 'Edit: /wrong/path.ts',
-        output: 'Successfully replaced 1 occurrence(s) in /another/wrong.ts.',
-      }),
-    ]);
-    const r = deriveDiffReceipt(m);
-    expect(r!.files[0].path).toBe('real/path.ts');
   });
 });

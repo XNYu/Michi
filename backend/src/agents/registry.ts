@@ -1,15 +1,14 @@
 import type { AgentRuntime, RuntimeId } from "./types";
-
-const runtimes = new Map<RuntimeId, AgentRuntime>();
+import { getRuntimeManager } from "./sessionRegistry";
 
 export function registerRuntime(runtime: AgentRuntime): void {
-  runtimes.set(runtime.id, runtime);
+  getRuntimeManager().register(runtime);
 }
 
 export function getRuntime(id: RuntimeId): AgentRuntime | undefined {
-  return runtimes.get(id);
+  return getRuntimeManager().get(id);
 }
 
 export function listRuntimes(): AgentRuntime[] {
-  return Array.from(runtimes.values());
+  return getRuntimeManager().list();
 }

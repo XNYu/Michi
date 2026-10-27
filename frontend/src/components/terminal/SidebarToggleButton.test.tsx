@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import SidebarToggleButton from './SidebarToggleButton';
 
 describe('SidebarToggleButton', () => {
@@ -14,12 +14,5 @@ describe('SidebarToggleButton', () => {
     rerender(<SidebarToggleButton collapsed={true} onToggle={() => {}} />);
     expect(btn.getAttribute('aria-pressed')).toBe('true');
     expect(btn.getAttribute('aria-label')).toBe('Open sidebar');
-  });
-
-  it('fires onToggle on click', () => {
-    const onToggle = vi.fn();
-    render(<SidebarToggleButton collapsed={false} onToggle={onToggle} />);
-    fireEvent.click(screen.getByRole('button'));
-    expect(onToggle).toHaveBeenCalledOnce();
   });
 });

@@ -1,0 +1,75 @@
+import React from 'react';
+import { Clock, Layers, MessageSquare, Settings } from 'lucide-react';
+import { HoverTip } from '../../ui/Popover';
+import type { ShellArea } from '../../../state/shellArea';
+import './rail.css';
+
+export const AREA_RAIL_WIDTH = 48;
+
+export interface RailBadges {
+  /** Things waiting on you on the Spaces Home. */
+  spacesWaiting: number;
+  /** First generation, or a conversation started in a Space, is running. */
+  scheduledRunning: boolean;
+  /** A conversation started in a Space finished and has not been opened. */
+  conversationsDone: boolean;
+  /** The Meta agent stopped (for example, its tool check failed). */
+  settingsAlert: boolean;
+}
+
+export const NO_RAIL_BADGES: RailBadges = { spacesWaiting: 0, scheduledRunning: false, conversationsDone: false, settingsAlert: false };
+
+const ITEMS: ReadonlyArray<{ area: ShellArea; label: string; Icon: typeof Clock }> = [
+  { area: 'conversations', label: 'Conversations', Icon: MessageSquare },
+  { area: 'spaces', label: 'Pages', Icon: Layers },
+  { area: 'scheduled', label: 'Scheduled', Icon: Clock },
+  { area: 'settings', label: 'Settings', Icon: Settings },
+];
+
+function describe(area: ShellArea, label: string, badges: RailBadges): { name: string; badge: React.ReactNode } {
+  if (area === 'spaces' && badges.spacesWaiting > 0) {
+    return { name: `${label}, ${badges.spacesWaiting} waiting`, badge: <em className="area-rail__count">{badges.spacesWaiting > 99 ? '99+' : badges.spacesWaiting}</em> };
+  }
+  if (area === 'scheduled' && badges.scheduledRunning) return { name: `${label}, running`, badge: <i className="area-rail__dot" data-tone="run" /> };
+  if (area === 'conversations' && badges.conversationsDone) return { name: `${label}, finished`, badge: <i className="area-rail__dot" data-tone="done" /> };
+  if (area === 'settings' && badges.settingsAlert) return { name: `${label}, needs attention`, badge: <i className="area-rail__dot" data-tone="warn" /> };
+  return { name: label, badge: null };
+}
+
+/** The leftmost column: one button per area. Settings sits at the bottom. */
+export function AreaRail({ area, onSelect, badges = NO_RAIL_BADGES, settingsOpen = false }: {
+  area: ShellArea;
+  onSelect: (area: ShellArea) => void;
+  badges?: RailBadges;
+  settingsOpen?: boolean;
+}) {
+  return (
+    <nav className="area-rail" aria-label="Areas" style={{ width: AREA_RAIL_WIDTH }}>
+      {ITEMS.map(({ area: id, label, Icon }) => {
+        const { name, badge } = describe(id, label, badges);
+        return (
+          <React.Fragment key={id}>
+            {id === 'settings' && <span className="area-rail__spacer" aria-hidden="true" />}
+            <HoverTip label={label} delayMs={300} side="right">
+              <button
+                type="button"
+                className="area-rail__btn"
+                data-area={id}
+                aria-label={name}
+                aria-current={id !== 'settings' && area === id ? 'page' : undefined}
+                aria-haspopup={id === 'settings' ? 'dialog' : undefined}
+                aria-expanded={id === 'settings' ? settingsOpen : undefined}
+                onClick={() => onSelect(id)}
+              >
+                <Icon size={17} strokeWidth={1.5} aria-hidden="true" />
+                {badge}
+              </button>
+            </HoverTip>
+          </React.Fragment>
+        );
+      })}
+    </nav>
+  );
+}
+
+export default AreaRail;

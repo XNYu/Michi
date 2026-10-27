@@ -1,9 +1,11 @@
 import { openPreferredUrl } from '../../services/openUrl';
 import { sessionModeCatalog } from '../../state/sessionModeCatalog';
+import { turnErrorAction } from '../../state/turnErrorRecovery';
 import { ChatCommandResult } from './ChatCommandResult';
 import { usePermissionPreferences } from '../../hooks/usePermissionPreferences';
-import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { backendConnectionIdForWorkspace, workspaceBackendApiBase } from '../../config/backendConnections';
 import { ComposerPermissionControl } from './ComposerPermissionControl';
+import { mergeContextQuote } from '../../state/assistant/assistantContext';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useChatActions, useChatNode, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
 import type { ChatNodeState, ArtifactEntry, ProjectEdge } from '../../state/chatStore';
@@ -17,12 +19,16 @@ import type { MentionRecord } from '../mentions';
 import { expandMentions } from '../mentions';
 import { findTreeIdForNode } from '../../state/tree';
 import { collectCrossTreeGroups, EMPTY_CROSS_TREE_GROUPS as EMPTY_CROSS_TREE_NODES } from '../crossTreeMentions';
-import { formatQuotedMessage } from '../../lib/quoteFormat';
+import { ATTACHED_QUOTE_SOURCE, formatQuotedMessage, type AnyQuoteSource } from '../../lib/quoteFormat';
 import { buildAnchorMap, type ChildAnchor } from '../../state/branchAnchors';
 import { formatCommentsBlock, joinMessageParts } from '../../lib/commentFormat';
 import { getElectron } from '../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, copyWorkspaceFile, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
+import { fetchAssistant } from '../../services/api/assistant';
+import { adoptAssistantInfo, getAssistantSnapshot } from '../../state/assistant/assistantStore';
+import { readMetaAgent, saveMetaAgentSettings } from '../../state/metaAgent/useMetaAgent';
+import type { MetaAgentSettingsPatch } from 'michi-shared';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
 import { checkRuntimeHealth } from '../../services/api';
 import { shouldSteerInsteadOfQueue } from 'michi-shared';
@@ -43,6 +49,19 @@ import { resolveComposerReasoning } from './composerReasoning';
 import { PaneAgentMenus } from './PaneAgentMenus';
 import { FileDropOverlay, PaneDropIndicator } from './PaneDragOverlays';
 import { nextFollowScrollTop } from './scrollPinning';
+import { claimSourceJump, useSourceJump } from '../../state/sourceNav/sourceNav';
+import { useRunningClaudeWorkflow } from '../../state/workflowDomain';
+import { DARK_PALETTES } from './tokens';
+import {
+  noteAssistantContextSent,
+  pendingAssistantContext,
+  takeAssistantSends,
+  useAssistantPendingSends,
+} from '../../state/assistant/assistantComposer';
+import { isSystemWorkspace } from '../../state/assistant/systemWorkspace';
+import { assistantComposerBinding } from '../../state/assistant/assistantBinding';
+import { useAssistantInfo } from '../../state/assistant/assistantStore';
+import { navigateToNode } from '../../state/navigateToNode';
 import * as perf from '../../services/perf';
 
 // Shared module-level flag flipped by the Sidebar's `michi:sidebar-animating`
@@ -315,13 +334,40 @@ function messageRenderStats(node: ChatNodeState | undefined) {
   };
 }
 
-function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: number | null }) {
+export interface SelectedPageBlockContext {
+  pageId: string;
+  pageTitle: string;
+  blockId: string;
+  title: string;
+  content: string;
+}
+
+function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachments = false, selectedPageContext = null, draftRequest = null, onDraftRequestApplied, composerPreBlocks, composerFocusToken = 0, composerDisabled = false, spacesAssistant = false }: {
+  nodeId: string;
+  contentMaxWidth?: number | null;
+  /** Rendered outside the pane grid (the ⌘J assistant panel): clicks and
+   *  drops must not open or focus the node as a pane in the current slot. */
+  embedded?: boolean;
+  /** Page Helpers may upload files into their owning workspace while the global assistant remains attachment-free. */
+  allowEmbeddedAttachments?: boolean;
+  /** Chosen native page block, appended as structured context to the wire text while displayText stays the user's prose. */
+  selectedPageContext?: SelectedPageBlockContext | null;
+  /** Explicit user-authorized draft request; populates the composer without submitting. */
+  draftRequest?: { id: number; text: string } | null;
+  onDraftRequestApplied?: (requestId: number) => void;
+  composerPreBlocks?: React.ReactNode;
+  composerFocusToken?: number;
+  composerDisabled?: boolean;
+  /** Spaces reuses the complete chat composer; its model picker updates the Meta agent settings. */
+  spacesAssistant?: boolean;
+}) {
   const renderStartedAt = perf.enabled() ? perf.now() : 0;
   const {
     focusPane,
     closePane,
     sendMessage,
     retryLastTurn,
+    rerunLastTurn,
     editAndResend,
     cancelStream,
     setChatPermissionMode,
@@ -341,6 +387,10 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     setComposerDraft,
     reorderPane,
     openArtifactPane,
+    selectProject,
+    openPane,
+    openPaneInTree,
+    activateTree,
   } = useChatActions();
   const {
     availableModes: defaultAvailableModes,
@@ -350,12 +400,33 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     retryAgentModes,
     agentStatus,
     refreshAgentStatus,
-    activeProject,
+    activeProject: shellActiveProject,
+    projects,
   } = useChatProjects();
   const { focusedPane } = useChatPanes();
   const { prefs } = usePrefs();
   const paneShellStyle = usePaneShellStyle(nodeId);
   const n = useChatNode(nodeId);
+  const activeProject = embedded && n
+    ? projects?.find((project) => project.id === n.projectId) ?? shellActiveProject
+    : shellActiveProject;
+  const claudeWorkflowRunning = useRunningClaudeWorkflow(nodeId);
+  // The ⌘J assistant's conversation (in the panel, or as a pane of its hidden
+  // workspace) never branches: a branch would land where no list shows it.
+  // Branch and fan-out sends go to the conversation itself.
+  const nodeProjectId = n?.projectId;
+  const isAssistantConversation = useMemo(
+    // The existing global assistant keeps its narrower composer capabilities;
+    // page helpers opt into workspace attachments with allowEmbeddedAttachments.
+    () => (embedded && !allowEmbeddedAttachments) || isSystemWorkspace(projects?.find((p) => p.id === nodeProjectId)),
+    [allowEmbeddedAttachments, embedded, nodeProjectId, projects],
+  );
+  const branchesOff = embedded || isAssistantConversation;
+  const attachmentRestricted = (isAssistantConversation && !spacesAssistant) || (embedded && !allowEmbeddedAttachments && !spacesAssistant);
+  const selectedPageBlockQuote = useMemo(() => selectedPageContext
+    ? `Selected page block: ${selectedPageContext.title}\nPage: ${selectedPageContext.pageTitle} (pageId: ${selectedPageContext.pageId})\nBlock ID: ${selectedPageContext.blockId}\n\n${selectedPageContext.content}`
+    : null, [selectedPageContext]);
+  const assistantInfo = useAssistantInfo();
   const availableModes = sessionModeCatalog(n?.sessionState, defaultAvailableModes, agentStatus?.runtime);
   const permissionPreferences = usePermissionPreferences(n ? workspaceBackendApiBase(n.projectId) : undefined);
   // Latest node state for callbacks that outlive their render closure — the
@@ -387,11 +458,13 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     [n?.composerDraft],
   );
   const quotedText = n?.composerDraft?.quotedText ?? null;
+  const quoteSource = n?.composerDraft?.quoteSource;
   // Store writes are RAF-coalesced, so the render snapshot can trail the
   // TipTap transaction that immediately precedes Enter / a toolbar click.
   // Keep a synchronous source of truth for submit and quote composition.
   const latestDraftRef = useRef<ComposerDraftState>(draft);
   const latestQuotedTextRef = useRef<string | null>(quotedText);
+  const latestQuoteSourceRef = useRef<AnyQuoteSource | undefined>(quoteSource);
   // The full draft stays RAF-coalesced, but the primary action must flip
   // immediately between disabled / Send / Send next / Stop. Updating this
   // boolean only on empty↔non-empty transitions avoids per-keystroke renders.
@@ -403,17 +476,20 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // props on every render would roll the synchronous editor value back.
     latestDraftRef.current = draft;
     latestQuotedTextRef.current = quotedText;
+    latestQuoteSourceRef.current = quoteSource;
     setDraftHasText(draft.value.trim().length > 0);
-  }, [draft, quotedText]);
+  }, [draft, quotedText, quoteSource]);
   const persistComposerDraft = useCallback(
-    (nextDraft: ComposerDraftState, nextQuotedText: string | null) => {
+    (nextDraft: ComposerDraftState, nextQuotedText: string | null, nextSource: AnyQuoteSource | null = latestQuoteSourceRef.current ?? null) => {
       latestDraftRef.current = nextDraft;
       latestQuotedTextRef.current = nextQuotedText;
+      latestQuoteSourceRef.current = nextQuotedText ? nextSource ?? undefined : undefined;
       setDraftHasText(nextDraft.value.trim().length > 0);
       setComposerDraft(nodeId, {
         value: nextDraft.value,
         mentions: nextDraft.mentions,
         quotedText: nextQuotedText ?? undefined,
+        ...(nextQuotedText && nextSource ? { quoteSource: nextSource } : {}),
       });
     },
     [nodeId, setComposerDraft],
@@ -427,13 +503,26 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     },
     [persistComposerDraft],
   );
+  const appliedDraftRequest = useRef<number | null>(null);
+  useEffect(() => {
+    if (!draftRequest || appliedDraftRequest.current === draftRequest.id) return;
+    appliedDraftRequest.current = draftRequest.id;
+    const requested = draftRequest.text.trim();
+    if (!requested) return;
+    setDraft((previous) => ({
+      value: previous.value.trim() ? `${previous.value.trimEnd()}\n${requested}` : requested,
+      mentions: previous.mentions,
+    }));
+    onDraftRequestApplied?.(draftRequest.id);
+  }, [draftRequest, onDraftRequestApplied, setDraft]);
   const setQuotedText = useCallback(
-    (next: string | null) => persistComposerDraft(latestDraftRef.current, next),
+    (next: string | null) => persistComposerDraft(latestDraftRef.current, next, null),
     [persistComposerDraft],
   );
   const clearComposerDraft = useCallback(() => {
     latestDraftRef.current = EMPTY_COMPOSER_DRAFT;
     latestQuotedTextRef.current = null;
+    latestQuoteSourceRef.current = undefined;
     setDraftHasText(false);
     setComposerDraft(nodeId, null);
   }, [nodeId, setComposerDraft]);
@@ -442,7 +531,27 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
 
   // Per-node binding: resolve runtime/model/effort from node → global fallback.
   const [pendingBindingOverride, setPendingBindingOverride] = useState<PendingNodeBindingOverride | null>(null);
-  const requestedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride);
+  // A node continued from Michi asks for the attached session's runtime on its first send.
+  // While a Michi continue is attaching this node's session, sending would race it.
+  // The assistant runs on its own settings, which the backend pins: its
+  // composer shows those and never the global defaults of the user's chats.
+  const assistantBinding = isAssistantConversation ? spacesAssistant && assistantInfo?.nodeId === nodeId
+    ? { runtime: assistantInfo.conversation?.runtimeId ?? assistantInfo.settings.runtimeId, provider: readMetaAgent().info?.resolved.providerId ?? undefined, model: assistantInfo.conversation?.modelId ?? undefined,
+      reasoning: assistantInfo.conversation?.reasoning ?? undefined, source: 'node' as const }
+    : assistantComposerBinding(n, assistantInfo, agentStatus) : null;
+  const [savingAssistantModel, setSavingAssistantModel] = useState(false);
+  const assistantModelSave = useRef(false);
+  const saveAssistantModel = async (patch: MetaAgentSettingsPatch) => {
+    if (assistantModelSave.current) return;
+    assistantModelSave.current = true; setSavingAssistantModel(true);
+    try {
+      await saveMetaAgentSettings({ runtimeId: assistantBinding?.runtime, ...patch });
+      const info = await fetchAssistant();
+      if (getAssistantSnapshot().info?.nodeId === info.nodeId) adoptAssistantInfo(info);
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : 'Could not update the assistant model'); }
+    finally { assistantModelSave.current = false; setSavingAssistantModel(false); }
+  };
+  const requestedBinding = assistantBinding ?? resolveNodeBinding(n, agentStatus, pendingBindingOverride);
 
   // Load catalog for the *resolved* runtime (which may differ from the global active runtime).
   // Claude's provider-qualified IDs need CLI labels even before the picker opens.
@@ -458,10 +567,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     retry: retryModels,
   } = useRuntimeCatalog({
     enabled: shouldLoadModels,
+    connectionId: n ? backendConnectionIdForWorkspace(n.projectId) : undefined,
     runtime: requestedBinding.runtime,
     provider: requestedBinding.provider,
   });
-  const resolvedBinding = resolveNodeBinding(n, agentStatus, pendingBindingOverride,
+  const resolvedBinding = assistantBinding ?? resolveNodeBinding(n, agentStatus, pendingBindingOverride,
     catalogProviders.length > 0 ? catalogProviders : undefined);
   const providerModels = requestedBinding.runtime === n?.runtimeId && n?.sessionState?.availableModels?.length
     ? n.sessionState.availableModels : catalogModels;
@@ -470,6 +580,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // clear the pending chip override that this call consumes.
   const consumeBindingMeta = (): SendBindingMeta => {
     if (pendingBindingOverride) setPendingBindingOverride(null);
+    // The backend pins the assistant's runtime, model and reasoning; a send
+    // asks for none (the node's own binding, as the backend wrote it, goes).
+    if (isAssistantConversation) return {};
     return {
       runtimeId: resolvedBinding.runtime || undefined,
       providerId: resolvedBinding.provider || undefined,
@@ -493,6 +606,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // inputRef is hoisted here so insertContextMention (used by handleDrop) can
   // close over it — both are declared before handleDrop to avoid TDZ.
   const inputRef = useRef<MentionEditorHandle>(null);
+  useEffect(() => {
+    if (composerFocusToken) inputRef.current?.focus();
+  }, [composerFocusToken, nodeId]);
 
   const isFileDrag = (e: React.DragEvent) =>
     Array.from(e.dataTransfer.types).includes('Files');
@@ -512,12 +628,15 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     if (!isFileDrag(e)) return;
     e.preventDefault();
+    // The assistant takes no files, in the ⌘J panel or as a pane (they would
+    // land in a workspace folder, and it has no tool to read them).
+    if (attachmentRestricted) return;
     dragDepthRef.current += 1;
     if (dragDepthRef.current === 1) {
       setDropzoneVisible(true);
       setDroppedFileCount(e.dataTransfer.items.length);
     }
-  }, []);
+  }, [attachmentRestricted]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (!isFileDrag(e)) return;
@@ -593,11 +712,13 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     e.preventDefault();
     dragDepthRef.current = 0;
     setDropzoneVisible(false);
+    // The assistant takes no files (see handleDragEnter).
+    if (attachmentRestricted) return;
 
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
 
-    focusPane(nodeId);
+    if (!embedded) focusPane(nodeId);
 
     const items: Array<string | { abs: string; displayName: string; relPath?: string }> = [];
     const errors: string[] = [];
@@ -631,7 +752,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         { description: errors.join('\n'), style: { whiteSpace: 'pre-line' } },
       );
     }
-  }, [activeProject, addPendingPaths, focusPane, nodeId, progressForFile, resolveAttachCwd]);
+  }, [activeProject, addPendingPaths, attachmentRestricted, focusPane, nodeId, progressForFile, resolveAttachCwd]);
 
   // Paste-to-attach: scan clipboardData for file items (typically images
   // copied from screenshots / browsers) and pipe them through the same
@@ -640,7 +761,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // import path as drag-and-drop. Text pastes fall through to the textarea.
   const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData;
-    if (!dt) return;
+    // In the assistant a paste is only text: no files, no long-text attachments.
+    if (!dt || attachmentRestricted) return;
 
     // Long text paste → save as .txt file attachment instead of inline.
     const plainText = dt.getData('text/plain');
@@ -725,7 +847,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         { description: errors.join('\n'), style: { whiteSpace: 'pre-line' } },
       );
     }
-  }, [activeProject, addPendingPaths, progressForFile, resolveAttachCwd]);
+  }, [activeProject, addPendingPaths, attachmentRestricted, progressForFile, resolveAttachCwd]);
 
   const removePendingAttachment = useCallback((id: string) => {
     setPendingAttachments(prev => prev.filter(x => x.id !== id));
@@ -849,6 +971,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // guard, the first in-between frame can look like an upward user scroll and
   // incorrectly disable follow mode for the rest of the streaming turn.
   const programmaticScrollUntilRef = useRef<number>(0);
+  const cancelScrollRestoreRef = useRef<(() => void) | null>(null);
   // Layout reflow during a long stream can move scrollTop upward by itself
   // (markdown blocks forming, spacer removal, browser scroll anchoring). Only
   // leave follow mode when that upward scroll is tied to recent user input.
@@ -968,6 +1091,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         el.removeEventListener('pointerdown', finish);
       };
       finishRestore = finish;
+      cancelScrollRestoreRef.current = finish;
       const armQuiet = () => {
         if (quietTimer != null) clearTimeout(quietTimer);
         quietTimer = setTimeout(finish, RESTORE_QUIET_MS);
@@ -1345,11 +1469,21 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   // workspace, grouped by thread title. See collectCrossTreeGroups for the
   // ordering/cap rules (shared with the Home composer).
   const crossTreeNodes = useStructuralSelector(useCallback((nodesMap) => {
+    if (spacesAssistant) {
+      const groups = projects.filter(project => !project.system && !project.deletedAt && !project.archivedAt && backendConnectionIdForWorkspace(project.id) === 'local')
+        .flatMap(project => collectCrossTreeGroups(nodesMap, project, null).map(group => ({ ...group, treeTitle: `${project.name} · ${group.treeTitle}` })));
+      let count = 0;
+      return groups.flatMap(group => {
+        const nodes = group.nodes.slice(0, Math.max(0, 50 - count));
+        count += nodes.length;
+        return nodes.length ? [{ ...group, nodes }] : [];
+      });
+    }
     if (!activeProject) return EMPTY_CROSS_TREE_NODES;
     const currentTreeId = findTreeIdForNode(nodeId, activeProject);
     if (!currentTreeId) return EMPTY_CROSS_TREE_NODES;
     return collectCrossTreeGroups(nodesMap, activeProject, currentTreeId);
-  }, [activeProject, nodeId]), shallowArrayEqual);
+  }, [activeProject, nodeId, projects, spacesAssistant]), shallowArrayEqual);
 
   const mergeSourceLabels = useStructuralSelector(useCallback((nodesMap) => {
     const node = nodesMap[nodeId];
@@ -1592,6 +1726,63 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     }
   }, [streaming]);
 
+  // A send that isn't the composer's — a prompt a caller asked the ⌘J
+  // assistant to send, or a reply to a selection where branches are off —
+  // goes out like one: the pending assistant context as its quote (framed as
+  // attached context), the pane's runtime binding, queued while the node
+  // answers. The user's draft and quote stay as they are.
+  const sendBesideComposer = (prompt: string, selectionQuote: string | null, queue = false): void => {
+    const text = prompt.trim();
+    if (!text) return;
+    const context = pendingAssistantContext(nodeId);
+    const quote = mergeContextQuote(context, mergeContextQuote(selectionQuote, selectedPageBlockQuote));
+    const quoteSource = context ? ATTACHED_QUOTE_SOURCE : undefined;
+    noteAssistantContextSent(nodeId);
+    if (queue || nLatestRef.current?.status === 'streaming') {
+      queueMessage(nodeId, {
+        id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        value: text,
+        mentions: [],
+        attachments: [],
+        ...(quote ? { quotedText: quote } : {}),
+        ...(quote && quoteSource ? { quoteSource } : {}),
+        queuedAt: Date.now(),
+      });
+      return;
+    }
+    sendMessage(nodeId, joinMessageParts(null, quote, text, quoteSource), {
+      ...(quote ? { quotedText: quote } : {}),
+      ...(quote && quoteSource ? { quoteSource } : {}),
+      displayText: text,
+      // Not the composer's send: its draft stays as the user left it.
+      keepDraft: true,
+      ...consumeBindingMeta(),
+    });
+  };
+  const sendBesideComposerRef = useRef(sendBesideComposer);
+  sendBesideComposerRef.current = sendBesideComposer;
+
+  useEffect(() => {
+    if (!embedded || !selectedPageContext) return undefined;
+    const onFocusHelper = (event: Event) => {
+      const detail = (event as CustomEvent).detail as { pageId?: string; question?: string } | undefined;
+      if (detail?.pageId !== selectedPageContext.pageId || !detail.question?.trim()) return;
+      sendBesideComposerRef.current(detail.question, null);
+    };
+    window.addEventListener('michi:focus-page-helper', onFocusHelper);
+    return () => window.removeEventListener('michi:focus-page-helper', onFocusHelper);
+  }, [embedded, selectedPageContext?.pageId]);
+
+  // Sends requested through the assistant's composer store (openMichiAssistant
+  // with send): taken once, the first sent and any further ones queued behind it.
+  const requestedSends = useAssistantPendingSends(nodeId);
+  useEffect(() => {
+    if (requestedSends.length === 0) return;
+    const node = nLatestRef.current;
+    if (!node || node.deletedAt) return;
+    takeAssistantSends(nodeId).forEach((send, i) => sendBesideComposerRef.current(send.prompt, null, i > 0));
+  }, [nodeId, requestedSends]);
+
   const prevFocusedRef = useRef(isFocused);
   const wasStreamingRef = useRef(streaming);
   const lastQuoteRef = useRef(quotedText);
@@ -1617,6 +1808,54 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     const frame = requestAnimationFrame(() => inputRef.current?.editor?.commands.focus(undefined, { scrollIntoView: false }));
     return () => cancelAnimationFrame(frame);
   }, [isFocused, streaming, quotedText]);
+
+  // A jump from a page's source: scroll to the cited message once, then put the
+  // cursor in the composer (Continue) or keep it out (Open full chat).
+  const sourceJump = useSourceJump(nodeId);
+  useEffect(() => {
+    if (!sourceJump) return;
+    const { token, messageId, focus } = sourceJump;
+    let frame = 0;
+    let tries = 0;
+    let composerTries = 0;
+    const finish = () => {
+      const editor = inputRef.current?.editor;
+      // The message can render before the lazy composer. Keep the explicit
+      // Continue request pending until its editor exists, within the same
+      // bounded window as message loading; unmount cancels the frame.
+      if (focus === 'composer' && !editor && ++composerTries < 300) {
+        frame = requestAnimationFrame(finish);
+        return;
+      }
+      claimSourceJump(token);
+      const composer = composerHandle.current?.el;
+      if (focus === 'composer') editor?.commands.focus('end', { scrollIntoView: false });
+      else if (composer && document.activeElement instanceof HTMLElement && composer.contains(document.activeElement)) document.activeElement.blur();
+    };
+    const step = () => {
+      const target = messageId ? scrollRef.current?.querySelector<HTMLElement>(`[data-msg-id="${messageId.replace(/["\\]/g, '\\$&')}"]`) : null;
+      if (messageId && !target && ++tries < 300) { frame = requestAnimationFrame(step); return; }
+      if (!target) { frame = requestAnimationFrame(() => { frame = requestAnimationFrame(finish); }); return; }
+      cancelScrollRestoreRef.current?.();
+      followRef.current = false;
+      // Frames above it render at their real height as they come into view; hold the
+      // message in the middle until its position settles.
+      let last = Number.NaN;
+      let stable = 0;
+      let settle = 0;
+      const hold = () => {
+        programmaticScrollUntilRef.current = performance.now() + 200;
+        target.scrollIntoView({ block: 'center' });
+        const top = target.getBoundingClientRect().top;
+        stable = Math.abs(top - last) < 1 ? stable + 1 : 0;
+        last = top;
+        frame = requestAnimationFrame(stable < 3 && ++settle < 60 ? hold : finish);
+      };
+      hold();
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [sourceJump]);
 
   const insertMentionTrigger = useCallback(() => {
     // Type an `@` at the caret; MentionEditor's suggestion opens on it.
@@ -1653,14 +1892,28 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     setAgentMenu((current) => current ? null : anchor);
   }, []);
 
+  // Outside the grid (the ⌘J panel) a node opens wherever it lives, never in
+  // the current pane slot.
+  const openNodePane = useCallback((targetNodeId: string) => {
+    if (!embedded) {
+      focusPane(targetNodeId);
+      return;
+    }
+    navigateToNode(
+      { projects, activeProjectId: activeProject?.id ?? null, selectProject, openPane, openPaneInTree, activateTree, setFocusedNodeId },
+      targetNodeId,
+    );
+    window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: 'dashboard' } }));
+  }, [embedded, focusPane, projects, activeProject?.id, selectProject, openPane, openPaneInTree, activateTree, setFocusedNodeId]);
+
   const handleOpenBranch = useCallback((childNodeId: string) => {
-    focusPane(childNodeId);
-  }, [focusPane]);
+    openNodePane(childNodeId);
+  }, [openNodePane]);
 
   const handleMentionClick = useCallback((name: string, kind: string, mentionNodeId?: string) => {
     if (kind === 'node' && mentionNodeId) {
       // Open the referenced conversation node as a pane
-      focusPane(mentionNodeId);
+      openNodePane(mentionNodeId);
     } else {
       // Context/artifact mention — find the artifact by name and open it
       const artifact = mentionContexts.find(
@@ -1672,11 +1925,15 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         openPreferredUrl(artifact.url);
       }
     }
-  }, [focusPane, mentionContexts, openArtifactPane]);
+  }, [openNodePane, mentionContexts, openArtifactPane]);
 
   const handleRetryTurn = useCallback((userIdx: number) => {
     retryLastTurn(nodeId, userIdx, consumeBindingMetaRef.current());
   }, [nodeId, retryLastTurn]);
+
+  const handleRunAgain = useCallback((userIdx: number) => {
+    rerunLastTurn(nodeId, userIdx, consumeBindingMetaRef.current());
+  }, [nodeId, rerunLastTurn]);
 
   const handleEditUserMessage = useCallback((text: string) => {
     // Past messages contain wire-format tokens; reset mentions metadata
@@ -1706,12 +1963,17 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   }, [nodeId, sendMessage]);
 
   const handleBranchFollowUp = useCallback((question: string) => {
+    if (branchesOff) {
+      void sendMessage(nodeId, question);
+      return;
+    }
     void createChildChat(nodeId, question, undefined, {
       anchorMessageId: n?.followUpsSourceMessageId,
       focus: false,
     }).catch(() => {});
-  }, [createChildChat, n?.followUpsSourceMessageId, nodeId]);
+  }, [branchesOff, createChildChat, n?.followUpsSourceMessageId, nodeId, sendMessage]);
 
+  // Not offered at all when branches are off (see onBranchFromMessage below).
   const handleBranchFromMessage = useCallback((messageId: string) => {
     void createBlankChild(nodeId, { anchorMessageId: messageId }).catch(() => {});
   }, [createBlankChild, nodeId]);
@@ -1786,15 +2048,17 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     setSteeringQueueId(queueId);
     const expandedValue = expandMentions(entry.value, entry.mentions);
     const finalText = appendAttachmentsSentinel(
-      joinMessageParts(entry.commentBlock ?? null, entry.quotedText ?? null, expandedValue),
+      joinMessageParts(entry.commentBlock ?? null, entry.quotedText ?? null, expandedValue, entry.quoteSource),
       entry.attachments,
     );
     try {
       const accepted = await steerMessage(nodeId, finalText, {
         queueId,
-        displayText: joinMessageParts(entry.commentBlock ?? null, null, expandedValue),
+        displayText: joinMessageParts(entry.comments?.length ? null : entry.commentBlock ?? null, null, expandedValue),
         userMetadata: {
           quotedText: entry.quotedText,
+          ...(entry.quoteSource ? { quoteSource: entry.quoteSource } : {}),
+          ...(entry.comments?.length ? { comments: entry.comments as unknown as Array<Record<string, unknown>> } : {}),
           attachments: entry.attachments.length ? entry.attachments.map((attachment) => ({ ...attachment })) : undefined,
         },
       });
@@ -1810,9 +2074,17 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     }
   };
 
-  const onSubmit = async (forceBranch = false) => {
+  const onSubmit = async (branchRequested = false) => {
+    if (savingAssistantModel || composerDisabled) return;
+    // The assistant's conversation sends a branch request to itself.
+    const forceBranch = branchRequested && !branchesOff;
     const submitDraft = latestDraftRef.current;
-    const submitQuotedText = latestQuotedTextRef.current;
+    // A pending Michi handoff rides on this send as (the start of) its quote.
+    // So do the ⌘J assistant's attachments and page context, framed on the
+    // wire as attached context rather than a selection from a reply.
+    const assistantContext = pendingAssistantContext(nodeId);
+    const submitQuoteSource = assistantContext ? ATTACHED_QUOTE_SOURCE : latestQuoteSourceRef.current;
+    const submitQuotedText = mergeContextQuote(assistantContext, mergeContextQuote(latestQuotedTextRef.current, selectedPageBlockQuote));
     // Expand mention chips back to wire-format tokens (`@node:<id>` for nodes,
     // `@<name>` for artifacts) before any downstream parsing — fanout, branch
     // prefix stripping, etc. all see the wire string, not the chip-display.
@@ -1835,7 +2107,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // Fanout commands (`/fan topic1, topic2`) bypass the normal pipeline. The
     // parser requires text so it short-circuits on comment-only sends
     // automatically; we still guard explicitly so the intent is readable.
-    if (raw) {
+    if (raw && !branchesOff) {
       const fanout = parseFanoutCommand(raw);
       if (fanout) {
         const lastAssistantId = [...(n.messages ?? [])].reverse().find((m) => m.role === 'assistant')?.id;
@@ -1844,14 +2116,19 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       }
     }
 
-    const { branched: slashBranched, text } = raw
+    const { branched: slashRequested, text } = raw
       ? stripBranchPrefix(raw)
       : { branched: false, text: '' };
+    const slashBranched = slashRequested && !branchesOff;
 
     // With comment-only enabled, `text` can legitimately be empty. Only bail
     // when there's nothing outgoing at all (no comments AND no text AND no
     // attachments).
     if (!text && pending.length === 0 && attachmentsForSend.length === 0) return;
+    // Resumed from Michi: if the runtime cannot load the session, its restart
+    // starts from these. A branch forks from this node instead.
+    // The handoff goes with this send; the stored Michi lines shrink to the last answer.
+    noteAssistantContextSent(nodeId);
 
     // Compute commentBlock BEFORE the queue branch so it can be folded into
     // the queue payload. quotedText is already captured in scope from the
@@ -1877,7 +2154,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         mentions: [...submitDraft.mentions],
         attachments: attachmentsForSend.map(a => ({ ...a })),
         quotedText: queuedQuote ?? undefined,
+        ...(queuedQuote && submitQuoteSource ? { quoteSource: submitQuoteSource } : {}),
         commentBlock: commentBlock ?? undefined,
+        ...(pending.length ? { comments: pending.map(comment => ({ ...comment })) } : {}),
         queuedAt: Date.now(),
       });
       // Comments were folded into the queue entry — clear them off the node
@@ -1886,7 +2165,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       return;
     }
 
-    const baseFinal = joinMessageParts(commentBlock, submitQuotedText, text);
+    const baseFinal = joinMessageParts(commentBlock, submitQuotedText, text, submitQuoteSource);
     const finalText = appendAttachmentsSentinel(baseFinal, attachmentsForSend);
     if (pending.length > 0) clearPendingComments(nodeId);
 
@@ -1894,7 +2173,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     // The optimistic user message renders only the bare prose plus structured
     // quotedText / attachments / comments, so the bubble can show them as modules.
     const meta = {
-      rejectedDraft: { ...submitDraft, quotedText: submitQuotedText ?? undefined },
+      rejectedDraft: { ...submitDraft, quotedText: submitQuotedText ?? undefined, ...(submitQuoteSource ? { quoteSource: submitQuoteSource } : {}) },
       onRejected: () => {
         setPendingAttachments((current) => [
           ...pendingAttachments,
@@ -1903,6 +2182,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         for (const comment of pending) addPendingComment(nodeId, comment.quotedText, comment.body, comment.source);
       },
       quotedText: submitQuotedText ?? undefined,
+      ...(submitQuotedText && submitQuoteSource ? { quoteSource: submitQuoteSource } : {}),
       attachments: attachmentsForSend.length > 0 ? attachmentsForSend.map(a => ({ ...a })) : undefined,
       comments: pending.length > 0 ? pending.map(c => ({ ...c })) : undefined,
       displayText: text,
@@ -1928,11 +2208,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     }
   };
 
-  const canAttach = !!getElectron()?.chooseFiles || !!activeProject;
+  const canAttach = !attachmentRestricted && (!!getElectron()?.chooseFiles || !!activeProject);
   const sendDisabledBase = !draftHasText
     && pendingAttachments.length === 0
     && (n.pendingComments?.length ?? 0) === 0;
-  const sendDisabled = sendDisabledBase;
+  const sendDisabled = sendDisabledBase || savingAssistantModel || composerDisabled;
 
   const isError = n.status === 'error';
   // composerEmpty mirrors the same predicate used in the onSubmit early-return above.
@@ -1971,7 +2251,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
     <div
       data-node-id={nodeId}
       className="terminal-pane"
-      onMouseDown={() => {
+      onMouseDown={embedded ? undefined : () => {
         focusPane(nodeId);
         setFocusedNodeId(nodeId);
       }}
@@ -2000,7 +2280,8 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }
         void handleDrop(e);
       }}
-      style={paneShellStyle}
+      // Never dimmed as an unfocused pane: it isn't one of the grid's panes.
+      style={embedded ? { ...paneShellStyle, filter: 'none' } : paneShellStyle}
     >
       {n.spawnedByAgent && (
         <div
@@ -2028,6 +2309,12 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           containerRef={scrollRef}
           onQuote={(q) => setQuotedText(q)}
           onBranch={(q, p, anchorMessageId) => {
+            if (branchesOff) {
+              // A reply here, quoting the selection, instead of a branch
+              // (queued while the assistant is still answering).
+              sendBesideComposer(p, q);
+              return;
+            }
             void createChildChat(
               nodeId,
               formatQuotedMessage(q, p),
@@ -2126,6 +2413,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           viewportHeight={viewportH}
           bottomClearance={n.pendingPermission ? 12 : composerHeight + 24}
           onRetryTurn={handleRetryTurn}
+          onRunAgain={handleRunAgain}
           onEditUserMessage={handleEditUserMessage}
           onContinueFollowUp={handleContinueFollowUp}
           onBranchFollowUp={handleBranchFollowUp}
@@ -2133,7 +2421,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           anchorsByMessage={anchorsByMessage}
           onOpenBranch={handleOpenBranch}
           onMentionClick={handleMentionClick}
-          onBranchFromMessage={handleBranchFromMessage}
+          onBranchFromMessage={branchesOff ? undefined : handleBranchFromMessage}
           contextNames={contextNamesSet}
           editingMessageId={editingMessageId}
           onEditStart={handleEditStart}
@@ -2195,6 +2483,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         }}
         preBlocks={
           <>
+            {composerPreBlocks}
             {n.commandResult && <ChatCommandResult result={n.commandResult} />}
             <UploadProgressBar progress={uploadProgress} />
             <PaneComposerPreBlocks
@@ -2211,7 +2500,16 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
                 const entry = (n.pendingQueued ?? []).find((x) => x.id === queueId);
                 if (!entry) return;
                 dequeueMessage(nodeId, queueId);
-                persistComposerDraft({ value: entry.value, mentions: entry.mentions }, null);
+                const legacyCommentPrefix = !entry.comments?.length && entry.commentBlock ? entry.commentBlock + '\n\n' : '';
+                persistComposerDraft({
+                  value: legacyCommentPrefix + entry.value,
+                  mentions: entry.mentions.map(mention => ({ ...mention,
+                    start: mention.start + legacyCommentPrefix.length, end: mention.end + legacyCommentPrefix.length,
+                  })),
+                }, entry.quotedText ?? null, entry.quoteSource ?? null);
+                for (const comment of entry.comments ?? []) {
+                  addPendingComment(nodeId, comment.quotedText, comment.body, comment.source);
+                }
                 setPendingAttachments(
                   entry.attachments.map((a, idx) => ({
                     id: `att-restored-${Date.now()}-${idx}`,
@@ -2255,6 +2553,9 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         toolbarLeft={
           <PaneComposerToolbarLeft
             canAttach={canAttach}
+            // Spaces uses the shared context controls; the global assistant keeps its restricted toolbar.
+            contextTools={!isAssistantConversation || spacesAssistant}
+            enableAgentChip={!isAssistantConversation}
             toolbarTier={toolbarTier}
             currentMode={currentMode}
             currentModeId={n.currentModeId ?? undefined}
@@ -2271,6 +2572,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
           {!permissionPreferences.global && <ComposerPermissionControl apiBase={workspaceBackendApiBase(n.projectId)} mode={n.permissionMode ?? 'ask'}
             runtimeIds={[resolvedBinding.runtime]}
             compact={toolbarTier > 0} disabled={streaming || permissionPreferences.loading}
+            yoloRestartHint={claudeWorkflowRunning ? 'Claude restarts on your next message, which stops the running workflow.' : undefined}
             onChange={(mode) => setChatPermissionMode(nodeId, mode)} />}
           <ComposerModelTrigger
             toolbarTier={toolbarTier}
@@ -2280,10 +2582,13 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             providerModels={providerModels}
             providers={catalogProviders}
             isStreaming={streaming}
+            locked={isAssistantConversation && !spacesAssistant}
             modelMenuOpen={!!modelMenu && !streaming}
             onOpenModelMenu={openModelMenu}
+            switchHint={claudeWorkflowRunning ? 'Switching the model also stops the running workflow.' : undefined}
           />
           <PaneComposerActions
+            allowBranch={!branchesOff}
             draftHasText={draftHasText}
             sendMode={sendMode}
             streaming={streaming}
@@ -2292,8 +2597,11 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
             onSend={() => void onSubmit()}
             onStop={() => cancelStream(nodeId)}
             onRetry={() => retryLastTurn(nodeId, undefined, consumeBindingMeta())}
+            inspectOriginal={turnErrorAction(n.errorKind) === 'inspect-existing-turn'}
+            checkingOriginal={n.errorRecovery === 'checking'}
             contextUsagePercentage={n.contextUsagePercentage}
             usageSummary={n.usageSummary}
+            stopHint={claudeWorkflowRunning ? 'Also stops the running workflow.' : undefined}
           />
           </>
         }
@@ -2334,13 +2642,13 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
       <PaneAgentMenus
         agentMenu={agentMenu}
         modelMenu={modelMenu}
-        disabled={streaming}
+        disabled={streaming || savingAssistantModel}
         availableModes={availableModes}
         agentModesLoading={agentModesLoading}
         agentModesError={agentModesError}
         onRetryAgentModes={retryAgentModes}
         currentModeId={n.currentModeId ?? undefined}
-        agentStatus={agentStatus}
+        agentStatus={spacesAssistant && agentStatus ? { ...agentStatus, availableRuntimes: agentStatus.availableRuntimes?.filter(runtime => assistantInfo?.supportedRuntimes.includes(runtime.id)) } : agentStatus}
         resolvedBinding={resolvedBinding}
         catalogCapabilities={catalogCapabilities}
         providerModels={providerModels}
@@ -2351,19 +2659,19 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
         defaultModeId={defaultModeId}
         runtimeId={agentStatus?.runtime}
         onSwitchAgent={(modeId) => void switchAgent(nodeId, modeId)}
-        onSwitchRuntime={(runtimeId) => {
-          // Reset model/effort when switching runtime — new catalog will provide defaults.
-          setPendingBindingOverride({ runtime: runtimeId });
-        }}
+        onSwitchRuntime={(runtimeId) => spacesAssistant ? saveAssistantModel({ runtimeId, providerId: null, modelId: null, reasoning: null }) : setPendingBindingOverride({ runtime: runtimeId })}
         onSaveProvider={(provider) => {
+          if (spacesAssistant) return saveAssistantModel({ providerId: provider, modelId: null });
           // Provider change invalidates the pending model (models are
           // provider-scoped); resolution re-derives a valid one.
           setPendingBindingOverride((prev) => ({ ...prev, provider, model: undefined }));
         }}
         onSaveModel={(model) => {
+          if (spacesAssistant) return saveAssistantModel({ modelId: model });
           setPendingBindingOverride((prev) => ({ ...prev, model }));
         }}
         onSaveReasoning={(reasoning) => {
+          if (spacesAssistant) return saveAssistantModel({ reasoning });
           setPendingBindingOverride((prev) => ({ ...prev, reasoning }));
         }}
         onRetryModels={retryModels}
@@ -2377,10 +2685,7 @@ function TPane({ nodeId, contentMaxWidth }: { nodeId: string; contentMaxWidth?: 
   );
 }
 
-const MemoizedTPane = React.memo(TPane, (prev, next) =>
-  prev.nodeId === next.nodeId &&
-  prev.contentMaxWidth === next.contentMaxWidth,
-);
+const MemoizedTPane = React.memo(TPane);
 
 MemoizedTPane.displayName = 'TPane';
 

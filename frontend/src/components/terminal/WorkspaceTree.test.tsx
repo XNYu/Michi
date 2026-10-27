@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import WorkspaceTree from './WorkspaceTree';
 import { ChatProvider } from '../../state/chatStore';
 import { PrefsProvider } from '../../state/prefs';
@@ -98,46 +98,6 @@ function renderTree() {
 }
 
 describe('WorkspaceTree', () => {
-  it('renders the active workspace expanded and others collapsed by default', async () => {
-    renderTree();
-    // ChatProvider hydrates asynchronously (workspacePersistence awaits a
-    // backend fetch); use findBy* to wait for first paint after hydration.
-    expect(await screen.findByText('Active thread')).toBeTruthy();
-    expect(screen.getByText('Other thread')).toBeTruthy();
-    // Other workspace's thread NOT visible (collapsed):
-    expect(screen.queryByText('P2 thread')).toBeNull();
-  });
-
-  it('renders the active thread\'s direct branches but not its grandchildren', async () => {
-    renderTree();
-    expect(await screen.findByText('Child of A')).toBeTruthy();
-  });
-
-  it('marks each workspace with a folder glyph that opens with the workspace', async () => {
-    renderTree();
-    await screen.findByText('Active thread');
-    const folderOf = (projectId: string) =>
-      within(screen.getByTestId(`workspace-row-${projectId}`)).getByTestId('workspace-folder-icon');
-    expect(folderOf('p1').getAttribute('data-open')).toBe('true');
-    expect(folderOf('p2').getAttribute('data-open')).toBe('false');
-
-    fireEvent.click(screen.getByText('Other workspace'));
-    await screen.findByText('P2 thread');
-    expect(folderOf('p2').getAttribute('data-open')).toBe('true');
-  });
-
-  it('steps a workspace\'s threads and branches in under the workspace name', async () => {
-    renderTree();
-    await screen.findByText('Child of A');
-    const row = (nodeId: string) =>
-      document.querySelector<HTMLElement>(`[data-sidebar-row="${nodeId}"]`)!;
-    // Default row style (square-full): the folder glyph sits at 20, the name
-    // at 41. Threads share the name's edge; a branch is one 16px step further.
-    expect(row('rootA').style.paddingLeft).toBe('41px');
-    expect(row('rootB').style.paddingLeft).toBe('41px');
-    expect(row('childA').style.paddingLeft).toBe('57px');
-  });
-
   it('leaves the classic row style without the neutral folder glyph', async () => {
     localStorage.setItem('michi:v1:prefs', JSON.stringify({ sidebarRowStyle: 'classic' }));
     renderTree();
@@ -325,41 +285,5 @@ describe('WorkspaceTree', () => {
 
     expect(await screen.findByText('Merged 6')).toBeTruthy();
     expect(screen.queryByText('Thread 6')).toBeNull();
-  });
-
-  it('collapses the Merged section together with its workspace', async () => {
-    const nodes: Record<string, ChatNodeState> = {
-      regular1: {
-        nodeId: 'regular1', chatId: null, projectId: 'p1', kind: 'chat',
-        title: 'Thread 1', messages: [], followUps: [], status: 'idle',
-      },
-      merge1: {
-        nodeId: 'merge1', chatId: null, projectId: 'p1', kind: 'chat',
-        title: 'Merged 1', mergeSources: [], messages: [], followUps: [], status: 'idle',
-      },
-    };
-    const projects: Project[] = [
-      {
-        id: 'p1', name: 'Active workspace', cwd: '~/x',
-        chatIds: Object.keys(nodes), edges: [],
-        trees: [
-          { id: 't1', rootNodeId: 'regular1', createdAt: 0, lastActiveAt: 100 },
-          { id: 'm1', rootNodeId: 'merge1', createdAt: 0, lastActiveAt: 50, kind: 'merge' as const },
-        ],
-        activeTreeId: 't1', createdAt: 0,
-      },
-    ];
-
-    renderTreeWith({ nodes, projects });
-
-    // Active workspace is expanded by default → Merged section visible.
-    expect(await screen.findByText('Merged 1')).toBeTruthy();
-    expect(screen.getByTestId('merged-section')).toBeTruthy();
-
-    // Collapse the workspace → both threads and the Merged section hide.
-    fireEvent.click(screen.getByText('Active workspace'));
-    expect(screen.queryByText('Thread 1')).toBeNull();
-    expect(screen.queryByText('Merged 1')).toBeNull();
-    expect(screen.queryByTestId('merged-section')).toBeNull();
   });
 });

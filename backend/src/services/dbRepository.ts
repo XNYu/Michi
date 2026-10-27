@@ -1,7 +1,13 @@
 import { getDb, prepareCached, runInTransaction } from './db';
 import { randomUUID } from 'node:crypto';
+import { purgeWorkspacePages } from './pages/repository';
+import { LOCAL_AGENT_OWNER_ID } from './agentOwner';
+import { purgeScheduledJobsForWorkspace } from './scheduledJobs/workspacePurge';
 import path from 'node:path';
 import {
+  isAssistantWorkspaceSettings,
+  isSystemWorkspaceSettings,
+  mergeServerOwnedSettings,
   type DurableTurnSnapshot,
 } from 'michi-shared';
 import {
@@ -78,6 +84,10 @@ export interface TreeRow {
 }
 
 export interface NodeRow {
+  /** Server-owned native Page helper binding; saveNode never accepts changes to it. */
+  page_id?: string | null;
+  /** Server-owned scheduled maintenance identity; graph snapshots cannot set or clear it. */
+  maintenance_job_id?: string | null;
   id: string;
   workspace_id: string;
   tree_id?: string | null;
@@ -128,6 +138,8 @@ export interface NodeRow {
   fork_boundary_message_id?: string | null;
   /** Exact inherited prefix length; messages with seq < this are copied history. */
   inherited_message_count?: number;
+  /** When the owner last had it on screen (migration 0042). Written only by markNodeViewed. */
+  viewed_at?: number | null;
   created_at: number;
   /** Per-row sync version (sync L2, migration 0006). NULL = predates versioning
    *  / no claim. Stamped by leaf save* via COALESCE; guard reads it in L2.2. */
@@ -200,6 +212,7 @@ export interface TurnRow {
   started_at: number;
   checkpoint_at: number | null;
   completed_at: number | null;
+  completion_seq: number | null;
   updated_at: number;
 }
 
@@ -242,8 +255,11 @@ export interface FullWorkspaceData {
 
 // --- Workspace CRUD ---
 
+// Omitting userId is the trusted background/server API. Request adapters must
+// obtain it through requestOwnerUserId after requireRequestAccess; an explicitly
+// supplied empty id remains scoped and can never become a global read.
 export function listWorkspaces(userId?: string): WorkspaceRow[] {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     return getDb().prepare(
       'SELECT * FROM workspaces WHERE owner_user_id = ? AND purged_at IS NULL ORDER BY updated_at DESC',
     ).all(userId) as unknown as WorkspaceRow[];
@@ -257,7 +273,7 @@ export function getWorkspace(id: string, userId?: string): WorkspaceRow | null {
   const row =
     (getDb().prepare('SELECT * FROM workspaces WHERE id = ? AND purged_at IS NULL').get(id) as unknown as WorkspaceRow)
     ?? null;
-  if (process.env.MICHI_CLOUD === '1' && userId && row) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined && row) {
     if (row.owner_user_id !== userId) return null;
   }
   return row;
@@ -319,8 +335,8 @@ export function saveWorkspace(ws: WorkspaceRow): void {
   // target's column — the row itself is the conflict, not excluded. Cheaper
   // and clearer to read-then-skip in app code.
   const existing = getDb()
-    .prepare('SELECT purged_at FROM workspaces WHERE id = ?')
-    .get(ws.id) as { purged_at: number | null } | undefined;
+    .prepare('SELECT purged_at, settings FROM workspaces WHERE id = ?')
+    .get(ws.id) as { purged_at: number | null; settings: string | null } | undefined;
   if (existing && existing.purged_at !== null) return;
 
   getDb().prepare(`
@@ -333,7 +349,13 @@ export function saveWorkspace(ws: WorkspaceRow): void {
       backend=excluded.backend,
       owner_user_id=COALESCE(excluded.owner_user_id, workspaces.owner_user_id),
       folders=excluded.folders
-  `).run({ cwd: null, active_tree_id: null, settings: null, deleted_at: null, archived_at: null, pinned_at: null, backend: 'kiro', owner_user_id: null, folders: null, ...ws });
+  `).run({
+    cwd: null, active_tree_id: null, deleted_at: null, archived_at: null, pinned_at: null, backend: 'kiro', owner_user_id: null, folders: null,
+    ...ws,
+    // Server-owned keys (the assistant's `system` marker) come only from the
+    // stored row: no snapshot or insert can set, change or drop them.
+    settings: mergeServerOwnedSettings(existing?.settings, ws.settings),
+  });
 }
 
 /**
@@ -350,11 +372,17 @@ export function deleteWorkspace(id: string, userId?: string): void {
   runInTransaction(() => {
     const now = Date.now();
     const db = getDb();
-    if (process.env.MICHI_CLOUD === '1' && userId) {
+    if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
       const owned = db
         .prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?')
         .get(id, userId);
       if (!owned) return;
+    }
+    const workspace = db.prepare('SELECT owner_user_id,purged_at,settings FROM workspaces WHERE id=?')
+      .get(id) as { owner_user_id: string | null; purged_at: number | null; settings: string | null } | undefined;
+    if (workspace && workspace.purged_at === null && !isSystemWorkspaceSettings(workspace.settings)) {
+      purgeScheduledJobsForWorkspace(id);
+      purgeWorkspacePages(id, workspace.owner_user_id ?? LOCAL_AGENT_OWNER_ID);
     }
     db.prepare('UPDATE workspaces SET purged_at = ? WHERE id = ? AND purged_at IS NULL')
       .run(now, id);
@@ -411,7 +439,7 @@ function isNodeTombstoned(nodeId: string): boolean {
 // --- Tree CRUD ---
 
 export function listTrees(workspaceId: string, userId?: string): TreeRow[] {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     return getDb().prepare(
       'SELECT t.* FROM trees t JOIN workspaces w ON t.workspace_id = w.id WHERE t.workspace_id = ? AND w.owner_user_id = ? ORDER BY t.last_active_at DESC'
     ).all(workspaceId, userId) as unknown as TreeRow[];
@@ -420,7 +448,7 @@ export function listTrees(workspaceId: string, userId?: string): TreeRow[] {
 }
 
 export function saveTree(tree: TreeRow, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const owned = getDb().prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?').get(tree.workspace_id, userId);
     if (!owned) return;
   }
@@ -438,7 +466,7 @@ export function saveTree(tree: TreeRow, userId?: string): void {
 }
 
 export function deleteTree(id: string, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     getDb().prepare(
       'DELETE FROM trees WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM trees WHERE id = ?) AND owner_user_id = ?)'
     ).run(id, id, userId);
@@ -465,7 +493,7 @@ export function moveTreeToWorkspace(
 ): { movedNodes: number; movedEdges: number; droppedEdges: number } {
   return runInTransaction(() => {
     const db = getDb();
-    if (process.env.MICHI_CLOUD === '1' && userId) {
+    if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
       const srcOwned = db.prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?').get(fromWorkspaceId, userId);
       if (!srcOwned) throw new Error(`source workspace ${fromWorkspaceId} not found`);
       const dstOwned = db.prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?').get(toWorkspaceId, userId);
@@ -488,6 +516,10 @@ export function moveTreeToWorkspace(
     const nodeIds = new Set(nodeRows.map((r) => r.id));
     if (nodeIds.size > 0) {
       const placeholders = Array.from(nodeIds).map(() => '?').join(',');
+      if (fromWorkspaceId !== toWorkspaceId) {
+        db.prepare(`UPDATE turns SET completion_seq = NULL WHERE node_id IN (${placeholders})`)
+          .run(...Array.from(nodeIds));
+      }
       db.prepare(
         `UPDATE nodes SET workspace_id = ? WHERE id IN (${placeholders})`,
       ).run(toWorkspaceId, ...Array.from(nodeIds));
@@ -529,7 +561,7 @@ export function moveTreeToWorkspace(
 // --- Node CRUD ---
 
 export function listNodes(workspaceId: string, userId?: string): NodeRow[] {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     return getDb().prepare(
       `SELECT n.* FROM nodes n JOIN workspaces w ON n.workspace_id = w.id
        WHERE n.workspace_id = ? AND w.owner_user_id = ? AND n.purged_at IS NULL`,
@@ -548,8 +580,9 @@ export function getNode(id: string): NodeRow | null {
 }
 
 export function saveNode(node: NodeRow, userId?: string): void {
-  const { permission_mode: _permissionMode, crew_memory_mode: _crewMemoryMode, ...graphNode } = node;
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  const { permission_mode: _permissionMode, crew_memory_mode: _crewMemoryMode, maintenance_job_id: _maintenanceJobId,
+    viewed_at: _viewedAt, ...graphNode } = node;
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const owned = getDb().prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?').get(node.workspace_id, userId);
     if (!owned) return;
   }
@@ -558,19 +591,27 @@ export function saveNode(node: NodeRow, userId?: string): void {
   // POST /sync from another tab can no longer undo a purge.
   if (isNodeTombstoned(node.id) || isWorkspaceTombstoned(node.workspace_id)) return;
 
+  // A child cloned from a scheduled maintenance transcript remains restricted.
+  // Do not accept a client-provided marker; derive it only from the durable
+  // server-owned parent row on insertion. Existing rows keep their marker via
+  // the conflict clause below.
+  const inheritedMaintenanceJobId = node.parent_node_id
+    ? (getDb().prepare('SELECT maintenance_job_id FROM nodes WHERE id = ?').get(node.parent_node_id) as { maintenance_job_id?: string | null } | undefined)?.maintenance_job_id ?? null
+    : null;
+
   getDb().prepare(`
     INSERT INTO nodes (id, workspace_id, tree_id, parent_node_id, kind, title, branch_overview, status,
       position_x, position_y, minimized, deleted_at, deletion_group_id,
       spawned_by_agent, current_mode_id, pane_width, digest, follow_ups, follow_ups_source_message_id,
       acp_session_id, runtime_id,
       provider_id, model_id, reasoning, resume_fingerprint, composer_draft, external_session_id,
-      trim_snapshot, last_applied_turn_id, last_applied_seq, pinned_at, created_at, rev)
+      trim_snapshot, last_applied_turn_id, last_applied_seq, pinned_at, created_at, rev, maintenance_job_id)
     VALUES (@id, @workspace_id, @tree_id, @parent_node_id, @kind, @title, @branch_overview, @status,
       @position_x, @position_y, @minimized, @deleted_at, @deletion_group_id,
       @spawned_by_agent, @current_mode_id, @pane_width, @digest, @follow_ups, @follow_ups_source_message_id,
       @acp_session_id, @runtime_id,
       @provider_id, @model_id, @reasoning, @resume_fingerprint, @composer_draft, @external_session_id,
-      @trim_snapshot, @last_applied_turn_id, @last_applied_seq, @pinned_at, @created_at, @rev)
+      @trim_snapshot, @last_applied_turn_id, @last_applied_seq, @pinned_at, @created_at, @rev, @maintenance_job_id)
     ON CONFLICT(id) DO UPDATE SET
       tree_id=excluded.tree_id, parent_node_id=excluded.parent_node_id,
       kind=excluded.kind, title=excluded.title, branch_overview=excluded.branch_overview, status=excluded.status,
@@ -613,6 +654,7 @@ export function saveNode(node: NodeRow, userId?: string): void {
       last_applied_turn_id=excluded.last_applied_turn_id,
       last_applied_seq=excluded.last_applied_seq,
       pinned_at=excluded.pinned_at,
+      maintenance_job_id=COALESCE(nodes.maintenance_job_id, excluded.maintenance_job_id),
       rev=COALESCE(excluded.rev, nodes.rev)
   `).run({
     tree_id: null,
@@ -641,12 +683,34 @@ export function saveNode(node: NodeRow, userId?: string): void {
     last_applied_seq: null,
     pinned_at: null,
     rev: null,
+    maintenance_job_id: inheritedMaintenanceJobId,
     ...graphNode,
   });
 }
 
+/**
+ * Records that the owner had the node on screen at `viewedAt`. The mark only
+ * moves forward, so a late or replayed write from another window cannot
+ * reopen a conversation already seen; a time past `now` is held to `now`.
+ * Returns false when the node is not a live node of that workspace.
+ */
+export function markNodeViewed(nodeId: string, workspaceId: string, viewedAt: number, now = Date.now()): boolean {
+  const result = getDb().prepare(`UPDATE nodes SET viewed_at = MAX(COALESCE(viewed_at, 0), ?)
+    WHERE id = ? AND workspace_id = ? AND purged_at IS NULL`)
+    .run(Math.min(Math.trunc(viewedAt), now), nodeId, workspaceId);
+  return Number(result.changes) === 1;
+}
+
+/** Assigns the server-owned maintenance identity before the scheduler opens a runtime. */
+export function markNodeMaintenanceJob(nodeId: string, jobId: string): void {
+  const result = getDb().prepare(`UPDATE nodes SET maintenance_job_id = ? WHERE id = ? AND kind = 'chat'
+    AND (maintenance_job_id IS NULL OR maintenance_job_id = ?)`)
+    .run(jobId, nodeId, jobId);
+  if (Number(result.changes) !== 1) throw new Error('Could not mark scheduled maintenance node');
+}
+
 export function updateNodeTitle(id: string, title: string, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     getDb().prepare(
       'UPDATE nodes SET title = ? WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM nodes WHERE id = ?) AND owner_user_id = ?)'
     ).run(title, id, id, userId);
@@ -656,7 +720,7 @@ export function updateNodeTitle(id: string, title: string, userId?: string): voi
 }
 
 export function updateNodeBranchOverview(id: string, overview: string, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const owned = getDb().prepare(
       'SELECT 1 FROM nodes WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM nodes WHERE id = ?) AND owner_user_id = ?)'
     ).get(id, id, userId);
@@ -666,7 +730,7 @@ export function updateNodeBranchOverview(id: string, overview: string, userId?: 
 }
 
 export function softDeleteNode(id: string, deletedAt: number, groupId: string, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     getDb().prepare(
       'UPDATE nodes SET deleted_at = ?, deletion_group_id = ? WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM nodes WHERE id = ?) AND owner_user_id = ?)'
     ).run(deletedAt, groupId, id, id, userId);
@@ -676,7 +740,7 @@ export function softDeleteNode(id: string, deletedAt: number, groupId: string, u
 }
 
 export function restoreNode(id: string, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     getDb().prepare(
       'UPDATE nodes SET deleted_at = NULL, deletion_group_id = NULL WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM nodes WHERE id = ?) AND owner_user_id = ?)'
     ).run(id, id, userId);
@@ -1062,7 +1126,7 @@ export function restoreTrimmedNode(
 // --- Edge CRUD ---
 
 export function listEdges(workspaceId: string, userId?: string): EdgeRow[] {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     return getDb().prepare(
       'SELECT e.* FROM edges e JOIN workspaces w ON e.workspace_id = w.id WHERE e.workspace_id = ? AND w.owner_user_id = ?'
     ).all(workspaceId, userId) as unknown as EdgeRow[];
@@ -1071,7 +1135,7 @@ export function listEdges(workspaceId: string, userId?: string): EdgeRow[] {
 }
 
 export function saveEdge(edge: EdgeRow, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const owned = getDb().prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?').get(edge.workspace_id, userId);
     if (!owned) return;
   }
@@ -1142,7 +1206,7 @@ export function setEdgeForkProvenance(edgeId: string, input: {
 }
 
 export function deleteEdge(id: string, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     getDb().prepare(
       'DELETE FROM edges WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM edges WHERE id = ?) AND owner_user_id = ?)'
     ).run(id, id, userId);
@@ -1154,7 +1218,7 @@ export function deleteEdge(id: string, userId?: string): void {
 // --- Message CRUD ---
 
 export function listMessages(nodeId: string, userId?: string): MessageRow[] {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     return getDb().prepare(
       'SELECT m.* FROM messages m JOIN nodes n ON m.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id WHERE m.node_id = ? AND w.owner_user_id = ? ORDER BY m.seq ASC'
     ).all(nodeId, userId) as unknown as MessageRow[];
@@ -1163,7 +1227,7 @@ export function listMessages(nodeId: string, userId?: string): MessageRow[] {
 }
 
 export function saveMessage(msg: MessageRow, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const owned = getDb().prepare(
       'SELECT 1 FROM nodes n JOIN workspaces w ON n.workspace_id = w.id WHERE n.id = ? AND w.owner_user_id = ?'
     ).get(msg.node_id, userId);
@@ -1176,7 +1240,7 @@ export function saveMessage(msg: MessageRow, userId?: string): void {
 }
 
 export function getMessageCount(nodeId: string, userId?: string): number {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const row = getDb().prepare(
       'SELECT COUNT(*) as cnt FROM messages m JOIN nodes n ON m.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id WHERE m.node_id = ? AND w.owner_user_id = ?'
     ).get(nodeId, userId) as unknown as { cnt: number };
@@ -1208,7 +1272,7 @@ export function getMessageCountsByNode(
   userId?: string,
 ): { total: number; user: number; assistant: number } {
   const rows = (
-    process.env.MICHI_CLOUD === '1' && userId
+    process.env.MICHI_CLOUD === '1' && userId !== undefined
       ? getDb().prepare(
           'SELECT m.role as role, COUNT(*) as cnt FROM messages m JOIN nodes n ON m.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id WHERE m.node_id = ? AND w.owner_user_id = ? GROUP BY m.role'
         ).all(nodeId, userId)
@@ -1252,7 +1316,7 @@ export function getCompletedTurnCount(
   nodeId: string,
   userId?: string,
 ): { count: number | null; coverage: TurnHistoryCoverage } {
-  const cloudScoped = process.env.MICHI_CLOUD === '1' && userId;
+  const cloudScoped = process.env.MICHI_CLOUD === '1' && userId !== undefined;
 
   const turnRow = (
     cloudScoped
@@ -1312,7 +1376,7 @@ export function getNodesMetadataByIds(
 ): Map<string, NodeMetadataBatchEntry> {
   const result = new Map<string, NodeMetadataBatchEntry>();
   if (nodeIds.length === 0) return result;
-  const cloudScoped = process.env.MICHI_CLOUD === '1' && userId;
+  const cloudScoped = process.env.MICHI_CLOUD === '1' && userId !== undefined;
   const db = getDb();
   const CHUNK = 900;
 
@@ -1461,7 +1525,7 @@ export function recoverInterruptedTurns(now = Date.now(), preserveTurnIds: Reado
 // --- Context CRUD ---
 
 export function listContexts(workspaceId: string, userId?: string): ContextRow[] {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     return getDb().prepare(
       'SELECT c.* FROM contexts c JOIN workspaces w ON c.workspace_id = w.id WHERE c.workspace_id = ? AND w.owner_user_id = ? ORDER BY c.created_at ASC'
     ).all(workspaceId, userId) as unknown as ContextRow[];
@@ -1470,7 +1534,7 @@ export function listContexts(workspaceId: string, userId?: string): ContextRow[]
 }
 
 export function saveContext(ctx: ContextRow, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const owned = getDb().prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?').get(ctx.workspace_id, userId);
     if (!owned) return;
   }
@@ -1539,7 +1603,7 @@ export function upsertAgentContextMetadata(input: {
 }
 
 export function deleteContext(id: string, userId?: string): void {
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     getDb().prepare(
       'DELETE FROM contexts WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM contexts WHERE id = ?) AND owner_user_id = ?)'
     ).run(id, id, userId);
@@ -1620,7 +1684,7 @@ export function loadWorkspaceMeta(id: string, userId?: string): MetaWorkspaceDat
 
 export function loadAllWorkspacesMeta(userId?: string): MetaWorkspaceData[] {
   const db = getDb();
-  const isCloud = process.env.MICHI_CLOUD === '1' && userId;
+  const isCloud = process.env.MICHI_CLOUD === '1' && userId !== undefined;
 
   // Batch: fetch ALL rows for every table in one query each, then group by
   // workspace_id in JS. This replaces the previous N+1 pattern (6 queries per
@@ -1741,12 +1805,14 @@ export function loadTreeMessages(workspaceId: string, treeId: string, userId?: s
 export function getAiGlobalContext(workspaceId: string, userId?: string): boolean {
   let sql = 'SELECT settings FROM workspaces WHERE id = ?';
   const params: string[] = [workspaceId];
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     sql += ' AND owner_user_id = ?';
     params.push(userId);
   }
   const row = getDb().prepare(sql).get(...params as [string, ...string[]]) as { settings: string | null } | undefined;
   if (!row?.settings) return true; // default ON
+  // The Michi assistant's own workspace exists to navigate the others.
+  if (isAssistantWorkspaceSettings(row.settings)) return true;
   try {
     const parsed = JSON.parse(row.settings) as Record<string, unknown>;
     return parsed.aiGlobalContext !== false; // default ON unless explicitly false
@@ -1759,7 +1825,7 @@ export function setAiGlobalContext(workspaceId: string, on: boolean, userId?: st
   const db = getDb();
   let sql = 'SELECT settings FROM workspaces WHERE id = ?';
   const params: string[] = [workspaceId];
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     sql += ' AND owner_user_id = ?';
     params.push(userId);
   }
@@ -1773,10 +1839,10 @@ export function setAiGlobalContext(workspaceId: string, on: boolean, userId?: st
     }
   }
   // If cloud mode and userId was given, row will be null for non-owned workspaces — no-op.
-  if (!row && process.env.MICHI_CLOUD === '1' && userId) return;
+  if (!row && process.env.MICHI_CLOUD === '1' && userId !== undefined) return;
   parsed.aiGlobalContext = on;
   const serialized = JSON.stringify(parsed);
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     db.prepare('UPDATE workspaces SET settings = ?, updated_at = ? WHERE id = ? AND owner_user_id = ?')
       .run(serialized, Date.now(), workspaceId, userId);
   } else {
@@ -1931,6 +1997,7 @@ export interface UserAgentConfigRow {
   reasoning_by_runtime: string;
   native_resume_by_runtime: string;
   native_fork_by_runtime: string;
+  workflows_by_runtime?: string;
   updated_at: number;
 }
 
@@ -1940,12 +2007,12 @@ export function getUserAgentConfig(userId: string): UserAgentConfigRow | null {
 
 export function upsertUserAgentConfig(
   userId: string,
-  patch: Partial<Pick<UserAgentConfigRow, 'runtime' | 'provider' | 'web_search_provider' | 'provider_by_runtime' | 'model_by_runtime' | 'reasoning_by_runtime' | 'native_resume_by_runtime' | 'native_fork_by_runtime'>>,
+  patch: Partial<Pick<UserAgentConfigRow, 'runtime' | 'provider' | 'web_search_provider' | 'provider_by_runtime' | 'model_by_runtime' | 'reasoning_by_runtime' | 'native_resume_by_runtime' | 'native_fork_by_runtime' | 'workflows_by_runtime'>>,
 ): void {
   const now = Date.now();
   getDb().prepare(`
-    INSERT INTO user_agent_configs (user_id, runtime, provider, web_search_provider, provider_by_runtime, model_by_runtime, reasoning_by_runtime, native_resume_by_runtime, native_fork_by_runtime, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO user_agent_configs (user_id, runtime, provider, web_search_provider, provider_by_runtime, model_by_runtime, reasoning_by_runtime, native_resume_by_runtime, native_fork_by_runtime, workflows_by_runtime, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       runtime              = COALESCE(excluded.runtime, user_agent_configs.runtime),
       provider             = COALESCE(excluded.provider, user_agent_configs.provider),
@@ -1955,6 +2022,7 @@ export function upsertUserAgentConfig(
       reasoning_by_runtime = COALESCE(excluded.reasoning_by_runtime, user_agent_configs.reasoning_by_runtime),
       native_resume_by_runtime = COALESCE(?, user_agent_configs.native_resume_by_runtime),
       native_fork_by_runtime = COALESCE(?, user_agent_configs.native_fork_by_runtime),
+      workflows_by_runtime = COALESCE(?, user_agent_configs.workflows_by_runtime),
       updated_at           = excluded.updated_at
   `).run(
     userId,
@@ -1966,11 +2034,13 @@ export function upsertUserAgentConfig(
     patch.reasoning_by_runtime ?? null,
     patch.native_resume_by_runtime ?? '{}',
     patch.native_fork_by_runtime ?? '{}',
+    patch.workflows_by_runtime ?? '{}',
     now,
     patch.web_search_provider ?? null,
     patch.provider_by_runtime ?? null,
     patch.native_resume_by_runtime ?? null,
     patch.native_fork_by_runtime ?? null,
+    patch.workflows_by_runtime ?? null,
   );
 }
 

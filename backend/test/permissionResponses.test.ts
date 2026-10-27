@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { closeDb, initDb } from '../src/services/db';
 import { saveNode, saveWorkspace } from '../src/services/dbRepository';
@@ -40,7 +41,7 @@ test('HTTP permission responses reject stale, disabled, forged and foreign-chat 
     const app = express(); app.use(express.json());
     app.use((req, _res, next) => { (req as any).user = { id: req.headers['x-user'] }; next(); });
     app.use('/api', setupMichiRoutes({} as ChatManager));
-    const server = app.listen(0);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/chats/a/permission-response`;
     const post = (body: unknown, user = 'alice') => fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user': user }, body: JSON.stringify(body) });
     try {

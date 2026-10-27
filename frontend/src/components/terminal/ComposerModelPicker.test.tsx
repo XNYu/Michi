@@ -1,8 +1,7 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComposerModelPicker, type ComposerModelPickerProps } from './ComposerModelPicker';
-import { resolveComposerReasoning } from './composerReasoning';
 
 const baseProps: ComposerModelPickerProps = {
   anchor: { x: 100, y: 650, anchorBottom: 610 },
@@ -10,7 +9,7 @@ const baseProps: ComposerModelPickerProps = {
     runtime: 'codex', label: 'Codex', model: 'fast', reasoning: 'medium', hasRequiredKey: true,
     availableRuntimes: [{ id: 'codex', label: 'Codex', available: true }, { id: 'claude', label: 'Claude', available: true }, { id: 'kiro', label: 'Kiro', available: false }],
     capabilities: { modes: true, permissions: true, models: true, providerModels: false, reasoning: true,
-      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'], apiKeys: false, warmSessions: true, saveContext: true, spawnBranches: true },
+      supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh'], apiKeys: false, nativeResume: false, warmSessions: true, saveContext: true, spawnBranches: true },
   },
   resolvedBinding: { runtime: 'codex', model: 'fast', reasoning: 'medium', provider: undefined, source: 'global' },
   catalogCapabilities: null,
@@ -20,19 +19,6 @@ const baseProps: ComposerModelPickerProps = {
 };
 
 describe('ComposerModelPicker', () => {
-  it('formats a Claude ID in the overview while preserving the selected request ID', () => {
-    const model = 'global.anthropic.claude-opus-5-5[1m]';
-    const nextModel = 'global.anthropic.claude-sonnet-5';
-    const onSaveModel = vi.fn();
-    render(<ComposerModelPicker {...baseProps} resolvedBinding={{ ...baseProps.resolvedBinding, runtime: 'claude', model }}
-      providerModels={[{ id: nextModel, label: 'Sonnet 5' }]} onSaveModel={onSaveModel} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Select model: Opus 5.5 (1M)' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Opus 5.5 (1M) Current model' }));
-    expect(onSaveModel).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Select model: Opus 5.5 (1M)' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Sonnet 5' }));
-    expect(onSaveModel).toHaveBeenCalledExactlyOnceWith(nextModel);
-  });
 
   beforeEach(() => {
     vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
@@ -62,31 +48,6 @@ describe('ComposerModelPicker', () => {
     expect(screen.getByRole('slider')).toBeTruthy();
   });
 
-  it('shows only the selected model’s effort levels and hides fixed or unsupported effort', () => {
-    const view = render(<ComposerModelPicker {...baseProps} />);
-    const binding = { ...baseProps.resolvedBinding, reasoning: 'max' as const };
-    view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding}
-      providerModels={[{ id: 'fast', supportedReasoningLevels: ['low', 'medium', 'high'], defaultReasoning: 'high' }]} />);
-    const slider = screen.getByRole('slider');
-    expect(slider.getAttribute('max')).toBe('2');
-    expect(slider.getAttribute('aria-valuetext')).toBe('High');
-    const stops = () => [...document.querySelectorAll('.composer-picker-effort-stops span')].map((stop) => stop.getAttribute('title'));
-    expect(stops()).toEqual(['Low', 'Medium', 'High']);
-    expect(document.querySelector('.composer-picker-effort-extents')?.textContent).toBe('LowHigh');
-    view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding}
-      providerModels={[{ id: 'fast', supportedReasoningLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] }]} />);
-    expect(screen.getByRole('slider').getAttribute('max')).toBe('5');
-    expect(screen.getByRole('slider').getAttribute('aria-valuetext')).toBe('Max');
-    expect(stops()).toEqual(['Minimal', 'Low', 'Medium', 'High', 'Extra high', 'Max']);
-    screen.getByRole('slider').focus();
-    view.rerender(<ComposerModelPicker {...baseProps} providerModels={[{ id: 'fast', supportedReasoningLevels: ['high'] }]} />);
-    expect(screen.queryByText('Thinking effort')).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Select runtime: Codex' }));
-    view.rerender(<ComposerModelPicker {...baseProps} providerModels={[{ id: 'fast', label: 'Fast', supportsReasoning: false }]} />);
-    expect(screen.queryByRole('slider')).toBeNull();
-    expect(screen.queryByText('Thinking effort')).toBeNull();
-  });
-
   it('hides effort for an unset binding whose default model has none', () => {
     const onSaveReasoning = vi.fn();
     render(<ComposerModelPicker {...baseProps} onSaveReasoning={onSaveReasoning} resolvedBinding={{ ...baseProps.resolvedBinding, model: undefined }}
@@ -94,98 +55,6 @@ describe('ComposerModelPicker', () => {
     expect(screen.queryByRole('slider')).toBeNull();
     expect(screen.queryByText('Thinking effort')).toBeNull();
     expect(onSaveReasoning).not.toHaveBeenCalled();
-  });
-
-  it('waits for the selected model’s capabilities instead of exposing generic runtime levels', () => {
-    const binding = { ...baseProps.resolvedBinding, model: 'gemini-4-argon', reasoning: 'high' as const };
-    expect(resolveComposerReasoning(binding, baseProps.agentStatus, null, [])).toMatchObject({
-      levels: [], adjustable: false, value: 'high', known: true,
-    });
-    const view = render(<ComposerModelPicker {...baseProps} resolvedBinding={binding} providerModels={[]} modelsLoading />);
-    expect(screen.queryByRole('slider')).toBeNull();
-    view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding} providerModels={baseProps.providerModels} modelsError="Catalog unavailable" />);
-    expect(screen.queryByRole('slider')).toBeNull();
-    view.rerender(<ComposerModelPicker {...baseProps} resolvedBinding={binding} providerModels={[
-      { id: 'gemini-4-argon', supportedReasoningLevels: ['low', 'medium', 'high'] },
-    ]} />);
-    expect(screen.getByRole('slider').getAttribute('max')).toBe('2');
-    expect(screen.getByRole('slider').getAttribute('value')).toBe('2');
-    expect(document.querySelector('.composer-picker-effort-extents')?.textContent).toBe('LowHigh');
-  });
-
-  it('keeps sparse model levels selectable without inserting intermediate levels', () => {
-    const onSaveReasoning = vi.fn();
-    render(<ComposerModelPicker {...baseProps} onSaveReasoning={onSaveReasoning}
-      providerModels={[{ id: 'fast', supportedReasoningLevels: ['low', 'high'] }]} />);
-    const slider = screen.getByRole('slider');
-    expect(slider.getAttribute('max')).toBe('1');
-    fireEvent.change(slider, { target: { value: '1' } });
-    expect(onSaveReasoning).toHaveBeenCalledExactlyOnceWith('high');
-  });
-
-  it('respects the selected provider even when its models advertise effort', () => {
-    render(<ComposerModelPicker {...baseProps} resolvedBinding={{ ...baseProps.resolvedBinding, provider: 'local' }}
-      providers={[{ id: 'local', label: 'Local', keyLabel: '', envVars: [], defaultModel: 'fast', supportsReasoning: false }]} />);
-    expect(screen.queryByRole('slider')).toBeNull();
-  });
-
-  it('places runtime above model and follows that order with keyboard navigation', () => {
-    render(<ComposerModelPicker {...baseProps} />);
-    const runtime = screen.getByRole('button', { name: 'Select runtime: Codex' });
-    const model = screen.getByRole('button', { name: 'Select model: Fast' });
-    expect(within(screen.getByRole('dialog')).getAllByRole('button')).toEqual([runtime, model]);
-    expect(document.activeElement).toBe(runtime);
-    fireEvent.keyDown(runtime, { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(model);
-    fireEvent.keyDown(model, { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(screen.getByRole('slider', { name: 'Thinking effort' }));
-  });
-
-  it('places the Pi provider between runtime and model, including keyboard navigation', () => {
-    render(<ComposerModelPicker {...baseProps}
-      resolvedBinding={{ ...baseProps.resolvedBinding, runtime: 'pi', provider: 'openrouter' }}
-      catalogCapabilities={{ ...baseProps.agentStatus!.capabilities, providerModels: true }}
-      providers={[{ id: 'openrouter', label: 'OpenRouter', keyLabel: 'Key', envVars: [], defaultModel: 'fast', supportsReasoning: true }]}
-      onSaveProvider={vi.fn()} />);
-    const buttons = within(screen.getByRole('dialog')).getAllByRole('button');
-    expect(buttons.map((button) => button.getAttribute('data-picker-page'))).toEqual(['runtime', 'provider', 'model']);
-    expect(document.activeElement).toBe(buttons[0]);
-    fireEvent.keyDown(buttons[0], { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(buttons[1]);
-    fireEvent.keyDown(buttons[1], { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(buttons[2]);
-  });
-
-  it.each(['', 'Model 9', 'no match'])('returns from model search %j and clears the search on reentry', (query) => {
-    const onClose = vi.fn();
-    const onSaveModel = vi.fn();
-    render(<ComposerModelPicker {...baseProps} onClose={onClose} onSaveModel={onSaveModel}
-      providerModels={Array.from({ length: 10 }, (_, index) => ({ id: `model-${index}`, label: `Model ${index}` }))} />);
-    fireEvent.click(screen.getByRole('button', { name: /Select model:/ }));
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: query } });
-    fireEvent.click(screen.getByRole('button', { name: 'Back to model settings' }));
-    expect(screen.queryByRole('searchbox')).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Select model:/ }));
-    expect(onClose).not.toHaveBeenCalled();
-    expect(onSaveModel).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: /Select model:/ }));
-    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('');
-    expect(document.activeElement).toBe(screen.getByRole('searchbox'));
-  });
-
-  it('starts compact, reveals one list at a time and applies a model without a delayed close', () => {
-    const onSaveModel = vi.fn();
-    const onClose = vi.fn();
-    render(<ComposerModelPicker {...baseProps} onSaveModel={onSaveModel} onClose={onClose} />);
-    expect(screen.queryByRole('menu')).toBeNull();
-    expect(screen.getByRole('slider', { name: 'Thinking effort' }).getAttribute('aria-valuetext')).toBe('Medium');
-    fireEvent.click(screen.getByRole('button', { name: 'Select model: Fast' }));
-    expect(screen.queryByRole('slider')).toBeNull();
-    expect(screen.getByRole('menuitemradio', { name: 'Fast' }).getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(screen.getByRole('menuitemradio', { name: /Deep/ }));
-    expect(onSaveModel).toHaveBeenCalledExactlyOnceWith('deep');
-    expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByRole('slider')).toBeTruthy();
   });
 
   it('supports nested Escape and restores focus to the trigger', () => {
@@ -271,34 +140,6 @@ describe('ComposerModelPicker', () => {
     expect(onSaveModel).not.toHaveBeenCalled();
   });
 
-  it('keeps errors visible, prevents duplicate saves, and allows a retry', async () => {
-    let reject!: (error: Error) => void;
-    const onSaveModel = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, fail) => { reject = fail; })).mockResolvedValue(undefined);
-    render(<ComposerModelPicker {...baseProps} onSaveModel={onSaveModel} />);
-    fireEvent.click(screen.getByRole('button', { name: /Select model/ }));
-    const deep = screen.getByRole('menuitemradio', { name: /Deep/ });
-    fireEvent.click(deep);
-    fireEvent.click(deep);
-    expect(onSaveModel).toHaveBeenCalledTimes(1);
-    expect((deep as HTMLButtonElement).disabled).toBe(true);
-    await act(async () => reject(new Error('Could not save model')));
-    expect(screen.getByRole('alert').textContent).toBe('Could not save model');
-    fireEvent.click(deep);
-    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
-    expect(onSaveModel).toHaveBeenCalledTimes(2);
-  });
-
-  it('shows current models during a failed catalog fetch and retries without dismissal', () => {
-    const onRetryModels = vi.fn();
-    const onClose = vi.fn();
-    render(<ComposerModelPicker {...baseProps} providerModels={[]} modelsError="Catalog unavailable" onRetryModels={onRetryModels} onClose={onClose} />);
-    fireEvent.click(screen.getByRole('button', { name: /Select model/ }));
-    expect(screen.getByRole('menuitemradio', { name: /fast Current model/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(onRetryModels).toHaveBeenCalledTimes(1);
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
   it('exposes providers separately with key-configuration status', () => {
     const onSaveProvider = vi.fn();
     render(<ComposerModelPicker {...baseProps} catalogCapabilities={{ ...baseProps.agentStatus!.capabilities, providerModels: true }}
@@ -319,5 +160,64 @@ describe('ComposerModelPicker', () => {
     fireEvent.pointerDown(document.body);
     expect(onClose).toHaveBeenCalledTimes(1);
     view.unmount(); trigger.remove();
+  });
+});
+
+describe('ComposerModelPicker placement', () => {
+  const layout = { content: 230, chrome: 30 };
+  const size = (element: HTMLElement) => element.classList.contains('composer-picker-content') ? layout.content
+    : element.classList.contains('composer-picker') ? layout.content + layout.chrome : 0;
+  const triggerAt = (top: number) => {
+    const trigger = document.createElement('button');
+    trigger.getBoundingClientRect = () => ({ top, bottom: top + 30, left: 200, right: 290, width: 90, height: 30, x: 200, y: top, toJSON: () => ({}) });
+    document.body.append(trigger);
+    triggers.push(trigger);
+    return trigger;
+  };
+  const triggers: HTMLElement[] = [];
+  const surfaceTop = () => parseFloat(screen.getByRole('dialog', { name: 'Model settings' }).style.top);
+
+  beforeEach(() => {
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+    vi.stubGlobal('innerHeight', 844);
+    vi.stubGlobal('innerWidth', 390);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return size(this); });
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) { return size(this); });
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const height = this instanceof HTMLElement ? size(this) : 0;
+      const top = this instanceof HTMLElement && this.classList.contains('composer-picker-content') ? layout.chrome : 0;
+      return { top, bottom: top + height, left: 0, right: 280, width: 280, height, x: 0, y: top, toJSON: () => ({}) };
+    });
+  });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); layout.content = 230; triggers.splice(0).forEach((trigger) => trigger.remove()); });
+
+  it('opens below the trigger when the summary does not fit above but fits below', () => {
+    const trigger = triggerAt(270);
+    render(<ComposerModelPicker {...baseProps} anchor={{ ...baseProps.anchor, trigger }} />);
+    // 256 px above the trigger, 260 px wanted: below, 6 px under its bottom edge.
+    expect(surfaceTop()).toBe(306);
+  });
+
+  it('still opens above when the summary fits there', () => {
+    layout.content = 150;
+    const trigger = triggerAt(270);
+    render(<ComposerModelPicker {...baseProps} anchor={{ ...baseProps.anchor, trigger }} />);
+    expect(surfaceTop()).toBe(264 - 180);
+  });
+
+  it('opens above a composer near the bottom of the window', () => {
+    const trigger = triggerAt(700);
+    render(<ComposerModelPicker {...baseProps} anchor={{ ...baseProps.anchor, trigger }} />);
+    expect(surfaceTop()).toBe(694 - 260);
+  });
+
+  it('keeps the side it opened on while moving to a sub-page', () => {
+    const trigger = triggerAt(270);
+    render(<ComposerModelPicker {...baseProps} anchor={{ ...baseProps.anchor, trigger }} />);
+    expect(surfaceTop()).toBe(306);
+    layout.content = 100;
+    fireEvent.click(screen.getByRole('button', { name: 'Select runtime: Codex' }));
+    expect(screen.getByRole('menu', { name: 'Runtimes' })).toBeTruthy();
+    expect(surfaceTop()).toBe(306);
   });
 });

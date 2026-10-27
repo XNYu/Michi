@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Dot } from './primitives';
 import ContextMenu from '../ContextMenu';
 import { kbd } from '../../lib/platform';
+import { describeRunningWork, type RunningWorkCounts } from '../../state/backgroundWork';
+import { openBackgroundWork } from './backgroundWork/backgroundWorkEvents';
 
 const PANE_DRAG_MIME = 'application/x-michi-pane-id';
 
@@ -19,6 +21,8 @@ interface Props {
   streaming: boolean;
   error: boolean;
   isNew?: boolean;
+  /** Running subagents and workflows of this conversation (chat panes). */
+  backgroundWork?: RunningWorkCounts;
   kind?: 'chat' | 'digest' | 'artifact' | 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser';
   onFocus: (id: string) => void;
   onClose: (id: string) => void;
@@ -34,6 +38,7 @@ export default function PaneCaption({
   streaming,
   error,
   isNew = false,
+  backgroundWork,
   kind = 'chat',
   onFocus,
   onClose,
@@ -147,6 +152,9 @@ export default function PaneCaption({
         >
           {title}
         </span>
+        {kind === 'chat' && backgroundWork && (
+          <BackgroundWorkBadge nodeId={nodeId} counts={backgroundWork} />
+        )}
         {isDigest && (
           <span
             style={{
@@ -230,5 +238,60 @@ export default function PaneCaption({
         />
       )}
     </>
+  );
+}
+
+/**
+ * "◆ 3" after the title while the conversation has background work running.
+ * Opens the Background work drawer on this conversation; the click never
+ * reaches the caption (no pane focus) and never starts a pane drag.
+ */
+function BackgroundWorkBadge({ nodeId, counts }: { nodeId: string; counts: RunningWorkCounts }) {
+  const label = describeRunningWork(counts);
+  const [hover, setHover] = useState(false);
+  if (!label) return null;
+  const total = counts.subagents + counts.workflows;
+  return (
+    <button
+      type="button"
+      data-testid="pane-background-work-badge"
+      aria-label={`${label}. Show background work`}
+      aria-haspopup="dialog"
+      title={label}
+      draggable={false}
+      onClick={(e) => {
+        e.stopPropagation();
+        openBackgroundWork({ nodeId });
+      }}
+      onMouseDown={(e) => {
+        // The caption is draggable (pane reorder): a cancelled mousedown
+        // never starts that native drag, and leaves focus where it was.
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        height: 18,
+        padding: '0 5px',
+        flexShrink: 0,
+        border: hover ? '1px solid var(--term-line)' : '1px solid transparent',
+        borderRadius: 'var(--ui-radius-sm)',
+        background: hover ? 'var(--term-alt2, var(--term-alt))' : 'transparent',
+        color: hover ? 'var(--term-fg)' : 'var(--term-mid)',
+        fontFamily: 'var(--font-mono)',
+        fontSize: 'var(--fs-xs)',
+        lineHeight: 1,
+        cursor: 'pointer',
+        WebkitAppRegion: 'no-drag',
+        transition: 'background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease), border-color var(--t-quick) var(--t-ease)',
+      } as React.CSSProperties}
+    >
+      <span aria-hidden className="agent-glyph-run" style={{ color: 'var(--term-mauve)', fontSize: 'var(--fs-2xs)' }}>◆</span>
+      <span>{total}</span>
+    </button>
   );
 }

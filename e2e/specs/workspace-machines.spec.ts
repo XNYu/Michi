@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
+import { backendEntityId } from '../../frontend/src/config/backendIdentity';
+import { openSettings } from '../fixtures/shell';
 
 const connections = [
   { id: 'build-box', name: 'Build box', transport: 'ssh', sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 },
@@ -41,10 +43,10 @@ for (const palette of ['bone', 'gruvbox']) {
     await page.goto('/');
     await expect(page.getByRole('complementary').getByText('API service', { exact: true })).toBeVisible();
     await page.getByText('Workspaces', { exact: true }).last().click();
-    const remote = page.getByTestId('workspace-table-row-remote-api');
+    const remote = page.getByTestId(`workspace-table-row-${backendEntityId('build-box', 'remote-api')}`);
     await expect(remote.getByText('Remote - Build box', { exact: true })).toBeVisible();
     await expect(page.getByTestId('workspace-table-row-local-project').getByText('Local', { exact: true })).toBeVisible();
-    await expect(page.getByTestId('workspace-table-row-remote-build').getByText('Remote - Build server', { exact: true })).toBeVisible();
+    await expect(page.getByTestId(`workspace-table-row-${backendEntityId('direct', 'remote-build')}`).getByText('Remote - Build server', { exact: true })).toBeVisible();
     await expect(page.getByRole('columnheader', { name: 'Connection', exact: true })).toBeVisible();
     for (const name of ['Threads', 'Nodes', '14 days']) await expect(page.getByRole('columnheader', { name, exact: true })).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath(`workspaces-${palette}.png`) });
@@ -54,9 +56,7 @@ for (const palette of ['bone', 'gruvbox']) {
     await filter.fill('');
     await remote.getByRole('button', { name: 'API service', exact: true }).click();
     await expect(page.locator('header').getByText('Remote · Build box', { exact: true })).toBeVisible();
-    await page.getByText('Settings', { exact: true }).last().click();
-    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-    await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+    const settings = await openSettings(page, 'General');
     const list = settings.getByRole('list', { name: 'Workspaces on Build box' });
     await expect(list.getByRole('button', { name: 'API service', exact: true })).toBeVisible();
     await expect(list.getByRole('button', { name: 'Research', exact: true })).toBeVisible();

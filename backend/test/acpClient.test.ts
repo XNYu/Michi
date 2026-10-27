@@ -1,36 +1,90 @@
+import { michiTestHost } from './helpers/michiTestHost';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AcpClient, ACPError } from '../src/services/acpClient';
+import { AcpClient, ACPError } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { EventEmitter } from 'node:events';
+import * as processTree from '../src/agents/processTree';
+import type { SpawnOptions } from 'node:child_process';
+import { kiroAuth, KiroSignedOutError } from '../src/agents/kiro/kiroAuth';
+import { log } from '../src/services/logger';
 
-describe('AcpClient prompt timeout policy', () => {
-  test('does not arm an ACP idle timeout for session/prompt turns', async () => {
-    const client = new AcpClient('/bin/false', '/tmp') as any;
-
-    client.send = async (method: string, _params?: unknown, timeoutMs?: number) => {
-      if (method === 'session/new') {
-        return { sessionId: 's1' };
-      }
-      if (method === 'session/prompt') {
-        assert.equal(
-          timeoutMs,
-          0,
-          'long-running prompt turns should not fail while the agent is silent inside a tool call',
-        );
-        return { stopReason: 'end_turn' };
-      }
-      throw new Error(`unexpected ACP method ${method}`);
-    };
-
-    await client.newSession();
-
-    const updates: string[] = [];
-    for await (const update of client.prompt('s1', 'look this up')) {
-      updates.push(update.sessionUpdate);
-      if (update.sessionUpdate === 'turn_end') break;
-    }
-
-    assert.deepEqual(updates, ['turn_end']);
+test('a failed ACP launch never logs a successful spawn', async t => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(), stderr: new EventEmitter(), exitCode: 0, signalCode: null,
   });
+  t.mock.method(processTree, 'spawnAgentProcess', () => child as any);
+  const info = t.mock.method(log, 'info', () => {});
+  const errors = t.mock.method(log, 'error', () => {});
+  const client = new AcpClient('/bin/false', '/missing-workspace', undefined, 'v2', undefined, 'kiro', { observability: michiTestHost().observability });
+  try {
+    client.start();
+    const failure = Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
+    child.emit('error', failure);
+    assert.equal(info.mock.calls.filter(call => call.arguments[1] === 'kiro process spawned').length, 0);
+    assert.equal(errors.mock.calls.filter(call => call.arguments[1] === 'kiro process error').length, 1);
+  } finally { await client.shutdown(); }
+});
+
+test('ACP spawn success is logged only after the child confirms startup', async t => {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 12345, stdout: new EventEmitter(), stderr: new EventEmitter(), exitCode: 0, signalCode: null,
+  });
+  t.mock.method(processTree, 'spawnAgentProcess', () => child as any);
+  const info = t.mock.method(log, 'info', () => {});
+  const client = new AcpClient('/bin/false', '/tmp', undefined, 'v2', undefined, 'kiro', { observability: michiTestHost().observability, onSignedOut: binary => kiroAuth.signedOut(binary) });
+  try {
+    client.start();
+    assert.equal(info.mock.calls.filter(call => call.arguments[1] === 'kiro process spawned').length, 0);
+    child.emit('spawn');
+    const messages = info.mock.calls.filter(call => call.arguments[1] === 'kiro process spawned');
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].arguments[2]?.pid, 12345);
+  } finally { await client.shutdown(); }
+});
+
+test('host environment is scoped to direct Kiro children and bypasses Crew launch overrides', async t => {
+  const spawned: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = [];
+  t.mock.method(processTree, 'spawnAgentProcess', (_bin: string, args: string[], options?: SpawnOptions) => {
+    spawned.push({ args, env: options?.env });
+    return Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(), stderr: new EventEmitter(), exitCode: 0, signalCode: null,
+    }) as any;
+  });
+  const previousMandatory = process.env.MICHI_TEST_ENV_MARKER;
+  const previousPreload = process.env.MICHI_KIRO_PRELOAD_TOOLS;
+  process.env.MICHI_TEST_ENV_MARKER = 'existing';
+  delete process.env.MICHI_KIRO_PRELOAD_TOOLS;
+  // The host hands over the environment a child would inherit (Michi: process.env).
+  const spawnEnv = () => process.env;
+  let preloadReads = 0;
+  const clients = [
+    new AcpClient('/bin/false', '/tmp', undefined, 'v3', undefined, 'kiro', { spawnEnv }),
+    new AcpClient('/bin/false', '/tmp', undefined, 'v2', undefined, 'kiro', { spawnEnv }),
+    new AcpClient(undefined, '/tmp', undefined, 'v3', { bin: '/bin/false', args: () => ['crew-acp'] }, 'crew', { spawnEnv }),
+    new AcpClient('/bin/false', '/tmp', undefined, 'v3'),
+    new AcpClient('/bin/false', '/tmp', undefined, 'v3', undefined, 'kiro', { spawnEnv, preloadTools: () => { preloadReads++; return false; } }),
+    // The adapter no longer reads Michi's switch itself: only preloadTools turns it off.
+    new AcpClient('/bin/false', '/tmp', undefined, 'v3', undefined, 'kiro', { spawnEnv: () => ({ ...process.env, MICHI_KIRO_PRELOAD_TOOLS: 'false' }) }),
+  ];
+  try {
+    for (const client of clients) client.start();
+    assert.equal(spawned[0].env?.MICHI_TEST_ENV_MARKER, 'existing');
+    assert.equal(spawned[1].env?.MICHI_TEST_ENV_MARKER, 'existing');
+    assert.equal(spawned[2].env, undefined, 'custom ACP launches inherit the parent environment directly');
+    assert.deepEqual(spawned[2].args, ['crew-acp']);
+    assert.equal(spawned[3].env, undefined, 'without a host environment the child inherits this one unchanged');
+    assert.equal(spawned[4].env?.MICHI_TEST_ENV_MARKER, 'existing', 'preloading off leaves the list as it is');
+    assert.equal(preloadReads, 1, 'read once, at spawn');
+    assert.equal(spawned[5].env?.MICHI_TEST_ENV_MARKER, 'existing');
+    assert.equal(process.env.MICHI_TEST_ENV_MARKER, 'existing');
+    assert.ok(!spawned[0].args.some(arg => /trust/.test(arg)), 'preloading must not add trust flags');
+  } finally {
+    await Promise.all(clients.map(client => client.shutdown()));
+    if (previousMandatory === undefined) delete process.env.MICHI_TEST_ENV_MARKER;
+    else process.env.MICHI_TEST_ENV_MARKER = previousMandatory;
+    if (previousPreload === undefined) delete process.env.MICHI_KIRO_PRELOAD_TOOLS;
+    else process.env.MICHI_KIRO_PRELOAD_TOOLS = previousPreload;
+  }
 });
 
 describe('AcpClient RPC error diagnostics', () => {
@@ -66,124 +120,6 @@ describe('AcpClient RPC error diagnostics', () => {
       assert.deepEqual(err.rpcData, { provider: 'test-provider', requestId: 'req-123' });
       return true;
     });
-  });
-});
-
-describe('AcpClient cancellation transport', () => {
-  for (const cancelQueued of [false, true]) {
-    test(`serializes multiple queued consumers${cancelQueued ? ' and skips an aborted prompt' : ''}`, async () => {
-      const client = new AcpClient('/bin/false', '/tmp') as any;
-      const calls: string[] = [];
-      let finishFirst!: () => void;
-      client.send = async (method: string, params: any) => {
-        if (method === 'session/new') return { sessionId: 'serial' };
-        const text = params.prompt[0].text;
-        calls.push(text);
-        client.injectUpdate('serial', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
-        if (text === 'first') {
-          return new Promise((resolve) => { finishFirst = () => resolve({ stopReason: 'cancelled' }); });
-        }
-        return { stopReason: 'end_turn' };
-      };
-      await client.newSession();
-      const first = client.prompt('serial', 'first');
-      await first.next();
-      const controller = new AbortController();
-      const second = client.prompt('serial', 'second', [], controller.signal);
-      const secondNext = second.next();
-      const third = client.prompt('serial', 'third');
-      const thirdNext = third.next();
-      if (cancelQueued) controller.abort();
-      const beforeRelease = [...calls];
-      finishFirst();
-      await first.return();
-      const secondUpdate = await secondNext;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      const beforeSecondClosed = [...calls];
-      await second.return();
-      const thirdUpdate = await thirdNext;
-      await third.return();
-
-      assert.deepEqual(beforeRelease, ['first']);
-      assert.deepEqual(beforeSecondClosed, cancelQueued ? ['first'] : ['first', 'second']);
-      if (cancelQueued) assert.equal(secondUpdate.value.stopReason, 'cancelled');
-      else assert.equal(secondUpdate.value.content.text, 'second');
-      assert.equal(thirdUpdate.value.content.text, 'third');
-      assert.deepEqual(calls, cancelQueued ? ['first', 'third'] : ['first', 'second', 'third']);
-      assert.equal(client.sessionInFlight.size, 0);
-    });
-  }
-
-  test('waits for the cancelled RPC AND its consumer before reusing the session queue', async () => {
-    const client = new AcpClient('/bin/false', '/tmp') as any;
-    const calls: string[] = [];
-    let finishFirst!: (result: unknown) => void;
-    client.send = async (method: string, params: any) => {
-      if (method === 'session/new') return { sessionId: 'reuse' };
-      calls.push(params.prompt[0].text);
-      if (calls.length === 1) {
-        client.injectUpdate('reuse', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'old' } });
-        return new Promise((resolve) => { finishFirst = resolve; });
-      }
-      client.injectUpdate('reuse', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'new' } });
-      return { stopReason: 'end_turn' };
-    };
-    client.notify = async () => {};
-    await client.newSession();
-    const first = client.prompt('reuse', 'first');
-    await first.next();
-    await client.cancel('reuse');
-    const second = client.prompt('reuse', 'second');
-    const next = second.next();
-    let callsBeforeConsumerClosed: string[];
-    try {
-      assert.deepEqual(calls, ['first']);
-      client.injectUpdate('reuse', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'late-old' } });
-      finishFirst({ stopReason: 'cancelled' });
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      callsBeforeConsumerClosed = [...calls];
-    } finally {
-      await first.return();
-    }
-    const fresh = await next;
-    await second.return();
-    assert.deepEqual(callsBeforeConsumerClosed, ['first'], 'RPC completion is not queue-consumer completion');
-    assert.equal(fresh.value.content.text, 'new');
-    assert.deepEqual(calls, ['first', 'second']);
-    assert.equal(client.sessionInFlight.size, 0);
-  });
-
-  test('sends session/cancel as a JSON-RPC notification', async () => {
-    const client = new AcpClient('/bin/false', '/tmp') as any;
-    const writes: string[] = [];
-    client.proc = {
-      stdin: {
-        destroyed: false,
-        write(payload: string, callback?: (error?: Error | null) => void) {
-          writes.push(payload);
-          callback?.(null);
-          return true;
-        },
-      },
-    };
-    client.sessionQueues.set('session-1', {});
-
-    const cancelPromise = client.cancel('session-1');
-    const payload = JSON.parse(writes[0].trim()) as Record<string, unknown>;
-
-    // Let the old request-based implementation settle so a failing assertion
-    // cannot leave its idle timer running.
-    if (typeof payload.id === 'number') {
-      client.dispatch({ jsonrpc: '2.0', id: payload.id, result: null });
-    }
-    await cancelPromise;
-
-    assert.deepEqual(payload, {
-      jsonrpc: '2.0',
-      method: 'session/cancel',
-      params: { sessionId: 'session-1' },
-    });
-    assert.equal(client.pending.size, 0);
   });
 });
 
@@ -232,45 +168,6 @@ describe('AcpClient subagent routing (per-tool-call Map)', () => {
     };
   }
 
-  test('routes list_update to the correct session when only one owner exists', () => {
-    const { client, makeQueue } = makeTestClient();
-    const qA = makeQueue('session-A');
-    const qB = makeQueue('session-B');
-
-    // Session A triggers a subagent tool call
-    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
-
-    // list_update arrives — should route to session-A only
-    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
-
-    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    assert.equal(aUpdates.length, 1, 'session-A should receive the list_update');
-    assert.equal(bUpdates.length, 0, 'session-B should NOT receive the list_update');
-    assert.equal(aUpdates[0].update.subagents[0].name, 'gpu-coder');
-  });
-
-  test('does not route list_update to a session whose tool_call already completed', () => {
-    const { client, makeQueue } = makeTestClient();
-    const qA = makeQueue('session-A');
-    const qB = makeQueue('session-B');
-
-    // Session A triggers and completes a subagent tool call
-    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
-    client.dispatch(toolCallUpdateMsg('session-A', 'tc-1', 'completed'));
-
-    // Session B triggers a subagent tool call
-    client.dispatch(toolCallMsg('session-B', 'tc-2', 'subagent'));
-
-    // list_update arrives — should route to session-B only
-    client.dispatch(listUpdateMsg([{ sessionId: 'sub-2', name: 'gpu-research', status: 'Running' }]));
-
-    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    assert.equal(aUpdates.length, 0, 'completed session-A should NOT receive list_update');
-    assert.equal(bUpdates.length, 1, 'session-B should receive the list_update');
-  });
-
   test('concurrent owners: most recently registered wins (LIFO)', () => {
     const { client, makeQueue } = makeTestClient();
     const qA = makeQueue('session-A');
@@ -287,37 +184,6 @@ describe('AcpClient subagent routing (per-tool-call Map)', () => {
     const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
     assert.equal(aUpdates.length, 0, 'session-A (older) should NOT receive the list_update');
     assert.equal(bUpdates.length, 1, 'session-B (newer) should receive the list_update');
-  });
-
-  test('after the most recent owner completes, the remaining owner takes over', () => {
-    const { client, makeQueue } = makeTestClient();
-    const qA = makeQueue('session-A');
-    const qB = makeQueue('session-B');
-
-    // Both sessions trigger subagent tool calls
-    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
-    client.dispatch(toolCallMsg('session-B', 'tc-2', 'task'));
-
-    // B completes → A should become the sole owner
-    client.dispatch(toolCallUpdateMsg('session-B', 'tc-2', 'completed'));
-
-    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
-
-    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    assert.equal(aUpdates.length, 1, 'session-A (remaining) should receive the list_update');
-    assert.equal(bUpdates.length, 0, 'session-B (completed) should NOT receive list_update');
-  });
-
-  test('no owners → list_update is silently discarded', () => {
-    const { client, makeQueue } = makeTestClient();
-    const qA = makeQueue('session-A');
-
-    // No tool_call registered — list_update should be dropped
-    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'gpu-coder', status: 'Running' }]));
-
-    const updates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    assert.equal(updates.length, 0, 'list_update should be discarded when there are no owners');
   });
 
   test('empty roster does not clear another session\'s parent mappings', () => {
@@ -365,27 +231,7 @@ describe('AcpClient subagent routing (per-tool-call Map)', () => {
     const updates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
     assert.equal(updates.length, 0, 'no ownership → event discarded');
   });
-
-  test('error status also releases ownership', () => {
-    const { client, makeQueue } = makeTestClient();
-    const qA = makeQueue('session-A');
-    const qB = makeQueue('session-B');
-
-    client.dispatch(toolCallMsg('session-A', 'tc-1', 'agent'));
-    client.dispatch(toolCallUpdateMsg('session-A', 'tc-1', 'error'));
-
-    // Session B triggers after A errored
-    client.dispatch(toolCallMsg('session-B', 'tc-2', 'agent'));
-
-    client.dispatch(listUpdateMsg([{ sessionId: 'sub-1', name: 'coder', status: 'Running' }]));
-
-    const aUpdates = qA.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    const bUpdates = qB.items.filter((i: any) => i.update?.sessionUpdate === 'subagent_list_update');
-    assert.equal(aUpdates.length, 0);
-    assert.equal(bUpdates.length, 1);
-  });
 });
-
 
 test('adapter permission expiry is bound to session and request ID', () => {
   const client = new AcpClient('/bin/false', '/tmp') as any;
@@ -397,4 +243,94 @@ test('adapter permission expiry is bound to session and request ID', () => {
   client.dispatch({ method: '_michi/permission_resolved', params: { sessionId: 'one', requestId: 7 } });
   assert.equal(client.pendingPermissions.has(7), false);
   assert.deepEqual(events, [{ update: { sessionUpdate: 'permission_resolved', requestId: 7 } }]);
+});
+
+test('client options add argv and replace the environment for kiro-cli only', async t => {
+  const spawned: Array<{ args: string[]; env?: NodeJS.ProcessEnv }> = [];
+  t.mock.method(processTree, 'spawnAgentProcess', (_bin: string, args: string[], options?: SpawnOptions) => {
+    spawned.push({ args, env: options?.env });
+    return Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(), stderr: new EventEmitter(), exitCode: 0, signalCode: null,
+    }) as any;
+  });
+  const clients = [
+    new AcpClient('/bin/false', '/tmp', 'm', 'v2', undefined, 'kiro', { extraArgs: ['--agent', 'meta'], childEnv: { ONLY: '1' } }),
+    new AcpClient(undefined, '/tmp', undefined, 'v2', { bin: '/bin/false', args: () => ['crew-acp'] }, 'crew', { extraArgs: ['--agent', 'meta'] }),
+  ];
+  try {
+    for (const client of clients) client.start();
+    assert.deepEqual(spawned[0].args, ['acp', '--agent-engine', 'v2', '--model', 'm', '--agent', 'meta']);
+    assert.deepEqual(spawned[0].env, { ONLY: '1' });
+    assert.deepEqual(spawned[1].args, ['crew-acp'], 'a custom launch owns its argv');
+  } finally {
+    await Promise.all(clients.map((client) => client.shutdown()));
+  }
+});
+
+test('a rejecting client answers every permission request itself and never queues it', () => {
+  const client = new AcpClient('/bin/false', '/tmp', undefined, 'v3', undefined, 'kiro', { rejectPermissions: true }) as any;
+  const written: string[] = [];
+  client.proc = { stdin: { destroyed: false, write: (line: string) => { written.push(line); return true; } } };
+  const events: unknown[] = [];
+  client.sessionQueues.set('s', { push: (event: unknown) => events.push(event) });
+  client.dispatch({ jsonrpc: '2.0', id: 41, method: 'session/request_permission', params: {
+    sessionId: 's', toolCall: { title: 'shell' },
+    options: [{ optionId: 'yes', kind: 'allow_once' }, { optionId: 'no', kind: 'reject_once' }],
+  } });
+  client.dispatch({ jsonrpc: '2.0', id: 42, method: 'session/request_permission', params: { sessionId: 's', toolCall: { title: 'x' }, options: [] } });
+  assert.deepEqual(events, []);
+  assert.deepEqual(written.map((line) => JSON.parse(line)), [
+    { jsonrpc: '2.0', id: 41, result: { outcome: { outcome: 'selected', optionId: 'no' } } },
+    { jsonrpc: '2.0', id: 42, result: { outcome: { outcome: 'cancelled' } } },
+  ]);
+  assert.equal(client.pendingPermissions.size, 0);
+  client.proc = null;
+});
+
+test('tool catalogs: v3 tags and v2 server initialization are recorded per session and awaited', async () => {
+  const v3 = new AcpClient('/bin/false', '/tmp', undefined, 'v3') as any;
+  const waiting = v3.waitForToolCatalog('s', (state: any) => (state?.seq ?? 0) >= 2, 1_000);
+  v3.dispatch({ method: '_kiro/tools/didChange', params: { sessionId: 's', tags: [{ source: 'builtin', tag: 'read' }] } });
+  assert.equal(v3.toolCatalog('s').seq, 1);
+  v3.dispatch({ method: '_kiro/tools/didChange', params: { sessionId: 's', tags: [{ source: 'mcp', tag: '@michi/read_node' }] } });
+  const state = await waiting;
+  assert.deepEqual(state.tags, [{ source: 'mcp', tag: '@michi/read_node' }]);
+  assert.equal(v3.toolCatalog('other'), undefined);
+  const timedOut = await v3.waitForToolCatalog('s', (s: any) => s.seq > 5, 20);
+  assert.equal(timedOut.seq, 2, 'the latest state once the wait runs out');
+  let changes = 0;
+  const off = v3.onToolCatalogChange('s', () => { changes += 1; });
+  v3.dispatch({ method: '_kiro/tools/didChange', params: { sessionId: 's', tags: [] } });
+  off();
+  v3.dispatch({ method: '_kiro/tools/didChange', params: { sessionId: 's', tags: [] } });
+  assert.equal(changes, 1);
+  v3.destroySession('s');
+  assert.equal(v3.toolCatalog('s'), undefined);
+
+  const v2 = new AcpClient('/bin/false', '/tmp', undefined, 'v2') as any;
+  v2.dispatch({ method: '_kiro.dev/mcp/server_initialized', params: { sessionId: 's', serverName: 'michi' } });
+  v2.dispatch({ method: '_kiro.dev/mcp/server_initialized', params: { sessionId: 's', serverName: 'michi' } });
+  assert.deepEqual(v2.toolCatalog('s'), { initializedServers: ['michi'], seq: 1 });
+  v2.dispatch({ method: '_kiro/tools/didChange', params: { sessionId: 's', tags: [] } });
+  assert.equal(v2.toolCatalog('s').tags, undefined, 'v2 has no tag catalog');
+});
+
+
+test('split startup stderr preserves sign-out and latches the shared gate', async t => {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(), stderr: new EventEmitter(), exitCode: 1, signalCode: null,
+  });
+  t.mock.method(processTree, 'spawnAgentProcess', () => child as any);
+  const latch = t.mock.method(kiroAuth, 'signedOut', () => {});
+  const client = new AcpClient('/bin/false', '/tmp', undefined, 'v2', undefined, 'kiro', { observability: michiTestHost().observability, onSignedOut: binary => kiroAuth.signedOut(binary) });
+  let reason: Error | undefined;
+  client.onExit(error => { reason = error; });
+  client.start();
+  child.stderr.emit('data', Buffer.from('You are not log'));
+  child.stderr.emit('data', Buffer.from('ged in, please log in with kiro-cli login'));
+  child.emit('exit', 1, null);
+  assert.ok(reason instanceof KiroSignedOutError);
+  assert.equal(latch.mock.calls.length, 1);
+  await assert.rejects(client.initialize(), KiroSignedOutError);
+  await client.shutdown();
 });

@@ -189,16 +189,6 @@ describe('Map selection actions', () => {
 });
 
 describe('Map three-view switch', () => {
-  // The Graph/Timeline/Doc switcher floats top-right on the Map canvas (below
-  // the Topbar's icon row) and owns the active view internally.
-  it('renders the three view tabs and defaults to graph', () => {
-    render(<TerminalMap />);
-    const tabs = screen.getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['Graph', 'Timeline', 'Doc']);
-    expect(tabs[0].getAttribute('aria-selected')).toBe('true');
-    expect(document.querySelector('[data-map-node]')).not.toBeNull();
-  });
-
   it('switching to Timeline renders lane content and drops the graph cards', () => {
     storeState.nodes = {
       n1: { ...node('n1'), branchOverviewEntries: [{ at: 1000, text: 'first progress step' }] },

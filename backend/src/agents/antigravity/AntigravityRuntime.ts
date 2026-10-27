@@ -1,3 +1,4 @@
+import { ANTIGRAVITY_RUNTIME_DESCRIPTOR } from "./antigravityDescriptor";
 import { spawnAgentProcess } from "../processTree";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -56,6 +57,7 @@ export class AntigravitySessionNotResumableError extends Error {
  * smaller surface instead of advertising Michi MCP or permission parity.
  */
 export class AntigravityRuntime implements AgentRuntime {
+  public readonly descriptor = ANTIGRAVITY_RUNTIME_DESCRIPTOR;
   public readonly id = "antigravity";
   public readonly label = "Antigravity";
   public readonly capabilities = CAPABILITIES;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kiroArgs, resolveKiroEngine, normalizeSessionInfo, rewindPoints, v3InfoUpdates } from '../src/agents/kiro/kiroProtocol';
+import { kiroEnv, kiroArgs, resolveKiroEngine, normalizeSessionInfo, rewindPoints, v3InfoUpdates } from 'michi-runtime/internal/adapters/kiro/kiroProtocol';
 import { chooseResumeStrategy } from '../src/services/resumeStrategy';
 
 test('Kiro launch pins v2 by default and never sends v2-only flags to v3', () => {
@@ -45,3 +45,13 @@ test('legacy Kiro bindings are v2, and an engine change never claims native resu
     assert.deepEqual(chooseResumeStrategy(input), { strategy: 'compatible', reason: 'engine_changed' });
     assert.equal(chooseResumeStrategy({ ...input, targetSignature: { ...signature, runtimeEngine: 'v2' } }).strategy, 'live');
 });
+
+for (const engine of ['v2', 'v3'] as const) {
+    test(`${engine} copies the host environment without adding CLI settings`, () => {
+        const env = { KEEP: 'value' };
+        assert.deepEqual(kiroEnv(engine, env), env);
+        assert.notEqual(kiroEnv(engine, env), env);
+        assert.deepEqual(kiroEnv(engine, env, false), env);
+        assert.deepEqual(kiroEnv(engine, {}), {});
+    });
+}

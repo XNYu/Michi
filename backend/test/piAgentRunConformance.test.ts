@@ -22,6 +22,7 @@ import {
   makeConformanceToolProfile,
   attemptIdOf,
   RUN_OWNER,
+  CONFORMANCE_ATTEMPT_ID,
   type ConformanceHarness,
   type ConformanceSession,
 } from './fixtures/runtimeRunConformance';
@@ -99,21 +100,11 @@ function createPiHarness(): ConformanceHarness {
     resumeRunSession: undefined,
 
     async releaseSession(sessionId, expectedOwner) {
-      runtime.releaseSession(sessionId, expectedOwner);
+      await runtime.releaseSession(sessionId, expectedOwner);
     },
 
     async releaseSessionWrongOwner(sessionId, wrongOwner) {
-      // Pi's releaseSession silently no-ops when owners don't match (returns
-      // without destroying the session). This is a valid "fail closed"
-      // implementation that protects the real owner. We surface it as a throw
-      // so the conformance suite can validate the owner guard.
-      const beforeRelease = (runtime as any).sessions?.has?.(sessionId) ?? false;
-      runtime.releaseSession(sessionId, wrongOwner);
-      const afterRelease = (runtime as any).sessions?.has?.(sessionId) ?? false;
-      if (beforeRelease && afterRelease) {
-        // Session was NOT released — owner guard worked. Throw to satisfy the conformance assertion.
-        throw new Error('Owner mismatch: Pi silently refused release for wrong owner');
-      }
+      await runtime.releaseSession(sessionId, wrongOwner);
     },
 
     async cleanup() {
@@ -163,7 +154,7 @@ describe('Pi-specific conformance', () => {
         owner: RUN_OWNER,
       });
       // Pi returns the session directly from newSession, never from loadSession
-      assert.equal(session.id, RUN_OWNER.attemptId);
+      assert.equal(session.id, CONFORMANCE_ATTEMPT_ID);
       // nativeSessionId is null for Pi (no native transport identity)
       assert.equal(session.nativeSessionId ?? null, null,
         'Pi sessions should not have a native session id');
@@ -190,7 +181,7 @@ describe('Pi-specific conformance', () => {
 
     const runtime = new PiRuntime(bridge as any);
     await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
+      sessionId: CONFORMANCE_ATTEMPT_ID,
       cwd: process.cwd(),
       owner: RUN_OWNER,
       bootstrapInstructions: 'test',

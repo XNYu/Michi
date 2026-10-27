@@ -11,7 +11,7 @@ interface UseDigestOrchestrationArgs {
   setProjects: Dispatch<SetStateAction<Project[]>>;
   setNodes: Dispatch<SetStateAction<Record<string, ChatNodeState>>>;
   sameTree: (a: string, b: string) => boolean;
-  newNodeId: () => string;
+  newNodeId: (projectId?: string) => string;
 }
 
 export function useDigestOrchestration({
@@ -40,10 +40,18 @@ export function useDigestOrchestration({
         const { streamDigest } = await import('../services/digestApi');
         const { buildDigestPayload } = await import('../lib/digestPayload');
         if (ctl.signal.aborted) return;
+        // Capture content and its freshness watermark together. A source may
+        // continue streaming while the digest is generated.
+        const sourceNodes = nodesRef.current;
+        const fps: Record<string, string> = {};
+        for (const sid of sources) {
+          const src = sourceNodes[sid];
+          if (src) fps[sid] = computeSourceFingerprint(src);
+        }
         const snapshot = buildDigestPayload(
           project,
           sources,
-          nodesRef.current,
+          sourceNodes,
           previousDigest?.content,
           previousDigest?.customPrompt,
         );
@@ -63,11 +71,6 @@ export function useDigestOrchestration({
           },
         }, project.backendConnectionId);
         if (ctl.signal.aborted) return;
-        const fps: Record<string, string> = {};
-        for (const sid of sources) {
-          const src = nodesRef.current[sid];
-          if (src) fps[sid] = computeSourceFingerprint(src);
-        }
         dispatch({
           type: 'digest-generated',
           nodeId,
@@ -100,7 +103,7 @@ export function useDigestOrchestration({
           throw new Error('cross-tree digest');
         }
       }
-      const nodeId = newNodeId();
+      const nodeId = newNodeId(projectId);
       dispatch({ type: 'create-digest', nodeId, projectId, sources });
       setProjects((prev) =>
         prev.map((p) =>

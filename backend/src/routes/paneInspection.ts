@@ -1,3 +1,4 @@
+import { createSseObserver } from '../services/httpSse';
 /**
  * Pane Inspection API — HTTP route layer (design §7, §11; brief P1-8).
  *
@@ -99,12 +100,6 @@ export { panePresenceRegistry };
 // objects/cursors maps is invisible to another. Re-exported here under the same name so existing
 // importers of this module (route tests, defaultDeps below) keep working.
 export { paneInspectionRing };
-
-/** Local SSE write-buffer ceiling for /panes/subscribe's direct-HTTP path (design §11 / brief:
- *  "a slow consumer has its own buffer ceiling"). streamTransport.ts's own 8 MiB WebSocket-frame
- *  ceiling is stricter and wins whenever this route is reached through that multiplexer — see
- *  the route handler's own comment. */
-const SUBSCRIBE_MAX_BUFFER_BYTES = 1_048_576;
 
 const runsRepositoryForCaller = new AgentRunsRepository();
 
@@ -456,39 +451,18 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
     res.flushHeaders?.();
 
     const feed = new PaneFeed({ clock: deps.clock, ring: deps.ring, agentRunEvents: deps.agentRunEvents });
-    let closed = false;
+    const observer = createSseObserver(res);
+    observer.addCleanup(() => feed.stop());
     const emitter = {
       emit(event: import('michi-shared').PaneFeedEventV1) {
-        if (closed || res.destroyed || res.writableEnded) return;
-        // Slow-consumer buffer ceiling (design §11 / brief acceptance: "a slow consumer hitting
-        // the buffer ceiling is disconnected, and nothing is cancelled"). streamTransport.ts's
-        // own MAX_BUFFER_BYTES (8 MiB, checked on the WebSocket frame) is stricter and wins when
-        // this route is reached through that multiplexer per the brief's "where streamTransport's
-        // own limits are stricter, they win" — this local ceiling exists for the direct-HTTP path
-        // (no WebSocket in front) so a slow consumer is bounded either way.
-        if (res.writableLength > SUBSCRIBE_MAX_BUFFER_BYTES) {
-          close();
-          res.destroy(new Error('Pane subscribe client exceeded buffer limit'));
-          return;
-        }
-        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+        observer.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       },
     };
-    const close = (): void => {
-      if (closed) return;
-      closed = true;
-      feed.stop();
-    };
     for (const paneId of parsed.paneIds) {
+      if (observer.closed) break;
       feed.subscribe(caller, paneId, parsed.cursors[paneId], emitter);
     }
-    // res.on('close'), never req.on('close') — req fires as soon as the request body has been
-    // consumed (there is none, for a GET, but the convention is load-bearing elsewhere in this
-    // codebase per AGENTS.md/COMMON.md) and would tear the feed down before the client actually
-    // disconnects. A disconnect here only detaches observers (feed.stop() -> unsubscribe() ->
-    // ring.releaseSubscriber) — it never cancels a turn or a Run.
-    res.on('close', close);
-    res.on('error', close);
+    // Response close/error releases observers and never cancels a turn or Run.
   });
 
   // POST /api/panes/wait — design §7.4; brief P3-5b. Body: locator fields (flat) + until +

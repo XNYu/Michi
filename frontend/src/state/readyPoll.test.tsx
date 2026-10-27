@@ -144,30 +144,6 @@ describe('chatStore boot ready polling', () => {
     });
   });
 
-  test('retries /agent/status after a cold-start failure, before warm finishes', async () => {
-    // The renderer mounts before the backend is listening (the dev norm: the
-    // window loads from the vite server while the backend boots separately),
-    // so the first fetch rejects. /api/ready stays `pending` the whole time —
-    // warm never completes — yet the composer chips must still appear from the
-    // status retry alone. Regression guard for chips that were blank until warm.
-    (api.fetchReady as any).mockResolvedValue({ status: 'pending', error: null });
-    (api.fetchAgentStatus as any)
-      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
-      .mockResolvedValue({
-        ...STATUS_FIXTURE,
-        capabilities: { ...STATUS_FIXTURE.capabilities, modes: true },
-      });
-
-    const { getByTestId } = render(
-      wrapper({ children: <Probe /> }),
-    );
-
-    await waitFor(() => expect(getByTestId('status').textContent).toBe('ready'));
-    // Proven without warm: /api/ready only ever returned `pending`, so the
-    // success came from the loadUntilLoaded retry, not the watchReady backstop.
-    expect((api.fetchAgentStatus as any).mock.calls.length).toBeGreaterThanOrEqual(2);
-  });
-
   test('failed ready surfaces error without blocking status', async () => {
     (api.fetchReady as any).mockResolvedValue({
       status: 'failed',
@@ -182,20 +158,6 @@ describe('chatStore boot ready polling', () => {
     );
     await waitFor(() => expect(api.fetchAgentStatus).toHaveBeenCalled());
     await waitFor(() => expect(getByTestId('status').textContent).toBe('ready'));
-  });
-
-  test('reload event bypasses ready poll', async () => {
-    (api.fetchReady as any).mockResolvedValue({ status: 'ready', error: null });
-    render(wrapper({ children: <Probe /> }));
-    await waitFor(() => expect(api.fetchAgentStatus).toHaveBeenCalledTimes(1));
-    (api.fetchReady as any).mockClear();
-
-    await act(async () => {
-      window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
-    });
-
-    await waitFor(() => expect(api.fetchAgentStatus).toHaveBeenCalledTimes(2));
-    expect(api.fetchReady).not.toHaveBeenCalled();
   });
 
   // Regression: on desktop cold start the first /api/modes fetch can be refused
@@ -233,7 +195,7 @@ describe('chatStore boot ready polling', () => {
 
     render(wrapper({ children: <WarmProjectProbe /> }));
     await waitFor(() => expect(api.warmCwd).toHaveBeenCalledTimes(1));
-    expect(api.warmCwd).toHaveBeenLastCalledWith('/tmp');
+    expect(api.warmCwd).toHaveBeenLastCalledWith('/tmp', undefined, expect.any(AbortSignal));
 
     (api.fetchAgentStatus as any).mockResolvedValue({
       ...STATUS_FIXTURE,

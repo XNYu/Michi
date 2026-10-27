@@ -1,3 +1,7 @@
+import { DomainError } from './domainErrors';
+import { assertNodePlacement } from './nodePlacement';
+import { assertGraphNodeInput, requiredGraphId as requiredId } from './graphCommandValidation';
+import { nodePlacementRepository } from './nodePlacementRepository';
 import { getDb, runInTransaction } from './db';
 import {
   getNode,
@@ -97,18 +101,13 @@ export function rollbackProvisionalSpawnNode(
   });
 }
 
-function requiredId(value: string, label: string): string {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 160) throw new Error(`${label} must be a non-empty id <=160 chars`);
-  return trimmed;
-}
-
 /**
  * Idempotent graph prerequisite command used before a node can own a runtime
  * session. It intentionally creates only the addressed graph slice, never a
  * full workspace snapshot.
  */
 export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): EnsureDurableGraphNodeResult {
+  assertGraphNodeInput(input);
   return runInTransaction(() => {
     const workspaceId = requiredId(input.workspace.id, 'workspace.id');
     const nodeId = requiredId(input.node.id, 'node.id');
@@ -118,7 +117,7 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
       && existingWorkspace
       && existingWorkspace.owner_user_id !== input.ownerUserId
     ) {
-      throw new Error('workspace not found');
+      throw new DomainError('not_found', 'workspace_not_found', 'workspace not found');
     }
 
     saveWorkspace({
@@ -138,22 +137,23 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
       pinned_at: existingWorkspace?.pinned_at ?? null,
       backend: existingWorkspace?.backend ?? 'kiro',
       owner_user_id: input.ownerUserId ?? existingWorkspace?.owner_user_id ?? null,
+      folders: existingWorkspace?.folders ?? null,
     });
 
     let treeRow: TreeRow | null = null;
     if (input.tree) {
       const treeId = requiredId(input.tree.id, 'tree.id');
       if (input.node.treeId && input.node.treeId !== treeId) {
-        throw new Error('node.treeId must match tree.id');
+        throw new DomainError('conflict', 'node_tree_mismatch', 'node.treeId must match tree.id');
       }
       const existingTree = getDb().prepare(
         'SELECT workspace_id, root_node_id FROM trees WHERE id = ?',
       ).get(treeId) as { workspace_id: string; root_node_id: string } | undefined;
       if (existingTree?.workspace_id !== undefined && existingTree.workspace_id !== workspaceId) {
-        throw new Error(`tree ${treeId} belongs to a different workspace`);
+        throw new DomainError('conflict', 'tree_workspace_mismatch', `tree ${treeId} belongs to a different workspace`);
       }
       if (existingTree && existingTree.root_node_id !== input.tree.rootNodeId) {
-        throw new Error(`tree ${treeId} was replayed with a different root`);
+        throw new DomainError('conflict', 'tree_identity_mismatch', `tree ${treeId} was replayed with a different root`);
       }
       saveTree({
         id: treeId,
@@ -168,20 +168,7 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
       treeRow = listTrees(workspaceId).find((tree) => tree.id === treeId) ?? null;
     }
 
-    if (input.node.treeId) {
-      const nodeTree = getDb().prepare('SELECT workspace_id FROM trees WHERE id = ?')
-        .get(input.node.treeId) as { workspace_id: string } | undefined;
-      if (!nodeTree || nodeTree.workspace_id !== workspaceId) {
-        throw new Error('node tree must belong to the same workspace');
-      }
-    }
-
-    if (input.node.parentNodeId) {
-      const parent = getNode(input.node.parentNodeId);
-      if (!parent || parent.workspace_id !== workspaceId) {
-        throw new Error('branch parent and child must belong to the same workspace');
-      }
-    }
+    assertNodePlacement(workspaceId, input.node.treeId ?? null, input.node.parentNodeId ?? null, nodePlacementRepository);
 
     const existingNode = getNode(nodeId);
     if (existingNode) {
@@ -190,7 +177,7 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
         || (existingNode.tree_id ?? null) !== (input.node.treeId ?? null)
         || (existingNode.parent_node_id ?? null) !== (input.node.parentNodeId ?? null)
       ) {
-        throw new Error(`node ${nodeId} was replayed with different graph identity`);
+        throw new DomainError('conflict', 'node_identity_mismatch', `node ${nodeId} was replayed with different graph identity`);
       }
     } else {
       saveNode({
@@ -216,7 +203,7 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
         || root.workspace_id !== workspaceId
         || root.tree_id !== input.tree.id
       ) {
-        throw new Error(`tree ${input.tree.id} root must belong to the same workspace and tree`);
+        throw new DomainError('conflict', 'tree_root_mismatch', `tree ${input.tree.id} root must belong to the same workspace and tree`);
       }
     }
 
@@ -225,20 +212,20 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
       activeTreeId
       && !listTrees(workspaceId).some((candidate) => candidate.id === activeTreeId)
     ) {
-      throw new Error('active tree must belong to the same workspace');
+      throw new DomainError('conflict', 'active_tree_workspace_mismatch', 'active tree must belong to the same workspace');
     }
 
     for (const edge of input.edges) {
       if (edge.targetNodeId !== nodeId) {
-        throw new Error('graph prerequisite edges must target the ensured node');
+        throw new DomainError('conflict', 'edge_target_mismatch', 'graph prerequisite edges must target the ensured node');
       }
       const source = getNode(edge.sourceNodeId);
       const target = getNode(edge.targetNodeId);
       if (!source || !target || source.workspace_id !== workspaceId || target.workspace_id !== workspaceId) {
-        throw new Error('edge endpoints must belong to the same workspace');
+        throw new DomainError('conflict', 'edge_workspace_mismatch', 'edge endpoints must belong to the same workspace');
       }
       if (edge.kind === 'branch' && source.tree_id !== target.tree_id) {
-        throw new Error('branch edge endpoints must belong to the same tree');
+        throw new DomainError('conflict', 'edge_tree_mismatch', 'branch edge endpoints must belong to the same tree');
       }
       const existingEdge = getDb().prepare(`
         SELECT workspace_id, source_node_id, target_node_id, kind FROM edges WHERE id = ?
@@ -249,7 +236,7 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
         kind: string;
       } | undefined;
       if (existingEdge && existingEdge.workspace_id !== workspaceId) {
-        throw new Error(`edge ${edge.id} belongs to a different workspace`);
+        throw new DomainError('conflict', 'edge_workspace_mismatch', `edge ${edge.id} belongs to a different workspace`);
       }
       if (
         existingEdge
@@ -259,7 +246,7 @@ export function ensureDurableGraphNode(input: EnsureDurableGraphNodeInput): Ensu
           || existingEdge.kind !== edge.kind
         )
       ) {
-        throw new Error(`edge ${edge.id} was replayed with different graph identity`);
+        throw new DomainError('conflict', 'edge_identity_mismatch', `edge ${edge.id} was replayed with different graph identity`);
       }
       saveEdge({
         id: requiredId(edge.id, 'edge.id'),

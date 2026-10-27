@@ -1,22 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { listAgentModes, type AgentModesResult, type AgentStatus } from '../services/api';
+import { requestRetryDelay, shouldRetryRequest } from '../services/api/httpError';
 
 // A cold Kiro session can take over 30 seconds with workspace/MCP discovery.
 const LOAD_TIMEOUT_MS = 60_000;
-const RETRY_INTERVAL_MS = 500;
 
 /** Workspace defaults and catalogs must never cross Backend/runtime boundaries. */
 export function useAgentModeCatalog(
   workspaceId: string | null,
   backendConnectionId: string,
   status: AgentStatus | null,
+  cwd?: string,
 ) {
   const cache = useRef(new Map<string, AgentModesResult>());
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<{
     key: string; catalog?: AgentModesResult; loading: boolean; error: string | null;
   } | null>(null);
-  const key = JSON.stringify([backendConnectionId, workspaceId, status?.runtime, status?.capabilities.modes]);
+  const key = JSON.stringify([backendConnectionId, workspaceId, cwd, status?.runtime, status?.capabilities.modes]);
   const supported = status?.capabilities.modes;
   // KiroRuntime exposes one global catalog, but the fresh-session default is
   // workspace-specific. Reuse only the list while discovering a new default.
@@ -39,6 +40,7 @@ export function useAgentModeCatalog(
     const cached = cache.current.get(key) ?? (globalKey ? cache.current.get(globalKey) : undefined);
     setResult({ key, catalog: cached, loading: true, error: null });
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let failedAttempts = 0;
     let cancelled = false;
     const deadline = setTimeout(() => {
       controller.abort();
@@ -56,11 +58,18 @@ export function useAgentModeCatalog(
         if (globalKey) cache.current.set(globalKey, { availableModes: catalog.availableModes, defaultModeId: null });
         if (cache.current.size > 32) cache.current.delete(cache.current.keys().next().value!);
         setResult({ key, catalog, loading: false, error: null });
-      } catch {
+      } catch (error) {
         if (cancelled || controller.signal.aborted) return;
+        if (!shouldRetryRequest(error)) {
+          clearTimeout(deadline);
+          setResult({ key, catalog: cached, loading: false,
+            error: error instanceof Error ? error.message : 'Could not load agents. Please retry.' });
+          return;
+        }
         // The renderer may mount before the Backend is listening. Retry within
         // one bounded loading window; after it expires, leave a visible action.
-        retryTimer = setTimeout(() => void load(), RETRY_INTERVAL_MS);
+        failedAttempts += 1;
+        retryTimer = setTimeout(() => void load(), requestRetryDelay(failedAttempts));
       }
     };
     void load();

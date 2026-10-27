@@ -1,0 +1,698 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "<undefined>",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v2"
+        ],
+        "cwd": "/work",
+        "env": "<inherited>"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new",
+    "=newSession": [
+      {
+        "sessionId": "S1",
+        "modes": {
+          "currentModeId": "default",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ]
+        },
+        "models": {
+          "currentModelId": "claude-x",
+          "availableModels": [
+            {
+              "modelId": "claude-x",
+              "name": "X"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S1"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S1",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": []
+        }
+      }
+    ]
+  },
+  {
+    "step": "prompt",
+    "p1": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 5
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "first"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "first chunk and a permission",
+    "p1": [
+      {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "a"
+        }
+      },
+      {
+        "sessionUpdate": "permission_request",
+        "requestId": 19,
+        "toolCall": {
+          "toolCallId": "perm-19",
+          "title": "Edit file"
+        },
+        "options": [
+          {
+            "optionId": "allow",
+            "name": "Allow",
+            "kind": "allow_once"
+          },
+          {
+            "optionId": "always",
+            "name": "Always",
+            "kind": "allow_always"
+          },
+          {
+            "optionId": "reject",
+            "name": "Reject",
+            "kind": "reject_once"
+          }
+        ],
+        "_meta": "<undefined>"
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:prompt_to_first_chunk",
+        {
+          "sid": "S1"
+        }
+      ]
+    ]
+  },
+  {
+    "step": "cancel",
+    "=cancel": [
+      true
+    ],
+    "p1": [
+      {
+        "sessionUpdate": "permission_request",
+        "requestId": 20,
+        "toolCall": {
+          "toolCallId": "perm-20",
+          "title": "Edit file"
+        },
+        "options": [
+          {
+            "optionId": "allow",
+            "name": "Allow",
+            "kind": "allow_once"
+          },
+          {
+            "optionId": "always",
+            "name": "Always",
+            "kind": "allow_always"
+          },
+          {
+            "optionId": "reject",
+            "name": "Reject",
+            "kind": "reject_once"
+          }
+        ],
+        "_meta": "<undefined>"
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 19,
+        "result": {
+          "outcome": {
+            "outcome": "cancelled"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "cancel again",
+    "=cancel2": [
+      true
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 20,
+        "result": {
+          "outcome": {
+            "outcome": "cancelled"
+          }
+        }
+      },
+      {
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "result, then a late chunk",
+    "p1": [
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "cancelled"
+      },
+      "<end>"
+    ]
+  },
+  {
+    "step": "next prompt drains the stale chunk",
+    "p2": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 6
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "second"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "a third prompt queues behind it",
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 5
+        }
+      ]
+    ]
+  },
+  {
+    "step": "a fourth prompt queues and is aborted",
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 6
+        }
+      ]
+    ]
+  },
+  {
+    "step": "abort",
+    "p4": [
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "cancelled"
+      },
+      "<end>"
+    ]
+  },
+  {
+    "step": "p2 result with a chunk in the same read",
+    "p2": [
+      {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "p2 says"
+        }
+      },
+      {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "after-result"
+        }
+      },
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "end_turn"
+      },
+      "<end>"
+    ],
+    "p3": [
+      {
+        "sessionUpdate": "session_state",
+        "state": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:prompt_to_first_chunk",
+        {
+          "sid": "S1"
+        }
+      ],
+      [
+        "measure",
+        "acp:prompt_to_first_update",
+        {
+          "sid": "S1",
+          "kind": "session_state"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "session/prompt",
+        "params": {
+          "sessionId": "S1",
+          "prompt": [
+            {
+              "type": "text",
+              "text": "third"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "step": "p3 result",
+    "p3": [
+      {
+        "sessionUpdate": "agent_message_chunk",
+        "content": {
+          "type": "text",
+          "text": "p3 says"
+        }
+      },
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "end_turn"
+      },
+      "<end>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:prompt_to_first_chunk",
+        {
+          "sid": "S1"
+        }
+      ]
+    ]
+  },
+  {
+    "step": "an already-aborted prompt",
+    "p5": [
+      {
+        "sessionUpdate": "turn_end",
+        "stopReason": "cancelled"
+      },
+      "<end>"
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:prompt_entered",
+        {
+          "sid": "S1",
+          "textLen": 5
+        }
+      ]
+    ]
+  },
+  {
+    "step": "cancel with nothing running",
+    "=cancelIdle": [
+      true
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "cancel an unknown session",
+    "=cancelUnknown": [
+      false
+    ]
+  },
+  {
+    "step": "cancel that spares a wake with no prompt out",
+    "=cancelSpare": [
+      true
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "state",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "modes": {
+            "currentModeId": "default",
+            "availableModes": [
+              {
+                "id": "default",
+                "name": "Default"
+              },
+              {
+                "id": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          "models": {
+            "currentModelId": "claude-x",
+            "availableModels": [
+              {
+                "modelId": "claude-x",
+                "name": "X"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "default",
+          "modelId": "claude-x",
+          "availableModes": [
+            {
+              "id": "default",
+              "name": "Default"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "claude-x",
+              "label": "X"
+            }
+          ],
+          "nativeEngine": "v2"
+        }
+      }
+    ]
+  }
+]

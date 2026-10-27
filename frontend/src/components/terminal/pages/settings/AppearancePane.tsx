@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { usePrefs, TerminalPalette, CORNER_RADIUS_MAX } from '../../../../state/prefs';
+import { useState, type KeyboardEvent } from 'react';
+import { usePrefs, TerminalPalette, CORNER_RADIUS_MAX, DEFAULT_PREFS } from '../../../../state/prefs';
 import { Row as ClickableRow } from '../../primitives';
 import { PALETTES, resolveAccent } from '../../tokens';
 import { Row, Radio, Toggle } from './controls';
@@ -45,6 +45,16 @@ function CornerRadiusPreview() {
   );
 }
 
+/** Enter or Space presses a row that acts as a button, as a click does. */
+function pressKeys(run: () => void) {
+  return (event: KeyboardEvent) => {
+    if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    run();
+  };
+}
+
 export function AppearancePane() {
   const { prefs, setPref } = usePrefs();
   const currentAccent = resolveAccent(prefs.terminalAccentOverrides, prefs.terminalPalette);
@@ -60,19 +70,25 @@ export function AppearancePane() {
     value: TerminalPalette;
   }) => {
     const sel = prefs.terminalPalette === value;
+    const pick = () => {
+      if (sel) {
+        // Re-click on the active palette resets its accent override.
+        const next = { ...prefs.terminalAccentOverrides };
+        delete next[value];
+        setPref('terminalAccentOverrides', next);
+        return;
+      }
+      setPref('terminalPalette', value);
+    };
     return (
       <ClickableRow
         active={sel}
-        onClick={() => {
-          if (sel) {
-            // Re-click on the active palette resets its accent override.
-            const next = { ...prefs.terminalAccentOverrides };
-            delete next[value];
-            setPref('terminalAccentOverrides', next);
-            return;
-          }
-          setPref('terminalPalette', value);
-        }}
+        role="button"
+        tabIndex={0}
+        aria-pressed={sel}
+        className="t-row-focus"
+        onClick={pick}
+        onKeyDown={pressKeys(pick)}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -117,19 +133,16 @@ export function AppearancePane() {
 
   return (
     <div>
-      <h1
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-2xl)',
-          fontWeight: 700,
-          color: 'var(--term-fg)',
-          margin: 0,
-        }}
-      >
-        Appearance
-      </h1>
-      <div style={{ marginBottom: 20 }} />
-
+      <Row k="home.recommendations" label="Home">
+        <Toggle
+          on={prefs.homeRecommendations}
+          label="Pages recommendations on Home"
+          onChange={(value) => setPref('homeRecommendations', value)}
+        />
+        <p style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', marginTop: 8 }}>
+          On: show Pages recommendations or your custom Home page. Off: use the default composer and quick starts.
+        </p>
+      </Row>
       <Row k="theme.palette" label="Palette">
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
           <Swatch c={PALETTES.bone.bg} label="bone" value="bone" />
@@ -189,6 +202,14 @@ export function AppearancePane() {
         />
       </Row>
 
+      <Row k="layout.singlePage" label="Single-page mode">
+        <Toggle
+          on={prefs.singlePageMode}
+          label="show one pane at a time; the thread's other panes become tabs"
+          onChange={(v) => setPref('singlePageMode', v)}
+        />
+      </Row>
+
       <Row k="theme.accent" label="Accent hue">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
@@ -205,16 +226,20 @@ export function AppearancePane() {
             ['#ff2d95', 'pink'],
           ].map(([c, n]) => {
             const sel = currentAccent === c;
+            const pick = () => setPref('terminalAccentOverrides', {
+              ...prefs.terminalAccentOverrides,
+              [prefs.terminalPalette]: c,
+            });
             return (
               <ClickableRow
                 key={n}
                 active={sel}
-                onClick={() =>
-                  setPref('terminalAccentOverrides', {
-                    ...prefs.terminalAccentOverrides,
-                    [prefs.terminalPalette]: c,
-                  })
-                }
+                role="button"
+                tabIndex={0}
+                aria-pressed={sel}
+                className="t-row-focus"
+                onClick={pick}
+                onKeyDown={pressKeys(pick)}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -325,8 +350,9 @@ export function AppearancePane() {
                   type="range"
                   min={480}
                   max={1280}
-                  step={20}
-                  value={prefs.singlePaneContentWidth ?? 800}
+                  step={1}
+                  aria-label="Single-pane reading width"
+                  value={prefs.singlePaneContentWidth ?? DEFAULT_PREFS.singlePaneContentWidth!}
                   disabled={prefs.singlePaneContentWidth === null}
                   onChange={(e) => setPref('singlePaneContentWidth', Number(e.target.value))}
                   style={{
@@ -350,7 +376,7 @@ export function AppearancePane() {
                   onClick={() =>
                     setPref(
                       'singlePaneContentWidth',
-                      prefs.singlePaneContentWidth === null ? 800 : null,
+                      prefs.singlePaneContentWidth === null ? DEFAULT_PREFS.singlePaneContentWidth : null,
                     )
                   }
                   style={{
@@ -387,6 +413,7 @@ export function AppearancePane() {
 
             <Row k="theme.sidebarRowStyle" label="Sidebar row style">
               <Radio
+                label="Sidebar row style"
                 opts={[...SIDEBAR_ROW_STYLES]}
                 value={prefs.sidebarRowStyle}
                 onChange={(v) => setPref('sidebarRowStyle', v as any)}
@@ -411,6 +438,7 @@ export function AppearancePane() {
 
             <Row k="theme.uiFont" label="Interface font">
               <Radio
+                label="Interface font"
                 opts={['Geist', 'IBM Plex Sans', 'Inter']}
                 value={prefs.uiFont}
                 onChange={(v) => setPref('uiFont', v as typeof prefs.uiFont)}
@@ -419,6 +447,7 @@ export function AppearancePane() {
 
             <Row k="theme.messageFont" label="Message font">
               <Radio
+                label="Message font"
                 opts={['Source Serif 4', 'Geist']}
                 value={prefs.messageFont}
                 onChange={(v) => setPref('messageFont', v as typeof prefs.messageFont)}
@@ -461,6 +490,7 @@ export function AppearancePane() {
 
             <Row k="theme.sidebarDensity" label="Sidebar density">
               <Radio
+                label="Density"
                 opts={['compact', 'comfortable', 'airy']}
                 value={prefs.sidebarDensity}
                 onChange={(v) => setPref('sidebarDensity', v as any)}

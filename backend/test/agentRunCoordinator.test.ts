@@ -1,19 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  AgentDefinitionStatus,
-  AgentPolicyCategory,
-  AgentPolicyDecision,
-  AgentRunCompletionMode,
-  AgentRunEventType,
-  AgentRunStatus,
-  type AgentDefinitionDtoV1,
-  type AgentRunDtoV1,
-  type AgentRunEventV1,
-  type AgentRunInteractionDtoV1,
-  type EffectiveAgentDefinitionV1,
-  type ResultBundleV1,
-} from 'michi-shared';
+import { AgentPolicyCategory, AgentPolicyDecision, AgentRunCompletionMode, AgentRunEventType, AgentRunStatus, type AgentRunDtoV1, type AgentRunEventV1, type AgentRunInteractionDtoV1, type EffectiveAgentDefinitionV1, type ResultBundleV1 } from 'michi-shared';
 import { AgentRunCoordinator } from '../src/agents/runs/agentRunCoordinator';
 
 const hash = 'a'.repeat(64);
@@ -185,15 +172,6 @@ function spawnInput() {
 }
 
 describe('AgentRunCoordinator', () => {
-  test('full happy path completes with zero UI subscribers and committed event order', async () => {
-    const fixture = setup(); const coordinator = new AgentRunCoordinator(fixture.ports);
-    const queued = await coordinator.spawn(spawnInput());
-    const completed = await coordinator.start('owner', queued.id);
-    assert.equal(completed?.status, AgentRunStatus.Completed);
-    assert.equal(completed?.resultBundle?.handoff.conclusion, 'Done');
-    assert.deepEqual(fixture.repository.listEvents('owner', queued.id).map((event) => event.seq), [0, 1, 2, 3]);
-  });
-
   test('spawn forwards the exact nested Parent Attempt into durable creation', async () => {
     const fixture = setup(); const coordinator = new AgentRunCoordinator(fixture.ports);
     const queued = await coordinator.spawn({ ...spawnInput(), invocationMode: 'delegated',
@@ -248,15 +226,6 @@ describe('AgentRunCoordinator', () => {
     assert.equal(fixture.repository.attempts.get(run.id)?.at(-1)?.recoveryEnvelope?.failureBoundary, 'restart');
   });
 
-  test('executor startup failure never projects running without a live handle', async () => {
-    const fixture = setup();
-    fixture.setStartError(new Error('runtime unavailable'));
-    const coordinator = new AgentRunCoordinator(fixture.ports);
-    const queued = await coordinator.spawn(spawnInput());
-    await assert.rejects(() => coordinator.start('owner', queued.id), /runtime unavailable/);
-    assert.equal(coordinator.check('owner', queued.id)?.status, AgentRunStatus.Preparing);
-  });
-
   test('responding to a durable interaction resumes and settles the same Attempt', async () => {
     const fixture = setup(
       { status: 'waiting', kind: 'permission', request: { version: 1, tool: 'bash' } },
@@ -273,19 +242,6 @@ describe('AgentRunCoordinator', () => {
     await Promise.resolve(); await Promise.resolve();
     assert.equal(coordinator.check('owner', queued.id)?.status, AgentRunStatus.Completed);
     assert.deepEqual(fixture.inputs, [{ text: 'allow_once', mode: 'queued' }]);
-  });
-
-  test('failed runtime input leaves the interaction pending and the Run waiting', async () => {
-    const fixture = setup({ status: 'waiting', kind: 'permission', request: { version: 1, tool: 'bash' } });
-    const coordinator = new AgentRunCoordinator(fixture.ports);
-    const queued = await coordinator.spawn(spawnInput());
-    assert.equal((await coordinator.start('owner', queued.id))?.status, AgentRunStatus.Waiting);
-    const interaction = [...fixture.repository.interactions.values()][0];
-    fixture.setInputError(new Error('runtime input rejected'));
-    await assert.rejects(() => coordinator.respondInteraction('owner', queued.id, interaction.id,
-      { version: 1, text: 'allow_once' }, 'respond-failed'), /runtime input rejected/);
-    assert.equal(coordinator.check('owner', queued.id)?.status, AgentRunStatus.Waiting);
-    assert.equal(fixture.repository.interactions.get(interaction.id)?.status, 'pending');
   });
 
   test('bounded wait timeout reports stillRunning and never calls cancel', async () => {

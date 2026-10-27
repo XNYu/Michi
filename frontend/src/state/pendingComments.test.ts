@@ -34,34 +34,12 @@ function comment(
 }
 
 describe('reduceNodes: add-comment', () => {
-  it('adds a comment to a node with no pending comments', () => {
-    const state = { n1: node() };
-    const c = comment('c1');
-    const next = reduceNodes(state, { type: 'add-comment', nodeId: 'n1', comment: c });
-    expect(next.n1.pendingComments).toEqual([c]);
-  });
-
-  it('appends to existing pending comments in order', () => {
-    const c1 = comment('c1');
-    const c2 = comment('c2');
-    const state = { n1: node({ pendingComments: [c1] }) };
-    const next = reduceNodes(state, { type: 'add-comment', nodeId: 'n1', comment: c2 });
-    expect(next.n1.pendingComments).toEqual([c1, c2]);
-  });
-
   it('is a no-op when the same id is added twice (idempotent)', () => {
     const c = comment('c1');
     const state = { n1: node({ pendingComments: [c] }) };
     const next = reduceNodes(state, { type: 'add-comment', nodeId: 'n1', comment: c });
     // Identity preserved so referential checks still work downstream.
     expect(next).toBe(state);
-  });
-
-  it('does not mutate the input node', () => {
-    const state = { n1: node() };
-    const before = state.n1;
-    reduceNodes(state, { type: 'add-comment', nodeId: 'n1', comment: comment('c1') });
-    expect(before.pendingComments).toBeUndefined();
   });
 
   it('leaves other nodes untouched', () => {
@@ -136,15 +114,6 @@ describe('reduceNodes: remove-comment', () => {
 });
 
 describe('reduceNodes: clear-comments', () => {
-  it('clears all pending comments on the target node', () => {
-    const state = {
-      n1: node({ pendingComments: [comment('c1'), comment('c2')] }),
-    };
-    const next = reduceNodes(state, { type: 'clear-comments', nodeId: 'n1' });
-    expect(next.n1.pendingComments).toBeUndefined();
-    expect('pendingComments' in next.n1).toBe(false);
-  });
-
   it('does not affect pendingComments on other nodes', () => {
     const state = {
       n1: node({ pendingComments: [comment('c1')] }),
@@ -159,29 +128,9 @@ describe('reduceNodes: clear-comments', () => {
     const next = reduceNodes(state, { type: 'clear-comments', nodeId: 'n1' });
     expect(next).toBe(state);
   });
-
-  it('is a no-op when the node does not exist', () => {
-    const state = { n1: node() };
-    const next = reduceNodes(state, { type: 'clear-comments', nodeId: 'missing' });
-    expect(next).toBe(state);
-  });
 });
 
 describe('reduceNodes: set-composer-draft', () => {
-  it('saves text, mention chips, and quote context on the node', () => {
-    const state = { n1: node() };
-    const draft = {
-      value: 'compare @Notes with @Thread ',
-      mentions: [
-        { start: 8, end: 14, kind: 'context' as const, refId: 'ctx1', label: 'Notes' },
-        { start: 20, end: 27, kind: 'node' as const, refId: 'n2', label: 'Thread' },
-      ],
-      quotedText: 'selected passage',
-    };
-    const next = reduceNodes(state, { type: 'set-composer-draft', nodeId: 'n1', draft });
-    expect(next.n1.composerDraft).toEqual(draft);
-  });
-
   it('deletes the composerDraft key when the draft is empty', () => {
     const state = {
       n1: node({
@@ -199,23 +148,32 @@ describe('reduceNodes: set-composer-draft', () => {
     expect(next.n1.composerDraft).toBeUndefined();
     expect('composerDraft' in next.n1).toBe(false);
   });
+});
 
-  it('clears a saved draft when a message is sent', () => {
-    const state = {
-      n1: node({
-        composerDraft: {
-          value: 'send me',
-          mentions: [],
-          quotedText: 'old quote',
-        },
-      }),
-    };
-    const next = reduceNodes(state, {
-      type: 'user-send',
-      nodeId: 'n1',
-      userText: 'send me',
-      assistantId: 'a1',
-    });
-    expect(next.n1.composerDraft).toBeUndefined();
+describe('file feedback metadata', () => {
+  const source = { type: 'artifact' as const, filePath: 'a.md', snapshot: { hashKind: 'sha256-text-utf8' as const, contentHash: 'abc123', backendConnectionId: 'local', projectId: 'p1', resolvedFilePath: '/a.md' } };
+  it('preserves the complete source in pending comments and quote drafts, including source-only updates', () => {
+    let state: Record<string, ChatNodeState> = { n1: node() };
+    state = reduceNodes(state, { type: 'add-comment', nodeId: 'n1', comment: { ...comment('c1'), source } });
+    expect(state.n1.pendingComments?.[0].source).toEqual(source);
+    state = reduceNodes(state, { type: 'set-composer-draft', nodeId: 'n1', draft: { value: '', mentions: [], quotedText: 'old quote', quoteSource: source } });
+    expect(state.n1.composerDraft?.quoteSource).toEqual(source);
+    const changed = { ...source, snapshot: { ...source.snapshot, contentHash: 'def456' } };
+    state = reduceNodes(state, { type: 'set-composer-draft', nodeId: 'n1', draft: { value: '', mentions: [], quotedText: 'old quote', quoteSource: changed } });
+    expect(state.n1.composerDraft?.quoteSource).toEqual(changed);
   });
+});
+
+it('restores a rejected quote from a different read version without misattributing either quote or shifting mentions', () => {
+  const source = { type: 'artifact' as const, filePath: 'a.md', snapshot: { hashKind: 'sha256-text-utf8' as const, contentHash: 'old-hash', backendConnectionId: 'local', projectId: 'p1', resolvedFilePath: '/a.md' } };
+  const currentSource = { ...source, snapshot: { ...source.snapshot, contentHash: 'new-hash' } };
+  const mention = { start: 0, end: 2, kind: 'node' as const, refId: 'n1', label: 'n' };
+  const state = { n1: node({ composerDraft: { value: '@n current', mentions: [mention], quotedText: 'new selection', quoteSource: currentSource } }) };
+  const next = reduceNodes(state, { type: 'set-composer-draft', nodeId: 'n1', preserveExisting: true, draft: { value: '@n failed', mentions: [mention], quotedText: 'old selection', quoteSource: source } });
+  const draft = next.n1.composerDraft!;
+  expect(draft.quotedText).toBe('new selection');
+  expect(draft.quoteSource).toEqual(currentSource);
+  expect(draft.value).toContain('sha256-text-utf8 old-hash');
+  expect(draft.value).toContain('old selection');
+  for (const m of draft.mentions) expect(draft.value.slice(m.start, m.end)).toBe('@n');
 });

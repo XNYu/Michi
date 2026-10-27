@@ -70,6 +70,7 @@ export function ConfirmDialogHost() {
       title={pending?.title ?? 'Confirm'}
       accent={pending?.danger === false ? 'var(--term-accent)' : 'var(--term-danger)'}
       width={420}
+      captureEscape
     >
       <div
         style={{

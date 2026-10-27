@@ -1,5 +1,11 @@
-import type { ChatStreamEvent, PlanEntry, ToolCallStreamPayload } from './chatStreamEvents';
+import type { ChatStreamEvent, ChatStreamPayloads, PlanEntry, ToolCallStreamPayload, UserInputQuestion, UserInputAnswer } from './chatStreamEvents';
 import { extractKiroSteering, mergeSteeringReports, type SteeringReport } from './kiroSteering';
+import {
+  applySubagentActivity,
+  finalizeSubagentRoster,
+  mergeSubagentRoster,
+  type SubagentInfo,
+} from './subagents';
 import type { ThreadMessageSource } from './threadMessage';
 
 export interface DurableToolCall {
@@ -11,24 +17,63 @@ export interface DurableToolCall {
   inputJson?: string;
   output?: string;
   textOffset?: number;
-  /** Wall-clock ms when the tool_call event was first projected. Optional:
+  /** Wall-clock ms when the backend first observed the tool_call event. Optional:
    *  turns persisted before this field exists simply omit durations. */
   startedAt?: number;
   /** Wall-clock ms when the tool first reached a terminal status. */
   endedAt?: number;
 }
 
+export interface DurableUserInput {
+  interactionId: string;
+  requestId: number;
+  questions: UserInputQuestion[];
+  answers: UserInputAnswer[];
+  status: 'pending' | 'answered' | 'skipped' | 'interrupted';
+}
+
+/** Stable fallback for older envelopes with no interactionId. */
+export function userInputInteractionId(turnId: string, requestId: number): string {
+  return `${turnId}:input:${requestId}`;
+}
+
+export function normalizeUserInputQuestions(interactionId: string, questions: UserInputQuestion[]): UserInputQuestion[] {
+  return questions.map((question, index) => ({ id: question.id ?? `${interactionId}:q:${index}`, question: question.question,
+    ...(question.header !== undefined ? { header: question.header } : {}), multiSelect: question.multiSelect,
+    options: question.options.map(option => ({ label: option.label, ...(option.description !== undefined ? { description: option.description } : {}) })) }));
+}
+
+export function normalizeUserInputAnswers(questions: UserInputQuestion[], answers: UserInputAnswer[]): UserInputAnswer[] {
+  return answers.map((answer, index) => ({ ...answer, id: answer.id ?? (questions[index]?.question === answer.question ? questions[index]?.id : questions.find(q => q.question === answer.question)?.id) }));
+}
+
+/** Text-block timing, stamped from the backend's `observedAt` like tool
+ *  startedAt/endedAt: `startedAt` when the block's first frame is projected,
+ *  `endedAt` when a later block (or the turn's end) closes it. Optional:
+ *  blocks persisted before these fields existed simply omit them. */
+interface DurableTextBlockTiming {
+  startedAt?: number;
+  endedAt?: number;
+}
+
 export type DurableAssistantBlock =
-  | { id: string; kind: 'answer'; rawText: string; streaming?: boolean }
-  | { id: string; kind: 'thinking'; rawText: string; streaming?: boolean }
+  | ({ id: string; kind: 'answer'; rawText: string; streaming?: boolean } & DurableTextBlockTiming)
+  | ({ id: string; kind: 'thinking'; rawText: string; streaming?: boolean } & DurableTextBlockTiming)
   | { id: string; kind: 'tool'; toolCallId: string; section: 'answer' | 'thinking'; rawOffset: number }
+  | { id: string; kind: 'user-input'; requestId: number; interaction?: DurableUserInput; section: 'answer'; rawOffset: number }
   | { id: string; kind: 'image'; workspaceId: string; path: string; caption?: string; mimeType: string; size: number };
 
 export interface DurableMessageMetadata {
+  /** Server-generated scheduled input; excluded from ordinary conversation increments. */
+  scheduledJobId?: string;
+  usageSummary?: ChatStreamPayloads['usage_summary'];
+  warnings?: ChatStreamPayloads['warning'][];
   /** The runtime accepted this user message as input to an existing turn. */
   steered?: boolean;
   steeringReports?: SteeringReport[];
   quotedText?: string;
+  /** Opaque JSON provenance for the quote, interpreted by the rendering client. */
+  quoteSource?: unknown;
   attachments?: Array<{ name: string; absPath: string }>;
   comments?: Array<Record<string, unknown>>;
   /** This user message was relayed, with user approval, from another thread. */
@@ -42,6 +87,8 @@ export interface DurableMessage {
   blocks: DurableAssistantBlock[];
   toolCalls: DurableToolCall[];
   plan?: PlanEntry[];
+  /** Subagents this assistant turn delegated to (persisted in metadata). */
+  subagents?: SubagentInfo[];
   metadata?: DurableMessageMetadata;
   createdAt: number;
 }
@@ -294,7 +341,7 @@ function currentSection(blocks: DurableAssistantBlock[]): 'answer' | 'thinking' 
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     const block = blocks[index];
     if (block.kind === 'answer' || block.kind === 'thinking') return block.kind;
-    if (block.kind === 'tool') return block.section;
+    if (block.kind === 'tool' || block.kind === 'user-input') return block.section;
   }
   return 'answer';
 }
@@ -314,11 +361,15 @@ function currentRunLength(blocks: DurableAssistantBlock[], section: 'answer' | '
   return total;
 }
 
-function closeTrailingTextBlock(blocks: DurableAssistantBlock[]): void {
+function closeTrailingTextBlock(blocks: DurableAssistantBlock[], observedAt?: number): void {
   const index = blocks.length - 1;
   const last = blocks[index];
   if ((last?.kind === 'answer' || last?.kind === 'thinking') && last.streaming !== false) {
-    blocks[index] = { ...last, streaming: false };
+    blocks[index] = {
+      ...last,
+      streaming: false,
+      ...(last.endedAt === undefined && observedAt !== undefined ? { endedAt: observedAt } : {}),
+    };
   }
 }
 
@@ -326,22 +377,29 @@ function appendText(
   snapshot: DurableTurnSnapshot,
   kind: 'answer' | 'thinking',
   text: string,
+  observedAt?: number,
 ): DurableAssistantBlock[] {
   const blocks = snapshot.assistantMessage.blocks.slice();
   const last = blocks[blocks.length - 1];
   if (last?.kind === kind) {
     blocks[blocks.length - 1] = { ...last, rawText: last.rawText + text, streaming: true };
   } else {
-    closeTrailingTextBlock(blocks);
-    blocks.push({ id: nextBlockId(snapshot, blocks), kind, rawText: text, streaming: true });
+    closeTrailingTextBlock(blocks, observedAt);
+    blocks.push({
+      id: nextBlockId(snapshot, blocks),
+      kind,
+      rawText: text,
+      streaming: true,
+      ...(observedAt !== undefined ? { startedAt: observedAt } : {}),
+    });
   }
   return blocks;
 }
 
-function mergeTool(previous: DurableToolCall | undefined, update: ToolCallStreamPayload): DurableToolCall {
+function mergeTool(previous: DurableToolCall | undefined, update: ToolCallStreamPayload, observedAt?: number): DurableToolCall {
   const merged: DurableToolCall = previous
     ? { ...previous }
-    : { id: update.toolCallId, title: '', status: '', startedAt: Date.now() };
+    : { id: update.toolCallId, title: '', status: '', ...(observedAt !== undefined ? { startedAt: observedAt } : {}) };
   if (update.title) merged.title = update.title;
   if (update.status) merged.status = update.status;
   if (update.kind) merged.kind = update.kind;
@@ -354,16 +412,16 @@ function mergeTool(previous: DurableToolCall | undefined, update: ToolCallStream
     if (isActiveToolStatus(merged.status)) merged.status = 'completed';
   }
   // Stamp completion once, on the first transition into a terminal status.
-  if (!merged.endedAt && !isActiveToolStatus(merged.status)) merged.endedAt = Date.now();
+  if (merged.endedAt === undefined && observedAt !== undefined && !isActiveToolStatus(merged.status)) merged.endedAt = observedAt;
   return merged;
 }
 
-function applyTool(snapshot: DurableTurnSnapshot, update: ToolCallStreamPayload): DurableMessage {
+function applyTool(snapshot: DurableTurnSnapshot, update: ToolCallStreamPayload, observedAt?: number): DurableMessage {
   const message = snapshot.assistantMessage;
   const existingIndex = message.toolCalls.findIndex((tool) => tool.id === update.toolCallId);
   const toolCalls = message.toolCalls.slice();
   const existing = existingIndex >= 0 ? toolCalls[existingIndex] : undefined;
-  const merged = mergeTool(existing, update);
+  const merged = mergeTool(existing, update, observedAt);
   const blocks = message.blocks.slice();
   if (existingIndex >= 0) {
     toolCalls[existingIndex] = merged;
@@ -371,7 +429,7 @@ function applyTool(snapshot: DurableTurnSnapshot, update: ToolCallStreamPayload)
     const section = currentSection(blocks);
     merged.textOffset = currentRunLength(blocks, section);
     toolCalls.push(merged);
-    closeTrailingTextBlock(blocks);
+    closeTrailingTextBlock(blocks, observedAt);
     blocks.push({
       id: nextBlockId(snapshot, blocks),
       kind: 'tool',
@@ -383,24 +441,35 @@ function applyTool(snapshot: DurableTurnSnapshot, update: ToolCallStreamPayload)
   return { ...message, toolCalls, blocks };
 }
 
-function finalizeMessage(message: DurableMessage, interrupted = false): DurableMessage {
+function finalizeMessage(message: DurableMessage, interrupted = false, completedAt?: number): DurableMessage {
   // A turn that ended via cancel/error must not stamp its still-active tools
   // as 'completed' — they may never have executed (a tool_call is emitted
   // when the tool_use block appears, before execution). 'interrupted' is a
   // terminal, non-success status so consumers (e.g. diff receipts) can tell
   // "finished" apart from "was cut off mid-flight".
   const finalStatus = interrupted ? 'interrupted' : 'completed';
+  const subagents = finalizeSubagentRoster(message.subagents, interrupted);
   return {
     ...message,
     blocks: message.blocks.map((block) =>
       block.kind === 'answer' || block.kind === 'thinking'
-        ? { ...block, streaming: false }
-        : block,
+        ? {
+            ...block,
+            streaming: false,
+            // Only the still-open block ends with the turn; blocks closed
+            // earlier keep (or, for legacy frames, lack) their own endedAt.
+            ...(block.streaming !== false && block.endedAt === undefined && completedAt !== undefined
+              ? { endedAt: completedAt } : {}),
+          }
+        : block.kind === 'user-input' && block.interaction?.status === 'pending'
+          ? { ...block, interaction: { ...block.interaction, status: 'interrupted' as const } }
+          : block,
     ),
     toolCalls: message.toolCalls.map((tool) => {
       const active = isActiveToolStatus(tool.status);
-      return active ? { ...tool, status: finalStatus, endedAt: tool.endedAt ?? Date.now() } : tool;
+      return active ? { ...tool, status: finalStatus, ...(tool.endedAt !== undefined || completedAt !== undefined ? { endedAt: tool.endedAt ?? completedAt } : {}) } : tool;
     }),
+    ...(subagents ? { subagents } : {}),
   };
 }
 
@@ -445,7 +514,7 @@ export function applyTurnEvent(
       break;
     }
     case 'chunk': {
-      const blocks = appendText(next, 'answer', streamEvent.data.text);
+      const blocks = appendText(next, 'answer', streamEvent.data.text, streamEvent.data.observedAt);
       next = {
         ...next,
         assistantMessage: { ...next.assistantMessage, blocks },
@@ -453,7 +522,7 @@ export function applyTurnEvent(
       break;
     }
     case 'thought': {
-      const blocks = appendText(next, 'thinking', streamEvent.data.text);
+      const blocks = appendText(next, 'thinking', streamEvent.data.text, streamEvent.data.observedAt);
       next = { ...next, assistantMessage: { ...next.assistantMessage, blocks } };
       break;
     }
@@ -473,11 +542,58 @@ export function applyTurnEvent(
       break;
     case 'tool_call':
     case 'tool_call_update':
-      next = { ...next, assistantMessage: applyTool(next, streamEvent.data) };
+      next = { ...next, assistantMessage: applyTool(next, streamEvent.data, streamEvent.data.observedAt) };
       break;
+    case 'user_input_request': {
+      const data = streamEvent.data;
+      const interactionId = data.interactionId ?? userInputInteractionId(next.turnId, data.requestId);
+      if (next.assistantMessage.blocks.some(block => block.kind === 'user-input' && block.interaction?.interactionId === interactionId)) break;
+      const blocks = next.assistantMessage.blocks.slice();
+      const rawOffset = currentRunLength(blocks, 'answer');
+      closeTrailingTextBlock(blocks, data.observedAt);
+      blocks.push({ id: nextBlockId(next, blocks), kind: 'user-input', requestId: data.requestId, section: 'answer', rawOffset,
+        interaction: { interactionId, requestId: data.requestId, questions: normalizeUserInputQuestions(interactionId, data.questions), answers: [], status: 'pending' } });
+      next = { ...next, assistantMessage: { ...next.assistantMessage, blocks } };
+      break;
+    }
+    case 'user_input_resolved': {
+      const data = streamEvent.data;
+      const interactionId = data.interactionId ?? userInputInteractionId(next.turnId, data.requestId);
+      const blocks = next.assistantMessage.blocks.map(block => {
+        if (block.kind !== 'user-input' || block.interaction?.interactionId !== interactionId) return block;
+        // A duplicate empty confirmation must not erase a submitted answer.
+        if (block.interaction.status === 'answered' && !data.answers.length) return block;
+        return { ...block, interaction: { ...block.interaction,
+          answers: normalizeUserInputAnswers(block.interaction.questions, data.answers),
+          status: data.outcome ?? (data.answers.length ? 'answered' as const : 'skipped' as const) } };
+      });
+      next = { ...next, assistantMessage: { ...next.assistantMessage, blocks } };
+      break;
+    }
+    case 'usage_summary':
+      next = { ...next, assistantMessage: { ...next.assistantMessage, metadata: { ...next.assistantMessage.metadata, usageSummary: streamEvent.data } } };
+      break;
+    case 'warning':
+      next = { ...next, assistantMessage: { ...next.assistantMessage, metadata: { ...next.assistantMessage.metadata, warnings: [...(next.assistantMessage.metadata?.warnings ?? []), streamEvent.data] } } };
+      break;
+    case 'subagent_list_update': {
+      if (streamEvent.data.subagents.length === 0) break;
+      const message = next.assistantMessage;
+      next = { ...next, assistantMessage: {
+        ...message,
+        subagents: mergeSubagentRoster(message.subagents, streamEvent.data.subagents),
+      } };
+      break;
+    }
+    case 'subagent_tool_activity': {
+      const message = next.assistantMessage;
+      const subagents = applySubagentActivity(message.subagents, streamEvent.data);
+      if (subagents && subagents !== message.subagents) next = { ...next, assistantMessage: { ...message, subagents } };
+      break;
+    }
     case 'image': {
       const blocks = next.assistantMessage.blocks.slice();
-      closeTrailingTextBlock(blocks);
+      closeTrailingTextBlock(blocks, streamEvent.data.observedAt);
       blocks.push({
         id: nextBlockId(next, blocks),
         kind: 'image',
@@ -519,7 +635,7 @@ export function applyTurnEvent(
         : stopReason === 'error'
           ? 'error'
           : 'completed';
-      const assistantMessage = finalizeMessage(next.assistantMessage, status !== 'completed');
+      const assistantMessage = finalizeMessage(next.assistantMessage, status !== 'completed', streamEvent.data.completedAt ?? streamEvent.data.observedAt);
       const rawAnswer = rawAnswerContent(assistantMessage.blocks);
       next = {
         ...next,
@@ -532,7 +648,7 @@ export function applyTurnEvent(
       break;
     }
     case 'error': {
-      const assistantMessage = finalizeMessage(next.assistantMessage, true);
+      const assistantMessage = finalizeMessage(next.assistantMessage, true, streamEvent.data.completedAt ?? streamEvent.data.observedAt);
       const rawAnswer = rawAnswerContent(assistantMessage.blocks);
       next = {
         ...next,

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
+import { openSettings } from '../fixtures/shell';
 
 const day = 86_400_000;
 const previewTitle = 'Compare DeepSeek models';
@@ -79,12 +80,8 @@ async function bootTrash(page: Page, palette = 'bone') {
   await page.addInitScript(() => localStorage.setItem('michi:migrated', '1'));
   await page.goto('/');
   await expect(page.locator('.t-sidebar-toggle')).toBeVisible();
-  const sidebar = page.locator('.terminal-sidebar');
-  if (!await sidebar.isVisible()) await page.getByRole('button', { name: 'Open sidebar', exact: true }).click();
-  await sidebar.getByText('Settings', { exact: true }).click();
-  const history = page.getByRole('group', { name: 'History', exact: true });
-  await expect(history.getByRole('button', { name: 'Trash 5', exact: true })).toBeVisible();
-  await history.getByRole('button', { name: 'Trash 5', exact: true }).click();
+  const settings = await openSettings(page, 'Data & backup');
+  await settings.getByRole('button', { name: 'Trash', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Trash', exact: true, level: 1 })).toBeVisible();
   await expect(page.locator('.drawer-shell-panel')).toHaveCount(0);
   await expect(page.locator('.trash-row')).toHaveCount(5);

@@ -1,6 +1,5 @@
-import type { RuntimeReasoning } from './agentRuns';
-
-export const REASONING_LEVELS: readonly RuntimeReasoning[] = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+export const REASONING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type RuntimeReasoning = typeof REASONING_LEVELS[number];
 
 export interface ModelReasoningCapabilities {
   supportsReasoning?: boolean;

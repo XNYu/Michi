@@ -5,6 +5,7 @@ import { RuntimeRunExecutor } from '../src/agents/runs/runtimeRunExecutor';
 import { RuntimeRunAdapterRegistry } from '../src/agents/runs/runtimeRunAdapterRegistry';
 import type { AgentRunSpec } from '../src/agents/runs/ports';
 import type { AgentRuntime, AgentSession } from '../src/agents/types';
+import { runOwner } from './helpers/owners';
 
 for (const mode of ['queued', 'immediate'] as const) {
     test(`Kiro Run ${mode} input respects the native active-turn contract and checkpoints engine`, async () => {
@@ -16,7 +17,7 @@ for (const mode of ['queued', 'immediate'] as const) {
         let cancels = 0; let closed = 0;
         const session: AgentSession = {
             id: 'attempt', runtimeId: 'kiro', nativeSessionId: 'native',
-            owner: { kind: 'agent_run', runId: 'run', attemptId: 'attempt' },
+            owner: runOwner('run', 'attempt'),
             getHistory: () => [], getPendingAssistant: () => undefined,
             getNativeResumeToken: () => ({ engine: 'v3', sessionId: 'native' }),
             async *send(text) {

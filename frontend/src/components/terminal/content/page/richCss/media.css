@@ -1,0 +1,18 @@
+/* Michi rules for the Desk-drawn media blocks (deskRenderers.tsx): excerpts of agent-desk CSS they read, and fits to Michi's page. Theme tokens only. */
+
+/* Desk's sheet keeps white and black literals for marks laid over a picture; Michi's page takes its palette tokens instead. */
+.michi-mantine .desk-compare-line { background: var(--term-bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--term-fg) 40%, transparent); }
+.michi-mantine .desk-compare-tag { background: color-mix(in srgb, var(--term-bg) 78%, transparent); color: var(--term-fg); }
+.michi-mantine .desk-video-frame, .michi-mantine .desk-video { background: var(--term-alt2); }
+
+/* A name's initials on the page's own tones, not Mantine's palette of hues (the avatar sets both variables inline). */
+.michi-mantine .desk-person-card .mantine-Avatar-root { --avatar-bg: var(--term-alt2) !important; --avatar-color: var(--term-fg) !important; }
+
+
+/* Embed: the real domain leads the bar; the page loads only after a click. */
+.michi-mantine .desk-embed-domain { color: var(--term-fg); font-weight: 600; flex: none; }
+.michi-mantine .desk-embed-title { color: var(--desk-meta); font-weight: 400; }
+.michi-mantine .desk-embed-placeholder { display: flex; align-items: center; justify-content: center; max-height: 60vh; background: var(--term-alt); }
+.michi-mantine .desk-embed-placeholder button { padding: 6px 14px; border: 1px solid var(--term-line-s); border-radius: var(--ui-radius); background: var(--term-surface); color: var(--term-fg); font: inherit; font-size: var(--fs-lg); cursor: pointer; }
+.michi-mantine .desk-embed-placeholder button:hover { background: var(--desk-hover); }
+.michi-mantine .desk-embed-placeholder button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

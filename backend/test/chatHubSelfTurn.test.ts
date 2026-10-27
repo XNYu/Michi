@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { ChatHub } from '../src/agents/chatHub';
 import type { AgentSession } from '../src/agents/types';
 import type { NormalizedEvent } from '../src/services/chatEvents';
+import { log } from '../src/services/logger';
+import { ReportedRuntimeError } from 'michi-runtime/internal/contract/errors';
 import type { ChatStreamEvent } from 'michi-shared';
 import type { DurableTurnSnapshot } from 'michi-shared';
+import { chatOwner, runOwner } from './helpers/owners';
 
 function asyncIteratorFrom(events: NormalizedEvent[]): AsyncIterableIterator<NormalizedEvent> {
   let i = 0;
@@ -70,7 +73,26 @@ describe('ChatHub.startTurn', () => {
 
     assert.deepEqual(capturedInput?.attachments, [{ name: 'screen.png', absPath: '/tmp/screen.png' }]);
     assert.ok(capturedInput?.assistantMessageId?.startsWith('a-attachment-node-'));
+    assert.equal(capturedInput?.humanOrigin, undefined, 'a turn is not human unless the user route says so');
     assert.ok(capturedInput?.userMessageId);
+  });
+
+  it('marks only composer turns as human-origin', async () => {
+    const hub = hubWithPersistence();
+    const inputs: Array<Parameters<AgentSession['send']>[1]> = [];
+    const session: AgentSession = {
+      ...sessionFrom([]),
+      send: (_text, input) => {
+        inputs.push(input);
+        return asyncIteratorFrom([{ kind: 'turn_end', stopReason: 'end_turn' }]);
+      },
+    };
+    const human = await hub.startTurn({ chatId: 'origin-chat', nodeId: 'origin-node', text: 'ultracode: audit', session, humanOrigin: true });
+    await human.done;
+    // send_to_thread deliveries reuse startTurn without the flag.
+    const relayed = await hub.startTurn({ chatId: 'origin-chat', nodeId: 'origin-node', text: 'ultracode: from another agent', session });
+    await relayed.done;
+    assert.deepEqual(inputs.map((input) => input?.humanOrigin), [true, undefined]);
   });
 
   it('routes foreground turns only to direct subscribers and self turns only to background subscribers', async () => {
@@ -174,7 +196,7 @@ describe('ChatHub.startTurn', () => {
       text: 'Update the overview',
       session: sessionFrom([
         { kind: 'chunk', text: 'Visible answer body.' },
-        { kind: 'branch_overview', overview: 'Structured Tool overview.' },
+        { kind: 'host_event', type: 'branch_overview', payload: { overview: 'Structured Tool overview.' } },
         { kind: 'turn_end', stopReason: 'end_turn' },
       ]),
     });
@@ -187,6 +209,115 @@ describe('ChatHub.startTurn', () => {
       received.findIndex((ev) => ev.event === 'done') > received.findIndex((ev) => ev.event === 'branch_overview'),
       'structured overview must arrive before done',
     );
+  });
+
+  it('does not publish the sentinel overview again after the runtime reported one', async () => {
+    const hub = hubWithPersistence();
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('reported-overview-chat', { send: (ev) => received.push(ev), close: () => {} });
+
+    const { done } = await hub.startTurn({
+      chatId: 'reported-overview-chat',
+      nodeId: 'reported-overview-node',
+      text: 'Update the overview',
+      session: sessionFrom([
+        { kind: 'chunk', text: 'Answer body.\n\n[BRANCH-OVERVIEW: Sentinel overview.]' },
+        { kind: 'host_event', type: 'branch_overview', payload: { overview: 'Tool overview.' } },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await done;
+
+    assert.deepEqual(
+      received.filter((ev) => ev.event === 'branch_overview').map((ev) => (ev.data as any).overview),
+      ['Tool overview.'],
+    );
+  });
+
+  it('falls back to the sentinel overview when the reported one is empty or cannot be decoded', async (t) => {
+    t.mock.method(log, 'warn', () => {});
+    const hub = hubWithPersistence();
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('fallback-overview-chat', { send: (ev) => received.push(ev), close: () => {} });
+
+    const { done } = await hub.startTurn({
+      chatId: 'fallback-overview-chat',
+      nodeId: 'fallback-overview-node',
+      text: 'Update the overview',
+      session: sessionFrom([
+        { kind: 'chunk', text: 'Answer body.\n\n[BRANCH-OVERVIEW: Sentinel overview.]' },
+        { kind: 'host_event', type: 'branch_overview', payload: { overview: 7 } },
+        { kind: 'host_event', type: 'branch_overview', payload: { overview: '  ' } },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await done;
+
+    // The malformed one is dropped; the empty one still reaches the wire, as before.
+    assert.deepEqual(
+      received.filter((ev) => ev.event === 'branch_overview').map((ev) => (ev.data as any).overview),
+      ['  ', 'Sentinel overview.'],
+    );
+  });
+
+  it('puts a runtime_error code on the wire error but never its retryable', async () => {
+    const wireError = async (chatId: string, session: AgentSession) => {
+      const hub = hubWithPersistence();
+      const received: ChatStreamEvent[] = [];
+      hub.subscribe(chatId, { send: (ev) => received.push(ev), close: () => {} });
+      const { done } = await hub.startTurn({ chatId, nodeId: `${chatId}-node`, text: 'hello', session });
+      await done;
+      const error = received.find((ev) => ev.event === 'error');
+      assert.ok(error?.event === 'error');
+      return error.data;
+    };
+
+    const coded = await wireError('coded-error-chat', sessionFrom([
+      { kind: 'runtime_error', error: 'Session expired', code: 'auth', retryable: false },
+    ]));
+    assert.equal(coded.message, 'Session expired');
+    assert.equal(coded.code, 'auth');
+    assert.equal('recoverable' in coded, false);
+
+    const uncoded = await wireError('uncoded-error-chat', sessionFrom([
+      { kind: 'runtime_error', error: 'Model failed', retryable: true },
+    ]));
+    assert.equal(uncoded.message, 'Model failed');
+    assert.equal('code' in uncoded, false);
+    assert.equal('recoverable' in uncoded, false);
+
+    // KiroSession's classification of a thrown error comes first.
+    const tagged = await wireError('tagged-error-chat', {
+      ...sessionFrom([]),
+      send: async function* () {
+        throw Object.assign(new ReportedRuntimeError({ error: 'Stream dropped', code: 'generic' }), { acpErrorKind: 'connection' });
+      },
+    });
+    assert.equal(tagged.code, 'connection');
+
+    // Only the error kinds the UI shows a banner for: a runtime's own code
+    // must not set a wire code the client acts on.
+    for (const code of ['turn_active', 'turn_persistence_failed', 'ENOTFOUND']) {
+      const ignored = await wireError(`ignored-${code}-chat`, sessionFrom([
+        { kind: 'runtime_error', error: 'Model failed', code },
+      ]));
+      assert.equal('code' in ignored, false, code);
+    }
+  });
+
+  it('puts a runtime_error code on the wire error of a self turn', async () => {
+    const hub = hubWithPersistence();
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('self-coded-error', { send: (ev) => received.push(ev), close: () => {} });
+    hub.startSelfTurn({
+      chatId: 'self-coded-error',
+      nodeId: 'self-coded-error-node',
+      events: asyncIteratorFrom([{ kind: 'runtime_error', error: 'Session expired', code: 'auth' }]),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const error = received.find((ev) => ev.event === 'error');
+    assert.ok(error?.event === 'error');
+    assert.equal(error.data.code, 'auth');
   });
 
   it('commits the canonical turn before broadcasting persisted done', async () => {
@@ -379,6 +510,89 @@ describe('ChatHub.startTurn', () => {
 });
 
 describe('ChatHub.startSelfTurn', () => {
+  it('interrupts the owning runtime when a spontaneous self-turn is cancelled', async () => {
+    const hub = hubWithPersistence();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let cancellations = 0;
+    let nativeCancelled = false;
+    let sideEffect = false;
+    const session: AgentSession = {
+      ...sessionFrom([]), id: 'idle-chat', owner: chatOwner('idle-node'),
+      cancel: () => { cancellations++; nativeCancelled = true; release(); },
+    };
+    hub.startSelfTurn({
+      chatId: 'idle-chat', nodeId: 'idle-node', session,
+      events: (async function* (): AsyncIterableIterator<NormalizedEvent> {
+        yield { kind: 'chunk', text: 'background work' };
+        await blocked;
+        if (!nativeCancelled) sideEffect = true;
+        yield { kind: 'turn_end', stopReason: nativeCancelled ? 'cancelled' : 'end_turn' };
+      })(),
+    });
+    const done = (hub as any).selfTurnQueues.get('idle-chat') as Promise<void>;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      assert.equal(hub.isOwnerTurnActive('idle-chat'), true);
+      assert.equal(hub.cancel('idle-chat'), true);
+      assert.equal(cancellations, 1);
+      await done;
+      assert.equal(sideEffect, false);
+      assert.equal(hub.isOwnerTurnActive('idle-chat'), false);
+      assert.equal((hub as any).turns.get('idle-chat').snapshot.status, 'cancelled');
+    } finally {
+      release();
+      await done;
+    }
+  });
+
+  it('rejects mismatched spontaneous runtime owners before durable begin and drains their iterator', async () => {
+    const mismatches: Array<Pick<AgentSession, 'id' | 'owner'>> = [
+      { id: 'different-chat', owner: chatOwner('idle-node') },
+      { id: 'idle-chat', owner: chatOwner('different-node') },
+      { id: 'idle-chat', owner: runOwner('run', 'idle-chat') },
+    ];
+    for (const mismatch of mismatches) {
+      let begins = 0;
+      let drained = false;
+      let cancellations = 0;
+      const hub = hubWithPersistence({ begin: () => { begins++; } });
+      hub.startSelfTurn({
+        chatId: 'idle-chat', nodeId: 'idle-node',
+        session: { ...sessionFrom([]), ...mismatch, cancel: () => { cancellations++; } },
+        events: (async function* (): AsyncIterableIterator<NormalizedEvent> {
+          try { yield { kind: 'turn_end', stopReason: 'end_turn' }; } finally { drained = true; }
+        })(),
+      });
+      await (hub as any).selfTurnQueues.get('idle-chat');
+      assert.equal(begins, 0);
+      assert.equal(drained, true);
+      assert.equal(hub.cancel('idle-chat'), false);
+      assert.equal(cancellations, 0);
+    }
+  });
+
+  it('does not remove a replacement runtime when a self-turn finishes', async () => {
+    const hub = hubWithPersistence();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const session: AgentSession = { ...sessionFrom([]), id: 'idle-chat', owner: chatOwner('idle-node') };
+    const replacement: AgentSession = { ...session, nativeSessionId: 'replacement' };
+    hub.startSelfTurn({
+      chatId: 'idle-chat', nodeId: 'idle-node', session,
+      events: (async function* (): AsyncIterableIterator<NormalizedEvent> {
+        await blocked;
+        yield { kind: 'turn_end', stopReason: 'end_turn' };
+      })(),
+    });
+    const done = (hub as any).selfTurnQueues.get('idle-chat') as Promise<void>;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    (hub as any).activeSessions.set('idle-chat', replacement);
+    release();
+    await done;
+    assert.equal((hub as any).activeSessions.get('idle-chat'), replacement);
+  });
+
   it('reserves the chat synchronously so a foreground turn cannot overtake a claimed self-turn', async () => {
     const hub = hubWithPersistence();
     hub.startSelfTurn({
@@ -453,6 +667,29 @@ describe('ChatHub.startSelfTurn', () => {
       close: () => {},
     });
     assert(replayed.some((ev) => ev.event === 'branch_overview'), 'expected branch_overview replay');
+  });
+
+  it('does not publish the sentinel overview again after the runtime reported one in a self turn', async () => {
+    const hub = hubWithPersistence();
+    const received: ChatStreamEvent[] = [];
+    hub.subscribe('self-reported-overview', { send: (ev) => received.push(ev), close: () => {} });
+
+    hub.startSelfTurn({
+      chatId: 'self-reported-overview',
+      nodeId: 'self-reported-overview-node',
+      events: asyncIteratorFrom([
+        { kind: 'chunk', text: 'Answer body.\n\n[BRANCH-OVERVIEW: Sentinel overview.]' },
+        { kind: 'host_event', type: 'branch_overview', payload: { overview: 'Tool overview.' } },
+        { kind: 'turn_end', stopReason: 'end_turn' },
+      ]),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.deepEqual(
+      received.filter((ev) => ev.event === 'branch_overview').map((ev) => (ev.data as any).overview),
+      ['Tool overview.'],
+    );
+    assert.equal(received.at(-1)?.event, 'done');
   });
 
   it('broadcasts turn_start with selfInitiated=true to subscribers', async () => {
@@ -717,6 +954,61 @@ describe('ChatHub.startRequestedSelfTurn with a visible message (send_to_thread)
     });
   }
 
+  it('interrupts the requested turn runtime instead of only marking its durable log cancelled', async () => {
+    const hub = requestedHub([]);
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let cancellations = 0;
+    let nativeCancelled = false;
+    let sideEffect = false;
+    const session: AgentSession = {
+      ...sessionFrom([]),
+      send: () => (async function* (): AsyncIterableIterator<NormalizedEvent> {
+        yield { kind: 'chunk', text: 'working' };
+        await blocked;
+        if (!nativeCancelled) sideEffect = true;
+        yield { kind: 'turn_end', stopReason: nativeCancelled ? 'cancelled' : 'end_turn' };
+      })(),
+      cancel: () => { cancellations++; nativeCancelled = true; release(); },
+    };
+    const started = await hub.startRequestedSelfTurn({
+      chatId: 'scheduled-chat', nodeId: 'scheduled-chat', turnId: 'scheduled-turn',
+      text: 'work', displayText: 'work', session,
+    });
+    try {
+      assert.equal(hub.cancel('scheduled-chat', started.turnId), true);
+      assert.equal(cancellations, 1);
+      await started.done;
+      assert.equal(sideEffect, false, 'the cancelled native work must not continue writing');
+      assert.equal((hub as any).turns.get('scheduled-chat').snapshot.status, 'cancelled');
+      assert.equal((hub as any).activeSessions.has('scheduled-chat'), false);
+    } finally {
+      release();
+      await started.done;
+    }
+  });
+
+  it('does not dispatch a requested turn cancelled while its provisional rows commit', async () => {
+    let releaseBegin!: () => void;
+    const blocked = new Promise<void>((resolve) => { releaseBegin = resolve; });
+    const hub = new ChatHub({
+      retentionMs: 100, workspaceIdForNode: () => 'ws-test', lookupDurableTurn: () => null,
+      persistence: { begin: () => blocked, checkpoint: () => {}, finalize: () => {} },
+    });
+    let sends = 0;
+    const session = { ...sessionFrom([]), send: () => { sends++; return asyncIteratorFrom([]); } };
+    const starting = hub.startRequestedSelfTurn({
+      chatId: 'early-chat', nodeId: 'early-chat', turnId: 'early-turn', text: 'work', session,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(hub.cancel('early-chat', 'early-turn'), false);
+    releaseBegin();
+    const started = await starting;
+    await started.done;
+    assert.equal(sends, 0);
+    assert.equal((hub as any).turns.get('early-chat').snapshot.status, 'cancelled');
+  });
+
   it('persists the user message and announces it on turn_start', async () => {
     const begins: DurableTurnSnapshot[] = [];
     const hub = requestedHub(begins);
@@ -776,7 +1068,10 @@ describe('ChatHub.startRequestedSelfTurn with a visible message (send_to_thread)
     assert.ok(turnStart && turnStart.event === 'turn_start');
     assert.equal(turnStart.data.userText, '');
     assert.equal(turnStart.data.userMetadata, undefined);
-    assert.equal(sendInput, undefined);
+    assert.deepEqual(sendInput, {
+      assistantMessageId: 'self-parent-wake-1',
+      turnId: 'wake-1',
+    });
   });
 
   it('reports a requested turn queued behind a foreground turn as pending', async () => {

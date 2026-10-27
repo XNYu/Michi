@@ -8,7 +8,7 @@ import type { AssistantBlock, ChatMessage, ToolCallState } from './chatTypes';
 export type Segment =
   | { kind: 'text'; text: string; revealTailChars?: number }
   | { kind: 'tool-group'; tools: ToolCallState[] }
-  | { kind: 'user-input'; requestId: number };
+  | { kind: 'user-input'; requestId: number; interaction?: Extract<AssistantBlock, { kind: 'user-input' }>['interaction'] };
 
 export type AssistantRunKind = 'answer' | 'thinking' | 'image';
 
@@ -267,7 +267,7 @@ export function weaveRunToolBlocks(
 ): Segment[] {
   type ResolvedItem =
     | { type: 'tool'; tool: ToolCallState; at: number; order: number }
-    | { type: 'user-input'; requestId: number; at: number; order: number };
+    | { type: 'user-input'; requestId: number; interaction?: Extract<AssistantBlock, { kind: 'user-input' }>['interaction']; at: number; order: number };
   const resolved: ResolvedItem[] = [];
   blocks.forEach((block, order) => {
     if (block.kind === 'tool') {
@@ -281,7 +281,7 @@ export function weaveRunToolBlocks(
       if (block.rawOffset > rawTextLen) return;
       const visibleOff = remapOffset(block.rawOffset);
       if (visibleOff > smoothText.length) return;
-      resolved.push({ type: 'user-input', requestId: block.requestId, at: visibleOff, order });
+      resolved.push({ type: 'user-input', requestId: block.requestId, interaction: block.interaction, at: visibleOff, order });
     }
   });
 
@@ -310,7 +310,7 @@ export function weaveRunToolBlocks(
       currentGroup.push(item.tool);
     } else {
       flushGroup();
-      out.push({ kind: 'user-input', requestId: item.requestId });
+      out.push({ kind: 'user-input', requestId: item.requestId, ...(item.interaction ? { interaction: item.interaction } : {}) });
     }
   }
   if (cursor < smoothText.length) pushText(smoothText.slice(cursor), cursor);

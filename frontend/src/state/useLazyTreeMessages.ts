@@ -18,8 +18,8 @@ import { sameTreeMessageNode, TreeMessageRequests } from './treeMessageRequests'
  *   share a provider-scoped request pool, isolated by backend/workspace/tree.
  * - The `messages-loaded` action is NOT in NODE_ACTIVITY_ACTIONS and installs
  *   backend-authored bodies, so it never dirties the node for write-back.
- * - Best-effort: a failed fetch clears the key so a later activation retries;
- *   it never throws into render.
+ * - Failed reads retry with bounded backoff while this tree stays active;
+ *   they never install an empty snapshot or throw into render.
  * - A deferred retry (500ms) runs after the initial effect to catch cases
  *   where hydration's eager-load silently fails but marks the key as done
  *   before the nodes are installed with their true messagesLoaded state.
@@ -72,6 +72,8 @@ export function useLazyTreeMessages({
     const loadedKeys = loadedKeysRef.current;
     let cancelled = false;
     let inFlight = false;
+    let retryTimer: ReturnType<typeof setTimeout>;
+    let retryDelay = 500;
     const controller = new AbortController();
 
     const attemptLoad = () => {
@@ -157,6 +159,11 @@ export function useLazyTreeMessages({
           if (!cancelled) loadedKeys.delete(key);
         } finally {
           inFlight = false;
+          if (!cancelled && !loadedKeys.has(key)) {
+            clearTimeout(retryTimer);
+            retryTimer = setTimeout(attemptLoad, retryDelay);
+            retryDelay = Math.min(retryDelay * 2, 10_000);
+          }
         }
       })();
     };
@@ -168,7 +175,7 @@ export function useLazyTreeMessages({
     // delay. This catches the race where installNodes sets messagesLoaded:true
     // on the ref but the rendered component hasn't received the update yet,
     // or where the eager-load result was silently lost.
-    const retryTimer = setTimeout(() => {
+    retryTimer = setTimeout(() => {
       if (cancelled || inFlight) return;
       const nodes = nodesRef.current;
       const hasPlaceholders = activeProject.chatIds.some((nid) => {

@@ -1,6 +1,8 @@
 import type { Prefs } from './prefs';
 import type { Tree, ChatNodeState, ProjectEdge, Project } from './chatTypes';
 import type { TreeNode } from './tree';
+import { isSystemWorkspace } from './assistant/systemWorkspace';
+import { isVisibleConversationNode } from './conversationVisibility';
 
 
 type ExpandedMaps = Prefs['sidebarExpanded'];
@@ -193,13 +195,14 @@ export function subtreeOpenState(
  * drag-saved order). Projects present in `workspaceOrder` render after,
  * in the user's explicit drag order. Stale IDs in `workspaceOrder`
  * (referencing a deleted/archived/unknown project) are ignored at sort
- * time so the caller doesn't have to prune them eagerly.
+ * time so the caller doesn't have to prune them eagerly. System workspaces
+ * (the assistant's) are never listed.
  */
 export function sortLiveProjects(
   projects: readonly Project[],
   workspaceOrder: readonly string[],
 ): Project[] {
-  const live = projects.filter((p) => !p.deletedAt && !p.archivedAt);
+  const live = projects.filter((p) => !p.deletedAt && !p.archivedAt && !isSystemWorkspace(p));
   const pinned = live
     .filter((p) => !!p.pinnedAt)
     .sort((a, b) => (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0));
@@ -255,12 +258,23 @@ export function isNodeUnread(
   return last > seen;
 }
 
+/**
+ * Unread nodes across every workspace, except those in `hiddenProjectIds`:
+ * workspaces no list shows the user (the assistant's), whose replies would
+ * count where the Activity view has nothing to open.
+ */
 export function selectUnreadTotal(
   nodes: Record<string, ChatNodeState>,
   focusedNodeId: string | null,
+  hiddenProjectIds?: ReadonlySet<string>,
 ): number {
   let count = 0;
-  for (const id in nodes) if (isNodeUnread(nodes[id], focusedNodeId)) count++;
+  for (const id in nodes) {
+    const node = nodes[id];
+    if (hiddenProjectIds?.has(node.projectId)) continue;
+    if (!isVisibleConversationNode(node)) continue;
+    if (isNodeUnread(node, focusedNodeId)) count++;
+  }
   return count;
 }
 
@@ -271,12 +285,12 @@ export function selectUnreadTotal(
  */
 export function selectProjectNodeStatuses(
   chatIds: readonly string[],
-  nodes: Readonly<Record<string, Pick<ChatNodeState, 'status'> | undefined>>,
+  nodes: Readonly<Record<string, Pick<ChatNodeState, 'status' | 'pageId' | 'maintenanceJobId'> | undefined>>,
 ): Record<string, ChatNodeState['status']> {
   const statuses: Record<string, ChatNodeState['status']> = {};
   for (const id of chatIds) {
     const status = nodes[id]?.status;
-    if (status && status !== 'idle') statuses[id] = status;
+    if (status && status !== 'idle' && isVisibleConversationNode(nodes[id])) statuses[id] = status;
   }
   return statuses;
 }
@@ -297,7 +311,7 @@ export function treeHasUnread(
   childrenOf?: ReadonlyMap<string, readonly string[]>,
 ): boolean {
   const root = nodes[tree.rootNodeId];
-  if (root && isNodeUnread(root, focusedNodeId)) return true;
+  if (root && isVisibleConversationNode(root) && isNodeUnread(root, focusedNodeId)) return true;
   // Use the shared map when provided; otherwise build one locally.
   const children: ReadonlyMap<string, readonly string[]> =
     childrenOf ?? buildBranchChildrenOf(edges);
@@ -308,7 +322,7 @@ export function treeHasUnread(
     if (seen.has(id)) continue;
     seen.add(id);
     const node = nodes[id];
-    if (node && isNodeUnread(node, focusedNodeId)) return true;
+    if (node && isVisibleConversationNode(node) && isNodeUnread(node, focusedNodeId)) return true;
     for (const child of children.get(id) ?? []) stack.push(child);
   }
   return false;
@@ -321,7 +335,7 @@ export function workspaceHasUnread(
 ): boolean {
   for (const id of project.chatIds ?? []) {
     const node = nodes[id];
-    if (node && isNodeUnread(node, focusedNodeId)) return true;
+    if (node && isVisibleConversationNode(node) && isNodeUnread(node, focusedNodeId)) return true;
   }
   return false;
 }

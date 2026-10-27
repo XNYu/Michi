@@ -9,8 +9,9 @@ import express from 'express';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { AcpClient } from '../src/services/acpClient';
-import { michiMcpServer } from '../src/agents/kiro/kiroProtocol';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { michiMcpServer } from 'michi-runtime/internal/adapters/kiro/kiroProtocol';
+import { kiroEnvOptions } from '../src/agents/michiKiroOptions';
 import { buildMcpServerForSlot, McpSlotRegistry } from '../src/services/mcpServer';
 import { buildStableSystemPrompt } from '../src/agents/preamble';
 
@@ -35,12 +36,12 @@ async function main() {
         await server.connect(transport); await transport.handleRequest(req, res, req.body);
     });
     const http = app.listen(0, '127.0.0.1'); await once(http, 'listening');
-    const client = new AcpClient(undefined, dir, undefined, 'v3');
+    const client = new AcpClient(undefined, dir, undefined, 'v3', undefined, 'kiro', kiroEnvOptions());
     const watchdog = setTimeout(() => { void client.shutdown(); }, 180_000);
     try {
         client.start(); await client.initialize();
         const baseUrl = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
-        const session = await client.newSession([michiMcpServer('v3', baseUrl, 'docs')], {
+        const session = await client.newSession([michiMcpServer('v3', { type: 'http', url: `${baseUrl}/mcp/docs`, headers: [] })], {
             modelId: process.env.MICHI_DOCS_LIVE_MODEL ?? 'claude-sonnet-4.6',
         });
         for await (const event of client.prompt(session.sessionId, buildStableSystemPrompt() + '\n\n'

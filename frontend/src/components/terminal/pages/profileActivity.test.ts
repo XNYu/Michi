@@ -83,6 +83,29 @@ describe('buildProfileActivity', () => {
     expect(nodesByDate.get('2026-05-26')?.isFuture).toBe(true);
   });
 
+  it('leaves out page helpers and Meta agent maintenance runs, as the conversation lists do', () => {
+    const activity = buildProfileActivity(
+      [project({
+        chatIds: ['root', 'helper', 'maint'],
+        edges: [{ source: 'root', target: 'helper', kind: 'branch' }],
+        trees: [
+          { id: 't1', rootNodeId: 'root', createdAt: atNoon('2026-01-01'), lastActiveAt: atNoon('2026-05-25') },
+          { id: 't2', rootNodeId: 'maint', createdAt: atNoon('2026-01-01'), lastActiveAt: atNoon('2026-05-25') },
+        ],
+      })],
+      {
+        root: node({ nodeId: 'root', messages: [{ id: 'u1', role: 'user', text: 'mine', toolCalls: [], createdAt: atNoon('2026-05-24') }] }),
+        helper: node({ nodeId: 'helper', pageId: 'page-1', parentNodeId: 'root',
+          messages: [{ id: 'u2', role: 'user', text: 'page help', toolCalls: [], createdAt: atNoon('2026-05-24') }] }),
+        maint: node({ nodeId: 'maint', maintenanceJobId: 'job-1',
+          messages: [{ id: 'u3', role: 'user', text: 'maintenance prompt', toolCalls: [], createdAt: atNoon('2026-05-24') }] }),
+      },
+      atNoon('2026-05-25'),
+    );
+    expect([activity.totalNodes, activity.totalThreads, activity.totalBranches, activity.totalMessages]).toEqual([1, 1, 0, 1]);
+    expect(activity.metrics.messages.total).toBe(1);
+  });
+
   it('builds the heatmap from the complete backend snapshot', () => {
     const activity = buildProfileActivityFromSnapshot(
       {

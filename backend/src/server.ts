@@ -1,17 +1,37 @@
+import { jsonConfigErrorResponse } from "./routes/jsonConfigErrorResponse";
 import { persistSessionState } from './services/sessionStatePersistence';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { randomUUID } from 'node:crypto';
 import { tryForkChatSession } from './services/nativeFork';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
+import { setupSpaFallback } from './routes/spaFallback';
+import { setupAssistantRoutes } from './routes/assistant';
+import { setupMetaAgentRoutes } from './routes/metaAgent';
+import { setupMetaAgentOverviewRoutes } from './routes/metaAgentOverview';
+import { setupMetaAgentRunNowRoutes } from './routes/metaAgentRunNow';
 import { log } from './services/logger';
+import { shouldLogAccess } from './services/accessLog';
 import { setupMichiRoutes } from './routes/michi';
 import { setupDigestRoutes } from './routes/digests';
 import { setupPersistenceRoutes } from './routes/persistence';
 import { setupPaneInspectionRoutes } from './routes/paneInspection';
+import { setupConversationUpdatesRoutes } from './routes/conversationUpdates';
+import { setupPagesRoutes } from './routes/pages';
+import { setupSpacesHomeRoutes } from './routes/spacesHome';
+import { chatHubLiveWait, configureHomeLiveWait } from './services/pages/homeSections';
+import { setupHomeCardsRoutes } from './routes/homeCards';
+import { setupSpacesHomeRunRoutes } from './routes/spacesHomeRuns';
+import { configureHomeCardsSink } from './services/metaAgent/homeCardsGenerator';
+import { repositoryHomeCardsSink } from './services/metaAgent/homeCardsSink';
+import { chatHubLiveTurn, configureProgressCardLiveTurns } from './services/pages/progressCards';
+import { setupPageHelperRoutes } from './routes/pageHelpers';
+import { setupPageComponentRoutes } from './routes/pageComponents';
+import { setupPageMaintenanceRoutes } from './routes/pageMaintenance';
 import { configurePaneInspectionEventBus } from './services/paneInspectionSubscribe';
 import { setupBackupRoutes } from './routes/backup';
 import { setupSearchRoutes } from './routes/search';
@@ -20,6 +40,11 @@ import { setupAdminRoutes } from './routes/admin';
 import { setupAgentRoutes } from './routes/agent';
 import { setupCustomAgentRoutes } from './routes/customAgents';
 import { setupAgentRunRoutes } from './routes/agentRuns';
+import { setupWorkflowRunRoutes } from './routes/workflowRuns';
+import { workflowRunHub } from './services/workflowRunHub';
+import { backgroundSubagentRegistry } from './services/backgroundSubagentRegistry';
+import { endNodeBackgroundSubagents, endOrphanedBackgroundSubagents } from './services/backgroundSubagentEndsRepository';
+import { installLocalAccessGuards } from './services/localOrigins';
 import { setupUserKeysRoutes } from './routes/userKeys';
 import { setupUploadsRoutes } from './routes/uploads';
 import { setupFilesRoutes } from './routes/files';
@@ -27,10 +52,13 @@ import { setupArtifactRoutes } from './routes/artifacts';
 import { closeAllArtifactWatchers } from './services/artifactWatcher';
 import { setupDiffRoutes } from './routes/diff';
 import { setupBackendConnectionRoutes } from './routes/backendConnections';
+import { publicBuildInfo, runningBuild } from './services/buildInfo';
 import { ChatManager } from './services/chatManager';
-import { getAuth, getAuthForHost, runAuthMigrations } from './services/auth';
-import { requireAdmin } from './routes/middleware/admin';
+import { getAuthForHost, runAuthMigrations } from './services/auth';
+import { resolveAccessPolicy } from './services/accessPolicy';
+import { createSessionAccessMiddleware } from './routes/middleware/sessionAccess';
 import { McpSlotRegistry, mountMcp } from './services/mcpServer';
+import { JSON_BODY_LIMIT_BYTES } from './services/requestBodyLimit';
 import { initDb, getDb, getDbPath, closeDb, closeAuditDb } from './services/db';
 import { initDbWorker, shutdownDbWorker } from './services/dbWorkerClient';
 import { recordAudit } from './services/audit';
@@ -40,11 +68,13 @@ import { getWarmStatus, markReady, markFailed } from './services/readyState';
 import { getRuntime, listRuntimes, registerRuntime } from './agents/registry';
 import { findRemoteRuntimeDefault } from './services/remoteRuntimeDefault';
 import { getEnabledFactories } from './agents/runtimeFactories';
+import { createMichiRuntimeHost } from './agents/michiRuntimeHost';
+import { agentRunToolsBindingFor } from './agents/agentRunInvocation';
 import { createAgentToolBridge } from './agents/toolBridge';
 import type { ProviderEnvBinding } from './agents/types';
 import * as sessionRegistry from './agents/sessionRegistry';
 import type { AgentRuntime } from './agents/types';
-import type { KiroRuntime } from './agents/kiro/KiroRuntime';
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import { printEnvInfo } from './envDetect';
 import { startupMark } from './services/startupTrace';
 import { configureRuntimeDeps } from './agents/runtimeDeps';
@@ -64,12 +94,21 @@ import { listThreads, searchMessages, readNode, readNodeOverview } from './servi
 import { FileRuntimeCatalogCache } from './agents/runtimeModelCache';
 import { refreshRuntimeModelsInBackground } from './agents/runtimeModelRefresh';
 import { createAgentRunAssembly, type AgentRunAssembly } from './agents/agentRunAssembly';
-import { LOCAL_AGENT_OWNER_ID } from './services/agentOwner';
 import { chatHub } from './agents/chatHub';
+import { watchAssistantGuardChecks } from './services/metaAgent/chatGuardWatcher';
 import { configureThreadMessaging } from './agents/threadMessageTool';
 import { acquireSessionRestoreLock } from './services/nativeResume';
 import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
 import { createStreamTransport } from './services/streamTransport';
+import { setupScheduledJobRoutes } from './routes/scheduledJobs';
+import { createLocalOriginGuard, isLoopbackListenHost } from './routes/middleware/localControl';
+import { ScheduledJobsRepository } from './services/scheduledJobs/repository';
+import { ScheduledJobScheduler } from './services/scheduledJobs/scheduler';
+import { ChatScheduledJobExecutor, isSchedulableWorkspace } from './services/scheduledJobs/chatExecutor';
+import { scheduledJobEvents } from './services/scheduledJobs/events';
+import { createDesktopAppLauncher } from './services/scheduledJobs/appLauncher';
+import { scheduledJobsFeatureEnabled } from './services/scheduledJobs/feature';
+import { configureScheduledJobTools } from './agents/scheduledJobTools';
 import { CustomAgentsFeatureGate } from './services/customAgentsFeatureGate';
 
 // Load backend/.env explicitly. The default `dotenv.config()` looks in
@@ -77,7 +116,17 @@ import { CustomAgentsFeatureGate } from './services/customAgentsFeatureGate';
 // repo root, so `backend/.env` would silently be missed. Resolving from
 // __dirname makes us cwd-independent.
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
-startupMark('backend_process_start', { node: process.version });
+// The desktop app forwards ~/.michi/.env into the backend it forks. The
+// always-on background service is started by launchd instead, so it reads the
+// same file itself (existing environment variables still win).
+const SERVICE_MODE = process.env.MICHI_SERVICE_MODE === '1';
+if (SERVICE_MODE) {
+  dotenv.config({ path: path.join(os.homedir(), '.michi', '.env') });
+}
+// Reject unsupported combinations before opening databases or starting runtimes.
+const accessPolicy = resolveAccessPolicy();
+const REQUIRE_AUTH = accessPolicy.requireAuth;
+startupMark('backend_process_start', { node: process.version, serviceMode: SERVICE_MODE });
 
 function isDirectory(absPath: string | undefined): absPath is string {
   if (!absPath || !path.isAbsolute(absPath)) return false;
@@ -146,6 +195,23 @@ const interruptedTurns = recoverInterruptedTurns(Date.now(), pendingAgentDeliver
 if (interruptedTurns > 0) {
   log.warn('boot', 'recovered interrupted turns', { count: interruptedTurns });
 }
+// Before any agent session starts: the background subagents stored as still
+// waiting for an outcome ran in processes the previous backend owned, which
+// are gone, so their outcome never comes. A failed sweep leaves them as they
+// were (the renderer still reads them as interrupted once the live feed says
+// no process tracks them).
+try {
+  const ended = endOrphanedBackgroundSubagents();
+  if (ended.subagents > 0) log.info('boot', 'recorded background subagents ended by the restart', { ...ended });
+} catch (error) {
+  log.warn('boot', 'background subagent sweep failed', { error: (error as Error).message });
+}
+// A session whose process ends with background subagents still running
+// records how they ended on the node's stored rosters.
+backgroundSubagentRegistry.setEndRecorder((ownerUserId, nodeId, ends) => {
+  const recorded = endNodeBackgroundSubagents(ownerUserId, nodeId, ends);
+  return recorded ? { workspaceId: recorded.workspaceId } : null;
+});
 log.info('boot', 'db initialized');
 
 // Load persisted agent runtime/provider/model config (with env overrides)
@@ -165,8 +231,12 @@ configureRuntimeDeps({
   agentConfig: { getAgentConfig, resolveModel, resolveReasoning },
 });
 
-const mcpRegistry = new McpSlotRegistry();
+const mcpRegistry = new McpSlotRegistry({ mcpPort: Number(port) });
 const runtimeModelCache = new FileRuntimeCatalogCache(getMichiDataDir());
+// One host for every runtime: the adapters read Michi through its ports.
+const runtimeHost = createMichiRuntimeHost();
+// Before the first runtime registers: the manager reads session ownership from this host.
+sessionRegistry.configureRuntimeManager(runtimeHost);
 
 // Register the enabled runtimes (filtered by MICHI_ENABLED_RUNTIMES, or
 // all of them locally) through a single factory loop. Each factory
@@ -291,27 +361,11 @@ for (const factory of getEnabledFactories()) {
             });
         },
         agentRunToolsForSession: (binding) => {
-            if (!agentRunAssembly || !binding.workspaceId) return null;
-            const ownerUserId = binding.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
             // Null while Custom Agents is off, so ordinary chats are not handed
             // spawn_agent & co. at all.
-            if (binding.owner.kind === 'agent_run') {
-                return agentRunAssembly.toolInvokerForSession({
-                    kind: 'agent_run',
-                    ownerUserId,
-                    workspaceId: binding.workspaceId,
-                    parentRunId: binding.owner.runId,
-                    parentAttemptId: binding.owner.attemptId,
-                });
-            }
-            const parentNodeId = binding.nodeId ?? binding.owner.nodeId;
-            return agentRunAssembly.toolInvokerForSession({
-                kind: 'conversation',
-                ownerUserId,
-                workspaceId: binding.workspaceId,
-                parentNodeId,
-                runtimeSessionId: binding.sessionId,
-            });
+            if (!agentRunAssembly) return null;
+            const caller = agentRunToolsBindingFor(binding);
+            return caller ? agentRunAssembly.toolInvokerForSession(caller) : null;
         },
     });
     runtime = factory.create({
@@ -320,6 +374,7 @@ for (const factory of getEnabledFactories()) {
       mcpPort: Number(port),
       defaultCwd,
       modelCache: runtimeModelCache,
+      host: runtimeHost,
     });
     registerRuntime(runtime);
     if (factory.id === 'kiro') kiroRuntime = runtime as KiroRuntime;
@@ -398,6 +453,51 @@ const agentRunRecoveryPromise = agentRunAssembly.start()
     return summary;
   });
 
+// The Meta agent chat window checks its tools inside each turn on some runtimes.
+if (process.env.MICHI_CLOUD !== '1') watchAssistantGuardChecks(chatHub);
+
+// Scheduled Jobs run prompts headlessly as ordinary durable chat turns. They
+// are a desktop feature: cloud deployments have per-user owners and no local
+// notification path, so the scheduler stays off there.
+const SCHEDULED_JOBS_ENABLED = scheduledJobsFeatureEnabled();
+const scheduledJobExecutor = SCHEDULED_JOBS_ENABLED
+  ? new ChatScheduledJobExecutor({
+      chatHub,
+      ensureSession: (input) => chatManager.ensureParentSession(input),
+    })
+  : null;
+const scheduledJobScheduler = scheduledJobExecutor
+  ? new ScheduledJobScheduler({
+      repository: new ScheduledJobsRepository(),
+      executor: scheduledJobExecutor,
+      events: scheduledJobEvents,
+      // A hidden system workspace (the Michi assistant's) is not a place a
+      // job may run in: to the scheduler it does not exist.
+      workspaceExists: (id) => isSchedulableWorkspace(getWorkspace(id)),
+      runtimeExists: (id) => !!getRuntime(id),
+      launcher: createDesktopAppLauncher(),
+      serviceMode: SERVICE_MODE,
+    })
+  : null;
+configureScheduledJobTools(scheduledJobScheduler && scheduledJobExecutor
+  ? {
+      scheduler: scheduledJobScheduler,
+      isScheduledRunNode: (nodeId) => scheduledJobExecutor.isRunningOn(nodeId),
+      workspaceName: (id) => getWorkspace(id)?.name ?? null,
+    }
+  : null);
+// Resolved once the HTTP listener is bound (see app.listen below).
+let markListening!: () => void;
+const listeningPromise = new Promise<void>((resolve) => { markListening = resolve; });
+// Start after interrupted-turn recovery so a run never races boot repair, and
+// only once this process is reachable: a backend that failed to bind must not
+// hold the scheduler lease and run jobs no window can see.
+void Promise.all([agentRunRecoveryPromise.catch(() => undefined), listeningPromise])
+  .then(() => {
+    scheduledJobScheduler?.start();
+    if (scheduledJobScheduler) log.info('boot', 'scheduled jobs started', { serviceMode: SERVICE_MODE });
+  });
+
 async function warmConfiguredRuntime(): Promise<void> {
   if (remoteAccessEnabled()) {
     const selected = await findRemoteRuntimeDefault(listRuntimes(), getAgentConfig().runtime);
@@ -448,12 +548,10 @@ refreshRuntimeModelsInBackground(listRuntimes(), (runtimeId, err) => {
   });
 });
 
-// Auth is opt-in via MICHI_REQUIRE_AUTH=true. Without the flag the
-// process behaves exactly like the pre-auth backend: open CORS, no
-// session middleware, no /api/auth/* handler. This keeps the Electron
-// desktop app and `npm run dev` flow unchanged — auth only kicks in
-// for the cloud (Docker / Railway) Pi-only deployment.
-const REQUIRE_AUTH = (process.env.MICHI_REQUIRE_AUTH || '').toLowerCase() === 'true';
+// Session auth supports isolated cloud hosting and explicitly selected local
+// single-account access. Desktop/dev keep their origin-protected local mode:
+// no session middleware and no /api/auth/* handler; origin and host guards
+// keep other web pages out (services/localOrigins.ts).
 
 if (REQUIRE_AUTH) {
   // CORS — credentials:true is required so the browser sends the auth
@@ -542,46 +640,45 @@ if (REQUIRE_AUTH) {
     return toNodeHandler(inst)(req, res);
   });
 } else {
-  // Open CORS for dev/desktop — same behavior as before auth was added.
-  app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  }));
+  // Desktop/dev: the API has no user sessions, so the origin and host decide
+  // which pages may use it. One rule (services/localOrigins.ts) serves CORS,
+  // this guard stack and the /api guard below: Michi's own UI (same origin),
+  // the dev renderers (MICHI_DEV_RENDERER, MICHI_RENDERER_URL) and configured
+  // origins (MICHI_CORS_ORIGINS, MICHI_LOCAL_CONTROL_ORIGINS). Other sites get
+  // no CORS headers, and any request they send is refused before a route runs
+  // (CORS alone would still run a simple POST's handler). A wildcard here
+  // would let any web page read this API while Michi is running — and with
+  // the background service, Michi is always running. Without remote access's
+  // token, a DNS name that is not loopback or listed is DNS rebinding.
+  installLocalAccessGuards(app, { remoteAccess: remoteAccessEnabled() });
   log.info('auth', 'MICHI_REQUIRE_AUTH not set — auth middleware disabled');
 }
 
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }));
 
 // A server explicitly launched for remote control is protected by a shared
 // bearer token. Desktop/dev remain unchanged unless MICHI_REMOTE_ACCESS=1.
 app.use('/api', createRemoteAccessMiddleware());
 
+if (!REQUIRE_AUTH) {
+  // Behind installLocalAccessGuards and with the same origin and host rules,
+  // also reject cross-site browser requests that carry no Origin before any
+  // /api route runs. Token-authenticated remote requests are exempt.
+  app.use('/api', createLocalOriginGuard({ loopbackListener: isLoopbackListenHost(resolveListenHost()) }));
+}
+
 if (REQUIRE_AUTH) {
-  // requireSession — every /api/* path that is NOT /api/health or
-  // /api/auth/* must have a valid session. We attach req.user /
-  // req.session onto the request so downstream handlers can read
-  // req.user.id without re-fetching.
+  // Every protected /api/* path needs a valid session. The shared gate attaches
+  // req.authUser and req.session; only cloud mode also sets req.user as the data
+  // owner. Authenticated desktop requests retain the local data identity.
   //
   // IMPORTANT: when this middleware is mounted under app.use('/api', ...),
   // Express strips the '/api' prefix from req.path inside the handler,
   // so match against the post-strip path: '/health' and '/auth/...'.
-  const SESSION_PUBLIC_PATHS = [/^\/health$/, /^\/auth\//, /^\/auth-config$/, /^\/diagnostics$/, /^\/ready$/];
-  app.use('/api', async (req, res, next) => {
-    if (SESSION_PUBLIC_PATHS.some((re) => re.test(req.path))) return next();
-    try {
-      const session = await getAuthForHost(req.headers.host).api.getSession({ headers: fromNodeHeaders(req.headers) });
-      if (!session?.user) {
-        return res.status(401).json({ error: 'unauthorized' });
-      }
-      req.user = session.user;
-      (req as any).session = session.session;
-      next();
-    } catch (err) {
-      log.warn('auth', 'getSession failed', { err: (err as Error).message });
-      return res.status(401).json({ error: 'unauthorized' });
-    }
-  });
+  app.use('/api', createSessionAccessMiddleware(accessPolicy,
+    req => getAuthForHost(req.headers.host).api.getSession({ headers: fromNodeHeaders(req.headers) }),
+    err => log.warn('auth', 'getSession failed', { err: (err as Error).message }),
+  ));
 }
 
 // Single-line access log per request — first signal that the frontend
@@ -594,21 +691,25 @@ const ACCESS_LOG_SILENT_2XX = [
   /^(?:\/api)?\/agent\/status$/,             // runtime capability probe
   /^(?:\/api)?\/agent\/models$/,             // model picker / sanitized-model probe
   /^(?:\/api)?\/mcp\/[^/]+$/,                // MCP slot calls (per-turn, very noisy)
+  /^(?:\/api)?\/mcp-session\/[^/]+$/,        // MCP session-group calls (Kiro's shared catalog)
   /^(?:\/api)?\/nodes\/[^/]+\/ensure-session$/, // lazy session binding before send
   /^(?:\/api)?\/workspaces$/,                // lightweight workspace index load
   /^(?:\/api)?\/workspaces\/all$/,           // full workspace hydration
   /^(?:\/api)?\/workspaces\/[^/]+\/sync$/,   // bulk chat sync (frequent client poll)
   /^(?:\/api)?\/chats\/[^/]+\/heartbeat$/,   // compatibility heartbeat from older renderers
 ];
+// MCP slot and group ids in a path are capabilities: log only their first 4 hex chars.
+const redactCapabilityIds = (path: string) =>
+  path.replace(/(?<=\/)[0-9a-f]{32}(?=\/|$)/g, (id) => `${id.slice(0, 4)}…`);
 app.use((req, res, next) => {
   const t0 = Date.now();
   res.on('finish', () => {
     const dur = Date.now() - t0;
     const status = res.statusCode;
-    if (status < 400 && ACCESS_LOG_SILENT_2XX.some((re) => re.test(req.path))) return;
+    if (!shouldLogAccess(req.method, req.path, status)) return;
     const stage = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
     const fn = stage === 'error' ? log.error : stage === 'warn' ? log.warn : log.info;
-    fn('http', `${req.method} ${req.path}`, { status, durMs: dur });
+    fn('http', `${req.method} ${redactCapabilityIds(req.path)}`, { status, durMs: dur });
   });
   next();
 });
@@ -618,7 +719,12 @@ app.get('/api/health', (req, res) => {
     status: 'healthy',
     service: 'michi-backend',
     connectionProtocol: 1,
+    build: publicBuildInfo(runningBuild),
     serverId: remoteServerId(),
+    // Lets the desktop app tell its background service apart from a forked
+    // child and restart the service after an app update.
+    serviceMode: SERVICE_MODE,
+    serviceBuild: SERVICE_MODE ? process.env.MICHI_SERVICE_BUILD ?? null : null,
   });
 });
 
@@ -671,21 +777,28 @@ app.use('/api', setupAgentRunRoutes({
   sse: agentRunAssembly.sse,
   isEnabled: customAgentsControl.isEnabled,
 }));
+// Workflow runs are independent of custom agents: any Claude/Kiro chat can
+// launch one.
+// Runs a previous process left open lost their runtime with it.
+workflowRunHub.recover();
+app.use('/api', setupWorkflowRunRoutes({ hub: workflowRunHub, backgroundSubagents: backgroundSubagentRegistry }));
 // Connection credentials belong to the local desktop gateway. A remotely
 // exposed execution backend never needs to manage or replay another server's
 // saved token, so keep this surface unavailable in remote mode.
 if (!remoteAccessEnabled()) {
   app.use('/api', setupBackendConnectionRoutes());
 }
-if (REQUIRE_AUTH) {
+if (accessPolicy.ownerScoped) {
   // BYOK provider key routes — only mounted in cloud mode. Local dev /
   // Electron continue to use the disk-based shared provider key store
   // in services/secrets.ts.
   app.use('/api', setupUserKeysRoutes());
+}
+if (REQUIRE_AUTH) {
   // Admin routes — gated by MICHI_ADMIN_EMAILS env var (requireAdmin).
   // requireSession is already applied globally above for all /api/* paths
-  // not in SESSION_PUBLIC_PATHS, so req.user is already populated here.
-  app.use('/api/admin', requireAdmin, setupAdminRoutes({ agentRunLifecycle }));
+  // not in SESSION_PUBLIC_PATHS, so the login principal is populated here.
+  app.use('/api/admin', setupAdminRoutes({ agentRunLifecycle }));
 }
 app.use('/api', setupUploadsRoutes());
 app.use('/api', setupFilesRoutes());
@@ -696,30 +809,70 @@ app.use('/api', setupDigestRoutes(chatManager));
 app.use('/api', setupPersistenceRoutes());
 configurePaneInspectionEventBus(agentRunAssembly.enabled ? agentRunAssembly.coordinator.events : undefined);
 app.use('/api', setupPaneInspectionRoutes({ agentRunEvents: agentRunAssembly.enabled ? agentRunAssembly.coordinator.events : undefined }));
+app.use('/api', setupConversationUpdatesRoutes());
+app.use('/api', setupPagesRoutes());
+app.use('/api', setupSpacesHomeRoutes({ liveWait: (nodeId) => chatHubLiveWait(chatHub, nodeId) }));
+app.use('/api', setupHomeCardsRoutes());
+app.use('/api', setupPageHelperRoutes());
+app.use('/api', setupPageComponentRoutes());
+configureHomeCardsSink(repositoryHomeCardsSink);
+configureProgressCardLiveTurns((nodeId) => chatHubLiveTurn(chatHub, nodeId));
+configureHomeLiveWait((nodeId) => chatHubLiveWait(chatHub, nodeId));
+app.use('/api', setupSpacesHomeRunRoutes({ scheduler: scheduledJobScheduler }));
+// Before the local-only /meta-agent routes: a remote connection's Update reaches its own Meta agent.
+app.use('/api', setupMetaAgentRunNowRoutes({ scheduler: scheduledJobScheduler }));
+app.use('/api', setupPageMaintenanceRoutes({ scheduler: scheduledJobScheduler }));
 app.use('/api', setupBackupRoutes());
 app.use('/api', setupSearchRoutes());
 app.use('/api', setupVersionRoutes());
+// The Michi assistant reads workspaces and maintains Pages: a
+// desktop feature, never offered from a cloud or remotely exposed backend.
+if (process.env.MICHI_CLOUD !== '1' && !remoteAccessEnabled()) {
+  app.use('/api', setupAssistantRoutes());
+  app.use('/api', setupMetaAgentRoutes());
+  app.use('/api', setupMetaAgentOverviewRoutes({ scheduler: scheduledJobScheduler }));
+}
+app.use('/api', setupScheduledJobRoutes({ scheduler: scheduledJobScheduler, events: scheduledJobEvents }));
 
 const frontendBuild = path.join(__dirname, '../../frontend/build');
 const indexHtml = path.join(frontendBuild, 'index.html');
 
 if (fs.existsSync(indexHtml)) {
-  app.use(express.static(frontendBuild));
-  app.get('/*splat', (req, res, next) => {
-    if (req.path.startsWith('/api/')) return next();
-    res.sendFile(indexHtml);
-  });
+  setupSpaFallback(app, frontendBuild);
 }
 
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) { next(err); return; }
+  const configError = jsonConfigErrorResponse(err);
+  if (configError) {
+    log.error('http', 'configuration request failed', { path: req.path, code: configError.body.code, err: err.message });
+    res.status(configError.status).json(configError.body);
+    return;
+  }
   log.error('http', 'unhandled error', { path: req.path, err: err.message, stack: err.stack });
   res.status(500).json({ error: 'Something broke!' });
 });
 
 const listenHost = resolveListenHost();
 startupMark('express_listen_start', { port: Number(port), host: listenHost });
-const server = app.listen(Number(port), listenHost, () => {
+const server = app.listen(Number(port), listenHost, (error?: Error) => {
+  if (error) {
+    // Express 5 hands bind errors (e.g. EADDRINUSE) to this callback instead
+    // of throwing. Without a listener the process would keep its runtimes
+    // running while every request goes to whoever holds the port, so exit.
+    const code = (error as NodeJS.ErrnoException).code;
+    log.error('boot', 'listen failed; exiting', {
+      port: Number(port),
+      host: listenHost,
+      code,
+      err: code === 'EADDRINUSE' ? `port ${port} is already in use on ${listenHost}` : error.message,
+    });
+    void gracefulShutdown().finally(() => process.exit(1));
+    setTimeout(() => process.exit(1), 5000).unref();
+    return;
+  }
   log.info('boot', 'listening', { port: Number(port), host: listenHost });
+  markListening();
   startupMark('express_listen_ready', { port: Number(port) });
   printEnvInfo(Number(port));
 
@@ -744,9 +897,13 @@ const gracefulShutdown = async (): Promise<void> => {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info('boot', 'shutting down');
+  chatHub.prepareForShutdown();
   streamTransport.close();
   clearInterval(agentRunCleanupTimer);
   await agentRunCleanupPass;
+  // Record in-flight scheduled runs as interrupted while the DB is open.
+  await scheduledJobScheduler?.stop().catch(() => {});
+  scheduledJobExecutor?.dispose();
   await agentRunAssembly?.shutdown();
   sessionRegistry.clearAllSessions();
   // runtime.shutdown() disposes each session, which SIGTERM/SIGKILLs the
@@ -756,6 +913,8 @@ const gracefulShutdown = async (): Promise<void> => {
   await Promise.allSettled(listRuntimes().map((runtime) => runtime.shutdown()));
   sshTunnelManager.shutdown();
   closeAllArtifactWatchers();
+  // Coalesced workflow snapshots would otherwise lose their last revisions.
+  workflowRunHub.flush();
   closeDb();
   closeAuditDb();
   await shutdownDbWorker();

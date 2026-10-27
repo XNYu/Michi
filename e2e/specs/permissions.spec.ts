@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { installMockApi, bootWithWorkspace, sseBody } from '../fixtures/mockApi';
 import type { ChatPermissionSettings } from 'michi-shared';
+import { COMPOSER_EDITOR, leaveSettings, openSettings as openSettingsSection, settingsMain } from '../fixtures/shell';
 
 type PermissionSource = 'acp_permission' | 'claude_prompt_tool' | 'codex_approval' | 'michi_policy';
 type PermissionOption = { optionId: string; name: string; kind: string };
@@ -97,7 +98,7 @@ async function fixture(page: Page, initial: ChatPermissionSettings = { global: f
 }
 
 async function send(page: Page) {
-  await page.locator('[contenteditable="true"]').first().fill('permission test');
+  await page.locator(COMPOSER_EDITOR).first().fill('permission test');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await expect.poll(() => page.evaluate(() => Boolean(window.__michiPermissionAudit.turnId))).toBe(true);
 }
@@ -115,11 +116,8 @@ async function requestPermission(page: Page, source: PermissionSource, requestOp
   } }]);
   await page.evaluate((body) => window.__michiPermissionAudit.write!(body), body);
 }
-async function openSettings(page: Page) {
-  await page.locator('.terminal-sidebar').getByText('Settings', { exact: true }).click();
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-  await settings.getByRole('button', { name: 'Model', exact: true }).click();
-  return settings;
+function openSettings(page: Page) {
+  return openSettingsSection(page, 'Runtime (global)');
 }
 async function selectMode(page: Page, mode: string) {
   await page.getByRole('button', { name: /^Permissions:/ }).click();
@@ -179,12 +177,12 @@ test('an existing chat saves its Composer mode and retains the selection across 
   const settings = await openSettings(page);
   await settings.getByRole('switch', { name: 'Use global permissions' }).click();
   await expect.poll(() => state.settings.global).toBe(true);
-  await page.keyboard.press('Escape');
+  await leaveSettings(page);
   await expect(page.getByRole('button', { name: /^Permissions:/ })).toHaveCount(0);
   const reopened = await openSettings(page);
   await reopened.getByRole('switch', { name: 'Use global permissions' }).click();
   await expect.poll(() => state.settings.global).toBe(false);
-  await page.keyboard.press('Escape');
+  await leaveSettings(page);
   await expect(page.getByRole('button', { name: 'Permissions: Ask', exact: true })).toBeVisible();
 });
 
@@ -197,13 +195,13 @@ test('Settings global switch hides Composer controls, saves the global mode, and
   await settings.getByRole('button', { name: 'Permissions: Ask', exact: true }).click();
   await page.getByRole('menuitem', { name: /^YOLO\b/ }).click();
   await expect.poll(() => state.settings.mode).toBe('yolo');
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Settings', exact: true })).toHaveCount(0);
+  await leaveSettings(page);
+  await expect(settingsMain(page)).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Permissions:/ })).toHaveCount(0);
   const reopened = await openSettings(page);
   await reopened.getByRole('switch', { name: 'Use global permissions' }).click();
   await expect.poll(() => state.settings.global).toBe(false);
-  await page.keyboard.press('Escape');
+  await leaveSettings(page);
   await expect(page.getByRole('button', { name: 'Permissions: Trust', exact: true })).toBeVisible();
 });
 
@@ -254,7 +252,7 @@ test('a YOLO draft becomes Trust when switched to Pi and sends the displayed mod
   const settings = await openSettings(page);
   await settings.getByRole('combobox').selectOption('pi');
   await expect.poll(() => state.runtimeId).toBe('pi');
-  await page.keyboard.press('Escape');
+  await leaveSettings(page);
   await expect(page.getByRole('button', { name: 'Permissions: Trust', exact: true })).toBeVisible();
   await send(page);
   expect(state.ensureBodies[0].permissionMode).toBe('trust');
@@ -270,7 +268,7 @@ test('an existing Codex chat keeps YOLO after the default runtime switches to Pi
   await finishTurn(page);
   const settings = await openSettings(page);
   await settings.getByRole('combobox').selectOption('pi');
-  await page.keyboard.press('Escape');
+  await leaveSettings(page);
   await expect(page.getByRole('button', { name: 'Permissions: YOLO', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Permissions: YOLO', exact: true }).click();
   await expect(page.getByRole('menuitem')).toHaveCount(3);

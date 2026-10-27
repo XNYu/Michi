@@ -52,6 +52,10 @@ if (specimen === 'agent-blocks') {
   void import('./components/terminal/AgentBlocksSpecimen').then(({ default: AgentBlocksSpecimen }) => {
     root.render(<AgentBlocksSpecimen />);
   });
+} else if (specimen === 'native-blocks') {
+  void import('./components/terminal/content/page/NativeBlocksSpecimen').then(({ default: NativeBlocksSpecimen }) => {
+    root.render(<NativeBlocksSpecimen />);
+  });
 } else {
   root.render(
     <React.StrictMode>

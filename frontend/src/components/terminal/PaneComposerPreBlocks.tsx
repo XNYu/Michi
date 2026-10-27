@@ -1,7 +1,9 @@
+import { serverEntityId } from '../../config/backendIdentity';
 import React, { useState, useRef, useEffect } from 'react';
 import type { ChatNodeState } from '../../state/chatTypes';
 import { useChatProjects } from '../../state/chatStore';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { AssistantAttachmentsPreBlock } from './assistant/AssistantAttachments';
 
 export interface PanePendingAttachment {
   id: string;
@@ -32,7 +34,7 @@ interface PaneComposerPreBlocksProps {
 function pendingThumbSrc(p: PanePendingAttachment, workspaceId?: string): string | null {
   if (workspaceId && p.relPath) {
     const encoded = p.relPath.split('/').map(encodeURIComponent).join('/');
-    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(serverEntityId(workspaceId))}/${encoded}`;
   }
   // Fallback: derive relPath from absPath if it contains .attachments/
   if (workspaceId && p.absPath) {
@@ -41,7 +43,7 @@ function pendingThumbSrc(p: PanePendingAttachment, workspaceId?: string): string
     if (idx !== -1) {
       const rel = '.attachments/' + p.absPath.slice(idx + marker.length);
       const encoded = rel.split('/').map(encodeURIComponent).join('/');
-      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encoded}`;
+      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(serverEntityId(workspaceId))}/${encoded}`;
     }
   }
   return null;
@@ -65,6 +67,8 @@ export function PaneComposerPreBlocks({
   const workspaceId = activeProject?.id;
   return (
     <>
+      <AssistantAttachmentsPreBlock nodeId={node.nodeId} />
+
       {(node.pendingQueued ?? []).map((q, i) => {
         const isErrored = !!node.queueErrored;
         const tone = isErrored ? 'tone-danger' : 'tone-select';
@@ -112,6 +116,7 @@ export function PaneComposerPreBlocks({
           index={i}
           quotedText={c.quotedText}
           body={c.body}
+          source={c.source}
           onEdit={(body) => onEditPendingComment(c.id, body)}
           onRemove={() => onRemovePendingComment(c.id)}
         />
@@ -122,6 +127,9 @@ export function PaneComposerPreBlocks({
           <div className="t-pre-block-col">
             <div className="t-pre-block-cap">
               replying to <b>selection</b>
+              {node.composerDraft?.quoteSource?.type === 'artifact' ? (
+                <span> · {node.composerDraft.quoteSource.name || node.composerDraft.quoteSource.filePath} · {node.composerDraft.quoteSource.snapshot?.contentHash.slice(0, 8) || 'version unknown'}</span>
+              ) : null}
             </div>
             <div
               className={quoteMaxLines > 1 ? 't-pre-block-body is-multi' : 't-pre-block-body'}
@@ -191,12 +199,14 @@ function EditableCommentChip({
   index,
   quotedText,
   body,
+  source,
   onEdit,
   onRemove,
 }: {
   index: number;
   quotedText: string;
   body: string;
+  source?: NonNullable<ChatNodeState['pendingComments']>[number]['source'];
   onEdit: (body: string) => void;
   onRemove: () => void;
 }) {
@@ -230,6 +240,7 @@ function EditableCommentChip({
       <div className="t-pre-block-col">
         <div className="t-pre-block-cap">
           comment <b>{index + 1}</b>{index === 0 ? ' · pending on next send' : ''}
+          {source ? <span> · {source.name || source.filePath} · {source.snapshot?.contentHash.slice(0, 8) || 'version unknown'}</span> : null}
         </div>
         <div className="t-pre-block-quoted">
           "{quotedText.replace(/\s+/g, ' ').trim()}"

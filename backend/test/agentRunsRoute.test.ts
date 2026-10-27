@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import {
   AgentRunCompletionMode, AgentRunInvocationMode, AgentRunStatus,
   type AgentRunDtoV1, type EffectiveAgentDefinitionV1, type SpawnAgentRunRequestV1,
 } from 'michi-shared';
 import { AgentRunEventBus } from '../src/agents/runs/agentRunEventBus';
-import { AgentRunApiService, setupAgentRunRoutes, type AgentRunRouteService } from '../src/routes/agentRuns';
+import { setupAgentRunRoutes, type AgentRunRouteService } from '../src/routes/agentRuns';
 
 const HASH = 'a'.repeat(64);
 const effective: EffectiveAgentDefinitionV1 = { version: 1, name: 'Worker', description: 'Works', instructions: 'Work', runtimeProfile: { version: 1, runtimeId: 'pi' }, fallbackChain: [], capabilitySnapshot: { version: 1, entries: [] }, permissionPolicy: { version: 1, preset: 'research', categories: {}, maxDelegationDepth: 0, maxConcurrentRuns: 1, maxWallTimeMs: 60_000, maxAttempts: 1 }, contextPolicy: { version: 1, includeWorkspaceInstructions: true, allowMessageContext: true, allowFileContext: true, allowArtifactContext: true, maxEstimatedChars: 1_000 } };
@@ -22,10 +23,10 @@ let seenOperation = '';
 beforeEach(() => { delete process.env.MICHI_CLOUD; });
 afterEach(async () => { if (server) await new Promise<void>((resolve) => server.close(() => resolve())); });
 
-function start(
+async function start(
   serviceOverrides: Partial<AgentRunRouteService> = {},
   isEnabled: () => boolean = () => true,
-): void {
+): Promise<void> {
   const service: AgentRunRouteService = {
     async spawn(_owner, _request, operationId) { seenOperation = operationId; return run('local-user'); },
     list(_owner, query) { seenQuery = query; return [run('local-user')]; },
@@ -41,7 +42,8 @@ function start(
   const allow = (_req: express.Request, _res: express.Response, next: express.NextFunction) => next();
   app.use('/api', setupAgentRunRoutes({ service, sse: { source: { getRun: () => null, listEvents: () => [], listRuns: () => [] }, events }, createOperationId: () => 'generated-op', ownership: { run: allow, interaction: allow, watch: allow }, isEnabled }));
   app.get('/api/persistence/capabilities', (_req, res) => res.json({ protocolVersion: 2 }));
-  server = app.listen(0); base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
 }
 
 async function request(method: string, path: string, body?: unknown, user?: string, operationId?: string) {
@@ -54,7 +56,7 @@ async function request(method: string, path: string, body?: unknown, user?: stri
 
 describe('Agent Run REST routes', () => {
   test('returns feature-disabled while the backend gate is off', async () => {
-    start({}, () => false);
+    await start({}, () => false);
 
     const response = await request('GET', '/agent-runs?workspaceId=ws-a');
     const unrelated = await request('GET', '/persistence/capabilities');
@@ -65,22 +67,8 @@ describe('Agent Run REST routes', () => {
     assert.deepEqual(unrelated.body, { protocolVersion: 2 });
   });
 
-  test('Run-origin service spawns preserve the exact durable Parent Attempt id', async () => {
-    let forwarded: any;
-    const service = new AgentRunApiService({
-      async spawn(input: any) { forwarded = input; return run(); },
-      async start() { return run(); },
-    } as any, {} as any, {} as any);
-    await service.spawn('owner-a', {
-      ...spawn, invocationMode: AgentRunInvocationMode.Delegated,
-      parentRunId: 'parent-run', parentAttemptId: 'parent-attempt',
-    }, 'route-spawn');
-    assert.equal(forwarded.parentRunId, 'parent-run');
-    assert.equal(forwarded.parentAttemptId, 'parent-attempt');
-  });
-
   test('validates saved/ephemeral spawn and forwards durable operation IDs', async () => {
-    start();
+    await start();
     const created = await request('POST', '/agent-runs', spawn, undefined, 'spawn-op');
     assert.equal(created.response.status, 201); assert.equal(created.body.run.id, 'run-1'); assert.equal(seenOperation, 'spawn-op');
     const invalid = await request('POST', '/agent-runs', { ...spawn, ephemeralDefinition: effective });
@@ -89,7 +77,7 @@ describe('Agent Run REST routes', () => {
   });
 
   test('parses bounded list/search filters and exposes authoritative detail/events', async () => {
-    start();
+    await start();
     const listed = await request('GET', '/agent-runs?workspaceId=ws-a&status=running&includeArchived=true&q=work&limit=25');
     assert.equal(listed.response.status, 200); assert.equal(listed.body.runs.length, 1);
     assert.deepEqual(seenQuery, { version: 1, workspaceId: 'ws-a', statuses: ['running'], q: 'work', includeArchived: true, limit: 25 });
@@ -99,7 +87,7 @@ describe('Agent Run REST routes', () => {
   });
 
   test('wrong-owner detail and event reads are hidden with 404 semantics', async () => {
-    process.env.MICHI_CLOUD = '1'; start();
+    process.env.MICHI_CLOUD = '1'; await start();
     assert.equal((await request('GET', '/agent-runs/run-1', undefined, 'owner-b')).response.status, 404);
     assert.equal((await request('GET', '/agent-runs/run-1/events', undefined, 'owner-b')).response.status, 404);
   });

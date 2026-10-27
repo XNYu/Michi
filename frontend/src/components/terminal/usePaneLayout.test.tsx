@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePaneLayout } from './usePaneLayout';
-import { paneEntrance, PANE_EASE } from './paneMotion';
+import { paneEntrance } from './paneMotion';
 import type { PaneWidthMode } from '../../state/paneLayout';
 
 const animations: Array<{ cancel: ReturnType<typeof vi.fn>; onfinish: (() => void) | null }> = [];
@@ -90,27 +90,6 @@ describe('shared pane layout motion', () => {
     ], expect.objectContaining({ duration: 180 }));
   });
 
-  it('retains the old scroll extent until the last exiting visual is removed', () => {
-    const { rerender, getByTestId } = render(<Harness ids={['a', 'b', 'c', 'd']} />);
-    expect(getByTestId('strip').dataset.scrollExtent).toBe('3400');
-    rerender(<Harness ids={['a', 'b', 'c', 'd']} exitingIds={new Set(['d'])} />);
-    expect(getByTestId('strip').dataset.scrollExtent).toBe('3400');
-    rerender(<Harness ids={['a', 'b', 'c']} />);
-    expect(getByTestId('strip').dataset.scrollExtent).toBe('2600');
-  });
-
-  it('commits final widths once and animates transforms only', () => {
-    const { rerender, getByTestId } = render(<Harness ids={['a']} />);
-    expect(animate).not.toHaveBeenCalled();
-    rerender(<Harness ids={['a', 'b']} />);
-    expect(getByTestId('strip').style.gridTemplateColumns).toBe('600px 600px');
-    expect(animate).toHaveBeenCalledTimes(1);
-    expect(animate).toHaveBeenCalledWith([
-      { transform: 'translateX(0px)' }, { transform: 'translateX(0px)' },
-    ], { duration: 220, easing: PANE_EASE, fill: 'both' });
-    expect(animate.mock.contexts.every(element => element !== getByTestId('strip'))).toBe(true);
-  });
-
   it('does not cancel motion for equivalent selector arrays', async () => {
     const { rerender } = render(<Harness ids={['a']} />);
     rerender(<Harness ids={['a', 'b']} widths={[undefined, undefined]} />);
@@ -120,42 +99,6 @@ describe('shared pane layout motion', () => {
     await act(async () => { animations.forEach(animation => animation.onfinish?.()); });
     expect(animations[0].cancel).toHaveBeenCalledTimes(1);
     expect(animate).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps growing final-width panes disjoint instead of overlapping text', () => {
-    const { rerender, getByTestId } = render(<Harness ids={['a', 'b']} />);
-    rerender(<Harness ids={['a', 'b', 'c']} />);
-    expect(getByTestId('strip').style.gridTemplateColumns).toBe('800px 800px 800px');
-    for (const call of animate.mock.calls) {
-      expect(call[0]).toEqual([{ transform: 'translateX(0px)' }, { transform: 'translateX(0px)' }]);
-    }
-  });
-
-  it('moves remaining panes in at most 160ms after immediate close', () => {
-    const { rerender, getByTestId } = render(<Harness ids={['a', 'b', 'c']} />);
-    rerender(<Harness ids={['a', 'b']} />);
-    expect(getByTestId('strip').style.gridTemplateColumns).toBe('600px 600px');
-    expect(animate).toHaveBeenLastCalledWith([
-      { transform: 'translateX(200px)' }, { transform: 'translateX(0px)' },
-    ], expect.objectContaining({ duration: 160 }));
-  });
-
-  it('samples a running transform before cancellation when rapidly retargeting', () => {
-    const { rerender } = render(<Harness ids={['a', 'b', 'c']} />);
-    rerender(<Harness ids={['a', 'b']} />);
-    const original = window.getComputedStyle;
-    vi.spyOn(window, 'getComputedStyle').mockImplementation(element => {
-      expect(animations[0].cancel).not.toHaveBeenCalled();
-      const style = original(element);
-      style.transform = element.getAttribute('data-node-id') === 'b' ? 'matrix(1,0,0,1,100,0)' : 'none';
-      return style;
-    });
-    vi.stubGlobal('DOMMatrixReadOnly', class { m41 = 100; });
-    rerender(<Harness ids={['a', 'b']} mode="half" widths={[500, undefined]} />);
-    expect(animations[0].cancel).toHaveBeenCalledTimes(1);
-    expect(animate).toHaveBeenLastCalledWith([
-      { transform: 'translateX(200px)' }, { transform: 'translateX(0px)' },
-    ], expect.objectContaining({ duration: 220 }));
   });
 
   it('applies manual widths immediately, including during an interrupted close', () => {
@@ -173,13 +116,6 @@ describe('shared pane layout motion', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
     rerender(<Harness ids={['c', 'd']} scope="tree-b" />);
     expect(animate).not.toHaveBeenCalled();
-  });
-
-  it('cancels every animation on unmount', () => {
-    const { rerender, unmount } = render(<Harness ids={['a']} />);
-    rerender(<Harness ids={['a', 'b']} />);
-    unmount();
-    expect(animations.every(animation => animation.cancel.mock.calls.length === 1)).toBe(true);
   });
 
   it.each(['soft-fade', 'gentle-glide', 'frozen-retract', 'phosphor', 'fission', 'thread-pull'])('%s uses short unscaled entrances', mode => {

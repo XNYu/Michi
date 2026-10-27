@@ -1,97 +1,33 @@
 import fs from "fs";
 import path from "path";
 import { log } from "../services/logger";
-import type { AgentRunToolInvoker } from "./runToolBridge";
-import type { RuntimeSessionOwner } from "./types";
+import type {
+    AgentRunToolInvoker,
+    AgentRunToolInvokerFactory,
+    AgentToolBridge,
+    BridgeSaveContextArgs,
+    BridgeSaveContextResult,
+    BridgeSpawnBranchesArgs,
+    BridgeUpdateContextArgs,
+    BridgeUpdateContextResult,
+    SpawnedBranch,
+} from "michi-runtime/internal/contract/tools";
 
-export interface AgentRunToolSessionBinding {
-    runtimeId: string;
-    sessionId: string;
-    owner: RuntimeSessionOwner;
-    ownerUserId: string | null;
-    workspaceId: string | null;
-    nodeId: string | null;
-}
-
-export type AgentRunToolInvokerFactory = (
-    binding: Readonly<AgentRunToolSessionBinding>,
-) => AgentRunToolInvoker | null | undefined;
-
-/**
- * Shared business-effect handlers for the four internal "tools" any agent
- * runtime can call: spawn-branches, set-title, set-follow-ups, save/update-context.
- *
- * The bridge does NOT surface events. That's each runtime's job:
- *   - Kiro injects synthetic ACP updates onto the parent ACP session queue
- *     (see ChatManager.handleSpawnBranches etc.).
- *   - Pi yields NormalizedEvent directly from its in-process stream loop.
- *
- * The runtime calls bridge.spawnBranches(...) etc. and consumes the
- * structured result. The bridge handles the durable side effects (creating
- * a new chat, persisting a context file).
- */
-export interface SpawnedBranch {
-    title: string;
-    prompt: string;
-    chatId: string;
-    nodeId: string;
-}
-
-export interface BridgeSpawnBranchesArgs {
-    /** The chatId that initiated the spawn (the "parent" branch). */
-    parentChatId: string;
-    /** Cwd inherited by the children. */
-    cwd: string;
-    /** Whether children should also instruct the agent to call set_follow_ups. */
-    enableFollowUps: boolean;
-    /** Cloud owner of the parent session, forwarded to durable graph lookup. */
-    ownerUserId?: string | null;
-    topics: Array<{ title: string; prompt: string }>;
-}
-
-export interface BridgeSaveContextArgs {
-    cwd: string;
-    /** Runtime chat id used to resolve the durable workspace owner. */
-    chatId?: string;
-    ownerUserId?: string | null;
-    /** Sanitized to /^[A-Za-z0-9_-]+$/. The bridge enforces this. */
-    name: string;
-    body: string;
-}
-
-export interface BridgeContextResult {
-    /** Durable contexts row id. Present in the production bridge. */
-    id?: string;
-    name: string;
-    filePath: string;
-    size: number;
-}
-
-export type BridgeSaveContextResult = BridgeContextResult;
-export type BridgeUpdateContextResult = BridgeContextResult;
-
-export interface BridgeUpdateContextArgs {
-    cwd: string;
-    /** Runtime chat id used to resolve the durable workspace owner. */
-    chatId?: string;
-    ownerUserId?: string | null;
-    /** Sanitized to /^[A-Za-z0-9_-]+$/. The bridge enforces this. */
-    name: string;
-    body: string;
-}
-
-export interface AgentToolBridge {
-    spawnBranches(args: BridgeSpawnBranchesArgs): Promise<SpawnedBranch[]>;
-    saveContext(args: BridgeSaveContextArgs): BridgeSaveContextResult | null;
-    updateContext(args: BridgeUpdateContextArgs): BridgeUpdateContextResult | null;
-    /** Optional session-bound generic Agent Run tools. T16 supplies the
-     * production binding; absence keeps existing chat tools unchanged. */
-    agentRuns?: AgentRunToolInvoker;
-    /** Production path: bind orchestration tools to one immutable runtime
-     * session identity. A factory avoids cross-session caller leakage when
-     * several chats/Run Attempts execute concurrently. */
-    agentRunToolsForSession?: AgentRunToolInvokerFactory;
-}
+// The tool bridge contract lives in michi-runtime (runtime/src/contract/tools.ts);
+// re-exported so existing imports of this module keep working. The implementation stays here.
+export type {
+    AgentRunToolSessionBinding,
+    AgentRunToolInvokerFactory,
+    SpawnedBranch,
+    BridgeSpawnBranchesArgs,
+    BridgeSaveContextArgs,
+    BridgeContextResult,
+    BridgeSaveContextResult,
+    BridgeUpdateContextResult,
+    BridgeUpdateContextArgs,
+    AgentToolBridge,
+} from "michi-runtime/internal/contract/tools";
+export { resolveAgentRunToolsForSession } from "michi-runtime/internal/contract/tools";
 
 /**
  * Default implementation. The `createChild` callback is provided at
@@ -133,7 +69,11 @@ function contextFilePath(name: string): string {
     return `.contexts/${name}.md`;
 }
 
-export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridge {
+/** Michi's bridge has every business effect, so every adapter offers all of their tools. */
+export type MichiAgentToolBridge = AgentToolBridge
+    & Required<Pick<AgentToolBridge, "spawnBranches" | "saveContext" | "updateContext">>;
+
+export function createAgentToolBridge(deps: AgentToolBridgeDeps): MichiAgentToolBridge {
     const persistContext = (args: { chatId?: string; ownerUserId?: string | null; name: string; filePath: string; size: number }): string | undefined | null => {
         if (!args.chatId || !deps.persistContext) return undefined;
         try {
@@ -211,20 +151,4 @@ export function createAgentToolBridge(deps: AgentToolBridgeDeps): AgentToolBridg
             return { ...result, ...(contextId ? { id: contextId } : {}) };
         },
     };
-}
-
-export function resolveAgentRunToolsForSession(
-    bridge: AgentToolBridge,
-    binding: AgentRunToolSessionBinding,
-): AgentRunToolInvoker | null {
-    if (bridge.agentRunToolsForSession) {
-        const immutable = Object.freeze({
-            ...binding,
-            owner: Object.freeze({ ...binding.owner }) as RuntimeSessionOwner,
-        });
-        return bridge.agentRunToolsForSession(immutable) ?? null;
-    }
-    // Compatibility for isolated T13 callers. Production assembly should use
-    // the session factory so a singleton invoker is never shared concurrently.
-    return bridge.agentRuns ?? null;
 }

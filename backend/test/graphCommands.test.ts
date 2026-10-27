@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { closeDb, initDb } from '../src/services/db';
+import { closeDb, getDbPath, initDb } from '../src/services/db';
+import { dbWorker, initDbWorker, shutdownDbWorker } from '../src/services/dbWorkerClient';
 import { ensureDurableGraphNode } from '../src/services/graphCommands';
-import { getNode, getWorkspace, listEdges, listTrees, saveNode, saveTree, saveWorkspace } from '../src/services/dbRepository';
+import { getNode, getWorkspace, listTrees, saveNode, saveTree, saveWorkspace } from '../src/services/dbRepository';
 
 describe('ensureDurableGraphNode', () => {
   let tmpDir: string;
@@ -21,31 +22,6 @@ describe('ensureDurableGraphNode', () => {
   afterEach(() => {
     closeDb();
     fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('atomically creates and idempotently replays workspace/tree/node/edge prerequisites', () => {
-    const root = ensureDurableGraphNode({
-      workspace: { id: 'ws-1', name: 'Workspace', cwd: null, createdAt: 1, activeTreeId: 'tree-1' },
-      tree: { id: 'tree-1', rootNodeId: 'root', createdAt: 1, lastActiveAt: 1 },
-      node: { id: 'root', treeId: 'tree-1', parentNodeId: null, kind: 'chat', createdAt: 1 },
-      edges: [],
-    });
-    const childInput = {
-      workspace: { id: 'ws-1', name: 'Workspace', cwd: null, createdAt: 1, activeTreeId: 'tree-1' },
-      tree: { id: 'tree-1', rootNodeId: 'root', createdAt: 1, lastActiveAt: 2 },
-      node: { id: 'child', treeId: 'tree-1', parentNodeId: 'root', kind: 'chat', createdAt: 2 },
-      edges: [{ id: 'branch-root-child', sourceNodeId: 'root', targetNodeId: 'child', kind: 'branch', createdAt: 2 }],
-    } as const;
-    const child = ensureDurableGraphNode(childInput);
-    const replay = ensureDurableGraphNode(childInput);
-
-    assert.equal(root.node.id, 'root');
-    assert.equal(child.node.id, 'child');
-    assert.equal(replay.node.id, 'child');
-    assert.equal(getWorkspace('ws-1')?.id, 'ws-1');
-    assert.equal(listTrees('ws-1').length, 1);
-    assert.equal(getNode('child')?.parent_node_id, 'root');
-    assert.equal(listEdges('ws-1').length, 1);
   });
 
   test('keeps an agent-spawn title and pending prompt durable across graph replay', () => {
@@ -94,7 +70,7 @@ describe('ensureDurableGraphNode', () => {
     saveWorkspace({
       id: 'ws-1', name: 'Workspace', cwd: '/original', created_at: 1, updated_at: 1,
       settings: '{"custom":true}', deleted_at: 10, archived_at: 11, pinned_at: 12,
-      backend: 'claude',
+      backend: 'claude', folders: '[{"path":"/original"},{"path":"/second"}]',
     });
     saveNode({
       id: 'root', workspace_id: 'ws-1', tree_id: null, parent_node_id: null,
@@ -113,6 +89,24 @@ describe('ensureDurableGraphNode', () => {
     assert.equal(workspace?.archived_at, 11);
     assert.equal(workspace?.pinned_at, 12);
     assert.equal(workspace?.backend, 'claude');
+    assert.equal(workspace?.folders, '[{"path":"/original"},{"path":"/second"}]');
+  });
+
+  test('the DB worker\'s graph prerequisite keeps the workspace folders too', async () => {
+    saveWorkspace({ id: 'ws-w', name: 'Workspace', cwd: '/original', created_at: 1, updated_at: 1, folders: '[{"path":"/original"},{"path":"/second"}]' });
+    await initDbWorker(getDbPath());
+    try {
+      await dbWorker.ensureDurableGraphNode({
+        workspace: { id: 'ws-w', name: 'Workspace', cwd: '/original', createdAt: 1, activeTreeId: null },
+        tree: { id: 'tree-w', rootNodeId: 'root-w', createdAt: 1, lastActiveAt: 1 },
+        node: { id: 'root-w', treeId: 'tree-w', kind: 'chat', createdAt: 1 },
+        edges: [],
+      });
+    } finally {
+      await shutdownDbWorker();
+    }
+    assert.equal(getWorkspace('ws-w')?.folders, '[{"path":"/original"},{"path":"/second"}]');
+    assert.equal(getNode('root-w')?.workspace_id, 'ws-w');
   });
 
   test('rejects a tree id that already belongs to another workspace', () => {

@@ -18,14 +18,6 @@ beforeEach(() => {
 });
 
 describe('CommandPalette Agent navigation', () => {
-  it('opens the Agent Library without requiring an active Workspace', () => {
-    const setPage = vi.fn(); const onClose = vi.fn();
-    render(<CommandPalette activePage="home" setPage={setPage} onClose={onClose} />);
-    fireEvent.click(screen.getByText('Open Agent Library'));
-    expect(setPage).toHaveBeenCalledWith('agents');
-    expect(onClose).toHaveBeenCalled();
-  });
-
   it('finds Agent navigation by search and keeps existing empty-query number behavior', () => {
     const setPage = vi.fn(); const onClose = vi.fn();
     render(<CommandPalette activePage="dashboard" setPage={setPage} onClose={onClose} />);

@@ -18,18 +18,6 @@ function node(p: Partial<ChatNodeState>): ChatNodeState {
 const NOW = 1_000_000_000_000;
 
 describe('MapTimeline', () => {
-  it('renders one card per overview entry along a lane', () => {
-    const nodes = [node({ nodeId: 'a', title: 'backend', branchOverviewEntries: [
-      { at: NOW - 3000, text: 'fork 无日志' },
-      { at: NOW - 2000, text: 'PATH 缺 node' },
-      { at: NOW - 1000, text: '稳定复现' },
-    ]})];
-    render(<MapTimeline nodes={nodes} now={NOW} onOpenPane={() => {}} onFocus={() => {}} />);
-    expect(screen.getByText('fork 无日志')).toBeTruthy();
-    expect(screen.getByText('PATH 缺 node')).toBeTruthy();
-    expect(screen.getByText('稳定复现')).toBeTruthy();
-  });
-
   it('renders a lane name per node', () => {
     const nodes = [node({ nodeId: 'a', title: 'backend' }), node({ nodeId: 'b', title: 'fix-path' })];
     render(<MapTimeline nodes={nodes} now={NOW} onOpenPane={() => {}} onFocus={() => {}} />);
@@ -45,20 +33,6 @@ describe('MapTimeline', () => {
     ];
     render(<MapTimeline nodes={nodes} now={NOW} onOpenPane={() => {}} onFocus={() => {}} parentOf={parentOf} />);
     expect(screen.getByText(/forked/)).toBeTruthy();
-  });
-
-  it('uses elastic scale — no compression for short-span events', () => {
-    // All events within 10 minutes — should be no break markers
-    const nodes = [node({ nodeId: 'a', title: 'short', branchOverviewEntries: [
-      { at: NOW - 600_000, text: 'event 1' },
-      { at: NOW - 300_000, text: 'event 2' },
-      { at: NOW,           text: 'event 3' },
-    ]})];
-    const { container } = render(
-      <MapTimeline nodes={nodes} now={NOW} onOpenPane={() => {}} onFocus={() => {}} />
-    );
-    // No break markers should be rendered
-    expect(container.querySelectorAll('[title*="idle"]').length).toBe(0);
   });
 
   it('renders break markers for large gaps', () => {

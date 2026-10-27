@@ -28,10 +28,15 @@ import {
 import { messageForPersistence } from './assistantBlocks';
 import { serializeBranchOverviewEntries } from 'michi-shared';
 import type { ChatNodeState, Project } from './chatTypes';
+import { isSystemWorkspace } from './assistant/systemWorkspace';
 import { startupMarkOnce } from '../services/startupTrace';
 import { WorkspaceSyncQueue } from './workspaceSyncQueue';
+import { remoteEntityIdentity, serverEntityId } from '../config/backendIdentity';
+import { backendRequestOptions } from '../services/api/backendRequest';
+import { BACKEND_CONNECTION_UNAVAILABLE, markBackendConnectionReady, markBackendConnectionUnavailable } from '../config/backendConnectionState';
 import {
   LOCAL_BACKEND_CONNECTION_ID,
+  getKnownBackendConnections,
   setKnownBackendConnections,
   workspaceBackendApiBase,
   type BackendConnectionSummary,
@@ -196,6 +201,33 @@ export function mergeIndexProjectIds(diskIds: string[], memIds: string[]): strin
 
 const EMPTY_HYDRATED: HydratedState = { projects: [], activeProjectId: null, nodes: {} };
 
+function isLocalProject(project: Project): boolean {
+  return !remoteEntityIdentity(project.id)
+    && (!project.backendConnectionId || project.backendConnectionId === LOCAL_BACKEND_CONNECTION_ID);
+}
+
+/**
+ * The workspace a window opens on from saved state: its preference, unless
+ * that is the assistant's hidden system workspace, which never opens as the
+ * active one (the backend boot path follows the same rule).
+ */
+export function openableActiveProjectId(projects: readonly Project[], preferred: string | null): string | null {
+  const saved = preferred ? projects.find((project) => project.id === preferred) : undefined;
+  if (!isSystemWorkspace(saved)) return preferred;
+  return projects.find((project) => !project.deletedAt && !project.archivedAt && !isSystemWorkspace(project))?.id ?? null;
+}
+
+/** Remote content is loaded from its connection, never restored from disk. */
+function localOnlySavedState(state: SavedState): SavedState {
+  const projects = state.projects.filter(isLocalProject);
+  const ids = new Set(projects.map(project => project.id));
+  return {
+    ...state, projects,
+    activeProjectId: ids.has(state.activeProjectId ?? '') ? state.activeProjectId : null,
+    nodes: Object.fromEntries(Object.entries(state.nodes).filter(([, node]) => ids.has(node.projectId))),
+  };
+}
+
 /**
  * Backoff between hydration reachability retries while the backend is still
  * starting. Short enough that a cold start feels instant once the backend
@@ -237,6 +269,10 @@ export function readLocalStoragePayload(userId?: string): SavedState | null {
         try {
           const blob = JSON.parse(rawBlob) as { project: SavedState['projects'][number]; nodes: SavedState['nodes'] };
           if (!blob || !blob.project) continue;
+          if (!isLocalProject(blob.project)) {
+            window.localStorage.removeItem(stateProjectKey(baseKey, pid));
+            continue;
+          }
           projects.push(blob.project);
           // node ids are unique across projects by invariant, so no key collision
           Object.assign(nodes, blob.nodes ?? {});
@@ -262,7 +298,10 @@ export function readLocalStoragePayload(userId?: string): SavedState | null {
     (userId ? window.localStorage.getItem(LEGACY_STATE_KEY) : null);
   if (!rawSingle) return null;
   try {
-    return JSON.parse(rawSingle) as SavedState;
+    const state = localOnlySavedState(JSON.parse(rawSingle) as SavedState);
+    window.localStorage.setItem(baseKey, JSON.stringify(state));
+    if (userId) window.localStorage.removeItem(LEGACY_STATE_KEY);
+    return state;
   } catch {
     return null;
   }
@@ -296,6 +335,9 @@ export function serializeWorkspaceRow(project: Project) {
   if (project.instructions && project.instructions.length > 0) {
     settings.instructions = project.instructions;
   }
+  // The row upsert replaces the whole settings blob: a system workspace (the
+  // assistant's) must keep its flag or it would turn into a user workspace.
+  if (project.system) settings.system = project.system;
   return {
     id: project.id,
     name: project.name,
@@ -387,7 +429,7 @@ export function serializeNodeRow(
 /** Build one `edges` row. The id derivation is the convergence key. */
 export function serializeEdgeRow(project: Project, e: Project['edges'][number]) {
   return {
-    id: `${e.kind || 'branch'}-${e.source}-${e.target}`,
+    id: `${e.kind || 'branch'}-${serverEntityId(e.source)}-${serverEntityId(e.target)}`,
     workspace_id: project.id,
     source_node_id: e.source,
     target_node_id: e.target,
@@ -412,13 +454,17 @@ export function serializeMessageRowsForNode(
   return (n.messages || []).flatMap((m, i) => {
     if (m.role === 'assistant' && m.streaming) return [];
     const persisted = messageForPersistence(m);
+    // Mirror every assistant metadata field the backend projection writes
+    // (turnPersistence.recipes durableMessageMetadata): a write-back that
+    // omits one silently erases it from the row.
     const metadata = m.role === 'assistant'
-      ? (m.plan?.length || persisted.steeringReports?.length
-          ? { plan: m.plan, steeringReports: persisted.steeringReports } : null)
+      ? (m.plan?.length || persisted.steeringReports?.length || persisted.subagents?.length
+          ? { plan: m.plan, steeringReports: persisted.steeringReports, subagents: persisted.subagents } : null)
       : (m.steered || m.quotedText || m.attachments?.length || m.comments?.length
           ? {
               ...(m.steered ? { steered: true } : {}),
               quotedText: m.quotedText,
+              quoteSource: m.quoteSource,
               attachments: m.attachments,
               comments: m.comments,
             }
@@ -478,6 +524,8 @@ export function serializeWorkspaceForSync(
 export interface ExplicitCommandBatch {
   commands: WorkspaceCommand[];
   nodeProjectionUpdates: Map<string, string>;
+  /** View marks this batch writes, by node: what `knownViewedAt` holds once it lands. */
+  viewedAtUpdates: Map<string, number>;
 }
 
 function nodeCommandPatch(
@@ -507,16 +555,35 @@ function nodeCommandPatch(
   };
 }
 
-/** Convert an entity delta into explicit, message-free domain commands. */
+function noteDurableViewedAt(known: Map<string, number>, nodeId: string, node: ChatNodeState | undefined): void {
+  if (node?.viewedAt !== undefined) known.set(nodeId, node.viewedAt);
+}
+
+/** A view mark only counts against a reply (unread, Just done), so a node without one has none to save. */
+function hasReply(node: ChatNodeState): boolean {
+  return node.lastAssistantAt !== undefined
+    || node.messages.some((message) => message.role === 'assistant')
+    || (node.messagesLoaded === false && (node.messageCount ?? 0) > 1);
+}
+
+/**
+ * Convert an entity delta into explicit, message-free domain commands. With
+ * `knownViewedAt` (the view mark the backend holds per node), a node viewed
+ * since gets a patch carrying only `viewed_at`, after any upsert that creates
+ * it, so a view never replays this window's pane or graph fields. A node with
+ * no reply yet gets none.
+ */
 export function buildExplicitWorkspaceCommands(
   project: Project,
   nodes: Record<string, ChatNodeState>,
   delta: WorkspaceDirtyDelta,
   knownNodeProjections: ReadonlyMap<string, string>,
   windowId?: string,
+  knownViewedAt?: ReadonlyMap<string, number>,
 ): ExplicitCommandBatch {
   const commands: WorkspaceCommand[] = [];
   const nodeProjectionUpdates = new Map<string, string>();
+  const viewedAtUpdates = new Map<string, number>();
   if (delta.workspaceChanged) {
     commands.push({ type: 'workspace.upsert', payload: serializeWorkspaceRow(project) });
   }
@@ -546,6 +613,15 @@ export function buildExplicitWorkspaceCommands(
       ...(windowId ? { composer_draft_window_id: windowId } : {}),
     } });
   }
+  if (knownViewedAt) {
+    for (const nodeId of delta.nodeIds) {
+      const node = nodes[nodeId];
+      const viewedAt = node?.viewedAt;
+      if (viewedAt === undefined || viewedAt <= (knownViewedAt.get(nodeId) ?? 0) || !hasReply(node)) continue;
+      commands.push({ type: 'node.patch', payload: { id: nodeId, viewed_at: viewedAt } });
+      viewedAtUpdates.set(nodeId, viewedAt);
+    }
+  }
   const edgeById = delta.edgeUpsertIds.size > 0
     ? new Map(project.edges.map((edge) => [serializedEdgeId(edge), edge] as const))
     : null;
@@ -569,7 +645,7 @@ export function buildExplicitWorkspaceCommands(
   for (const treeId of delta.treeDeleteIds) {
     commands.push({ type: 'tree.delete', payload: { id: treeId } });
   }
-  return { commands, nodeProjectionUpdates };
+  return { commands, nodeProjectionUpdates, viewedAtUpdates };
 }
 
 export function mergeWorkspaceDirtyDelta(
@@ -628,6 +704,97 @@ export function emptyWorkspaceDirtyDelta(): WorkspaceDirtyDelta {
     contextDeleteIds: new Set<string>(),
     workspaceChanged: false,
   };
+}
+
+/**
+ * Entities a backend snapshot just brought into the store
+ * (installWorkspaceSnapshot: the assistant's workspace, a thread made in
+ * another window). They are already durable, so the dirty tracker never
+ * writes them back; it treats them as loaded, the way hydration does.
+ */
+export interface BackendInstalledEntities {
+  projectId: string;
+  /** The whole workspace is new to the store. */
+  newProject: boolean;
+  nodeIds: readonly string[];
+  treeIds: readonly string[];
+  /** Serialized edge ids (serializedEdgeId). */
+  edgeIds: readonly string[];
+}
+
+/** True once `project` (as rendered) holds everything a noted install brought in. */
+function backendInstallLanded(project: Project, installed: BackendInstalledEntities): boolean {
+  const trees = new Set(project.trees.map((tree) => tree.id));
+  const edges = new Set(project.edges.map(serializedEdgeId));
+  return installed.nodeIds.every((id) => project.chatIds.includes(id))
+    && installed.treeIds.every((id) => trees.has(id))
+    && installed.edgeIds.every((id) => edges.has(id));
+}
+
+/** A noted install that still hasn't landed after this many scans is let go. */
+const BACKEND_INSTALL_MAX_MISSES = 20;
+
+/**
+ * Trees and edges this window removed from a workspace that the backend may
+ * not have heard of yet (or only just has): a backend snapshot read earlier
+ * must not bring them back.
+ */
+export interface PendingBackendDeletes {
+  treeIds: ReadonlySet<string>;
+  /** Serialized edge ids (serializedEdgeId). */
+  edgeIds: ReadonlySet<string>;
+}
+
+/**
+ * Confirmed tree/edge deletes remembered per workspace, newest kept. Only a
+ * snapshot read that began before a delete was confirmed needs it (see
+ * pendingBackendDeletes); this just bounds the memory.
+ */
+const CONFIRMED_DELETES_KEPT = 500;
+
+function rememberConfirmedDelete(ids: Map<string, number>, id: string, at: number): void {
+  ids.delete(id); // re-set moves it to the newest end
+  ids.set(id, at);
+  for (const oldest of ids.keys()) {
+    if (ids.size <= CONFIRMED_DELETES_KEPT) break;
+    ids.delete(oldest);
+  }
+}
+
+function mergeBackendInstalled(a: BackendInstalledEntities, b: BackendInstalledEntities): BackendInstalledEntities {
+  return {
+    projectId: a.projectId,
+    newProject: a.newProject || b.newProject,
+    nodeIds: [...new Set([...a.nodeIds, ...b.nodeIds])],
+    treeIds: [...new Set([...a.treeIds, ...b.treeIds])],
+    edgeIds: [...new Set([...a.edgeIds, ...b.edgeIds])],
+  };
+}
+
+/** `delta` without the installed entities; null when nothing else is left to write. */
+export function withoutBackendInstalled(
+  delta: WorkspaceDirtyDelta,
+  installed: BackendInstalledEntities,
+): WorkspaceDirtyDelta | null {
+  if (installed.newProject) return null;
+  const without = (ids: Set<string>, drop: readonly string[]) => {
+    const next = new Set(ids);
+    for (const id of drop) next.delete(id);
+    return next;
+  };
+  const rest: WorkspaceDirtyDelta = {
+    ...delta,
+    nodeIds: without(delta.nodeIds, installed.nodeIds),
+    draftNodeIds: without(delta.draftNodeIds, installed.nodeIds),
+    treeUpsertIds: without(delta.treeUpsertIds, installed.treeIds),
+    edgeUpsertIds: without(delta.edgeUpsertIds, installed.edgeIds),
+  };
+  const empty = !rest.workspaceChanged
+    && rest.nodeIds.size === 0 && rest.draftNodeIds.size === 0
+    && rest.edgeUpsertIds.size === 0 && rest.edgeDeleteIds.size === 0
+    && rest.treeUpsertIds.size === 0 && rest.treeDeleteIds.size === 0
+    && rest.contextUpsertIds.size === 0 && rest.contextDeleteIds.size === 0;
+  return empty ? null : rest;
 }
 
 // Serialized edge id, matching serializeEdgeRow's id derivation.
@@ -694,11 +861,12 @@ export function accumulateWorkspaceDirtyDelta(
     return d;
   }
 
-  // Workspace-level fields (name/cwd/activeTreeId/instructions/
+  // Workspace-level fields (name/cwd/folders/activeTreeId/instructions/
   // aiGlobalContext/deletedAt/archivedAt) → workspace row changed.
   if (
     prev.name !== cur.name ||
     prev.cwd !== cur.cwd ||
+    prev.folders !== cur.folders ||
     prev.activeTreeId !== cur.activeTreeId ||
     prev.instructions !== cur.instructions ||
     prev.aiGlobalContext !== cur.aiGlobalContext ||
@@ -820,7 +988,10 @@ export function writeScopedLocalStorage({
   // always completed before delta writes begin.
   const seeding = ls.getItem(indexKey) == null;
 
+  const remoteProjects = projects.filter(project => !isLocalProject(project));
+  projects = projects.filter(isLocalProject);
   const projectById = new Map(projects.map((p) => [p.id, p]));
+  for (const project of remoteProjects) ls.removeItem(stateProjectKey(baseKey, project.id));
   // First write seeds all projects; later writes only touch changed ones.
   const idsToWrite = seeding ? new Set(projects.map((p) => p.id)) : changedIds;
 
@@ -874,7 +1045,8 @@ export function writeScopedLocalStorage({
     const projectIds = mergeIndexProjectIds(
       diskIds,
       projects.map((p) => p.id),
-    ).filter((id) => !removedThisFlush.has(id));
+    ).filter((id) => !removedThisFlush.has(id) && !remoteEntityIdentity(id)
+      && !remoteProjects.some(project => project.id === id));
 
     const index: StateIndex = {
       // The index carries the schema version, but per-project blobs are NOT
@@ -882,7 +1054,7 @@ export function writeScopedLocalStorage({
       // STATE_SCHEMA_VERSION change must therefore force a full re-seed
       // (e.g. bump the key prefix) rather than rely on this field alone.
       version: STATE_SCHEMA_VERSION,
-      activeProjectId,
+      activeProjectId: projectById.has(activeProjectId ?? '') ? activeProjectId : null,
       projectIds,
     };
     try {
@@ -985,6 +1157,8 @@ export function useWorkspacePersistence({
   const dirtyDeltaByProjectRef = useRef(new Map<string, WorkspaceDirtyDelta>());
   const pendingCommandDeltaByProjectRef = useRef(new Map<string, WorkspaceDirtyDelta>());
   const nodeCommandProjectionRef = useRef(new Map<string, string>());
+  // The view mark the backend holds per node, so a focus change writes only a newer one.
+  const nodeViewedAtRef = useRef(new Map<string, number>());
   const workspaceSyncQueueRef = useRef<WorkspaceSyncQueue | null>(null);
   if (!workspaceSyncQueueRef.current) {
     workspaceSyncQueueRef.current = new WorkspaceSyncQueue((err, projectId) => {
@@ -997,6 +1171,18 @@ export function useWorkspacePersistence({
   const justHydratedRef = useRef(false);
   const prevProjectsRef = useRef<Project[]>(projects);
   const prevNodesRef = useRef<Record<string, ChatNodeState>>(nodes);
+  // Backend snapshots installed since the last dirty scan (see noteBackendInstalled).
+  const backendInstalledRef = useRef(new Map<string, { installed: BackendInstalledEntities; misses: number }>());
+  // Tree/edge deletes the backend confirmed, per workspace (id → when this window heard).
+  const confirmedDeletesRef = useRef(new Map<string, { trees: Map<string, number>; edges: Map<string, number> }>());
+  const noteConfirmedDeletes = useCallback((projectId: string, delta: WorkspaceDirtyDelta) => {
+    if (delta.treeDeleteIds.size === 0 && delta.edgeDeleteIds.size === 0) return;
+    const at = Date.now();
+    const confirmed = confirmedDeletesRef.current.get(projectId) ?? { trees: new Map<string, number>(), edges: new Map<string, number>() };
+    for (const id of delta.treeDeleteIds) rememberConfirmedDelete(confirmed.trees, id, at);
+    for (const id of delta.edgeDeleteIds) rememberConfirmedDelete(confirmed.edges, id, at);
+    confirmedDeletesRef.current.set(projectId, confirmed);
+  }, []);
   projectsRef.current = projects;
   activeProjectIdRef.current = activeProjectId;
   hydratedRef.current = hydrated;
@@ -1012,6 +1198,8 @@ export function useWorkspacePersistence({
     if (!hydrated) return;
     if (!justHydratedRef.current) {
       justHydratedRef.current = true;
+      // The loaded state is the clean baseline, snapshots installed before it included.
+      backendInstalledRef.current.clear();
       prevProjectsRef.current = projects;
       prevNodesRef.current = nodes;
       for (const project of projects) {
@@ -1022,6 +1210,7 @@ export function useWorkspacePersistence({
             nodeId,
             JSON.stringify(nodeCommandPatch(row, nodes[nodeId], windowId)),
           );
+          noteDurableViewedAt(nodeViewedAtRef.current, nodeId, nodes[nodeId]);
         }
       }
       return;
@@ -1081,6 +1270,40 @@ export function useWorkspacePersistence({
         }
       }
     }
+    // What a backend snapshot brought in is already durable: it joins the
+    // baseline like hydrated state (node projections included) instead of
+    // being written back.
+    // An install noted after this render's commit (its effects can run
+    // later) isn't in `projects` yet: it waits for the scan that sees it.
+    for (const [projectId, entry] of backendInstalledRef.current) {
+      const { installed } = entry;
+      const project = projects.find((p) => p.id === projectId);
+      if (!project || !backendInstallLanded(project, installed)) {
+        entry.misses += 1;
+        if (entry.misses > BACKEND_INSTALL_MAX_MISSES) backendInstalledRef.current.delete(projectId);
+        continue;
+      }
+      backendInstalledRef.current.delete(projectId);
+      for (const nodeId of installed.nodeIds) {
+        const row = serializeNodeRow(project, nodes, nodeId);
+        if (row) nodeCommandProjectionRef.current.set(nodeId, JSON.stringify(nodeCommandPatch(row, nodes[nodeId], windowId)));
+        noteDurableViewedAt(nodeViewedAtRef.current, nodeId, nodes[nodeId]);
+      }
+      const delta = dirtyDeltaByProjectRef.current.get(projectId);
+      if (!delta) continue;
+      // New to the store only if the last scan didn't hold it either: once
+      // a scan has, its delta can carry local edits, and only the installed
+      // ids leave it.
+      const newProject = installed.newProject && !prevProjectById.has(projectId);
+      const rest = withoutBackendInstalled(delta, { ...installed, newProject });
+      if (rest) {
+        dirtyDeltaByProjectRef.current.set(projectId, rest);
+      } else {
+        dirtyDeltaByProjectRef.current.delete(projectId);
+        dirtyProjectIdsRef.current.delete(projectId);
+        changed.delete(projectId);
+      }
+    }
     if (changed.size > 0) {
       dirtyRef.current = true;
       for (const id of Array.from(changed)) dirtyProjectIdsRef.current.add(id);
@@ -1120,9 +1343,12 @@ export function useWorkspacePersistence({
       );
       delta = accumulateWorkspaceDirtyDelta(prevProjectsRef.current.find(p => p.id === projectId), project,
         prevNodesRef.current, nodesRef.current, delta);
-      const batch = buildExplicitWorkspaceCommands(project, nodesRef.current, delta, nodeCommandProjectionRef.current, windowId);
+      const batch = buildExplicitWorkspaceCommands(project, nodesRef.current, delta, nodeCommandProjectionRef.current, windowId,
+        nodeViewedAtRef.current);
       await applyWorkspaceCommands(projectId, `cmd-${crypto.randomUUID()}`, batch.commands);
+      noteConfirmedDeletes(projectId, delta);
       for (const [nodeId, projection] of batch.nodeProjectionUpdates) nodeCommandProjectionRef.current.set(nodeId, projection);
+      for (const [nodeId, viewedAt] of batch.viewedAtUpdates) nodeViewedAtRef.current.set(nodeId, viewedAt);
       if (pendingCommandDeltaByProjectRef.current.get(projectId) === pendingDelta) pendingCommandDeltaByProjectRef.current.delete(projectId);
       if (dirtyDeltaByProjectRef.current.get(projectId) === dirtyDelta) {
         dirtyDeltaByProjectRef.current.delete(projectId);
@@ -1132,7 +1358,7 @@ export function useWorkspacePersistence({
     } finally {
       syncPausedRef.current = false;
     }
-  }, [nodesRef, syncPausedRef, windowId]);
+  }, [nodesRef, noteConfirmedDeletes, syncPausedRef, windowId]);
 
   // Periodically turn structural state and explicit draft edits into v2 commands.
   useEffect(() => {
@@ -1182,6 +1408,7 @@ export function useWorkspacePersistence({
               pending,
               nodeCommandProjectionRef.current,
               windowId,
+              nodeViewedAtRef.current,
             );
             if (batch.commands.length === 0) {
               if (!queue.hasPending(projectId)) pendingCommandDeltaByProjectRef.current.delete(projectId);
@@ -1189,9 +1416,11 @@ export function useWorkspacePersistence({
             }
             const operationId = `cmd-${projectId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
             await applyWorkspaceCommands(projectId, operationId, batch.commands);
+            noteConfirmedDeletes(projectId, pending);
             for (const [nodeId, projection] of batch.nodeProjectionUpdates) {
               nodeCommandProjectionRef.current.set(nodeId, projection);
             }
+            for (const [nodeId, viewedAt] of batch.viewedAtUpdates) nodeViewedAtRef.current.set(nodeId, viewedAt);
             if (!queue.hasPending(projectId) && !dirtyProjectIdsRef.current.has(projectId)) {
               pendingCommandDeltaByProjectRef.current.delete(projectId);
             }
@@ -1231,16 +1460,17 @@ export function useWorkspacePersistence({
           delta,
           nodeCommandProjectionRef.current,
           windowId,
+          nodeViewedAtRef.current,
         );
         if (batch.commands.length === 0) continue;
         const payload = JSON.stringify({
           operationId: `unload-${projectId}-${Date.now()}`,
           commands: batch.commands,
         });
-        navigator.sendBeacon(
-          `${workspaceBackendApiBase(projectId)}/workspaces/${encodeURIComponent(projectId)}/commands`,
-          new Blob([payload], { type: 'application/json' }),
-        );
+        const url = `${workspaceBackendApiBase(projectId)}/workspaces/${encodeURIComponent(serverEntityId(projectId))}/commands`;
+        navigator.sendBeacon(url, new Blob([
+          backendRequestOptions(url, { body: payload }).body as string,
+        ], { type: 'application/json' }));
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -1253,12 +1483,15 @@ export function useWorkspacePersistence({
     let cancelled = false;
     const activeRemoteIds = new Set<string>();
     const remoteControllers = new Map<string, AbortController>();
+    const retryingRemoteIds = new Set<string>();
     const retryWaiters = new Map<string, () => void>();
     const retryRequested = new Set<string>();
     const onRetryRemote = (event: Event) => {
       const id = (event as CustomEvent<{ connectionId: string }>).detail?.connectionId;
       if (!activeRemoteIds.has(id)) return;
       const wake = retryWaiters.get(id);
+      // Tell the caller whether a load acted on this; after hydration the gateway owns recovery.
+      if (wake || remoteControllers.has(id)) event.preventDefault();
       if (wake) wake(); else retryRequested.add(id);
     };
     window.addEventListener(REMOTE_WORKSPACE_RETRY_EVENT, onRetryRemote);
@@ -1289,7 +1522,7 @@ export function useWorkspacePersistence({
       const rawBackend = snapshot.workspaces.filter(
         (workspace): workspace is Record<string, unknown> => !!workspace && typeof workspace === 'object',
       );
-      const hydratedSnapshot = hydrateBackendWorkspaces(rawBackend, null);
+      const hydratedSnapshot = hydrateBackendWorkspaces(rawBackend, null, snapshot.connectionId);
       const seenProjectIds = new Set(state.projects.map((project) => project.id));
       const seenNodeIds = new Set(Object.keys(state.nodes));
       let addedProjects = 0;
@@ -1437,6 +1670,7 @@ export function useWorkspacePersistence({
     let resolveLocalInstalled: () => void = () => {};
     const localInstalled = new Promise<void>((resolve) => { resolveLocalInstalled = resolve; });
     const applyRemoteSnapshot = (connection: BackendConnectionSummary, snapshot: BackendSnapshot, replace = true): void => {
+      markBackendConnectionReady(connection.id);
       const nextState: HydratedState = {
         projects: [...projectsRef.current],
         activeProjectId: activeProjectIdRef.current,
@@ -1449,9 +1683,10 @@ export function useWorkspacePersistence({
         );
         if (!activeStillExists) {
           const preferred = nextState.projects.find(
-            (project) => project.id === initialActiveProjectIdRef.current,
+            (project) => project.id === initialActiveProjectIdRef.current && !isSystemWorkspace(project),
           );
-          nextState.activeProjectId = preferred?.id ?? nextState.projects[0]?.id ?? null;
+          nextState.activeProjectId = preferred?.id
+            ?? nextState.projects.find((project) => !isSystemWorkspace(project))?.id ?? null;
         } else if (
           pendingPreferredActiveId !== null
           && nextState.activeProjectId === autoSelectedActiveId
@@ -1470,21 +1705,63 @@ export function useWorkspacePersistence({
       console.info(`remote backend hydrated (${connection.name}); reconciled ${changedProjects} workspace(s)`);
     };
     const retryRemoteHydration = async (connection: BackendConnectionSummary, replace = true): Promise<void> => {
-      let retryDelay = REMOTE_HYDRATION_RETRY_INITIAL_MS;
-      while (!cancelled && activeRemoteIds.has(connection.id)) {
-        await waitForRemoteRetry(connection.id, retryDelay);
-        if (cancelled || !activeRemoteIds.has(connection.id)) return;
+      if (retryingRemoteIds.has(connection.id)) return;
+      retryingRemoteIds.add(connection.id);
+      try {
+        let retryDelay = REMOTE_HYDRATION_RETRY_INITIAL_MS;
+        while (!cancelled && activeRemoteIds.has(connection.id)) {
+          await waitForRemoteRetry(connection.id, retryDelay);
+          if (cancelled || !activeRemoteIds.has(connection.id)) return;
 
-        const snapshot = await fetchRemoteSnapshot(connection, false);
-        if (cancelled || !activeRemoteIds.has(connection.id)) return;
-        if (!snapshot) {
-          retryDelay = Math.min(retryDelay * 2, REMOTE_HYDRATION_RETRY_MAX_MS);
-          continue;
+          const snapshot = await fetchRemoteSnapshot(connection, false);
+          if (cancelled || !activeRemoteIds.has(connection.id)) return;
+          if (!snapshot) {
+            retryDelay = Math.min(retryDelay * 2, REMOTE_HYDRATION_RETRY_MAX_MS);
+            continue;
+          }
+          applyRemoteSnapshot(connection, snapshot, replace);
+          return;
         }
-        applyRemoteSnapshot(connection, snapshot, replace);
-        return;
-      }
+      } finally { retryingRemoteIds.delete(connection.id); }
     };
+    const removeRemoteSnapshot = (connectionId: string): void => {
+      const removed = projectsRef.current.filter(project => project.backendConnectionId === connectionId
+        || remoteEntityIdentity(project.id)?.connectionId === connectionId);
+      if (removed.length === 0) return;
+      const removedIds = new Set(removed.map(project => project.id));
+      const nextProjects = projectsRef.current.filter(project => !removedIds.has(project.id));
+      const nextNodes = { ...nodesRef.current };
+      for (const project of removed) {
+        dirtyDeltaByProjectRef.current.delete(project.id);
+        pendingCommandDeltaByProjectRef.current.delete(project.id);
+        dirtyProjectIdsRef.current.delete(project.id);
+        for (const nodeId of project.chatIds) {
+          delete nextNodes[nodeId];
+          nodeCommandProjectionRef.current.delete(nodeId);
+          nodeViewedAtRef.current.delete(nodeId);
+          dirtyDraftNodeIdsRef?.current.delete(nodeId);
+        }
+      }
+      if (removedIds.has(activeProjectIdRef.current ?? '')) {
+        pendingPreferredActiveId = activeProjectIdRef.current;
+        // Never the assistant's hidden system workspace (see the boot resolution below).
+        const nextActive = nextProjects.find(project => !project.deletedAt && !project.archivedAt && !isSystemWorkspace(project))?.id ?? null;
+        autoSelectedActiveId = nextActive;
+        activeProjectIdRef.current = nextActive;
+        setActiveProjectId(nextActive);
+      }
+      projectsRef.current = nextProjects;
+      setProjects(nextProjects);
+      installNodes(nextNodes);
+    };
+    const onRemoteUnavailable = (event: Event) => {
+      const connectionId = (event as CustomEvent<{ connectionId: string }>).detail?.connectionId;
+      if (!activeRemoteIds.has(connectionId)) return;
+      removeRemoteSnapshot(connectionId);
+      const connection = getKnownBackendConnections().find(item => item.id === connectionId);
+      if (connection) void retryRemoteHydration(connection);
+    };
+    window.addEventListener(BACKEND_CONNECTION_UNAVAILABLE, onRemoteUnavailable);
     const mergeRemoteWhenReady = async (fetch: Promise<RemoteFetchResult>, replace = true): Promise<void> => {
       const { connection, snapshot } = await fetch;
       await localInstalled;
@@ -1510,7 +1787,9 @@ export function useWorkspacePersistence({
         for (const id of activeRemoteIds) {
           if (currentIds.has(id)) continue;
           activeRemoteIds.delete(id); knownConnectionIds.delete(id); retryRequested.delete(id);
+          markBackendConnectionUnavailable(id);
           remoteControllers.get(id)?.abort(); retryWaiters.get(id)?.(); clearRemoteRecoveryIssue(id);
+          removeRemoteSnapshot(id);
         }
         for (const connection of connections) {
           activeRemoteIds.add(connection.id);
@@ -1550,13 +1829,16 @@ export function useWorkspacePersistence({
         const backendState: HydratedState = { projects: [], activeProjectId: null, nodes: {} };
         for (const snapshot of snapshots) {
           appendBackendSnapshot(backendState, snapshot);
+          markBackendConnectionReady(snapshot.connectionId);
         }
         if (backendState.projects.length > 0) {
             const preferredActiveId = resolveActiveProjectForWindow(initialActiveProjectIdRef.current);
             const preferredExists = backendState.projects.some((p) => p.id === preferredActiveId);
-            const resolvedActiveId = preferredExists
+            // The assistant's system workspace never opens as the active one.
+            const preferredUsable = backendState.projects.some((p) => p.id === preferredActiveId && !isSystemWorkspace(p));
+            const resolvedActiveId = preferredUsable
               ? preferredActiveId
-              : backendState.projects[0]?.id ?? null;
+              : backendState.projects.find((p) => !isSystemWorkspace(p))?.id ?? null;
             if (!preferredExists && preferredActiveId !== null && connections.length > 0) {
               // Likely a remote workspace whose snapshot has not landed yet.
               pendingPreferredActiveId = preferredActiveId;
@@ -1614,8 +1896,9 @@ export function useWorkspacePersistence({
             if (cancelled) return;
             setProjects(lsState.projects);
             projectsRef.current = lsState.projects;
-            setActiveProjectId(resolveActiveProjectForWindow(lsState.activeProjectId));
-            activeProjectIdRef.current = resolveActiveProjectForWindow(lsState.activeProjectId);
+            const resolvedActiveId = openableActiveProjectId(lsState.projects, resolveActiveProjectForWindow(lsState.activeProjectId));
+            setActiveProjectId(resolvedActiveId);
+            activeProjectIdRef.current = resolvedActiveId;
             installNodes(lsState.nodes);
           }
           if (!cancelled) finishHydration(lsState.projects.length > 0 ? 'localStorage' : 'empty');
@@ -1629,7 +1912,7 @@ export function useWorkspacePersistence({
           const lsState = readLocalStorageState(userId);
           setProjects(lsState.projects);
           projectsRef.current = lsState.projects;
-          const resolvedActiveId = resolveActiveProjectForWindow(lsState.activeProjectId);
+          const resolvedActiveId = openableActiveProjectId(lsState.projects, resolveActiveProjectForWindow(lsState.activeProjectId));
           setActiveProjectId(resolvedActiveId);
           activeProjectIdRef.current = resolvedActiveId;
           installNodes(lsState.nodes);
@@ -1645,8 +1928,53 @@ export function useWorkspacePersistence({
       for (const wake of retryWaiters.values()) wake();
       for (const id of activeRemoteIds) clearRemoteRecoveryIssue(id);
       window.removeEventListener(REMOTE_WORKSPACE_RETRY_EVENT, onRetryRemote);
+      window.removeEventListener(BACKEND_CONNECTION_UNAVAILABLE, onRemoteUnavailable);
       window.removeEventListener('michi:backend-connections-changed', onConnectionsChanged);
     };
   }, [nodesRef, setActiveProjectId, setHydrated, setNodes, setProjects, userId]);
-  return { runWorkspaceMutation };
+  /**
+   * Call right before putting a backend snapshot into the store: the next
+   * dirty scan takes these entities as loaded rather than as local edits.
+   */
+  const noteBackendInstalled = useCallback((installed: BackendInstalledEntities) => {
+    const map = backendInstalledRef.current;
+    const prev = map.get(installed.projectId);
+    map.set(installed.projectId, { installed: prev ? mergeBackendInstalled(prev.installed, installed) : installed, misses: 0 });
+  }, []);
+
+  /**
+   * Trees and edges removed from `current` (the store's workspace as it is
+   * now) that a backend snapshot whose read began at `readStartedAt` may
+   * still hold: removed since the last scan, waiting in a command batch, or
+   * confirmed by the backend at or after that start (a read begun later
+   * already saw the delete, so what it holds is back for real). An unknown
+   * start counts every confirmed delete still remembered.
+   */
+  const pendingBackendDeletes = useCallback((current: Project, readStartedAt?: number): PendingBackendDeletes => {
+    const treeIds = new Set<string>();
+    const edgeIds = new Set<string>();
+    for (const delta of [dirtyDeltaByProjectRef.current.get(current.id), pendingCommandDeltaByProjectRef.current.get(current.id)]) {
+      delta?.treeDeleteIds.forEach((id) => treeIds.add(id));
+      delta?.edgeDeleteIds.forEach((id) => edgeIds.add(id));
+    }
+    const scanned = prevProjectsRef.current.find((p) => p.id === current.id);
+    if (scanned && scanned !== current) {
+      const trees = new Set(current.trees.map((tree) => tree.id));
+      for (const tree of scanned.trees) if (!trees.has(tree.id)) treeIds.add(tree.id);
+      const edges = new Set(current.edges.map(serializedEdgeId));
+      for (const edge of scanned.edges) {
+        const id = serializedEdgeId(edge);
+        if (!edges.has(id)) edgeIds.add(id);
+      }
+    }
+    const confirmed = confirmedDeletesRef.current.get(current.id);
+    if (confirmed) {
+      for (const [ids, into] of [[confirmed.trees, treeIds], [confirmed.edges, edgeIds]] as const) {
+        for (const [id, at] of ids) if (readStartedAt === undefined || at >= readStartedAt) into.add(id);
+      }
+    }
+    return { treeIds, edgeIds };
+  }, []);
+
+  return { runWorkspaceMutation, noteBackendInstalled, pendingBackendDeletes };
 }

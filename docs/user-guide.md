@@ -1,6 +1,6 @@
 # Michi user guide
 
-This is the human entry point to the same canonical Markdown used by the built-in `michi_docs` tool. General content was source-reviewed on October 16, 2026. Each article states its scope; native Runtime versions and provider access can differ. Crew's guide retains its dated acceptance record.
+This is the human entry point to the same canonical Markdown used by the built-in `michi_docs` tool. General content was source-reviewed on October 16, 2026; Pages, maintenance and component-design content was checked again on October 26, 2026. Each article states its scope; native Runtime versions and provider access can differ. Crew's guide retains its dated acceptance record.
 
 Start with [Getting started](../backend/src/docs/getting-started.md) to complete a small task. For a problem, open [Troubleshooting](../backend/src/docs/troubleshooting.md). Public source installations use `~/Michi`, with application state under `~/.michi`; project folders and developer checkouts can be elsewhere.
 
@@ -12,6 +12,9 @@ Start with [Getting started](../backend/src/docs/getting-started.md) to complete
 | [Common workflows](../backend/src/docs/common-workflows.md) | Research, implementation, review and handoff | `common-workflows` |
 | [Choose a Runtime](../backend/src/docs/runtimes.md) | Requirements, authentication and models | `runtimes` |
 | [Runtime capabilities](../backend/src/docs/runtime-capabilities.md) | Integration matrix, native features and limits | `runtime-capabilities` |
+| [Pages and components](../backend/src/docs/pages-and-components.md) | Pages/Assistant, native blocks, grid, Sources, preferences, database views and sandbox calls | `pages-and-components` |
+| [Pages maintenance](../backend/src/docs/pages-maintenance.md) | Meta agent, initial Home reads, automatic updates, catch-up and protected proposals | `pages-maintenance` |
+| [Component design](../backend/src/docs/page-component-design.md) | Visual conventions, supported tokens, sandbox limits and authoring/preview workflow | `page-component-design` |
 | [Permissions](../backend/src/docs/permissions.md) | Ask/Trust/YOLO, grant scope, revocation and sandbox | `permissions` |
 | [Sessions and recovery](../backend/src/docs/sessions-and-recovery.md) | Execution state, queue/steer, Stop, resume and fork | `sessions-and-recovery` |
 | [Files and Artifacts](../backend/src/docs/files-and-artifacts.md) | Files, attachments, references, remote paths and browser | `files-and-artifacts` |
@@ -21,7 +24,7 @@ Start with [Getting started](../backend/src/docs/getting-started.md) to complete
 | [Privacy and data](../backend/src/docs/privacy-and-data.md) | Storage, recipients, authentication, telemetry and deletion | `privacy-and-data` |
 | [Troubleshooting](../backend/src/docs/troubleshooting.md) | Symptom index, diagnostic steps and a redacted report template | `troubleshooting` |
 | [Custom Agents (experimental)](../backend/src/docs/custom-agents.md) | Definitions, Runs, watches, policy and results; disabled by default | `custom-agents` |
-| [KiroCrew setup](../backend/src/agents/crew/GETTING_STARTED.md) | Required App/MCP/sessionApproval, Sync, Memory and acceptance scope | `crew` |
+| [KiroCrew setup](../runtime/src/adapters/crew/GETTING_STARTED.md) | Required App/MCP/sessionApproval, Sync, Memory and acceptance scope | `crew` |
 | [Remote backend setup](remote-backend.md) | Launch, SSH, connection tokens and lifecycle | `remote-backend` |
 
 ## Use the guide with an agent

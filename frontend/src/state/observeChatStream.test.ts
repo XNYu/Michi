@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CHAT_STREAM_EVENTS, dispatchChatStreamEvent } from '../services/chatStreamEvents';
 import type { ChatStreamEvent } from '../services/chatStreamEvents';
 import { createBackgroundTurnBinding } from './observeChatStream';
+import { reduceNodes } from './chatReducers';
+import { mapMessageRow } from './chatHydration';
+import { applyTurnEvent, createDurableTurn } from 'michi-shared';
+import type { ChatNodeState } from './chatTypes';
 import type { ChatAction } from './chatTypes';
 import { cancelChatAndObserve, settleCancellationObservation } from '../services/api/stream';
 import { fetchStream } from '../services/api/streamTransport';
@@ -246,4 +250,50 @@ describe('cancellation settlement from the existing background binding', () => {
     expect(fetchStream).not.toHaveBeenCalled();
     expect(status).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it.each(['foreground', 'background'] as const)('preserves durable fields through delayed %s observer replay and hydration', cursor => {
+  const initial = () => createDurableTurn({ turnId: 'self-turn-1', assistantId: 'self-a-1', nodeId: 'node-1', workspaceId: 'ws', displayUserText: 'ask', startedAt: 1 });
+  const frames: ChatStreamEvent[] = [
+    { event: 'tool_call', data: { ...envelope(1), toolCallId: 'read', title: 'Read', status: 'running', observedAt: 100 } },
+    { event: 'tool_call_update', data: { ...envelope(2), toolCallId: 'read', title: '', status: 'completed', observedAt: 700, inputJson: '{"path":"a"}', output: 'done' } },
+    { event: 'user_input_request', data: { ...envelope(3), requestId: 1, interactionId: 'interaction-1', questions: [{ id: 'question-1', question: 'Continue?', options: [], multiSelect: false }] } },
+    { event: 'user_input_resolved', data: { ...envelope(4), requestId: 1, interactionId: 'interaction-1', answers: [{ id: 'question-1', question: 'Continue?', answer: 'Yes' }], outcome: 'answered' } },
+    { event: 'usage_summary', data: { ...envelope(5), source: 'estimated', charge: { amount: 0.0123, unit: 'USD', provenance: 'sdk_estimate' } } },
+    { event: 'warning', data: { ...envelope(6), source: 'anthropic-api', category: 'provider', message: 'Retrying' } },
+    { event: 'error', data: { ...envelope(7), message: 'Durability failed', code: 'turn_persistence_failed', recoverable: true, completedAt: 800 } },
+  ];
+  const expected = frames.reduce(applyTurnEvent, initial());
+  let state: Record<string, ChatNodeState> = { 'node-1': { nodeId: 'node-1', chatId: 'chat-1', projectId: 'ws', kind: 'chat', status: 'streaming', activeTurnId: 'self-turn-1', messages: [{ id: 'self-a-1', role: 'assistant', text: '', toolCalls: [], blocks: [], streaming: true, createdAt: 1 }], followUps: [] } };
+  const now = vi.spyOn(Date, 'now').mockReturnValue(9_000_000);
+  try {
+    const handlers = createBackgroundTurnBinding({ chatId: 'chat-1', nodeId: 'node-1', cursor, dispatch: action => { state = reduceNodes(state, action); }, lastTurnRef: { current: '' }, lastSeqRef: { current: -1 } }).createHandlers();
+    for (const frame of frames) { dispatchChatStreamEvent(frame, handlers); dispatchChatStreamEvent(frame, handlers); }
+  } finally { now.mockRestore(); }
+  const message = state['node-1'].messages[0];
+  expect(message.blocks).toEqual(expected.assistantMessage.blocks);
+  expect(message.toolCalls).toEqual(expected.assistantMessage.toolCalls);
+  expect(message.usageSummary?.charge).toEqual(expected.assistantMessage.metadata?.usageSummary?.charge);
+  expect(message.warnings?.[0]).toMatchObject({ source: 'anthropic-api', category: 'provider' });
+  expect(state['node-1']).toMatchObject({ errorKind: 'turn_persistence_failed', errorRecoverable: true, errorCompletedAt: 800 });
+  const hydrated = mapMessageRow({ id: message.id, node_id: 'node-1', role: 'assistant', content: '', seq: 1, created_at: 1, blocks: JSON.stringify(message.blocks), tool_calls: JSON.stringify(message.toolCalls), metadata: JSON.stringify({ usageSummary: message.usageSummary, warnings: message.warnings }) });
+  expect(hydrated.blocks).toEqual(message.blocks);
+  expect(hydrated.toolCalls).toEqual(message.toolCalls);
+  expect(hydrated.usageSummary?.charge?.unit).toBe('USD');
+});
+
+it('does not attach an older assistant usage, warning or question to the latest reply', () => {
+  let state: Record<string, ChatNodeState> = { n: { nodeId: 'n', chatId: 'chat', projectId: 'ws', kind: 'chat', status: 'streaming', activeTurnId: 'new-turn', messages: [
+    { id: 'old', role: 'assistant', text: '', toolCalls: [], blocks: [], streaming: false },
+    { id: 'new', role: 'assistant', text: '', toolCalls: [], blocks: [], streaming: true },
+  ], followUps: [] } };
+  state = reduceNodes(state, { type: 'usage-summary', nodeId: 'n', assistantId: 'old', charge: { amount: 1, unit: 'USD', provenance: 'sdk_estimate' } });
+  state = reduceNodes(state, { type: 'warning', nodeId: 'n', assistantId: 'old', warning: { source: 'claude-cli', category: 'runtime', message: 'old warning' } });
+  state = reduceNodes(state, { type: 'user-input-request', nodeId: 'n', assistantId: 'old', userInput: { requestId: 1, interactionId: 'old-input', questions: [], answers: [] } });
+  expect(state.n.messages[1]).toMatchObject({ id: 'new', blocks: [] });
+  expect(state.n.messages[1].warnings).toBeUndefined();
+  expect(state.n.messages[1].usageSummary).toBeUndefined();
+  expect(state.n.pendingUserInput).toBeUndefined();
+  expect(state.n.usageSummary).toBeUndefined();
 });

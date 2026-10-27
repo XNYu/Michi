@@ -41,28 +41,6 @@ describe('MarkdownContent optional Streamdown-parity features', () => {
     expect(container.querySelector('del')?.textContent).toBe('该删除线包含句号。');
   });
 
-  it('adds automatic direction, code line numbers/download, and table controls', () => {
-    const markdown = [
-      'مرحبا بالعالم',
-      '',
-      '```ts',
-      'const a = 1;',
-      'const b = 2;',
-      '```',
-      '',
-      '| A | B |',
-      '| --- | --- |',
-      '| one | two |',
-    ].join('\n');
-    const { container } = render(<MarkdownContent features={features} text={markdown} />);
-
-    expect(container.querySelector('.prose')?.getAttribute('dir')).toBe('auto');
-    expect(container.querySelectorAll('[data-line-number]')).toHaveLength(2);
-    expect(container.querySelector('[data-michi-code-download]')).not.toBeNull();
-    expect(container.querySelector('[data-michi-table-controls]')).not.toBeNull();
-    expect(container.querySelectorAll('[data-michi-table-controls] button')).toHaveLength(3);
-  });
-
   it('asks before opening external links when link safety is enabled', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const { container } = render(

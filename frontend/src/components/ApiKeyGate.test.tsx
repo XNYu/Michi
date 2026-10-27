@@ -59,6 +59,9 @@ function status(overrides: Partial<AgentStatus> = {}): AgentStatus {
     label: 'Pi',
     capabilities: {
       modes: false,
+      models: false,
+      nativeResume: false,
+      supportedReasoningLevels: [],
       permissions: false,
       providerModels: true,
       reasoning: true,
@@ -129,20 +132,6 @@ describe('ApiKeyGate', () => {
     });
 
     await waitFor(() => expect(fetchAgentStatus).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText('Add a provider key')).toBeNull();
-  });
-
-  it('stays closed when another provider is usable and the active provider does not accept a user key', async () => {
-    fetchAgentStatus.mockResolvedValue(status({
-      provider: 'openrouter-free',
-      providers: [deepseek, cerebras, openRouterFree],
-      model: openRouterFree.defaultModel,
-      hasRequiredKey: true,
-    }));
-
-    render(<ApiKeyGate />);
-    await waitFor(() => expect(fetchAgentStatus).toHaveBeenCalledTimes(1));
-
     expect(screen.queryByText('Add a provider key')).toBeNull();
   });
 

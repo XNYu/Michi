@@ -16,7 +16,7 @@
  * @module turnPersistence.recipes
  */
 
-import type { DurableMessage, DurableTurnSnapshot } from 'michi-shared';
+import { knownSubagentEnd, type DurableMessage, type DurableTurnSnapshot, type SubagentEnd } from 'michi-shared';
 
 // ── SQL Templates ──────────────────────────────────────────────────────────
 // Named so grep turns them up: search `TURN_SQL.` or `MESSAGE_SQL.`.
@@ -36,11 +36,11 @@ export const TURN_SQL = {
   updateCheckpoint: `
     UPDATE turns SET last_seq = ?, checkpoint_at = ?, updated_at = ? WHERE turn_id = ?`,
 
-  /** Terminal finalization. Params: positional (8). */
+  /** Terminal finalization. Params: positional (9). */
   finalize: `
     UPDATE turns
     SET status = ?, last_seq = ?, stop_reason = ?, error = ?,
-        checkpoint_at = ?, completed_at = ?, updated_at = ?
+        checkpoint_at = ?, completed_at = ?, updated_at = ?, completion_seq = ?
     WHERE turn_id = ?`,
 } as const;
 
@@ -73,6 +73,10 @@ export const MESSAGE_SQL = {
     UPDATE messages
     SET content = ?, blocks = ?, tool_calls = ?, metadata = ?
     WHERE id = ? AND node_id = ? AND role = 'assistant'`,
+
+  /** An assistant row's stored metadata. Params: positional (id, node_id). */
+  getAssistantMetadata: `
+    SELECT metadata FROM messages WHERE id = ? AND node_id = ? AND role = 'assistant'`,
 } as const;
 
 export const NODE_SQL = {
@@ -118,12 +122,32 @@ export function durableMessageMetadata(message: DurableMessage): string | null {
     const metadata = {
       ...message.metadata,
       ...(message.plan?.length ? { plan: message.plan } : {}),
+      ...(message.subagents?.length ? { subagents: message.subagents } : {}),
     };
     return Object.keys(metadata).length > 0 ? jsonOrNull(metadata) : null;
   }
   return message.metadata && Object.keys(message.metadata).length > 0
     ? jsonOrNull(message.metadata)
     : null;
+}
+
+/**
+ * The ends a stored row's roster copies already record (shared
+ * knownSubagentEnd): one per copy terminated with an outcome. Empty for
+ * unreadable metadata or a row without a roster.
+ */
+export function storedSubagentEnds(raw: string | null): SubagentEnd[] {
+  if (!raw) return [];
+  let metadata: unknown;
+  try { metadata = JSON.parse(raw); } catch { return []; }
+  const roster = metadata && typeof metadata === 'object' ? (metadata as { subagents?: unknown }).subagents : undefined;
+  if (!Array.isArray(roster)) return [];
+  const ends: SubagentEnd[] = [];
+  for (const entry of roster) {
+    const end = knownSubagentEnd(entry);
+    if (end) ends.push(end);
+  }
+  return ends;
 }
 
 /**

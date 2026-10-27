@@ -1,8 +1,10 @@
 import { deriveSandboxCwd, normalizeWorkspaceCwd } from '../agents/tools/pathSandbox';
 import type { AgentSession, NewAgentSessionOptions } from '../agents/types';
 import { getRuntime } from '../agents/registry';
+import { descriptorOf } from 'michi-runtime/internal/core/descriptors';
 import { getSessionForUser, registerSession, dropSession } from '../agents/sessionRegistry';
 import { chatHub } from '../agents/chatHub';
+import { chatOwner, isRunOwner } from '../agents/ownerMapping';
 import { getNode, getWorkspace, updateNodeResumeBinding } from './dbRepository';
 import { acquireSessionRestoreLock } from './nativeResume';
 import { normalizeReasoning } from './resumeStrategy';
@@ -21,10 +23,12 @@ export async function resetKiroContext(original: AgentSession, ownerUserId: stri
         const node = getNode(original.id);
         const workspace = node ? getWorkspace(node.workspace_id) : null;
         const runtime = getRuntime(original.runtimeId);
-        if (!node || !workspace || !runtime || original.runtimeId !== 'kiro' || original.nativeEngine !== 'v3'
+        // The session's runtime replaces native sessions on /clear (Kiro v3); the
+        // durable row is the Kiro v3 binding written back below.
+        if (!node || !workspace || !runtime || descriptorOf(runtime).topology.clearCreatesNewNativeSession !== true || original.nativeEngine !== 'v3'
             || node.acp_session_id !== original.nativeSessionId || node.runtime_id !== 'kiro' || node.runtime_engine !== 'v3'
             || (runtime.nativeEngine !== undefined && runtime.nativeEngine !== 'v3')
-            || original.owner?.kind === 'agent_run' || (workspace.owner_user_id ?? null) !== ownerUserId) {
+            || isRunOwner(original.owner) || (workspace.owner_user_id ?? null) !== ownerUserId) {
             throw new Error('Cannot reset this Kiro chat context.');
         }
         if ((original.runtimeProfileHash ?? null) !== (bootstrap.profileHash ?? null)) {
@@ -42,7 +46,7 @@ export async function resetKiroContext(original: AgentSession, ownerUserId: stri
         try {
             replacement = await runtime.newSession({ sessionId: original.id, cwd: process.env.MICHI_CLOUD === '1' && ownerUserId ? deriveSandboxCwd(ownerUserId, workspace.id) : normalizeWorkspaceCwd(workspace.cwd ?? process.cwd()),
                 workspaceId: workspace.id, ownerUserId, model, reasoning,
-                owner: { kind: 'chat_node', nodeId: original.id },
+                owner: chatOwner(original.id),
                 ...bootstrap,
                 ...('getEnableFollowUps' in original && typeof original.getEnableFollowUps === 'function'
                     ? { enableFollowUps: original.getEnableFollowUps() } : {}),

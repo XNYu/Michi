@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import type { AgentRunEventV1 } from 'michi-shared';
 import type { LocatedAgentRun } from './agentRunSelectors';
 import { runIdentity } from './agentRunSelectors';
+import { serverEntityId } from '../../../config/backendIdentity';
 import { AgentRunActionApiError, continueAgentRunAsBranch, createAgentRunActionOperationId,
   saveAgentRunAsCustomAgent } from '../../../services/api/agentRunActions';
 
@@ -27,7 +28,8 @@ export function AgentRunActions({ run: resource, events = [] }: {
         version: 1, workspaceId: run.workspaceId, includeTask, includeResult, includeTranscript, fallback,
       }, continueOperationId.current);
       setOfferFallback(false);
-      setMessage(result.mode === 'branch' ? `Branch created: ${result.nodeId}` : `New thread created: ${result.nodeId}`);
+      const displayNodeId = serverEntityId(result.nodeId, identity.backendConnectionId);
+      setMessage(result.mode === 'branch' ? `Branch created: ${displayNodeId}` : `New thread created: ${displayNodeId}`);
     } catch (error) {
       if (error instanceof AgentRunActionApiError && error.code === 'parent_unavailable') setOfferFallback(true);
       setMessage(error instanceof Error ? error.message : String(error));

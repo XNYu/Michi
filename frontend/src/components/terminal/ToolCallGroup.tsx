@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { ToolCallState, SubagentInfo } from '../../state/chatTypes';
 import { useAgentBlockStyle } from '../../state/prefs';
-import { CardToolGroup, TermToolGroup } from './AgentBlockVariants';
+import { CardToolGroup, CollapsedToolSummary, TermToolGroup } from './AgentBlockVariants';
+import { useMetaChatDecorations } from '../../state/metaChat/metaChatDecorations';
 import {
-  summarizeToolsBase,
   failedToolCount,
   toolDurationMs,
   toolSpanMs,
@@ -12,22 +12,31 @@ import {
   isTerminalStatus,
   isFailedStatus,
   isRunningStatus,
-  subagentHeading,
   subagentStatusLabel,
-  subagentToolInfo,
+  delegationToolInfo,
   filterSubagentRelayedTools,
-  findOwningSubagent,
-  prettifyToolTitle,
+  toolDisplayTitle,
   isHiddenInternalTool,
   toolPurpose,
   toolRowDetail,
   type SubagentToolInfo,
 } from './toolCallGrouping';
+import { SubagentRow, SubagentSummaryLine } from './subagents/SubagentRoster';
+import {
+  delegationHeading,
+  delegationStatus,
+  subagentsForTool,
+  withConversationTone,
+  withDelegationStatus,
+} from './subagents/subagentPresentation';
+import { useDelegationStatusLabel } from './subagents/useDelegationStatusLabel';
 
 interface Props {
   tools: ToolCallState[];
   defaultExpanded: boolean;
   subagents?: readonly SubagentInfo[];
+  /** false: the caller shows Michi receipts itself (a collapsible thought block keeps them outside). */
+  receipts?: boolean;
 }
 
 const FAIL_COLOR = 'var(--term-danger)';
@@ -81,10 +90,20 @@ function DurLabel({ ms }: { ms: number | undefined }) {
 }
 
 function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
-  const visibleTools = useMemo(
-    () => filterSubagentRelayedTools(tools, subagents).filter((t) => !isHiddenInternalTool(t.title)),
+  const ownTools = useMemo(
+    () => withDelegationStatus(
+      filterSubagentRelayedTools(tools, subagents).filter((t) => !isHiddenInternalTool(t.title)),
+      subagents,
+    ),
     [tools, subagents],
   );
+  // A lone delegation's status as its conversation presents the agent: the
+  // collapsed label's word, and the chrome (spinner, counter, failure,
+  // auto-collapse) agrees with it.
+  const delegation = useDelegationStatusLabel(ownTools, subagents);
+  const tone = delegation?.tone;
+  const visibleTools = useMemo(() => withConversationTone(ownTools, tone), [ownTools, tone]);
+  const subagentStatus = delegation?.label;
   const [expanded, setExpanded] = useState(defaultExpanded);
   const userInteractedRef = useRef(false);
   const startedExpandedRef = useRef(defaultExpanded);
@@ -111,8 +130,17 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
   }, [visibleTools]);
 
   const variant = useAgentBlockStyle();
+  const toolLine = useMetaChatDecorations()?.toolLine;
 
   if (visibleTools.length === 0) return null;
+
+  if (toolLine) {
+    return (
+      <div data-tool-lines style={{ fontSize: 'var(--fs-sm)', fontFamily: 'var(--font-mono)', lineHeight: '16px', color: 'var(--term-muted)', margin: '0 0 6px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {visibleTools.map((t) => <ToolRow key={t.id} t={t} subagents={subagents} label={toolLine(t)} />)}
+      </div>
+    );
+  }
 
   const onToggle = () => {
     userInteractedRef.current = true;
@@ -120,15 +148,15 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
   };
 
   if (variant === 'card') {
-    return <CardToolGroup tools={visibleTools} expanded={expanded} onToggle={onToggle} subagents={subagents} />;
+    return <CardToolGroup tools={visibleTools} expanded={expanded} onToggle={onToggle} subagents={subagents} subagentStatus={subagentStatus} />;
   }
   if (variant === 'terminal') {
-    return <TermToolGroup tools={visibleTools} expanded={expanded} onToggle={onToggle} subagents={subagents} />;
+    return <TermToolGroup tools={visibleTools} expanded={expanded} onToggle={onToggle} subagents={subagents} subagentStatus={subagentStatus} />;
   }
 
   // Single non-subagent tool: render the row directly without a group header
   // so the user needs only one click to open the payload.
-  if (visibleTools.length === 1 && !subagentToolInfo(visibleTools[0])) {
+  if (visibleTools.length === 1 && !delegationToolInfo(visibleTools[0], subagents)) {
     return (
       <div style={{ fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)', color: 'var(--term-muted)', marginTop: 14, marginBottom: 14, padding: '3px 0' }}>
         <ToolRow t={visibleTools[0]} subagents={subagents} />
@@ -176,12 +204,7 @@ function ToolCallGroupInner({ tools, defaultExpanded, subagents }: Props) {
         >
           <Chevron open={false} />
           <span style={{ minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-            {summarizeToolsBase(visibleTools)}
-            {failed > 0 && (
-              <span style={{ color: FAIL_COLOR }}>
-                {' '}· {visibleTools.length === 1 ? 'failed' : `${failed} failed`}
-              </span>
-            )}
+            <CollapsedToolSummary tools={visibleTools} failed={failed} subagentStatus={subagentStatus} />
           </span>
           <DurLabel ms={spanMs} />
         </button>
@@ -252,14 +275,24 @@ function sameTools(a: ToolCallState[], b: ToolCallState[]): boolean {
   return true;
 }
 
-export const ToolCallGroup = React.memo(ToolCallGroupInner, (prev, next) =>
+/** The group, then a receipt card for each Michi write in it (only the ⌘J assistant makes those). */
+function ToolCallGroupWithReceipts({ receipts = true, ...props }: Props) {
+  return (
+    <>
+      <ToolCallGroupInner {...props} />
+    </>
+  );
+}
+
+export const ToolCallGroup = React.memo(ToolCallGroupWithReceipts, (prev, next) =>
   prev.defaultExpanded === next.defaultExpanded &&
+  prev.receipts === next.receipts &&
   sameTools(prev.tools, next.tools) &&
   prev.subagents === next.subagents,
 );
 
-function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly SubagentInfo[] }) {
-  const subagent = subagentToolInfo(t);
+function ToolRow({ t, subagents, label }: { t: ToolCallState; subagents?: readonly SubagentInfo[]; label?: string | null }) {
+  const subagent = delegationToolInfo(t, subagents);
   const hasPayload = !!(t.inputJson || t.output);
   const failed = isFailedStatus(t.status);
   const running = isRunningStatus(t.status);
@@ -273,17 +306,16 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
   }, [failed, hasPayload]);
 
   if (subagent) {
-    const owner = findOwningSubagent(t, subagents);
-    return <SubagentSpineRow t={t} info={subagent} currentTool={owner?.currentTool} />;
+    return <SubagentSpineRow t={t} info={subagent} linked={subagentsForTool(t, subagents)} />;
   }
 
   const titleColor = failed ? FAIL_COLOR : running ? 'var(--term-fg)' : 'var(--term-muted)';
   const durMs = toolDurationMs(t);
-  const purpose = toolPurpose(t);
-  const detail = toolRowDetail(t);
+  const purpose = label ? undefined : toolPurpose(t);
+  const detail = label ?? toolRowDetail(t);
 
   return (
-    <div style={{ paddingLeft: 14 }}>
+    <div style={{ paddingLeft: label ? 0 : 14 }} data-tool-line={label ? '' : undefined}>
       <div
         style={{
           display: 'flex',
@@ -311,18 +343,18 @@ function ToolRow({ t, subagents }: { t: ToolCallState; subagents?: readonly Suba
                   marginTop: 1,
                 }}
               >
-                {prettifyToolTitle(t.title) || t.kind || '(unnamed)'}
+                {toolDisplayTitle(t) || t.kind || '(unnamed)'}
                 {detail && ` ${detail}`}
               </span>
             </>
           ) : (
             <>
-              {detail || prettifyToolTitle(t.title) || t.kind || '(unnamed)'}
+              {detail || toolDisplayTitle(t) || t.kind || '(unnamed)'}
               {failed && ' · failed'}
             </>
           )}
         </span>
-        <DurLabel ms={durMs} />
+        {!label && <DurLabel ms={durMs} />}
       </div>
       {open && hasPayload && (
         <PayloadBlock inputJson={t.inputJson} output={t.output} />
@@ -386,70 +418,53 @@ function PayloadBlock({ inputJson, output }: { inputJson?: string; output?: stri
   );
 }
 
-function clampText(text: string | undefined, max: number): string | undefined {
-  if (!text) return undefined;
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-
 function SubagentSpineRow({
   t,
   info,
-  currentTool,
+  linked,
 }: {
   t: ToolCallState;
   info: SubagentToolInfo;
-  currentTool: string | undefined;
+  /** Roster entries this delegation spawned (usually one). */
+  linked: readonly SubagentInfo[];
 }) {
-  const failed = isFailedStatus(t.status);
-  const running = isRunningStatus(t.status);
-  const accent = failed ? FAIL_COLOR : running ? 'var(--term-accent)' : 'var(--term-muted)';
-  const mission = info.description ?? info.prompt;
-  const showNow = running && !!currentTool;
-
-  return (
-    <div
-      data-testid="subagent-spine-row"
-      style={{
-        marginLeft: 14,
-        marginTop: 2,
-        paddingLeft: 10,
-        borderLeft: '1px dotted var(--term-line-s)',
-        color: 'var(--term-muted)',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, minWidth: 0 }}>
-        <StatusDot status={t.status} />
-        <span
-          style={{
-            color: failed ? FAIL_COLOR : 'var(--term-fg)',
-            fontWeight: 600,
-            minWidth: 0,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {subagentHeading(info)}
-        </span>
-        {info.model && (
-          <span style={{ color: 'var(--term-muted)', flexShrink: 0, fontSize: 'var(--fs-xs)' }}>{info.model}</span>
-        )}
-        <span style={{ marginLeft: 'auto', color: failed ? FAIL_COLOR : accent, flexShrink: 0, fontSize: 'var(--fs-xs)', paddingLeft: 8 }}>
-          {subagentStatusLabel(t.status)}
-        </span>
+  const status = delegationStatus(t, linked);
+  const heading = delegationHeading(t, info, linked);
+  const spine: React.CSSProperties = {
+    marginLeft: 14,
+    marginTop: 2,
+    paddingLeft: 10,
+    borderLeft: '1px dotted var(--term-line-s)',
+    color: 'var(--term-muted)',
+  };
+  if (linked.length > 1) {
+    const failed = isFailedStatus(status);
+    const running = isRunningStatus(status);
+    return (
+      <div data-testid="subagent-spine-row" style={spine}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, minWidth: 0 }}>
+          <StatusDot status={status} />
+          <span style={{ color: failed ? FAIL_COLOR : 'var(--term-fg)', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {heading}
+          </span>
+          <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 'var(--fs-xs)', paddingLeft: 8, color: failed ? FAIL_COLOR : running ? 'var(--term-accent)' : 'var(--term-muted)' }}>
+            {subagentStatusLabel(status)}
+          </span>
+        </div>
+        <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {linked.map((entry) => <SubagentRow key={entry.sessionId} subagent={entry} />)}
+        </div>
       </div>
-      {mission && (
-        <div style={{ marginTop: 2, lineHeight: 1.45, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
-          <span style={{ color: 'var(--term-muted)' }}>mission: </span>
-          {clampText(mission, 180)}
-        </div>
-      )}
-      {showNow && (
-        <div style={{ marginTop: 1, lineHeight: 1.45 }}>
-          <span style={{ color: 'var(--term-muted)' }}>now: </span>
-          <span style={{ color: 'var(--term-accent)' }}>{currentTool}</span>
-        </div>
-      )}
+    );
+  }
+  return (
+    <div data-testid="subagent-spine-row" style={spine}>
+      <SubagentSummaryLine
+        subagent={linked[0]}
+        name={heading}
+        status={status}
+        fallback={info.description ?? info.prompt}
+      />
     </div>
   );
 }

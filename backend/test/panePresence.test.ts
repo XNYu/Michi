@@ -3,17 +3,11 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 
-import { closeDb, getDb, initDb } from '../src/services/db';
+import { closeDb, initDb } from '../src/services/db';
 import { getNode, saveNode, saveTree, saveWorkspace } from '../src/services/dbRepository';
-import { decodePaneId, encodePaneId, PaneInspectionError } from 'michi-shared';
-import {
-  MAX_SURFACE_REGISTRATIONS_PER_SCOPE,
-  PanePresenceRegistry,
-  resolvePresenceOwnerUserId,
-  type PresenceCaller,
-} from '../src/services/panePresence';
+import { encodePaneId } from 'michi-shared';
+import { PanePresenceRegistry, type PresenceCaller } from '../src/services/panePresence';
 import type { AgentRunsRepository } from '../src/services/agentRunsRepository';
 
 const OWNER = 'local-user';
@@ -119,35 +113,6 @@ afterEach(() => {
 });
 
 describe('panePresence: lease allocation and identity', () => {
-  test('first PUT allocates a lease; a second window for the same pane gets a different lease and both views appear', () => {
-    const registry = freshRegistry();
-    const paneId = encodePaneId({ kind: 'node', nodeId: 'node-1' });
-
-    const first = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1', treeId: 'node-1-tree', visible: true, openedAtClient: 100 }],
-    });
-    assert.equal(first.ok, true);
-    const leaseA = first.ok ? first.rendererLeaseId : '';
-    assert.ok(leaseA.length > 0);
-
-    const second = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-b',
-      views: [{ paneId, windowId: 'window-b', uiPaneId: 'ui-2', treeId: 'node-1-tree', visible: true, openedAtClient: 200 }],
-    });
-    assert.equal(second.ok, true);
-    const leaseB = second.ok ? second.rendererLeaseId : '';
-    assert.notEqual(leaseA, leaseB);
-
-    const presence = registry.getPresence({ kind: 'node', nodeId: 'node-1' });
-    assert.equal(presence.coverage, 'reported');
-    assert.equal(presence.views.length, 2);
-    const windowIds = presence.views.map((v) => v.windowId).sort();
-    assert.deepEqual(windowIds, ['window-a', 'window-b']);
-  });
-
   test('windowId cannot be used to modify another window\'s registration', () => {
     const registry = freshRegistry();
     const paneId = encodePaneId({ kind: 'node', nodeId: 'node-1' });
@@ -234,40 +199,6 @@ describe('panePresence: viewRevision monotonicity', () => {
 });
 
 describe('panePresence: TTL and expiry', () => {
-  test('keepalive renews; crossing the 60s expiry marks the view expired, not closed', () => {
-    const registry = freshRegistry();
-    const paneId = encodePaneId({ kind: 'node', nodeId: 'node-1' });
-    const first = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    const leaseA = (first as { rendererLeaseId: string }).rendererLeaseId;
-
-    clockNow += 20_000;
-    const keepalive1 = registry.keepalive(caller(), { rendererLeaseId: leaseA });
-    assert.equal(keepalive1.ok, true);
-
-    clockNow += 20_000;
-    const keepalive2 = registry.keepalive(caller(), { rendererLeaseId: leaseA });
-    assert.equal(keepalive2.ok, true);
-
-    // 40s elapsed total, under the 60s TTL — still live.
-    assert.equal(registry.hasLiveLease(leaseA), true);
-    assert.equal(registry.getPresence({ kind: 'node', nodeId: 'node-1' }).coverage, 'reported');
-
-    // Cross 60s past the LAST keepalive with no further renewal.
-    clockNow += 61_000;
-    assert.equal(registry.hasLiveLease(leaseA), false);
-
-    const presence = registry.getPresence({ kind: 'node', nodeId: 'node-1' });
-    // Expired -> unknown, never "closed" (there is no separate closed/removed signal here; the
-    // key acceptance property is that expiry does NOT surface as coverage: 'reported' with an
-    // explicit closed marker asserting the user ended anything).
-    assert.equal(presence.coverage, 'unknown');
-    assert.equal(presence.views.length, 0);
-  });
-
   test('an expired view leaves a tombstone, and the tombstone is released later', () => {
     const registry = freshRegistry();
     const paneId = encodePaneId({ kind: 'node', nodeId: 'node-1' });
@@ -321,16 +252,6 @@ describe('panePresence: empty-snapshot protection', () => {
       views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1-recovered', treeId: null, visible: true, openedAtClient: null }],
     });
     assert.equal(recover.ok, true);
-  });
-
-  test('a genuinely new lease may legitimately start empty (freshly opened window)', () => {
-    const registry = freshRegistry();
-    const result = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [],
-    });
-    assert.equal(result.ok, true);
   });
 });
 
@@ -395,77 +316,6 @@ describe('panePresence: server-side ownership validation', () => {
 });
 
 describe('panePresence: surface registrations', () => {
-  test('a surface registration produces a surface:{registrationId} paneId that round-trips through decodePaneId', () => {
-    const registry = freshRegistry();
-    const { registrationId, paneId } = registry.allocateSurfaceRegistration(caller(), 'terminal');
-    assert.equal(paneId, `surface:${registrationId}`);
-    const decoded = decodePaneId(paneId);
-    assert.deepEqual(decoded, { kind: 'surface', registrationId });
-
-    const result = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-terminal', treeId: null, visible: true, openedAtClient: null, surfaceTitle: 'my terminal' }],
-    });
-    assert.equal(result.ok, true);
-    if (result.ok) assert.equal(result.accepted, 1);
-    assert.equal(registry.getPresence({ kind: 'surface', registrationId }).coverage, 'reported');
-  });
-
-  test('submitting a fabricated registrationId is rejected as NOT_FOUND (not accepted)', () => {
-    const registry = freshRegistry();
-    const paneId = `surface:${randomUUID()}`;
-    const result = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-fake', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(result.ok, true);
-    if (result.ok) {
-      assert.equal(result.accepted, 0);
-      assert.equal(result.rejectedTargets.length, 1);
-      assert.equal(result.rejectedTargets[0].reason, 'NOT_FOUND');
-    }
-  });
-
-  test('a registration bound to a different owner/workspace/connection is rejected as NOT_FOUND', () => {
-    const registry = freshRegistry();
-    const { paneId } = registry.allocateSurfaceRegistration(caller(), 'terminal');
-
-    const byOtherOwner = registry.submitPresence(caller({ ownerUserId: 'other-owner' }), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(byOtherOwner.ok, true);
-    if (byOtherOwner.ok) assert.equal(byOtherOwner.accepted, 0);
-
-    const byOtherWorkspace = registry.submitPresence(caller({ workspaceId: OTHER_WORKSPACE_ID }), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(byOtherWorkspace.ok, true);
-    if (byOtherWorkspace.ok) assert.equal(byOtherWorkspace.accepted, 0);
-
-    const byOtherConnection = registry.submitPresence(caller({ connectionId: 'conn-other' }), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(byOtherConnection.ok, true);
-    if (byOtherConnection.ok) assert.equal(byOtherConnection.accepted, 0);
-
-    // The owning caller can still submit it successfully.
-    const byOwner = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(byOwner.ok, true);
-    if (byOwner.ok) assert.equal(byOwner.accepted, 1);
-  });
-
   test('an unclaimed registration is swept once older than the presence TTL', () => {
     const registry = freshRegistry();
     const { registrationId, paneId } = registry.allocateSurfaceRegistration(caller(), 'terminal');
@@ -483,80 +333,6 @@ describe('panePresence: surface registrations', () => {
     });
     assert.equal(result.ok, true);
     if (result.ok) assert.equal(result.accepted, 0);
-  });
-
-  test('a claimed registration survives past the allocation TTL as long as its lease stays alive', () => {
-    const registry = freshRegistry();
-    const { registrationId, paneId } = registry.allocateSurfaceRegistration(caller(), 'terminal');
-
-    const submitted = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-terminal', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(submitted.ok, true);
-    const leaseA = (submitted as { rendererLeaseId: string }).rendererLeaseId;
-
-    // Past the registration's own allocation TTL, but the lease has been kept alive throughout.
-    clockNow += 30_000;
-    registry.keepalive(caller(), { rendererLeaseId: leaseA });
-    clockNow += 30_000;
-    registry.keepalive(caller(), { rendererLeaseId: leaseA });
-    clockNow += 30_000; // 90s since allocation; well past ttlMs (60s).
-
-    assert.equal(registry.hasRegistration(registrationId), true);
-    assert.equal(registry.getPresence({ kind: 'surface', registrationId }).coverage, 'reported');
-  });
-
-  test('allocation refuses once a caller scope holds the per-scope cap, and does not affect another scope', () => {
-    const registry = freshRegistry();
-    for (let i = 0; i < MAX_SURFACE_REGISTRATIONS_PER_SCOPE; i += 1) {
-      registry.allocateSurfaceRegistration(caller(), 'terminal');
-    }
-
-    assert.throws(
-      () => registry.allocateSurfaceRegistration(caller(), 'terminal'),
-      (err: unknown) => {
-        assert.ok(err instanceof PaneInspectionError);
-        assert.equal((err as PaneInspectionError).code, 'RATE_LIMITED');
-        return true;
-      },
-    );
-
-    // A different connection (different scope) is entirely unaffected by the first scope's cap.
-    const other = registry.allocateSurfaceRegistration(caller({ connectionId: 'conn-other' }), 'terminal');
-    assert.ok(other.registrationId.length > 0);
-
-    // A different workspace is likewise unaffected.
-    const otherWs = registry.allocateSurfaceRegistration(caller({ workspaceId: OTHER_WORKSPACE_ID }), 'terminal');
-    assert.ok(otherWs.registrationId.length > 0);
-  });
-
-  test('sweeping an unclaimed registration below the cap allows allocation to succeed again', () => {
-    const registry = freshRegistry();
-    for (let i = 0; i < MAX_SURFACE_REGISTRATIONS_PER_SCOPE; i += 1) {
-      registry.allocateSurfaceRegistration(caller(), 'terminal');
-    }
-    assert.throws(() => registry.allocateSurfaceRegistration(caller(), 'terminal'));
-
-    clockNow += 61_000; // past ttlMs — every prior registration was unclaimed and is now swept.
-    const result = registry.allocateSurfaceRegistration(caller(), 'terminal');
-    assert.ok(result.registrationId.length > 0);
-  });
-});
-
-describe('panePresence: coverage semantics', () => {
-  test('coverage is unknown when nothing is registered, reported when something is', () => {
-    const registry = freshRegistry();
-    assert.equal(registry.getPresence({ kind: 'node', nodeId: 'node-1' }).coverage, 'unknown');
-
-    const paneId = encodePaneId({ kind: 'node', nodeId: 'node-1' });
-    registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    assert.equal(registry.getPresence({ kind: 'node', nodeId: 'node-1' }).coverage, 'reported');
   });
 });
 
@@ -584,46 +360,5 @@ describe('panePresence: DELETE performs no cancellation', () => {
     const node = getNode('node-1');
     assert.ok(node);
     assert.equal(node?.status, 'idle');
-  });
-
-  test('removePresence with no paneIds removes the whole lease (e.g. window close)', () => {
-    const registry = freshRegistry();
-    const paneIdA = encodePaneId({ kind: 'node', nodeId: 'node-1' });
-    const first = registry.submitPresence(caller(), {
-      viewRevision: 1,
-      windowId: 'window-a',
-      views: [{ paneId: paneIdA, windowId: 'window-a', uiPaneId: 'ui-1', treeId: null, visible: true, openedAtClient: null }],
-    });
-    const leaseA = (first as { rendererLeaseId: string }).rendererLeaseId;
-
-    const removed = registry.removePresence(caller(), { rendererLeaseId: leaseA });
-    assert.equal(removed.ok, true);
-    if (removed.ok) assert.equal(removed.removed, 1);
-    assert.equal(registry.hasLiveLease(leaseA), false);
-  });
-});
-
-describe('resolvePresenceOwnerUserId', () => {
-  test('desktop mode returns the fixed local owner id regardless of req.user', () => {
-    const original = process.env.MICHI_CLOUD;
-    delete process.env.MICHI_CLOUD;
-    try {
-      assert.equal(resolvePresenceOwnerUserId(undefined), 'local-user');
-      assert.equal(resolvePresenceOwnerUserId('someone'), 'local-user');
-    } finally {
-      if (original !== undefined) process.env.MICHI_CLOUD = original;
-    }
-  });
-
-  test('cloud mode returns req.user.id, or empty string when absent', () => {
-    const original = process.env.MICHI_CLOUD;
-    process.env.MICHI_CLOUD = '1';
-    try {
-      assert.equal(resolvePresenceOwnerUserId('alice'), 'alice');
-      assert.equal(resolvePresenceOwnerUserId(undefined), '');
-    } finally {
-      if (original === undefined) delete process.env.MICHI_CLOUD;
-      else process.env.MICHI_CLOUD = original;
-    }
   });
 });

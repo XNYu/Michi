@@ -1,0 +1,130 @@
+/* Source popover: one cited message and the ways into its conversation. */
+.source-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  outline: none;
+}
+.source-pop__focus { position: absolute; width: 0; height: 0; overflow: hidden; outline: none; }
+.source-pop__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.source-pop__head > svg { flex: none; }
+.source-pop__title {
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--term-fg);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-pop__tag {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-surface);
+  color: var(--term-mid);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+.source-pop__meta { flex: none; white-space: nowrap; }
+.source-pop__spacer { flex: 1; }
+.source-pop .source-pop__close { flex: none; min-width: 22px; min-height: 22px; padding: 2px; color: var(--term-muted); }
+.source-pop__quote {
+  display: -webkit-box;
+  margin: 0;
+  padding: 6px 10px;
+  overflow: hidden;
+  border-left: 2px solid var(--term-accent);
+  background: var(--term-bg);
+  color: var(--term-fg);
+  /* The cited message, a step under the conversation's own message size. */
+  font-size: calc(var(--message-body-size) - 1px);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+.source-pop__quote--loading { color: var(--term-muted); }
+.source-pop__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The small inline-button height Michi's table and diagram controls use. */
+.source-pop__actions .ui-btn { min-height: 24px; }
+.source-pop__hint,
+.source-pop__note { margin: 0; color: var(--term-faint); font-size: var(--fs-sm); line-height: 1.5; }
+.source-pop__note--closed { color: var(--term-mid); }
+
+/* "Back to <page>": above the conversations while the jump from Spaces is open.
+   Wash and lift are the user bubble's (.terminal-message-user). */
+.source-back { flex: none; padding: 18px 32px 0; }
+.source-back__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 auto;
+  padding: 5px 6px 5px 12px;
+  border: 1px solid var(--term-accent-f);
+  border-radius: var(--ui-radius);
+  background: color-mix(in srgb, var(--term-accent) 4%, var(--term-surface));
+  box-shadow: 0 6px 18px -10px color-mix(in srgb, var(--term-accent) 22%, transparent);
+  color: var(--term-mid);
+  font-size: var(--fs-sm);
+}
+.source-back__icon { flex: none; color: var(--term-accent); }
+.source-back__from { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-back__spacer { flex: 1; }
+.source-back__bar .ui-btn { flex: none; gap: 4px; background: var(--term-surface); }
+.source-back .source-back__close { flex: none; min-width: 22px; min-height: 22px; padding: 2px; color: var(--term-muted); }
+
+/* The cited message, highlighted where the jump landed. The frame holds the
+   message only; its hover actions keep their row under it. Off-screen frames
+   skip painting (content-visibility), which would clip this frame's outset. */
+.terminal-message-frame[data-source-referenced='true'] { content-visibility: visible; }
+.terminal-message-highlight {
+  margin: 4px -9px 0;
+  padding: 8px;
+  border: 1px solid var(--term-accent);
+  border-radius: var(--ui-radius-lg);
+  background: color-mix(in srgb, var(--term-accent) 4%, var(--term-surface));
+}
+.source-ref-mark {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+  color: var(--term-accent);
+  font-size: var(--fs-sm);
+}
+.source-ref-mark > svg { flex: none; }
+
+/* A page write receipt under a conversation's reply. */
+.assistant-receipt[data-variant='conversation'] {
+  display: inline-flex;
+  max-width: 100%;
+  margin: 8px 0 4px;
+  padding: 5px 6px 5px 10px;
+  border-radius: var(--ui-radius);
+  background: var(--term-surface);
+}
+.assistant-receipt[data-variant='conversation'] .assistant-receipt__label { flex: 0 1 auto; }
+.assistant-receipt[data-variant='conversation'] .assistant-receipt__btn {
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}

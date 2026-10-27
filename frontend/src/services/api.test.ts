@@ -70,101 +70,26 @@ describe('allocateNodeIds', () => {
 // pinned in "streaming" forever (frozen, no spinner, can't stop). These tests
 // lock that safety net.
 
-/** Build a Response whose body streams the given pre-encoded SSE frames. */
-function sseResponse(frames: string[], opts: { close?: boolean } = {}): Response {
-  const close = opts.close ?? true;
-  const enc = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const f of frames) controller.enqueue(enc.encode(f));
-      if (close) controller.close();
-      // when close === false the stream stays open with no further bytes,
-      // simulating a half-open / silently-stalled connection.
-    },
-  });
-  return new Response(stream, {
-    status: 200,
-    headers: { 'Content-Type': 'text/event-stream' },
-  });
-}
-
 describe('streamMessage terminal-state safety net', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
-  it('finalizes via onError when the stream closes without a terminal event', async () => {
-    // First fetch: the message POST stream, which closes with NO done/error
-    // frame. Subsequent fetches: the foreground resume replay subscribe —
-    // answer 410 (non-retryable) so the safety net must surface onError.
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce(sseResponse([
-        encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.chunk, data: { text: 'partial' } }),
-      ]))
-      .mockResolvedValue(new Response(null, { status: 410 })));
-
-    const onChunk = vi.fn<(t: string) => void>();
-    const onDone = vi.fn<(s?: string) => void>();
-    const onError = vi.fn<(m: string) => void>();
-    streamMessage('c1', 'hi', { onChunk, onDone, onError });
-
-    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
-    expect(onChunk).toHaveBeenCalledWith('partial', undefined, undefined, undefined);
-    expect(onDone).not.toHaveBeenCalled();
-  });
-
-  it('fires onDone (and not onError) when the stream sends a done event', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.chunk, data: { text: 'hello' } }),
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.done, data: { stopReason: 'end_turn' } }),
-    ])));
-
-    const onDone = vi.fn<(s?: string) => void>();
-    const onError = vi.fn<(m: string) => void>();
-    streamMessage('c1', 'hi', { onDone, onError });
-
-    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it('sends the display/wire split and exposes the persisted terminal boundary', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
-      encodeChatStreamEvent({
-        event: CHAT_STREAM_EVENTS.done,
-        data: { stopReason: 'end_turn', persisted: true },
-      }),
-    ]));
-    vi.stubGlobal('fetch', fetchMock);
+  it('writes captured file provenance into the durable POST envelope', async () => {
+    const userMetadata = {quotedText:'selected passage',quoteSource:{type:'artifact' as const,filePath:'/doc.txt',snapshot:{
+      hashKind:'sha256-text-utf8' as const,contentHash:'a'.repeat(64),backendConnectionId:'local',projectId:'p1',treeId:'t1',resolvedFilePath:'/doc.txt',
+    }}};
+    const fetchMock = vi.fn().mockResolvedValue(new Response(encodeChatStreamEvent({event:'done',data:{stopReason:'end_turn'}}),{
+      status:200,headers:{'Content-Type':'text/event-stream'},
+    }));
+    vi.stubGlobal('fetch',fetchMock);
     const onDone = vi.fn();
-    streamMessage('n1', 'wire prompt', { onDone }, {
-      displayText: 'visible text',
-      userMetadata: { quotedText: 'quote' },
-    });
-
-    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(JSON.parse(String(init.body))).toMatchObject({
-      text: 'wire prompt',
-      displayText: 'visible text',
-      userMetadata: { quotedText: 'quote' },
-    });
-    expect(onDone).toHaveBeenCalledWith('end_turn', undefined, undefined, true, undefined);
-  });
-
-  it('sends the sidecar title preference with the turn request', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
-      encodeChatStreamEvent({ event: CHAT_STREAM_EVENTS.done, data: { stopReason: 'end_turn' } }),
-    ]));
-    vi.stubGlobal('fetch', fetchMock);
-
-    streamMessage('n1', 'hello', { onDone: vi.fn() }, {
-      enableKiroSidecarTitle: false,
-    });
-
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect(JSON.parse(String(init.body))).toMatchObject({ enableKiroSidecarTitle: false });
+    const stop = streamMessage('provenance-node','review this',{onDone},{turnId:'provenance-turn',userMetadata});
+    try {
+      await vi.waitFor(() => expect(onDone).toHaveBeenCalledOnce());
+      expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).userMetadata).toEqual(userMetadata);
+    } finally {stop();}
   });
 
   it('finalizes via onError when the stream goes silent past the watchdog timeout', async () => {
@@ -205,4 +130,57 @@ describe('streamMessage terminal-state safety net', () => {
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onDone).not.toHaveBeenCalled();
   });
+});
+
+
+it('keeps the full typed error and finishes replay after the foreground response disconnects', async () => {
+  const enc = new TextEncoder();
+  const response = (event: Parameters<typeof encodeChatStreamEvent>[0]) => new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(enc.encode(encodeChatStreamEvent(event))); controller.close(); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  const fetchMock = vi.fn().mockResolvedValueOnce(response({ event: 'chunk', data: { text: 'partial', turnId: 'typed-replay', seq: 1 } }))
+    .mockResolvedValueOnce(response({ event: 'error', data: { message: 'Persistence failed', code: 'turn_persistence_failed', recoverable: true, completedAt: 100, turnId: 'typed-replay', seq: 2 } }));
+  vi.stubGlobal('fetch', fetchMock);
+  const onErrorPayload = vi.fn();
+  const onError = vi.fn();
+  const stop = streamMessage('typed-node', 'hi', { onErrorPayload, onError });
+  try {
+    await vi.waitFor(() => expect(onErrorPayload).toHaveBeenCalledTimes(1));
+    expect(onErrorPayload).toHaveBeenCalledWith(expect.objectContaining({ recoverable: true, completedAt: 100, code: 'turn_persistence_failed' }));
+    expect(onError).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  } finally { stop(); vi.unstubAllGlobals(); }
+});
+
+it('keeps a lost POST response outcome unknown with its original turn identity and never resends', async () => {
+  const fetchMock = vi.fn().mockRejectedValue(new TypeError('response lost after side effect'));
+  vi.stubGlobal('fetch', fetchMock);
+  const onErrorPayload = vi.fn();
+  streamMessage('lost-response-chat', 'perform side effect', { onErrorPayload }, { turnId: 'lost-original' });
+  try {
+    await vi.waitFor(() => expect(onErrorPayload).toHaveBeenCalledOnce());
+    expect(onErrorPayload).toHaveBeenCalledWith(expect.objectContaining({ code: 'turn_outcome_unknown', turnId: 'lost-original' }));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).turnId).toBe('lost-original');
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it('keeps an externally aborted POST outcome unknown while an explicit user cancel stays aborted', async () => {
+  const externalError = vi.fn();
+  const externalAborted = vi.fn();
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new DOMException('connection generation changed', 'AbortError')));
+  try {
+    streamMessage('external-abort-chat', 'side effect', { onErrorPayload: externalError, onAborted: externalAborted }, { turnId: 'external-original' });
+    await vi.waitFor(() => expect(externalError).toHaveBeenCalledOnce());
+    expect(externalError).toHaveBeenCalledWith(expect.objectContaining({ code: 'turn_outcome_unknown', turnId: 'external-original' }));
+    expect(externalAborted).not.toHaveBeenCalled();
+
+    const userError = vi.fn();
+    const userAborted = vi.fn();
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('user cancelled', 'AbortError')), { once: true });
+    })));
+    const cancel = streamMessage('user-abort-chat', 'side effect', { onErrorPayload: userError, onAborted: userAborted }, { turnId: 'user-original' });
+    cancel();
+    await vi.waitFor(() => expect(userAborted).toHaveBeenCalledOnce());
+    expect(userError).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
 });

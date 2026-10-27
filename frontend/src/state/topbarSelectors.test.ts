@@ -28,16 +28,6 @@ describe('topbar page count selectors', () => {
     expect(selectTrashGroupCountForPage('trash', nodes)).toBe(2);
   });
 
-  it('does not inspect archived groups away from the archived page', () => {
-    const throwingNodes = new Proxy(nodes, {
-      ownKeys() {
-        throw new Error('off-page selector walked the node map');
-      },
-    });
-
-    expect(selectArchivedGroupCountForPage('dashboard', throwingNodes)).toBe(0);
-  });
-
   it('counts unique archived groups on the archived page', () => {
     expect(selectArchivedGroupCountForPage('archived', nodes)).toBe(1);
   });

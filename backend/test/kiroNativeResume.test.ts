@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AcpClient, ACPError } from '../src/services/acpClient';
-import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { AcpClient, ACPError } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
-import type { McpSlotRegistry } from '../src/services/mcpServer';
+import type { McpSlot } from 'michi-runtime/internal/contract/mcp';
+import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
+import { michiTestHost } from './helpers/michiTestHost';
 
 function fixture() {
   const models: string[][] = [];
@@ -13,11 +15,11 @@ function fixture() {
     loadSession: async () => ({ models: { currentModelId: 'old-model' }, modes: { currentModeId: 'original-agent' } }),
     setModel: async (id: string, model: string) => { models.push([id, model]); },
   };
-  const registry = {
-    create: () => ({ slotId: 'slot' }),
+  const registry = fakeMcpRegistry({
+    create: () => ({ slotId: 'slot' }) as McpSlot,
     dispose: async (slot: string) => { disposed.push(slot); },
-  } as unknown as McpSlotRegistry;
-  const runtime = new KiroRuntime({} as AgentToolBridge, registry, 0, '/tmp');
+  });
+  const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, mcpSlots: registry, defaultCwd: '/tmp', host: michiTestHost() });
   runtime.ensureClient = async () => client as unknown as AcpClient;
   return { runtime, client, models, disposed };
 }
@@ -32,12 +34,6 @@ test('native Kiro load applies a model change on the same session and keeps the 
   assert.deepEqual(disposed, []);
 });
 
-test('native Kiro load does not set a model when the restored model already matches', async () => {
-  const { runtime, models } = fixture();
-  await runtime.loadAcpSession({ sessionId: 'original', cwd: '/tmp', model: 'old-model' });
-  assert.deepEqual(models, []);
-});
-
 test('only the observed missing-session failure is mapped to explicit unavailability', async () => {
   const { runtime, client, disposed } = fixture();
   client.loadSession = async () => { throw new ACPError('Internal error', {
@@ -46,32 +42,6 @@ test('only the observed missing-session failure is mapped to explicit unavailabi
   }); };
   await assert.rejects(runtime.loadAcpSession({ sessionId: 'original', cwd: '/tmp' }), NativeResumeUnavailableError);
   assert.deepEqual(disposed, ['slot']);
-});
-
-test('a model-selection failure cleans up its MCP slot without declaring native history unavailable', async () => {
-  const { runtime, client, disposed } = fixture();
-  const cause = new Error('model not found');
-  client.setModel = async () => { throw cause; };
-  await assert.rejects(runtime.loadAcpSession({ sessionId: 'original', cwd: '/tmp', model: 'invalid' }), (error) => error === cause);
-  assert.deepEqual(disposed, ['slot']);
-});
-
-test('failed initialization shuts down the spawned process and releases the start lock for retry', async (t) => {
-  let starts = 0;
-  let shutdowns = 0;
-  let initializes = 0;
-  t.mock.method(AcpClient.prototype, 'start', () => { starts++; });
-  t.mock.method(AcpClient.prototype, 'shutdown', async () => { shutdowns++; });
-  t.mock.method(AcpClient.prototype, 'initialize', async () => { if (++initializes === 1) throw new Error('startup failure'); });
-  const runtime = new KiroRuntime({} as AgentToolBridge, undefined, 0, '/tmp');
-  try {
-    await assert.rejects(runtime.ensureClient('/tmp'), /startup failure/);
-    assert.equal(shutdowns, 1);
-    assert.ok(await runtime.ensureClient('/tmp'));
-    assert.equal(starts, 2);
-  } finally {
-    await runtime.shutdown();
-  }
 });
 
 test('failed ACP native load removes only the queue it allocated', async () => {

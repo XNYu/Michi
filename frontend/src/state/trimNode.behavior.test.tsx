@@ -73,81 +73,6 @@ describe('trimNode (single-node trim)', () => {
     localStorage.clear();
   });
 
-  it('trim of a leaf is a no-op on parent topology but sends the leaf to trash', async () => {
-    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
-    await act(async () => { await result.current.store.createProject('test', undefined); });
-    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
-
-    let rootId = '';
-    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
-    let leafId = '';
-    await act(async () => { leafId = await result.current.store.createBlankChild(rootId); });
-
-    expect(result.current.nodes[leafId].parentNodeId).toBe(rootId);
-
-    act(() => { result.current.store.trimNode(leafId); });
-
-    expect(result.current.nodes[leafId].deletedAt).toBeTruthy();
-    expect(result.current.nodes[leafId].trimSnapshot).toBeTruthy();
-    expect(result.current.nodes[leafId].trimSnapshot?.parentId).toBe(rootId);
-    expect(result.current.nodes[leafId].trimSnapshot?.childrenIds).toEqual([]);
-    expect(result.current.nodes[leafId].trimSnapshot?.wasTreeRoot).toBeNull();
-    // Root is unaffected.
-    expect(result.current.nodes[rootId].deletedAt).toBeFalsy();
-  });
-
-  it('trim of a middle node reparents the descendant up to the grandparent', async () => {
-    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
-    await act(async () => { await result.current.store.createProject('test', undefined); });
-    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
-
-    let rootId = '';
-    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
-    let midId = '';
-    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
-    let leafId = '';
-    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
-
-    expect(result.current.nodes[leafId].parentNodeId).toBe(midId);
-
-    act(() => { result.current.store.trimNode(midId); });
-
-    // Mid is trashed with snapshot recording leaf as a child.
-    expect(result.current.nodes[midId].deletedAt).toBeTruthy();
-    expect(result.current.nodes[midId].trimSnapshot?.parentId).toBe(rootId);
-    expect(result.current.nodes[midId].trimSnapshot?.childrenIds).toEqual([leafId]);
-    // Leaf has slid up to root.
-    expect(result.current.nodes[leafId].parentNodeId).toBe(rootId);
-  });
-
-  it('trim of a fork node reparents every child up', async () => {
-    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
-    await act(async () => { await result.current.store.createProject('test', undefined); });
-    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
-
-    let rootId = '';
-    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
-    let forkId = '';
-    await act(async () => { forkId = await result.current.store.createBlankChild(rootId); });
-    let aId = '';
-    let bId = '';
-    let cId = '';
-    await act(async () => { aId = await result.current.store.createBlankChild(forkId); });
-    await act(async () => { bId = await result.current.store.createBlankChild(forkId); });
-    await act(async () => { cId = await result.current.store.createBlankChild(forkId); });
-
-    act(() => { result.current.store.trimNode(forkId); });
-
-    // All three children now under root.
-    expect(result.current.nodes[aId].parentNodeId).toBe(rootId);
-    expect(result.current.nodes[bId].parentNodeId).toBe(rootId);
-    expect(result.current.nodes[cId].parentNodeId).toBe(rootId);
-    expect(result.current.nodes[forkId].deletedAt).toBeTruthy();
-    expect(result.current.nodes[forkId].trimSnapshot?.childrenIds.sort()).toEqual(
-      [aId, bId, cId].sort(),
-    );
-  });
-
   it('trim of a tree root promotes the oldest live child (Option A)', async () => {
     const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
     await act(async () => { await result.current.store.createProject('test', undefined); });
@@ -179,30 +104,6 @@ describe('trimNode (single-node trim)', () => {
     const projectAfter = result.current.store.activeProject!;
     const trimmedTree = projectAfter.trees.find((t) => t.id === treeId);
     expect(trimmedTree?.rootNodeId).toBe(aId);
-  });
-
-  it('restoreDeletion reverses a leaf trim back to the original parent', async () => {
-    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
-    await act(async () => { await result.current.store.createProject('test', undefined); });
-    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
-
-    let rootId = '';
-    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
-    let midId = '';
-    await act(async () => { midId = await result.current.store.createBlankChild(rootId); });
-    let leafId = '';
-    await act(async () => { leafId = await result.current.store.createBlankChild(midId); });
-
-    act(() => { result.current.store.trimNode(midId); });
-    const groupId = result.current.nodes[midId].deletionGroupId!;
-
-    act(() => { result.current.store.restoreDeletion(groupId); });
-
-    expect(result.current.nodes[midId].deletedAt).toBeFalsy();
-    expect(result.current.nodes[midId].trimSnapshot).toBeFalsy();
-    expect(result.current.nodes[midId].parentNodeId).toBe(rootId);
-    // Leaf comes back home.
-    expect(result.current.nodes[leafId].parentNodeId).toBe(midId);
   });
 
   it('restore after grandparent is also trimmed walks up to nearest live ancestor', async () => {

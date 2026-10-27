@@ -1,5 +1,5 @@
 import { stripSentinelsStreamingSafe } from './assistantParsing';
-import type { AssistantBlock, ChatMessage, ToolCallState } from './chatTypes';
+import type { AssistantBlock, ChatMessage, SubagentInfo, ToolCallState } from './chatTypes';
 import {
   applyTurnEvent,
   extractTurnMetadata,
@@ -142,7 +142,8 @@ export function projectAssistantStreamEvent(
       blocks: (message.blocks ?? []) as DurableAssistantBlock[],
       toolCalls: message.toolCalls as DurableToolCall[],
       plan: message.plan,
-      metadata: message.steeringReports?.length ? { steeringReports: message.steeringReports } : undefined,
+      subagents: message.subagents,
+      metadata: { steeringReports: message.steeringReports, usageSummary: message.usageSummary, warnings: message.warnings },
       createdAt: startedAt,
     },
     nodeMetadata: {},
@@ -156,6 +157,9 @@ export function projectAssistantStreamEvent(
     blocks: projected.assistantMessage.blocks as AssistantBlock[],
     toolCalls: projected.assistantMessage.toolCalls as ToolCallState[],
     plan: projected.assistantMessage.plan,
+    ...(projected.assistantMessage.subagents ? { subagents: projected.assistantMessage.subagents } : {}),
+    usageSummary: projected.assistantMessage.metadata?.usageSummary,
+    warnings: projected.assistantMessage.metadata?.warnings,
     ...(projected.assistantMessage.metadata?.steeringReports
       ? { steeringReports: projected.assistantMessage.metadata.steeringReports } : {}),
     streaming: projected.status === 'active' ? message.streaming : false,
@@ -377,6 +381,7 @@ export function messageForPersistence(m: ChatMessage): {
   blocks: string | null;
   toolCalls: ToolCallState[];
   steeringReports?: SteeringReport[];
+  subagents?: SubagentInfo[];
 } {
   if (m.role !== 'assistant') {
     return { content: m.text, blocks: null, toolCalls: m.toolCalls ?? [] };
@@ -387,5 +392,6 @@ export function messageForPersistence(m: ChatMessage): {
     blocks: migrated.blocks && migrated.blocks.length > 0 ? JSON.stringify(migrated.blocks) : null,
     toolCalls: migrated.toolCalls ?? [],
     ...(migrated.steeringReports?.length ? { steeringReports: migrated.steeringReports } : {}),
+    ...(migrated.subagents?.length ? { subagents: migrated.subagents } : {}),
   };
 }

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
 import { writeFileSync } from 'node:fs';
+import { openThreadFromSidebar } from '../fixtures/shell';
 
 async function boot(page: Page, motion = 'soft-fade', count = 2, widthMode = 'adaptive') {
   await installMockApi(page, { custom: async route => {
@@ -35,7 +36,7 @@ async function boot(page: Page, motion = 'soft-fade', count = 2, widthMode = 'ad
     sessionStorage.setItem('michi:panes:focus', JSON.stringify({ 'motion-ws::tree': 'root' }));
   }, { motion, count, widthMode });
   await page.goto('/');
-  await page.getByText('root conversation', { exact: true }).first().click();
+  await openThreadFromSidebar(page, 'root conversation');
   await expect(page.locator('.terminal-dashboard > [data-node-id]')).toHaveCount(count);
   await expect(page.locator('.terminal-dashboard .prose p').first()).toBeAttached();
   await page.waitForTimeout(700);
@@ -275,7 +276,9 @@ test('rapid retarget, user interruption, reopen and reduced motion', async ({ pa
     const strip = document.querySelector<HTMLElement>('.terminal-dashboard')!;
     const open = () => (document.querySelector('[aria-label="New pane"]') as HTMLElement).click();
     open();
-    await new Promise(resolve => setTimeout(resolve, 70));
+    // Retarget once the first reveal is under way; a fixed delay misses it on a busy machine.
+    const opened = performance.now();
+    while (strip.scrollLeft <= 20 && performance.now() - opened < 1000) await new Promise(requestAnimationFrame);
     const before = strip.scrollLeft;
     open();
     await new Promise(requestAnimationFrame);
@@ -385,11 +388,13 @@ for (const motion of ['soft-fade', 'gentle-glide', 'frozen-retract', 'phosphor',
       const pane = document.querySelector<HTMLElement>('.terminal-dashboard > [data-node-id="second"]')!;
       const surface = pane.querySelector<HTMLElement>('.pane-entry-surface')!;
       const animations = surface.getAnimations();
-      return animations.map(animation => ({ duration: animation.effect?.getTiming().duration, frames: (animation.effect as KeyframeEffect).getKeyframes(), width: pane.getBoundingClientRect().width }));
+      const available = document.querySelector<HTMLElement>('.terminal-dashboard')!.clientWidth;
+      return animations.map(animation => ({ duration: animation.effect?.getTiming().duration, frames: (animation.effect as KeyframeEffect).getKeyframes(), width: pane.getBoundingClientRect().width, available }));
     });
     expect(frames).toHaveLength(1);
     expect(Number(frames[0].duration)).toBeLessThanOrEqual(220);
-    expect(frames[0].width).toBe(600);
+    // Adaptive sizing splits the strip in half for two panes.
+    expect(frames[0].width).toBe(frames[0].available / 2);
     expect(frames[0].frames.every(f => !String(f.transform).includes('scale') && f.filter === undefined)).toBe(true);
     expect(frames[0].frames.every(f => Number(f.opacity) === 1)).toBe(true);
     await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, bubbles: true, cancelable: true })));
@@ -515,7 +520,10 @@ for (const width of [1480, 390]) test(`mid-motion surfaces remain disjoint at ${
 for (const mode of ['fixed', 'half', 'adaptive']) test(`${mode} sizing, immediate manual resize and custom width preservation`, async ({ page }) => {
   await boot(page, 'soft-fade', 2, mode);
   const panes = page.locator('.terminal-dashboard > [data-node-id]');
-  await expect.poll(() => panes.first().evaluate(el => el.getBoundingClientRect().width)).toBe(mode === 'fixed' ? 800 : 600);
+  // Fixed panes take the 800px default; half (and adaptive with two panes) split the strip.
+  const available = () => page.locator('.terminal-dashboard').evaluate(el => el.clientWidth);
+  const half = await available() / 2;
+  await expect.poll(() => panes.first().evaluate(el => el.getBoundingClientRect().width)).toBe(mode === 'fixed' ? 800 : half);
   const handle = panes.first().getByTitle('Drag to resize · Double-click to reset');
   const box = (await handle.boundingBox())!;
   const before = await panes.first().evaluate(el => el.getBoundingClientRect().width);
@@ -528,9 +536,13 @@ for (const mode of ['fixed', 'half', 'adaptive']) test(`${mode} sizing, immediat
   await page.getByRole('complementary').getByText('third conversation', { exact: true }).first().click();
   await expect(panes).toHaveCount(3);
   await expect.poll(() => panes.first().evaluate(el => el.getBoundingClientRect().width)).toBe(before - 80);
-  await expect.poll(() => panes.last().evaluate(el => el.getBoundingClientRect().width)).toBe(mode === 'half' ? 600 : 800);
+  await expect.poll(() => panes.last().evaluate(el => el.getBoundingClientRect().width)).toBe(mode === 'half' ? half : 800);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(() => panes.last().evaluate(el => el.getBoundingClientRect().width)).toBe(mode === 'half' ? 195 : 390);
+  await expect.poll(async () => {
+    const strip = await available();
+    const width = await panes.last().evaluate(el => el.getBoundingClientRect().width);
+    return width - (mode === 'half' ? strip / 2 : strip);
+  }).toBe(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

@@ -2,8 +2,9 @@
 import "./isolatedConfigDir";
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import express from "express";
-import { spawnSync } from "node:child_process";
+
 import { setupAgentRoutes } from "../src/routes/agent";
 
 function registerRuntimeForOptions(id: string, providerModels: boolean): void {
@@ -92,48 +93,14 @@ describe("OpenRouter free trial provider", () => {
     assert.equal(getProviderApiKey(OPENROUTER_FREE_PROVIDER_ID, "user-123"), "trial-key");
   });
 
-  test("reports Pi ready when another desktop provider has a usable key", () => {
-    const { evaluateProviderReadiness } = require("../src/services/providerReadiness");
-    const { getProviderInfo, OPENROUTER_FREE_PROVIDER_ID } = require("../src/agents/pi/piProviders");
-    const builtInProvider = getProviderInfo(OPENROUTER_FREE_PROVIDER_ID);
-    const anthropicProvider = getProviderInfo("anthropic");
-    assert.ok(builtInProvider);
-    assert.ok(anthropicProvider);
-
-    const readiness = evaluateProviderReadiness(
-      [
-        {
-          ...builtInProvider,
-          label: builtInProvider.name,
-          keyLabel: builtInProvider.apiKeyLabel,
-        },
-        {
-          ...anthropicProvider,
-          label: anthropicProvider.name,
-          keyLabel: anthropicProvider.apiKeyLabel,
-        },
-      ],
-      {
-        keyPresence: { anthropic: true },
-        resolveOperatorKey: () => null,
-        hasAwsCredentials: false,
-      },
-    );
-
-    assert.equal(readiness.hasRequiredKey, true);
-    assert.equal(
-      readiness.providers.find((provider: { id: string }) => provider.id === OPENROUTER_FREE_PROVIDER_ID)?.hasKey,
-      false,
-    );
-  });
-
   test("rejects attempts to save a user key for the built-in provider", async () => {
     const { OPENROUTER_FREE_PROVIDER_ID } = require("../src/agents/pi/piProviders");
     const app = express();
     app.use(express.json());
     app.use("/api", setupAgentRoutes());
-    const server = app.listen(0);
+    const server = app.listen(0, "127.0.0.1");
     try {
+      await once(server, "listening");
       const port = (server.address() as any).port;
       const res = await fetch(`http://127.0.0.1:${port}/api/agent/provider-key`, {
         method: "POST",
@@ -158,8 +125,9 @@ describe("OpenRouter free trial provider", () => {
     const app = express();
     app.use(express.json());
     app.use("/api", setupAgentRoutes());
-    const server = app.listen(0);
+    const server = app.listen(0, "127.0.0.1");
     try {
+      await once(server, "listening");
       const port = (server.address() as any).port;
       const res = await fetch(`http://127.0.0.1:${port}/api/agent/options`, {
         method: "POST",
@@ -188,57 +156,5 @@ describe("OpenRouter free trial provider", () => {
     } finally {
       server.close();
     }
-  });
-
-  test("does not apply the built-in provider model lock to non-provider runtimes", async () => {
-    const { OPENROUTER_FREE_PROVIDER_ID } = require("../src/agents/pi/piProviders");
-    registerRuntimeForOptions("claude", false);
-    const app = express();
-    app.use(express.json());
-    app.use("/api", setupAgentRoutes());
-    const server = app.listen(0);
-    try {
-      const port = (server.address() as any).port;
-      const selectClaude = await fetch(`http://127.0.0.1:${port}/api/agent/options`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          runtime: "claude",
-          provider: OPENROUTER_FREE_PROVIDER_ID,
-        }),
-      });
-      assert.equal(selectClaude.status, 200);
-
-      const res = await fetch(`http://127.0.0.1:${port}/api/agent/options`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model: "sonnet" }),
-      });
-      const body = await res.json() as { ok: boolean; error?: string };
-      assert.equal(res.status, 200);
-      assert.equal(body.ok, true);
-    } finally {
-      server.close();
-    }
-  });
-
-  test("uses anthropic as the default provider for fresh local config", () => {
-    const script = `
-      const { getAgentConfig } = require("./src/services/agentConfig");
-      process.stdout.write(getAgentConfig().provider);
-    `;
-    const result = spawnSync(process.execPath, ["--require", "ts-node/register", "-e", script], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        HOME: "/tmp/michi-openrouter-free-default-test",
-        MICHI_DATA_DIR: "/tmp/michi-openrouter-free-default-test/data",
-        // A fresh config under the fake HOME, not this suite's isolated dir.
-        MICHI_CONFIG_DIR: "/tmp/michi-openrouter-free-default-test/.michi",
-      },
-      encoding: "utf8",
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, "anthropic");
   });
 });

@@ -5,6 +5,7 @@ import { PiSdkSession } from '../src/agents/pi/PiSdkSession';
 import { McpClientManager } from '../src/services/mcpClientManager';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import type { NormalizedEvent } from '../src/services/chatEvents';
+import { chatOwner } from './helpers/owners';
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function deferred<T = void>() {
@@ -23,7 +24,7 @@ const bridge = { spawnBranches: async () => [], saveContext: () => null, updateC
 const sessionDeps = {
   bridge, preamble: '', cwd: '/tmp', workspaceId: null, ownerUserId: null, enableFollowUps: false,
   requestedProvider: 'deepseek', requestedModel: 'pi-model',
-  owner: { kind: 'chat_node' as const, nodeId: 'pi-node' }, profileHash: 'profile',
+  owner: chatOwner('pi-node'), profileHash: 'profile',
 };
 
 async function streamModule() {
@@ -202,11 +203,11 @@ test('Pi cancellation releases a pending permission broker without allowing a la
   assert.equal((session as any).pendingPermissions.size, 0);
 });
 
-test('Pi SDK wrapper exposes the fallback unavailable status and preserves its model getter', () => {
+test('legacy Pi SDK class uses the real session contract and status', () => {
   const session = new PiSdkSession('pi-node', sessionDeps);
-  (session as any).fallback.markUnavailable('Injected cleanup failure.');
+  (session as any).markUnavailable('Injected cleanup failure.');
   assert.equal(session.currentModelId, 'pi-model');
-  assert.equal(session.describeNativeState().kind, 'pi-sdk');
+  assert.equal(session.describeNativeState().kind, 'pi-agent-core');
   assert.equal(session.describeNativeState().status, 'unavailable');
   session.destroy();
 });
@@ -370,3 +371,64 @@ for (const action of ['cancel', 'destroy'] as const) {
     assert.equal(agents.length, 0);
   });
 }
+
+test('Pi retries failed MCP server catalogs on later turns and emits setup warnings', async (t) => {
+  const { session, agents } = sessionFixture(t);
+  t.mock.method(require('../src/services/piMcpConfig'), 'readPiMcpServers', () => [
+    { serverName: 'ready', command: 'unused' }, { serverName: 'retry', command: 'unused' },
+  ]);
+  const connected = new Set<string>();
+  const calls: string[] = [];
+  let retryCalls = 0;
+  const manager = {
+    connectedServers: () => [...connected],
+    async connect(config: { serverName: string }) {
+      calls.push(config.serverName);
+      if (config.serverName === 'retry' && ++retryCalls === 1) throw new Error('catalog unavailable');
+      connected.add(config.serverName);
+    },
+    async dispose() { connected.clear(); },
+  };
+  const owners: unknown[] = [];
+  t.mock.method(require('../src/services/mcpClientManager'), 'McpClientManager', function(options: unknown) {
+    owners.push(options); return manager;
+  });
+  t.mock.method(require('../src/agents/pi/mcpToolBridge'), 'buildMcpToolsForPi', () =>
+    [...connected].map((name) => ({ name: `mcp__${name}__tool` })));
+  const first = await drain(session.send('first'));
+  assert.ok(first.some((event) => event.kind === 'warning' && event.source === 'mcp'
+    && event.category === 'setup' && event.serverName === 'retry'));
+  assert.deepEqual(agents[0].state.tools.map((tool: any) => tool.name), ['mcp__ready__tool']);
+  const second = await drain(session.send('second'));
+  assert.equal(second.some((event) => event.kind === 'warning'), false);
+  assert.deepEqual(calls, ['ready', 'retry', 'retry'], 'successful servers are retained; only failed server retries');
+  assert.deepEqual(owners, [{ ownerUserId: null }]);
+  assert.deepEqual(agents[0].state.tools.map((tool: any) => tool.name), ['mcp__ready__tool', 'mcp__retry__tool']);
+});
+
+test('Pi invalid MCP config warns without failing the turn and is retried', async (t) => {
+  const { session } = sessionFixture(t);
+  let reads = 0;
+  t.mock.method(require('../src/services/piMcpConfig'), 'readPiMcpServers', () => {
+    if (++reads === 1) throw new Error('invalid JSON config');
+    return [];
+  });
+  const first = await drain(session.send('first'));
+  assert.ok(first.some((event) => event.kind === 'warning' && event.source === 'mcp' && event.code === 'MCP_CONFIG_INVALID'));
+  const second = await drain(session.send('second'));
+  assert.equal(second.some((event) => event.kind === 'warning'), false);
+  assert.equal(reads, 2);
+});
+
+test('cloud Pi never reads or spawns process-global desktop MCP configuration', async (t) => {
+  const { session } = sessionFixture(t);
+  const previousCloud = process.env.MICHI_CLOUD;
+  process.env.MICHI_CLOUD = '1';
+  t.after(() => { if (previousCloud === undefined) delete process.env.MICHI_CLOUD; else process.env.MICHI_CLOUD = previousCloud; });
+  t.mock.method(require('../src/services/piMcpConfig'), 'readPiMcpServers', () => assert.fail('cloud must not read desktop configs'));
+  t.mock.method(require('../src/services/mcpClientManager'), 'McpClientManager', () => assert.fail('cloud must not start a global child process'));
+  const events = await drain(session.send('cloud task'));
+  assert.ok(events.some((event) => event.kind === 'warning' && event.source === 'mcp' && event.category === 'setup'
+    && event.code === 'MCP_CLOUD_CONFIG_UNAVAILABLE'));
+  assert.ok(events.some((event) => event.kind === 'turn_end'));
+});

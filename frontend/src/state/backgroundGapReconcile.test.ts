@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatNodeState, Project } from './chatTypes';
 import { reconcileBackgroundWorkspaceSnapshot } from './backgroundGapReconcile';
+import { hydrateBackendWorkspaces } from './chatHydration';
+import { backendEntityId } from '../config/backendIdentity';
+import { indexBackendProjects, workspaceBackendApiBase, nodeBackendApiBase } from '../config/backendConnections';
 
 function node(overrides: Partial<ChatNodeState> = {}): ChatNodeState {
   return {
@@ -61,6 +64,28 @@ function fullWorkspace(status: 'idle' | 'streaming' = 'idle') {
 }
 
 describe('background durable-gap workspace reconciliation', () => {
+  it('keeps a remote snapshot and all its recovered nodes on their connection alongside a same-ID Local workspace', () => {
+    const connectionId = 'remote-gap';
+    const remote = hydrateBackendWorkspaces([fullWorkspace()], null, connectionId);
+    const remoteNodeId = backendEntityId(connectionId, 'parent');
+    const remoteProjectId = backendEntityId(connectionId, 'ws-1');
+    const result = reconcileBackgroundWorkspaceSnapshot({
+      currentProjects: [project, ...remote.projects],
+      currentNodes: { parent: node(), ...remote.nodes },
+      rawWorkspace: fullWorkspace(),
+      gap: { chatId: remoteNodeId, nodeId: remoteNodeId, turnId: 'durable', seq: 12 },
+    });
+    expect(result).not.toBeNull();
+    expect(result!.projects[0]).toBe(project);
+    expect(result!.projects[1].backendConnectionId).toBe(connectionId);
+    expect(result!.nodes.parent.projectId).toBe('ws-1');
+    expect(result!.nodes[remoteNodeId].projectId).toBe(remoteProjectId);
+    // The identity itself owns routing, even if a later caller drops metadata.
+    indexBackendProjects(result!.projects.map(({ backendConnectionId: _connection, ...value }) => value));
+    expect(workspaceBackendApiBase(remoteProjectId)).toContain(`/backend-connections/${connectionId}/proxy`);
+    expect(nodeBackendApiBase(backendEntityId(connectionId, 'child'))).toBe(workspaceBackendApiBase(remoteProjectId));
+    expect(workspaceBackendApiBase('ws-1')).not.toContain('/proxy');
+  });
   it('atomically restores canonical messages, graph and artifacts while keeping local compose state', () => {
     const local = node({
       composerDraft: { value: 'do not lose this draft', mentions: [] },

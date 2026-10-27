@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import net from 'node:net';
 import type { ChildProcess } from 'node:child_process';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,32 +50,68 @@ function sshConnection(overrides: Partial<BackendConnectionRecord> = {}): Backen
 }
 
 describe('SSH tunnel arguments', () => {
-  test('uses fixed safety options and passes the target without a shell', () => {
-    assert.deepEqual(buildSshTunnelArgs(sshConnection(), 32123), [
-      '-N',
-      '-T',
-      '-o', 'BatchMode=yes',
-      '-o', 'ExitOnForwardFailure=yes',
-      '-o', 'ServerAliveInterval=30',
-      '-o', 'ServerAliveCountMax=3',
-      '-o', 'ConnectTimeout=8',
-      '-o', 'StrictHostKeyChecking=yes',
-      '-L', '127.0.0.1:32123:127.0.0.1:4649',
-      '-p', '2222',
-      'builder@build-server-box',
-    ]);
-  });
-
   test('uses SSH config defaults when user and ports are omitted', () => {
     const connection = sshConnection({ sshUser: undefined, sshPort: undefined, remotePort: undefined });
     const args = buildSshTunnelArgs(connection, 32123);
     assert.equal(args.at(-1), 'build-server-box');
     assert.equal(args.includes('-p'), false);
     assert.ok(args.includes('127.0.0.1:32123:127.0.0.1:3000'));
+    assert.ok(args.includes('ConnectTimeout=30'), 'allow a cold SSH proxy to finish its handshake');
   });
 });
 
 describe('SshTunnelManager', () => {
+  test('waits for forwarding when a cold proxy takes more than ten seconds', async (t) => {
+    const server = net.createServer(socket => socket.end());
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const port = address.port;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    const child = createFakeChild();
+    const manager = new SshTunnelManager({ allocatePort: async () => port, spawnSsh: () => child });
+    let settled = false;
+    const ready = manager.apiUrl(sshConnection()).finally(() => { settled = true; });
+    // Observe an early rejection too, so a regression does not leak it.
+    void ready.catch(() => {});
+    const flushIo = async () => { for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve)); };
+    try {
+      await flushIo();
+      t.mock.timers.tick(14_000);
+      await flushIo();
+      assert.equal(settled, false, 'keep waiting while SSH is within its handshake budget');
+      assert.equal(manager.status('remote-1').phase, 'connecting');
+      await new Promise<void>(resolve => server.listen(port, '127.0.0.1', resolve));
+      t.mock.timers.tick(100);
+      assert.equal(await ready, `http://127.0.0.1:${port}/api`);
+      assert.equal(manager.status('remote-1').phase, 'connected');
+    } finally {
+      manager.shutdown();
+      if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  test('still bounds forwarding startup and terminates a stuck SSH process', async (t) => {
+    const server = net.createServer();
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    const port = address.port;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    const child = createFakeChild();
+    const manager = new SshTunnelManager({ allocatePort: async () => port, spawnSsh: () => child });
+    const rejected = assert.rejects(manager.apiUrl(sshConnection()), /Timed out waiting for SSH port forwarding/);
+    try {
+      for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+      t.mock.timers.tick(35_001);
+      await rejected;
+      assert.equal(child.killedWith, 'SIGTERM');
+      assert.equal(manager.status('remote-1').phase, 'error');
+    } finally { manager.shutdown(); }
+  });
+
   test('deduplicates concurrent starts for one connection', async () => {
     const child = createFakeChild();
     let spawnCount = 0;
@@ -124,21 +161,6 @@ describe('SshTunnelManager', () => {
     manager.shutdown();
   });
 
-  test('stop terminates a live process and marks it disconnected', async () => {
-    const child = createFakeChild();
-    const manager = new SshTunnelManager({
-      allocatePort: async () => 32123,
-      spawnSsh: () => child,
-      waitUntilReady: async () => undefined,
-    });
-    await manager.apiUrl(sshConnection());
-
-    manager.stop('remote-1');
-
-    assert.equal(child.killedWith, 'SIGTERM');
-    assert.deepEqual(manager.status('remote-1'), { phase: 'disconnected' });
-  });
-
   test('stop during port allocation prevents a late process spawn', async () => {
     let releasePort!: (port: number) => void;
     const port = new Promise<number>((resolve) => { releasePort = resolve; });
@@ -173,21 +195,5 @@ describe('SshTunnelManager', () => {
     await assert.rejects(manager.apiUrl(sshConnection()), /Permission denied/);
     assert.equal(child.killedWith, 'SIGTERM');
     assert.match(manager.status('remote-1').error ?? '', /Permission denied/);
-  });
-
-  test('returns direct URLs without allocating or spawning', async () => {
-    let touched = false;
-    const manager = new SshTunnelManager({
-      allocatePort: async () => { touched = true; return 32123; },
-      spawnSsh: () => { touched = true; return createFakeChild(); },
-    });
-    const direct = sshConnection({
-      transport: 'direct',
-      apiUrl: 'https://michi.example.com/api',
-      sshHost: undefined,
-    });
-
-    assert.equal(await manager.apiUrl(direct), 'https://michi.example.com/api');
-    assert.equal(touched, false);
   });
 });

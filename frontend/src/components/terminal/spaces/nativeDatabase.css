@@ -1,0 +1,52 @@
+/* A database shown as a block of a Space page (NativeDatabase presentation="page"):
+   its title and view kind head the block and the view shows bare. The view's bar
+   rides over the heading's right side, and the row controls show, while the
+   pointer or focus is in the database, as a block's toolbar does. Tokens only. */
+
+[data-native-database][data-presentation='page'] { position: relative; }
+/* The bar is placed against the whole block, heading included. */
+[data-presentation='page'] > .michi-db { position: static; }
+
+.native-db-head { display: flex; align-items: center; gap: 8px; min-height: 26px; margin-bottom: 10px; }
+.native-db-head__tag { margin-left: auto; color: var(--term-mid); border-color: var(--term-line); background: var(--term-surface); }
+/* Each view ends where its rows do; a page's own spacing follows it. */
+[data-presentation='page'] :is(.michi-db-table, .michi-db-board, .michi-db-list, .michi-db-gallery, .michi-db-timeline, .michi-cal) { padding: 0; }
+[data-presentation='page'] .michi-db-empty { padding: 4px 0; }
+
+[data-presentation='page'] .michi-db__bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  max-width: 100%;
+  padding: 0 0 0 12px;
+  border: 0;
+  background: var(--term-bg);
+}
+[data-presentation='page'] :is(.michi-db__bar, .michi-db-th--check, .michi-db-td--check, .michi-db-th--add, .michi-db-new-row) {
+  opacity: 0;
+  transition: opacity var(--t-quick) ease;
+}
+[data-presentation='page']:is(:hover, :focus-within) :is(.michi-db__bar, .michi-db-th--check, .michi-db-td--check, .michi-db-th--add, .michi-db-new-row) {
+  opacity: 1;
+}
+
+/* A task board's head counts its tasks; its notes sit above the view. */
+.native-db-head__count { color: var(--term-muted); }
+.native-db-hint { margin: 0 0 8px; color: var(--term-muted); font-size: var(--fs-sm); }
+
+.native-task-view__empty { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.native-task-view__empty .michi-doc-unknown { margin: 0; }
+
+/* The Meta agent's latest update of a task board, above the view. */
+.michi-task-upkeep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: var(--term-mid);
+  font-size: var(--fs-sm);
+}
+.michi-task-upkeep svg { flex: none; color: var(--term-accent); }
+.michi-task-upkeep__undo { margin-left: auto; }

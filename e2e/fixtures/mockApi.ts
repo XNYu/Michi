@@ -1,4 +1,6 @@
-import type { Page, Route } from '@playwright/test';
+import { expect, type Page, type Route } from '@playwright/test';
+import { composerEditor } from './shell';
+import { createSpacesHomeMock } from './spacesHomeFixtures';
 import {
   AgentDefinitionStatus,
   AgentRunCompletionMode,
@@ -447,6 +449,7 @@ function nextNodeId() {
 export async function installMockApi(page: Page, overrides: MockOverrides = {}) {
   chatIdCounter = 0;
   nodeIdCounter = 0;
+  const spacesHome = createSpacesHomeMock();
 
   // Match only real backend calls: `<origin>/api/...`. A plain `**/api/**`
   // glob also matches Vite dev module URLs like
@@ -634,6 +637,9 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
     if (method === 'POST' && path === '/warm') return json({ ok: true });
     if (method === 'POST' && path === '/migrate') return json({ migrated: false });
 
+    // Spaces Home, Meta agent, Home cards and Scheduled jobs: empty, well-formed answers.
+    if (await spacesHome.handle(route)) return;
+
     // Default: empty 200. Loud enough to find in traces if we missed something.
     return json({ __unmocked: path });
   });
@@ -648,13 +654,20 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
 export async function bootWithWorkspace(page: Page, name = 'E2E Workspace') {
   await page.goto('/');
 
-  // The new-workspace dialog auto-opens when there are no projects.
+  // Open the new-workspace dialog once Home is ready if it was not opened automatically.
   // NewWorkspaceDialog has: <input placeholder="Untitled workspace"> + <button>Create</button>.
   const nameInput = page.getByPlaceholder(/workspace|untitled/i).first();
-  await nameInput.waitFor({ state: 'visible', timeout: 10_000 });
+  const home = page.locator('.home-page');
+  await nameInput.or(home).first().waitFor({ state: 'visible', timeout: 10_000 });
+  await expect(async () => {
+    if (!(await nameInput.isVisible())) {
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent('michi:open-new-workspace')));
+    }
+    await expect(nameInput).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
   await nameInput.fill(name);
   await page.getByRole('button', { name: /^create$/i }).click();
 
   // Wait for the TipTap-backed MentionEditor used by the Home composer.
-  await page.locator('[contenteditable="true"]').first().waitFor({ state: 'visible', timeout: 10_000 });
+  await composerEditor(page).first().waitFor({ state: 'visible', timeout: 10_000 });
 }

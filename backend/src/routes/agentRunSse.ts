@@ -1,10 +1,10 @@
+import { createSseObserver } from '../services/httpSse';
 import type { Request, Response } from 'express';
 import type { AgentRunDtoV1, AgentRunEventV1, AgentRunSseEnvelopeV1 } from 'michi-shared';
 import { AgentRunEventBus } from '../agents/runs/agentRunEventBus';
 
 const MAX_CURSOR_RUNS = 256;
 const MAX_REPLAY_EVENTS = 1_000;
-const MAX_SSE_BUFFER_BYTES = 1_048_576;
 
 export interface AgentRunSseSource {
   getRun(ownerUserId: string, runId: string): AgentRunDtoV1 | null;
@@ -60,11 +60,9 @@ export function createAgentRunSseHandler(deps: AgentRunSseDeps) {
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders?.();
-    let closed = false;
+    const observer = createSseObserver(res);
     const send = (envelope: AgentRunSseEnvelopeV1): void => {
-      if (closed || res.destroyed || res.writableEnded) return;
-      if (res.writableLength > MAX_SSE_BUFFER_BYTES) { res.destroy(new Error('Agent Run SSE client exceeded buffer limit')); return; }
-      res.write(frame(envelope));
+      observer.write(frame(envelope));
     };
 
     for (const [runId, afterSeq] of cursors) {
@@ -85,7 +83,8 @@ export function createAgentRunSseHandler(deps: AgentRunSseDeps) {
       }
     }
 
-    const unsubscribe = deps.events.subscribeAll((event) => {
+    if (observer.closed) return;
+    observer.addCleanup(deps.events.subscribeAll((event) => {
       const run = deps.source.getRun(ownerUserId, event.runId);
       if (!run || run.workspaceId !== workspaceId) return;
       const cursor = cursors.get(event.runId) ?? -1;
@@ -97,10 +96,7 @@ export function createAgentRunSseHandler(deps: AgentRunSseDeps) {
         send({ version: 1, event: 'agent_run_event', runId: event.runId, seq: event.seq, eventData: event, gapAfterSeq: null, emittedAt: now() });
         cursors.set(event.runId, event.seq);
       }
-    });
-    const heartbeat = setInterval(() => send({ version: 1, event: 'heartbeat', runId: null, seq: null, eventData: null, gapAfterSeq: null, emittedAt: now() }), heartbeatMs);
-    const close = (): void => { if (closed) return; closed = true; clearInterval(heartbeat); unsubscribe(); };
-    res.on('close', close);
-    res.on('error', close);
+    }));
+    observer.heartbeat(() => frame({ version: 1, event: 'heartbeat', runId: null, seq: null, eventData: null, gapAfterSeq: null, emittedAt: now() }), heartbeatMs);
   };
 }

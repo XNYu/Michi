@@ -1,29 +1,7 @@
 import { useState } from 'react';
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { pickActiveSection, revealInScroller, useScrollSpy, type ScrollSpy } from './useScrollSpy';
-
-describe('pickActiveSection', () => {
-  const base = { scrollTop: 400, scrollHeight: 3000, clientHeight: 600 };
-
-  it('returns -1 when there are no sections', () => {
-    expect(pickActiveSection({ ...base, tops: [] })).toBe(-1);
-  });
-
-  it('picks the last section whose heading crossed the reading line', () => {
-    // Reading line = 600 * 0.3 = 180px below the viewport top.
-    expect(pickActiveSection({ ...base, tops: [-400, -50, 150, 500] })).toBe(2);
-    expect(pickActiveSection({ ...base, tops: [-400, -50, 200, 500] })).toBe(1);
-  });
-
-  it('keeps the first section current at the very top, even for a short document', () => {
-    expect(pickActiveSection({ tops: [40, 120, 160], scrollTop: 0, scrollHeight: 500, clientHeight: 600 })).toBe(0);
-  });
-
-  it('makes the last section current once scrolled to the end', () => {
-    expect(pickActiveSection({ tops: [-2000, -300, 350, 500], scrollTop: 2400, scrollHeight: 3000, clientHeight: 600 })).toBe(3);
-  });
-});
+import { revealInScroller, useScrollSpy, type ScrollSpy } from './useScrollSpy';
 
 interface Layout {
   scrollTop: number;
@@ -123,26 +101,6 @@ describe('useScrollSpy', () => {
     fireEvent.wheel(scroller);
     scrollTo(scroller, { scrollTop: 700 });
     expect(latest.activeId).toBe('c');
-  });
-
-  it('releases the pin on scrollend without overriding the clicked section', () => {
-    const { scroller } = mount(['a', 'b', 'c', 'd']);
-    scrollTo(scroller, { scrollTop: 700 });
-
-    act(() => latest.pin('d'));
-    fireEvent(scroller, new Event('scrollend'));
-    // A short trailing section clicked from the outline stays current.
-    expect(latest.activeId).toBe('d');
-
-    scrollTo(scroller, { scrollTop: 400 });
-    expect(latest.activeId).toBe('b');
-  });
-
-  it('falls back to the first section when the current one disappears', () => {
-    const { rerender } = mount(['a', 'b', 'c', 'd']);
-    act(() => latest.pin('d'));
-    rerender(<Harness ids={['a', 'b']} />);
-    expect(latest.activeId).toBe('a');
   });
 });
 

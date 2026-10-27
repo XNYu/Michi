@@ -18,18 +18,16 @@ async function gitMaybe(...args: string[]): Promise<string | null> {
   try { return await git(...args); } catch { return null; }
 }
 
-// Update & Restart strictly tracks `amazon/dev` — the Michi internal release
-// branch. If the user has no `amazon` remote (or `amazon/dev` does not exist),
-// we return null so the button stays hidden rather than fall back to whatever
-// remote happens to be configured.
+// Source-checkout updates follow the public origin/main branch. A checkout
+// without that tracking branch has no source update target.
 async function pickUpstream(): Promise<{ remote: string; branch: string } | null> {
   const remotesOut = await gitMaybe('remote');
   if (!remotesOut) return null;
   const remotes = remotesOut.split('\n').map((s) => s.trim()).filter(Boolean);
-  if (!remotes.includes('amazon')) return null;
-  const verified = await gitMaybe('rev-parse', '--verify', 'refs/remotes/amazon/dev');
+  if (!remotes.includes('origin')) return null;
+  const verified = await gitMaybe('rev-parse', '--verify', 'refs/remotes/origin/main');
   if (!verified) return null;
-  return { remote: 'amazon', branch: 'amazon/dev' };
+  return { remote: 'origin', branch: 'origin/main' };
 }
 
 export function setupVersionRoutes(): Router {

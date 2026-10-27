@@ -1,123 +1,288 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { HomeCard, HomeCardsDto } from 'michi-shared';
 import TerminalHome from './Home';
+import { PrefsProvider } from '../../../state/prefs';
+import { AppearancePane } from './settings/AppearancePane';
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
+import { useZhCnDefaultLocale } from '../../../test/zhCnLocale';
 
-// The composer pulls in the editor and the model stack; the list under it is
-// what this file is about.
-vi.mock('../manage/ManageComposer', () => ({ default: () => null }));
+// What Home asks of its composer. The insertion itself is covered by
+// ManageComposer.insert.test.tsx and Home.composerInsert.test.tsx.
+const composer = vi.hoisted(() => ({ insert: vi.fn(), startMention: vi.fn() }));
+vi.mock('../manage/ManageComposer', async () => {
+  const { forwardRef, useImperativeHandle } = await import('react');
+  const FakeComposer = forwardRef(function FakeComposer(_props, ref) {
+    useImperativeHandle(ref, () => composer);
+    return <div data-testid="composer" />;
+  });
+  return { default: FakeComposer };
+});
+vi.mock('../home/ChatHomeDocument', () => ({ default: ({ page }: { page: { title: string } }) => <section aria-label="Home content">{page.title}</section> }));
 vi.mock('../HomeWorkspaceChip', () => ({ HomeWorkspaceChip: () => null }));
 
+const api = vi.hoisted(() => ({ fetchHomeCards: vi.fn(), markHomeCardUsed: vi.fn() }));
+vi.mock('../../../services/api/homeCards', async () => ({
+  ...(await vi.importActual<object>('../../../services/api/homeCards')),
+  fetchHomeCards: api.fetchHomeCards,
+  markHomeCardUsed: api.markHomeCardUsed,
+}));
+
 function node(nodeId: string, extra: Partial<ChatNodeState> = {}): ChatNodeState {
-  return {
-    nodeId, chatId: null, projectId: 'p1', kind: 'chat',
-    title: nodeId, messages: [], followUps: [], status: 'idle',
-    ...extra,
-  } as ChatNodeState;
+  return { nodeId, chatId: null, projectId: 'p1', kind: 'chat', title: nodeId, messages: [], followUps: [], status: 'idle', ...extra } as ChatNodeState;
 }
 
-const nodes: Record<string, ChatNodeState> = {
-  a: node('a', { title: 'Alpha' }),
-  a1: node('a1', { lastAssistantAt: 10, viewedAt: 0 }),
-  b: node('b', { title: 'Beta' }),
-  c: node('c', { title: 'Gamma', projectId: 'p2', status: 'streaming' }),
-};
-
-// Newest first: Beta (p1, not the active thread) › Gamma (p2) › Alpha (p1, active).
-const projects = [
-  {
-    id: 'p1', name: 'One', createdAt: 0, activeTreeId: 'tA',
-    chatIds: ['a', 'a1', 'b'],
-    edges: [{ source: 'a', target: 'a1', kind: 'branch' }],
-    trees: [
-      { id: 'tA', rootNodeId: 'a', createdAt: 0, lastActiveAt: 100 },
-      { id: 'tB', rootNodeId: 'b', createdAt: 0, lastActiveAt: 300 },
-    ],
-  },
-  {
-    id: 'p2', name: 'Two', createdAt: 0, activeTreeId: 'tC',
-    chatIds: ['c'], edges: [],
-    trees: [{ id: 'tC', rootNodeId: 'c', createdAt: 0, lastActiveAt: 200 }],
-  },
-] as Project[];
-
-const actions = {
+const store = vi.hoisted(() => ({
+  projects: [] as Project[],
+  nodes: {} as Record<string, ChatNodeState>,
+  hydrated: true,
   selectProject: vi.fn(),
-  activateTree: vi.fn(),
-  openPane: vi.fn(),
-  openPaneInTree: vi.fn(),
-  setFocusedNodeId: vi.fn(),
-};
+}));
+vi.mock('../../../state/chatStore', async () => ({
+  ...(await vi.importActual<object>('../../../state/chatStore')),
+  useChatStore: () => ({
+    projects: store.projects,
+    activeProject: store.projects[0] ?? null,
+    activeProjectId: store.projects[0]?.id ?? null,
+    hydrated: store.hydrated,
+    selectProject: store.selectProject,
+  }),
+  useStructuralSelector: (selector: (n: Record<string, ChatNodeState>) => unknown) => selector(store.nodes),
+}));
 
-vi.mock('../../../state/chatStore', async () => {
-  const actual: any = await vi.importActual('../../../state/chatStore');
+const withThreads: Project[] = [
+  { id: 'p1', name: 'rabbitholes', createdAt: 0, activeTreeId: 't1', chatIds: ['a'], edges: [],
+    trees: [{ id: 't1', rootNodeId: 'a', createdAt: 0, lastActiveAt: 10 }] },
+  { id: 'p2', name: 'agent-desk', createdAt: 0, activeTreeId: null, chatIds: [], edges: [], trees: [] },
+] as unknown as Project[];
+const withoutThreads: Project[] = [
+  { id: 'p1', name: 'rabbitholes', createdAt: 0, activeTreeId: null, chatIds: [], edges: [], trees: [] },
+] as unknown as Project[];
+
+function card(id: string, extra: Partial<HomeCard> = {}): HomeCard {
   return {
-    ...actual,
-    useChatStore: () => ({
-      projects,
-      activeProject: projects[0],
-      activeProjectId: 'p1',
-      focusedNodeId: null,
-      ...actions,
-    }),
-    useStructuralSelector: (selector: (n: Record<string, ChatNodeState>) => unknown) => selector(nodes),
+    id, kind: 'continue', label: '接着做 · rabbitholes', source: { workspaceId: 'p1' }, title: `Title ${id}`,
+    reason: `Reason ${id}`, buttonText: '接着做', prompt: `Prompt ${id}`, workspaceId: 'p1', ...extra,
   };
-});
+}
+const six = (prefix: string) => Array.from({ length: 6 }, (_, i) => card(`${prefix}${i}`));
+function answer(extra: Partial<HomeCardsDto> = {}): HomeCardsDto {
+  return {
+    greeting: { text: '早上好。昨晚 3 条线有进展。', detail: 'Michi 0.9 还有 5 天发布。' },
+    sets: [{ cards: six('a') }, { cards: six('b') }],
+    generatedAt: 1, inputFingerprint: 'fp', ...extra,
+  };
+}
 
-const rows = () => screen.getAllByTestId('home-continue-row');
+const inserted = () => composer.insert.mock.calls.map(([text]) => text);
+const cardTitles = () => screen.queryAllByTestId('home-card').map((el) => el.querySelector('.home-card__title')!.textContent);
 
-describe('TerminalHome — continue list', () => {
+const submitted = vi.fn();
+async function renderHome() {
+  const view = render(<TerminalHome onSubmitted={submitted} />);
+  await waitFor(() => expect(api.fetchHomeCards).toHaveBeenCalled());
+  await act(async () => {});
+  return view;
+}
+
+describe('TerminalHome', () => {
   beforeEach(() => {
-    for (const fn of Object.values(actions)) fn.mockClear();
+    store.projects = withThreads;
+    store.nodes = { a: node('a') };
+    store.hydrated = true;
+    store.selectProject.mockReset();
+    submitted.mockReset();
+    composer.insert.mockReset();
+    composer.startMention.mockReset();
+    api.fetchHomeCards.mockReset().mockResolvedValue(answer());
+    api.markHomeCardUsed.mockReset().mockResolvedValue(undefined);
+  });
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it('switches Home between default and Pages content from Settings and restores the saved choice', async () => {
+    localStorage.setItem('michi:v1:prefs', JSON.stringify({ homeRecommendations: true }));
+    api.fetchHomeCards.mockResolvedValue(answer({ contentMode: 'page', contentPage: { id: 'home', title: 'My home layout' } as never }));
+    const view = render(<PrefsProvider><AppearancePane /><TerminalHome onSubmitted={submitted} /></PrefsProvider>);
+    await screen.findByRole('region', { name: 'Home content' });
+    const toggle = screen.getByRole('switch', { name: 'Pages recommendations on Home' });
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'Home content' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Quick starts' })).toBeTruthy();
+    expect(screen.getByTestId('composer')).toBeTruthy();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('michi:v1:prefs')!).homeRecommendations).toBe(false));
+    view.unmount();
+    render(<PrefsProvider><AppearancePane /><TerminalHome onSubmitted={submitted} /></PrefsProvider>);
+    expect(screen.getByRole('switch', { name: 'Pages recommendations on Home' }).getAttribute('aria-checked')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'Home content' })).toBeNull();
+    fireEvent.click(screen.getByRole('switch', { name: 'Pages recommendations on Home' }));
+    await screen.findByRole('region', { name: 'Home content' });
+    localStorage.removeItem('michi:v1:prefs');
   });
 
-  it('lists recent threads from every workspace under a "continue" caption', () => {
-    render(<TerminalHome onSubmitted={vi.fn()} />);
-    expect(screen.getByText('continue')).toBeTruthy();
-    expect(screen.queryByText(/recent threads/i)).toBeNull();
-    expect(rows().map((r) => within(r).getByText(/Alpha|Named|Beta|Gamma/).textContent)).toEqual(['Beta', 'Gamma', 'Alpha']);
-    expect(within(rows()[0]).getByText('One')).toBeTruthy();
-    expect(within(rows()[1]).getByText('Two')).toBeTruthy();
+  it('shows the date, the greeting with its second line, the composer, quick starts and six cards', async () => {
+    useZhCnDefaultLocale();
+    await renderHome();
+    // English on a Chinese browser too.
+    expect(document.querySelector('.michi-home-eyebrow')!.textContent).toMatch(/^[A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2}$/);
+    const h1 = screen.getByRole('heading', { level: 1 });
+    expect(h1.textContent).toBe('_ 早上好。昨晚 3 条线有进展。Michi 0.9 还有 5 天发布。');
+    expect(screen.getByTestId('composer')).toBeTruthy();
+    expect(within(screen.getByRole('group', { name: 'Quick starts' })).getAllByRole('button')).toHaveLength(4);
+    expect(cardTitles()).toEqual(['Title a0', 'Title a1', 'Title a2', 'Title a3', 'Title a4', 'Title a5']);
+    // Recent threads and the stalled list are gone from Home.
+    expect(screen.queryByTestId('home-continue-row')).toBeNull();
+    expect(screen.queryByTestId('michi-home-row')).toBeNull();
   });
 
-  it('shows what each thread is doing and how far it has branched', () => {
-    render(<TerminalHome onSubmitted={vi.fn()} />);
-    const [beta, gamma, alpha] = rows();
-    expect(within(gamma).getByRole('img', { name: 'streaming' })).toBeTruthy();
-    expect(within(alpha).getByRole('img', { name: 'unread' })).toBeTruthy();
-    expect(within(alpha).getByRole('img', { name: '1 branch' })).toBeTruthy();
-    // An idle thread with no branches shows neither mark.
-    expect(within(beta).queryByRole('img')).toBeNull();
+  it('leaves the greeting out when the Meta agent wrote none', async () => {
+    api.fetchHomeCards.mockResolvedValue(answer({ greeting: null }));
+    await renderHome();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(document.querySelector('.michi-home-eyebrow')).toBeTruthy();
   });
 
-  it('opens a thread in another workspace by seeding its pane before switching', () => {
-    const onSubmitted = vi.fn();
-    render(<TerminalHome onSubmitted={onSubmitted} />);
-    fireEvent.click(rows()[1]);
-    expect(actions.selectProject).toHaveBeenCalledWith('p2');
-    expect(actions.openPaneInTree).toHaveBeenCalledWith('p2', 'tC', 'c');
-    expect(actions.activateTree).toHaveBeenCalledWith('tC', 'p2');
-    expect(actions.setFocusedNodeId).toHaveBeenCalledWith('c');
-    expect(actions.openPane).not.toHaveBeenCalled();
-    expect(onSubmitted).toHaveBeenCalledTimes(1);
+  it('a card puts its prompt into the composer without sending, and is marked used', async () => {
+    await renderHome();
+    fireEvent.click(screen.getAllByTestId('home-card')[0]!);
+    expect(inserted()).toEqual(['Prompt a0']);
+    expect(submitted).not.toHaveBeenCalled();
+    expect(api.markHomeCardUsed).toHaveBeenCalledWith('a0', expect.any(String));
+    // It stays on screen until the next read.
+    expect(cardTitles()[0]).toBe('Title a0');
   });
 
-  it('switches thread inside the active workspace without reselecting the workspace', () => {
-    render(<TerminalHome onSubmitted={vi.fn()} />);
-    fireEvent.click(rows()[0]);
-    expect(actions.selectProject).not.toHaveBeenCalled();
-    expect(actions.openPaneInTree).toHaveBeenCalledWith('p1', 'tB', 'b');
-    expect(actions.activateTree).toHaveBeenCalledTimes(1);
-    expect(actions.activateTree).toHaveBeenCalledWith('tB', 'p1');
+  it.each([
+    ['Recap today', "Review today's conversations", 'completed work, key decisions, unresolved blockers'],
+    ['Draft release notes', 'Draft release notes for this workspace', 'breaking changes or migration steps'],
+    ['Find threads stalled 3+ days', 'Find unfinished threads in this workspace', 'at least 3 days'],
+    ['Plan tomorrow', 'propose a practical plan for tomorrow', 'up to three main priorities'],
+  ])('%s inserts a complete task without sending or switching workspaces', async (label, task, detail) => {
+    await renderHome();
+    fireEvent.click(screen.getAllByTestId('home-card')[1]!);
+    fireEvent.click(screen.getByRole('button', { name: label }));
+    expect(inserted()).toEqual(['Prompt a1', expect.stringContaining(task)]);
+    expect(inserted()[1]).toContain(detail);
+    expect(inserted()[1]).toContain('this workspace');
+    expect(inserted()[1]).not.toBe(label);
+    expect(store.selectProject).not.toHaveBeenCalled();
+    expect(submitted).not.toHaveBeenCalled();
   });
 
-  it('still activates the already-active thread, so its unread branches are marked read', () => {
-    render(<TerminalHome onSubmitted={vi.fn()} />);
-    fireEvent.click(rows()[2]);
-    expect(actions.openPane).toHaveBeenCalledWith('a');
-    expect(actions.openPaneInTree).not.toHaveBeenCalled();
-    expect(actions.activateTree).toHaveBeenCalledTimes(1);
-    expect(actions.activateTree).toHaveBeenCalledWith('tA', 'p1');
+  it('a card moves the composer to its workspace when that is one of the user\'s', async () => {
+    api.fetchHomeCards.mockResolvedValue(answer({ sets: [{ cards: [card('x', { workspaceId: 'p2' }), card('y', { workspaceId: 'gone' }), card('z', { workspaceId: null, kind: 'tip', prompt: '' })] }] }));
+    await renderHome();
+    const [toP2, toGone, tip] = screen.getAllByTestId('home-card');
+    fireEvent.click(toP2!);
+    expect(store.selectProject).toHaveBeenCalledWith('p2');
+    fireEvent.click(toGone!);
+    fireEvent.click(tip!);
+    expect(store.selectProject).toHaveBeenCalledTimes(1);
+    expect(inserted()).toEqual(['Prompt x', 'Prompt y', '']);
+  });
+
+  it('Shuffle shows the next set without asking the backend, and comes back round', async () => {
+    api.fetchHomeCards.mockResolvedValue(answer({ sets: [{ cards: six('a') }, { cards: six('b') }, { cards: [card('c0')] }] }));
+    await renderHome();
+    const shuffle = screen.getByRole('button', { name: 'Shuffle' });
+    fireEvent.click(shuffle);
+    expect(cardTitles()[0]).toBe('Title b0');
+    fireEvent.click(shuffle);
+    expect(cardTitles()).toEqual(['Title c0']);
+    fireEvent.click(shuffle);
+    expect(cardTitles()[0]).toBe('Title a0');
+    expect(api.fetchHomeCards).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no Shuffle with a single set, and no cards at all when the Meta agent wrote none', async () => {
+    api.fetchHomeCards.mockResolvedValue(answer({ sets: [{ cards: six('a') }] }));
+    const view = await renderHome();
+    expect(screen.queryByRole('button', { name: 'Shuffle' })).toBeNull();
+    view.unmount();
+
+    api.fetchHomeCards.mockResolvedValue(answer({ greeting: null, sets: [] }));
+    await renderHome();
+    expect(screen.queryByRole('region', { name: 'Start here' })).toBeNull();
+    expect(screen.queryAllByTestId('home-card')).toHaveLength(0);
+  });
+
+  it('shows no cards when the cards cannot be read', async () => {
+    api.fetchHomeCards.mockRejectedValue(new Error('offline'));
+    await renderHome();
+    expect(screen.queryAllByTestId('home-card')).toHaveLength(0);
+    expect(screen.getByTestId('composer')).toBeTruthy();
+  });
+
+  it('sends Full summary on Spaces Home to the Spaces Home', async () => {
+    await renderHome();
+    const onNav = vi.fn();
+    window.addEventListener('michi:nav-page', onNav);
+    fireEvent.click(screen.getByRole('button', { name: /Full summary on Pages Home/ }));
+    window.removeEventListener('michi:nav-page', onNav);
+    expect((onNav.mock.calls[0]![0] as CustomEvent).detail).toEqual({ page: 'spaces' });
+  });
+
+  it('honors hidden recommendations instead of substituting onboarding cards', async () => {
+    store.projects = withoutThreads;
+    store.nodes = {};
+    api.fetchHomeCards.mockResolvedValue(answer({ greeting: null, sets: [], cardsCustomized: true }));
+    await renderHome();
+    expect(screen.queryAllByTestId('home-card')).toHaveLength(0);
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.getByTestId('composer')).toBeTruthy();
+  });
+
+  it('a custom Page replaces both starters and cards while keeping the composer', async () => {
+    api.fetchHomeCards.mockResolvedValue(answer({ contentMode: 'page', contentPage: { id: 'home', title: 'My home layout' } as never }));
+    await renderHome();
+    expect(await screen.findByRole('region', { name: 'Home content' })).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Quick starts' })).toBeNull();
+    expect(cardTitles()).toEqual([]);
+    expect(screen.getByTestId('composer')).toBeTruthy();
+  });
+
+  it('missing or hidden custom content never falls back to recommendations', async () => {
+    api.fetchHomeCards.mockResolvedValue(answer({ contentMode: 'page', contentPage: null }));
+    const view = await renderHome();
+    expect(screen.getByRole('status').textContent).toContain('unavailable');
+    expect(cardTitles()).toEqual([]);
+    view.unmount();
+    api.fetchHomeCards.mockResolvedValue(answer({ contentMode: 'hidden' }));
+    await renderHome();
+    expect(screen.queryByRole('group', { name: 'Quick starts' })).toBeNull();
+    expect(cardTitles()).toEqual([]);
+    expect(screen.getByTestId('composer')).toBeTruthy();
+  });
+
+  it('gives a new user getting-started cards instead, whatever the backend holds', async () => {
+    store.projects = withoutThreads;
+    store.nodes = {};
+    await renderHome();
+    expect(cardTitles()).toEqual(['Start a conversation', 'Try branching', '@ a page', 'Open Pages']);
+    expect(screen.queryByRole('button', { name: 'Shuffle' })).toBeNull();
+
+    const [conversation, , mention, spaces] = screen.getAllByTestId('home-card');
+    fireEvent.click(conversation!);
+    expect(inserted()).toEqual(['Help me plan what to work on today.']);
+    fireEvent.click(mention!);
+    expect(composer.startMention).toHaveBeenCalledOnce();
+    const onNav = vi.fn();
+    window.addEventListener('michi:nav-page', onNav);
+    fireEvent.click(spaces!);
+    window.removeEventListener('michi:nav-page', onNav);
+    expect((onNav.mock.calls[0]![0] as CustomEvent).detail).toEqual({ page: 'spaces' });
+    expect(api.markHomeCardUsed).not.toHaveBeenCalled();
+    expect(submitted).not.toHaveBeenCalled();
+  });
+
+  it('waits for the workspaces before deciding the user is new', async () => {
+    store.projects = [];
+    store.nodes = {};
+    store.hydrated = false;
+    api.fetchHomeCards.mockResolvedValue(answer({ sets: [] }));
+    await renderHome();
+    expect(screen.queryAllByTestId('home-card')).toHaveLength(0);
   });
 });

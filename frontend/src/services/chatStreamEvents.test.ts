@@ -33,6 +33,8 @@ const sampleEvents: ChatStreamEvent[] = [
       status: 'completed',
       kind: 'read',
       detail: 'done',
+      inputJson: '{"path":"src/index.ts"}',
+      output: 'file contents',
     },
   },
   { event: CHAT_STREAM_EVENTS.heartbeat, data: { idleMs: 1200 } },
@@ -140,6 +142,8 @@ function parseEncodedFrame(frame: string): ChatStreamEvent | null {
   const data = frame.match(/^data: (.+)$/m)?.[1];
   return event && data ? parseChatStreamEvent(event, data) : null;
 }
+
+sampleEvents.push({ event: CHAT_STREAM_EVENTS.warning, data: { source: 'anthropic-api', category: 'provider', message: 'Retrying' } });
 
 describe('parseChatStreamEvent', () => {
   it('roundtrips every known event through the shared SSE codec', () => {

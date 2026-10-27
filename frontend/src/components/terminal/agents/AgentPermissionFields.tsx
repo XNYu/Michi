@@ -1,6 +1,5 @@
 import React from 'react';
 import { AgentPolicyCategory, AgentPolicyDecision } from 'michi-shared';
-import { agentFieldStyle } from './AgentRuntimeProfileFields';
 
 export interface PermissionPolicyDraft {
   preset: 'research' | 'build' | 'custom';
@@ -33,7 +32,7 @@ export default function AgentPermissionFields({ value, onChange, errors = {} }: 
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <label style={labelStyle}>
         Preset
-        <select aria-label="permission preset" value={value.preset} onChange={(event) => set('preset', event.target.value as PermissionPolicyDraft['preset'])} style={agentFieldStyle}>
+        <select className="ui-select" aria-label="permission preset" value={value.preset} onChange={(event) => set('preset', event.target.value as PermissionPolicyDraft['preset'])}>
           <option value="research">Research — read/search only</option>
           <option value="build">Build — isolated worktree write/exec</option>
           <option value="custom">Custom — explicit decisions</option>
@@ -44,7 +43,7 @@ export default function AgentPermissionFields({ value, onChange, errors = {} }: 
           {categories.map((category) => (
             <label key={category} style={{ ...labelStyle, padding: 9, borderBottom: '1px solid var(--term-line)' }}>
               {category.replaceAll('_', ' ')}
-              <select aria-label={`permission ${category}`} value={value.categories[category] ?? AgentPolicyDecision.Deny} onChange={(event) => onChange({ ...value, categories: { ...value.categories, [category]: event.target.value as AgentPolicyDecision } })} style={agentFieldStyle}>
+              <select className="ui-select" aria-label={`permission ${category}`} value={value.categories[category] ?? AgentPolicyDecision.Deny} onChange={(event) => onChange({ ...value, categories: { ...value.categories, [category]: event.target.value as AgentPolicyDecision } })}>
                 <option value={AgentPolicyDecision.Allow}>allow</option>
                 <option value={AgentPolicyDecision.Ask}>ask</option>
                 <option value={AgentPolicyDecision.Deny}>deny</option>
@@ -64,7 +63,7 @@ export default function AgentPermissionFields({ value, onChange, errors = {} }: 
 }
 
 function NumberField({ label, aria, value, onChange, error }: { label: string; aria: string; value: string; onChange: (value: string) => void; error?: string }) {
-  return <label style={labelStyle}>{label}<input aria-label={aria} inputMode="numeric" value={value} onChange={(event) => onChange(event.target.value)} style={agentFieldStyle} />{error && <span role="alert" style={{ color: 'var(--danger, var(--term-danger))', fontSize: 'var(--fs-xs)', letterSpacing: 0, textTransform: 'none' }}>{error}</span>}</label>;
+  return <label style={labelStyle}>{label}<input className="ui-input" aria-label={aria} inputMode="numeric" value={value} onChange={(event) => onChange(event.target.value)} />{error && <span role="alert" style={{ color: 'var(--danger, var(--term-danger))', fontSize: 'var(--fs-xs)', letterSpacing: 0, textTransform: 'none' }}>{error}</span>}</label>;
 }
 
 const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--term-muted)', fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase' };

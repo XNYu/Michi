@@ -4,11 +4,12 @@ import { Row } from './primitives';
 import { usePrefs } from '../../state/prefs';
 import WorkspaceIcon, { modeForPalette } from './WorkspaceIcon';
 import { workspaceAccent } from './workspaceAccent';
-import ThreadRow, { Chevron, CARD_FILL } from './ThreadRow';
+import ThreadRow, { CARD_FILL } from './ThreadRow';
 import { rowGeom, spinePadding, branchBlockGap, WORKSPACE_ICON_GAP, WORKSPACE_ICON_SIZE, type RowGeom } from './sidebarRowStyle';
 import { FolderIcon, FolderOpenIcon } from './icons';
 import BranchRow from './BranchRow';
 import ContextMenu, { type MenuSection } from '../ContextMenu';
+import { HoverTip } from '../ui/Popover';
 import { buildTree } from '../../state/tree';
 import {
   buildWorkspaceRowContextMenu,
@@ -28,6 +29,7 @@ import {
   type OpenState,
 } from '../../state/sidebarSelectors';
 import { getKnownBackendConnections } from '../../config/backendConnections';
+import { isSystemWorkspace } from '../../state/assistant/systemWorkspace';
 
 const THREAD_PREVIEW_LIMIT_FALLBACK = 5;
 const THREAD_PAGE_SIZE = 10;
@@ -125,6 +127,7 @@ interface Props {
   onRenameNode?: (nodeId: string, title: string) => void;
   /** Clear the renaming state. */
   onRenameEnd?: () => void;
+
 }
 
 export default function WorkspaceRow({
@@ -231,7 +234,7 @@ export default function WorkspaceRow({
   const moveTargets = React.useMemo(
     () =>
       projects
-        .filter((p) => p.id !== project.id && !p.deletedAt && !p.archivedAt)
+        .filter((p) => p.id !== project.id && !p.deletedAt && !p.archivedAt && !isSystemWorkspace(p))
         .map((p) => ({ id: p.id, name: p.name })),
     [projects, project.id],
   );
@@ -350,6 +353,8 @@ export default function WorkspaceRow({
       )}
       <Row
         {...prefetchIntent}
+        active={false}
+        aria-current={false ? 'page' : undefined}
         onClick={() => {
           if (renaming) return;
           actions.toggleWorkspaceExpand(project.id);
@@ -398,11 +403,11 @@ export default function WorkspaceRow({
                 fontWeight: 500,
                 color: 'var(--term-fg)',
                 // Translucent so it tints the sidebar glass instead of covering it.
-                background: menu ? CARD_FILL : undefined,
+                background: menu || false ? CARD_FILL : undefined,
               }
             : {
                 padding: 'var(--sb-row-py, 5px) calc(10px + var(--sb-inset, 0px)) var(--sb-row-py, 4px) calc(4px + var(--sb-inset, 0px))',
-                background: menu ? 'var(--term-alt)' : undefined,
+                background: menu || false ? 'var(--term-alt)' : undefined,
                 borderLeft: isActiveWorkspaceAway
                   ? `2px solid ${accent}`
                   : '2px solid transparent',
@@ -424,7 +429,7 @@ export default function WorkspaceRow({
               height: WORKSPACE_ICON_SIZE,
               display: 'inline-flex',
               flexShrink: 0,
-              color: project.id === activeProjectId ? 'var(--term-fg)' : 'var(--term-mid)',
+              color: false ? 'var(--term-accent)' : project.id === activeProjectId ? 'var(--term-fg)' : 'var(--term-mid)',
             }}
           >
             {workspaceExpanded || forceExpand
@@ -436,7 +441,7 @@ export default function WorkspaceRow({
           <WorkspaceIcon
             project={project}
             mode={modeForPalette(prefs.terminalPalette)}
-            active={project.id === activeProjectId}
+            active={project.id === activeProjectId || false}
           />
         )}
         {renaming ? (
@@ -484,9 +489,8 @@ export default function WorkspaceRow({
                   // Card modes inherit the header's size and medium weight;
                   // unread still bumps the weight, same idea as classic.
                   fontSize: geom.workspaceAsHeader ? 'inherit' : 'var(--sb-fs, var(--fs-xl))',
-                  fontWeight: geom.workspaceAsHeader
-                    ? (wsUnread ? 900 : 500)
-                    : (wsUnread ? 900 : 450),
+                  // The workspace of the open Michi project page reads as the open page (600), unread still first.
+                  fontWeight: wsUnread ? 900 : false ? 600 : geom.workspaceAsHeader ? 500 : 450,
                   color: geom.workspaceAsHeader ? 'inherit' : 'var(--term-fg)',
                   fontFamily: 'var(--ui-font)',
                   overflow: 'hidden',
@@ -564,11 +568,11 @@ export default function WorkspaceRow({
               </span>
             </span>
             <span className="ws-hover-actions" style={{ display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0, ...(menu ? { opacity: 1, pointerEvents: 'auto' as const } : {}) }}>
+              <HoverTip label="Workspace options">
               <button
                 type="button"
                 className="ws-action-btn"
                 aria-label="Workspace options"
-                title="Workspace options"
                 onClick={(e) => {
                   e.stopPropagation();
                   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -577,11 +581,12 @@ export default function WorkspaceRow({
               >
                 ⋯
               </button>
+              </HoverTip>
+              <HoverTip label="New chat in this workspace">
               <button
                 type="button"
                 className="ws-action-btn"
                 aria-label="New chat in this workspace"
-                title="New chat in this workspace"
                 onClick={(e) => {
                   e.stopPropagation();
                   actions.selectProject(project.id);
@@ -590,6 +595,7 @@ export default function WorkspaceRow({
               >
                 +
               </button>
+              </HoverTip>
             </span>
           </>
         )}
@@ -635,6 +641,7 @@ export default function WorkspaceRow({
         <div style={{ marginTop: 4, marginBottom: 4 }}>
           {filteredLiveTrees.length === 0 && (
             <div
+              className="ws-no-threads"
               style={{
                 fontSize: 'var(--fs-md)',
                 color: 'var(--term-muted)',

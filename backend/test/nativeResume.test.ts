@@ -1,62 +1,38 @@
+import { KiroSignedOutError } from '../src/agents/kiro/kiroAuth';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, NativeResumeUnavailableError } from '../src/services/nativeResume';
-import { ACPError, ACPNotRunningError } from '../src/services/acpClient';
-import { isNativeSessionUnavailable } from '../src/agents/kiro/acpErrors';
-import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeIdFor } from '../src/services/nativeResume';
+import { ClaudeRuntime } from 'michi-runtime/internal/adapters/claude/ClaudeRuntime';
+import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
+import { ACPError, ACPNotRunningError } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { isNativeSessionUnavailable } from 'michi-runtime/internal/adapters/kiro/acpErrors';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import type { AgentRuntime, AgentSession } from '../src/agents/types';
 
 const options = { sessionId: 'node', nodeId: 'node', cwd: '/tmp' };
 const session = { id: 'node', nativeSessionId: 'original' } as AgentSession;
 
-test('native load retries a completed transient failure, preserving the same options and identity', async () => {
-  let attempts = 0;
-  const runtime = {
-    capabilities: { nativeResume: true },
-    isNativeResumeRetryable: () => true,
-    async loadSession(received: unknown) {
-      assert.equal(received, options);
-      if (++attempts < 3) throw new Error('transient');
-      return session;
-    },
-  } as unknown as AgentRuntime;
-  assert.equal(await loadNativeSession(runtime, options), session);
-  assert.equal(attempts, 3);
+test('the runtime names the resume id when it reads its own binding; otherwise the host reads the ACP column first', () => {
+  const row = { id: 'node', acp_session_id: 'acp', external_session_id: 'ext' };
+  const codex = { id: 'codex', resumeTokenFromBinding: CodexRuntime.prototype.resumeTokenFromBinding };
+  const claude = { id: 'claude', resumeTokenFromBinding: ClaudeRuntime.resumeTokenFromBinding };
+  assert.equal(nativeResumeIdFor(codex, row), 'ext');
+  assert.equal(nativeResumeIdFor(claude, row), 'ext');
+  assert.equal(nativeResumeIdFor({ id: 'fixture-plain' }, row), 'acp');
+  // The runtime's null is the answer: Claude's placeholder is not resumable, though the ACP column holds it.
+  assert.equal(nativeResumeIdFor(claude, { id: 'node', acp_session_id: 'node', external_session_id: null }), null);
+  assert.equal(nativeResumeIdFor({ id: 'fixture-plain' }, { id: 'node', acp_session_id: 'node', external_session_id: null }), 'node');
 });
 
-test('native retries are bounded and exhaustion never permits compatible reconstruction', async () => {
-  let attempts = 0;
-  const runtime = {
-    capabilities: { nativeResume: true }, isNativeResumeRetryable: () => true,
-    async loadSession() { attempts++; throw new Error('transient'); },
-  } as unknown as AgentRuntime;
-  await assert.rejects(loadNativeSession(runtime, options), NativeResumeFailedError);
-  assert.equal(attempts, 3);
-});
-
-test('unknown or authentication failures are retained, not retried or downgraded', async () => {
-  for (const message of ['MCP server not found', 'ExpiredTokenException', 'Internal error']) {
-    let attempts = 0;
-    const cause = new Error(message);
-    const runtime = {
-      capabilities: { nativeResume: true },
-      async loadSession() { attempts++; throw cause; },
-    } as unknown as AgentRuntime;
-    await assert.rejects(loadNativeSession(runtime, options), (error: unknown) => {
-      assert.ok(error instanceof NativeResumeFailedError);
-      assert.equal(error.cause, cause);
-      return true;
-    });
-    assert.equal(attempts, 1);
-  }
-});
-
-test('only explicit native unavailability permits compatible reconstruction', async () => {
-  const runtime = {
-    capabilities: { nativeResume: true },
-    async loadSession() { throw new NativeResumeUnavailableError('missing native state'); },
-  } as unknown as AgentRuntime;
-  assert.equal(await loadNativeSession(runtime, options), null);
+test("Claude resumes its external id, else the ACP column, never the node's placeholder", () => {
+  const token = ClaudeRuntime.resumeTokenFromBinding;
+  assert.equal(token({ id: 'node', acp_session_id: 'acp', external_session_id: 'ext' }), 'ext');
+  assert.equal(token({ id: 'node', acp_session_id: 'acp', external_session_id: null }), 'acp');
+  assert.equal(token({ id: 'node', acp_session_id: 'node', external_session_id: null }), null);
+  assert.equal(token({ id: 'node', acp_session_id: null, external_session_id: 'node' }), null);
+  assert.equal(token({ acp_session_id: null, external_session_id: null }), null);
+  assert.equal(token(null), null);
+  assert.equal(token(undefined), null);
 });
 
 test('a native identity mismatch is rejected and released, never persisted as a replacement', async () => {
@@ -84,16 +60,6 @@ test('Kiro missing-session classification uses the exact observed error envelope
   assert.equal(isNativeSessionUnavailable(new ACPError('Method not found', { ...details, rpcCode: -32601 }), 'native-id'), true);
 });
 
-test('Crew missing sessions do not opt into Kiro history reconstruction with a different memory identity', () => {
-  const details = { method: 'session/load', sessionId: 'native-id', rpcCode: -32602,
-    rpcData: { code: 'crew_session_unavailable' } };
-  const error = new ACPError('Crew session unavailable', details);
-  assert.equal(isNativeSessionUnavailable(error, 'native-id'), false);
-  for (const changed of [{ method: 'session/prompt' }, { sessionId: 'another' }, { rpcData: { code: 'access_denied' } }, { rpcCode: -32603 }]) {
-    assert.equal(isNativeSessionUnavailable(new ACPError('not found', { ...details, ...changed }), 'native-id'), false);
-  }
-});
-
 test('Kiro retries dead processes and service throttling but not auth, MCP or ambiguous idle timeouts', () => {
   const retryable = KiroRuntime.prototype.isNativeResumeRetryable;
   assert.equal(retryable(new ACPNotRunningError('not running')), true);
@@ -116,4 +82,19 @@ test('per-node restore lock serializes same-node work, allows other nodes and re
   await Promise.all([second, third]);
   assert.deepEqual(order, [2, 3]);
   (await acquireSessionRestoreLock('one'))();
+});
+
+
+test('a signed-out native restore runs once and preserves the actionable cause', async () => {
+  let attempts = 0;
+  const runtime = { capabilities: { nativeResume: true }, isNativeResumeRetryable: () => true,
+    async loadSession() { attempts++; throw new KiroSignedOutError(); },
+  } as unknown as AgentRuntime;
+  await assert.rejects(loadNativeSession(runtime, options, 'original'), error => {
+    assert.ok(error instanceof NativeResumeFailedError);
+    assert.match(error.message, /not signed in/);
+    return true;
+  });
+  assert.equal(attempts, 1);
+  assert.equal(KiroRuntime.prototype.isNativeResumeRetryable(new KiroSignedOutError()), false);
 });

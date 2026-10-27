@@ -2,6 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- Declare order before module CSS loads: the reset must precede Mantine controls. -->
+    <style>@layer theme, base, mantine, components, utilities;</style>
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <!-- Match the browser chrome to the active theme: parchment (light) is the

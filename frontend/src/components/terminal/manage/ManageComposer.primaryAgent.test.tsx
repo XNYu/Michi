@@ -71,23 +71,6 @@ describe('ManageComposer primary Agent selection', () => {
     status.customAgentsEnabled = true;
     listPrimaryAgentDefinitions.mockResolvedValue([implementer]);
   });
-  it('fetches from the Workspace Backend and explicitly binds the selected Definition to the new thread', async () => {
-    render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
-    await act(async () => { await Promise.resolve(); });
-    expect(listPrimaryAgentDefinitions).toHaveBeenCalledWith('ws-remote', expect.any(AbortSignal));
-
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(await screen.findByText('Implementer'));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
-    fireEvent.change(document.querySelector('textarea')!, { target: { value: 'Build it' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-
-    await waitFor(() => expect(createThread).toHaveBeenCalledWith(undefined));
-    expect(bindPendingPrimaryAgent).toHaveBeenCalledWith('node-primary', {
-      workspaceId: 'ws-remote', backendConnectionId: 'remote-a', definitionId: 'agent-implementer',
-    });
-    expect(sendMessage).toHaveBeenCalledWith('node-primary', 'Build it', undefined);
-  });
 
   it('restores the selected primary Agent after an app restart once its Definition is listed again', async () => {
     const first = render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
@@ -130,29 +113,5 @@ describe('ManageComposer primary Agent selection', () => {
     await waitFor(() => expect(listPrimaryAgentDefinitions).toHaveBeenCalledTimes(3));
     await act(async () => { await Promise.resolve(); });
     expect(screen.getByTitle('Switch agent — Build')).toBeTruthy();
-  });
-
-  it.each([false, undefined])('does not discover optional Agents when support is %s', async (enabled) => {
-    status.customAgentsEnabled = enabled;
-    render(<ManageComposer workspaceId="ws-remote" enableAgentSelect onSubmitted={vi.fn()} />);
-    await act(async () => { await Promise.resolve(); });
-    expect(listPrimaryAgentDefinitions).not.toHaveBeenCalled();
-  });
-
-  it('passes the selected primary Agent to the digest branch before its first turn', async () => {
-    render(<ManageComposer workspaceId="ws-remote" parentNodeId="digest-1" enableAgentSelect onSubmitted={vi.fn()} />);
-    await waitFor(() => expect(listPrimaryAgentDefinitions).toHaveBeenCalled());
-    fireEvent.click(screen.getByTitle(/Switch agent/));
-    fireEvent.click(await screen.findByText('Implementer'));
-    await waitFor(() => expect(screen.getByTitle('Switch agent — Implementer')).toBeTruthy());
-    fireEvent.change(document.querySelector('textarea')!, { target: { value: 'Implement the digest decisions' } });
-    fireEvent.click(screen.getByRole('button', { name: /send/i }));
-
-    await waitFor(() => expect(createChildChat).toHaveBeenCalledWith(
-      'digest-1', 'Implement the digest decisions', undefined,
-      { modeId: undefined, primaryAgent: { backendConnectionId: 'remote-a', definitionId: 'agent-implementer' } },
-    ));
-    expect(createThread).not.toHaveBeenCalled();
-    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

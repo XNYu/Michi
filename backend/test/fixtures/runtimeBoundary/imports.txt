@@ -1,0 +1,10 @@
+# Runtime boundary baseline, import edges.
+# <from>\t<to>: a runtime-layer file importing a non-runtime repo module
+# One entry per line, byte-sorted; # lines are comments. New entries fail
+# backend/test/runtimeBoundary.test.ts and the backend build (see AGENTS.md).
+# Regenerate with: node backend/scripts/runtimeBoundary.cjs --write (leaves *.pending.txt alone).
+backend/src/agents/chatApprovalState.ts	backend/src/agents/permissionPolicy.ts
+backend/src/agents/chatApprovalState.ts	backend/src/agents/runtimeDeps.ts
+backend/src/agents/sessionRegistry.ts	backend/src/agents/runtimeDeps.ts
+backend/src/agents/sessionStateFeed.ts	backend/src/agents/runtimeDeps.ts
+backend/src/agents/sessionStateFeed.ts	backend/src/services/logger.ts

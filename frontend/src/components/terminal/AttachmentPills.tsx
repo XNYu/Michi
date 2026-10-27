@@ -1,6 +1,7 @@
+import { serverEntityId } from '../../config/backendIdentity';
 import React, { useState } from 'react';
 import type { MessageAttachment } from '../../state/chatTypes';
-import { useChatProjects } from '../../state/chatStore';
+import { useOptionalChatProjects } from '../../state/chatStore';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
 import { Lightbox } from './Lightbox';
 
@@ -17,7 +18,7 @@ function isImageAttachment(a: MessageAttachment): boolean {
 function imageUrl(a: MessageAttachment, workspaceId: string | undefined): string | null {
   if (workspaceId && a.relPath) {
     const encodedPath = a.relPath.split('/').map(encodeURIComponent).join('/');
-    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encodedPath}`;
+    return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(serverEntityId(workspaceId))}/${encodedPath}`;
   }
   // Fallback: derive relPath from absPath if it contains .attachments/
   if (workspaceId && a.absPath) {
@@ -26,7 +27,7 @@ function imageUrl(a: MessageAttachment, workspaceId: string | undefined): string
     if (idx !== -1) {
       const rel = '.attachments/' + a.absPath.slice(idx + marker.length);
       const encodedPath = rel.split('/').map(encodeURIComponent).join('/');
-      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(workspaceId)}/${encodedPath}`;
+      return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(serverEntityId(workspaceId))}/${encodedPath}`;
     }
   }
   return null;
@@ -38,13 +39,7 @@ interface Props {
 
 export function AttachmentPills({ items }: Props) {
   // Defensive: in test environments without ChatProvider, we gracefully degrade (no thumbnails).
-  let workspaceId: string | undefined;
-  try {
-    const { activeProject } = useChatProjects();
-    workspaceId = activeProject?.id;
-  } catch {
-    // No ChatProvider — render without image URL resolution
-  }
+  const workspaceId = useOptionalChatProjects()?.activeProject?.id;
   const [zoom, setZoom] = useState<{ src: string; filename: string } | null>(null);
   const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
 

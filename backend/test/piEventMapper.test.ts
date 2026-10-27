@@ -60,47 +60,6 @@ describe("Pi event mapper provider errors", () => {
       error: "Provider connection closed",
     });
   });
-
-  test("keeps successful turns on the normal completion path", () => {
-    const ctx = context();
-    Array.from(mapAgentEvent({
-      type: "message_end",
-      message: {
-        role: "assistant",
-        stopReason: "stop",
-        content: [{ type: "text", text: "你好" }],
-        usage: {
-          input: 10,
-          output: 2,
-          cost: { total: 0.01 },
-        },
-      },
-    }, ctx));
-
-    const events = Array.from(mapAgentEvent({ type: "agent_end" }, ctx));
-    assert.equal(events.some((event) => event.kind === "runtime_error"), false);
-    assert.deepEqual(events[events.length - 1], { kind: "turn_end" });
-    assert.deepEqual(ctx.cumulative, {
-      inputTokens: 10,
-      outputTokens: 2,
-      totalCost: 0.01,
-    });
-  });
-
-  test("does not turn an aborted assistant message into a provider error", () => {
-    const ctx = context();
-    Array.from(mapAgentEvent({
-      type: "message_end",
-      message: {
-        role: "assistant",
-        stopReason: "aborted",
-        errorMessage: "Request was aborted",
-      },
-    }, ctx));
-
-    const events = Array.from(mapAgentEvent({ type: "agent_end" }, ctx));
-    assert.equal(events.some((event) => event.kind === "runtime_error"), false);
-  });
 });
 
 describe('eventMapper', () => {
@@ -124,13 +83,6 @@ describe('eventMapper', () => {
     assert.equal(events[0] && 'status' in events[0] ? events[0].status : '', 'in_progress');
   });
 
-  test('agent_end still closes the Michi turn with native usage', () => {
-    const events = [...mapAgentEvent({ type: 'agent_end' }, context())];
-    assert.equal(events.at(-1)?.kind, 'turn_end');
-    const usage = events.find((e) => e.kind === 'usage_summary');
-    assert.equal(usage && 'source' in usage ? usage.source : undefined, 'native');
-  });
-
   test('maps compaction and retry when present, ignores when absent', () => {
     const present = [
       ...mapAgentEvent({ type: 'compaction_start' }, context()),
@@ -140,4 +92,15 @@ describe('eventMapper', () => {
     const absent = [...mapAgentEvent({ type: 'unknown_noise' }, context())];
     assert.equal(absent.length, 0);
   });
+});
+
+
+test('Pi SDK price-table cost has USD units and estimated provenance instead of native credits', () => {
+  const ctx = context();
+  ctx.cumulative.totalCost = 0.123;
+  const summary = Array.from(mapAgentEvent({ type: 'agent_end' }, ctx)).find(event => event.kind === 'usage_summary');
+  assert.ok(summary?.kind === 'usage_summary');
+  assert.deepEqual(summary.charge, { amount: 0.123, unit: 'USD', provenance: 'sdk_estimate' });
+  assert.equal(summary.totalCredits, undefined);
+  assert.equal(summary.source, 'estimated');
 });

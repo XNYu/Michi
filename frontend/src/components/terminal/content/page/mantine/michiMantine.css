@@ -1,0 +1,133 @@
+/* Mantine inside a Desk page, the way agent-desk scopes it (src/desk/mantine.css): only the per-component
+   .layer.css builds, so everything sits in @layer mantine and Michi's unlayered CSS wins. No global.css, no
+   baseline reset, no default-css-variables: MantineProvider writes the variables on .michi-mantine instead.
+   A block that brings in a new Mantine component adds its sheet here. */
+@import '@mantine/core/styles/UnstyledButton.layer.css';
+@import '@mantine/core/styles/Loader.layer.css';
+@import '@mantine/core/styles/ActionIcon.layer.css';
+@import '@mantine/core/styles/Button.layer.css';
+@import '@mantine/core/styles/CloseButton.layer.css';
+@import '@mantine/core/styles/Paper.layer.css';
+@import '@mantine/core/styles/Popover.layer.css';
+@import '@mantine/core/styles/Tooltip.layer.css';
+@import '@mantine/core/styles/VisuallyHidden.layer.css';
+/* Forms and polls: Select is Combobox + Input; TextInput and the date picker's button are Input. */
+@import '@mantine/core/styles/Input.layer.css';
+@import '@mantine/core/styles/InlineInput.layer.css';
+@import '@mantine/core/styles/Checkbox.layer.css';
+@import '@mantine/core/styles/Radio.layer.css';
+@import '@mantine/core/styles/Combobox.layer.css';
+@import '@mantine/core/styles/NumberInput.layer.css';
+/* Data: rings, the dial, the stars. */
+@import '@mantine/core/styles/RingProgress.layer.css';
+@import '@mantine/core/styles/SemiCircleProgress.layer.css';
+@import '@mantine/core/styles/Rating.layer.css';
+/* Time: the stepper (Timeline for Desk's own timeline drawing, should Michi take it). */
+@import '@mantine/core/styles/Stepper.layer.css';
+@import '@mantine/core/styles/Timeline.layer.css';
+/* Media: the gallery's lightbox is a Modal over an Overlay; person cards are Avatars. */
+@import '@mantine/core/styles/ModalBase.layer.css';
+@import '@mantine/core/styles/Modal.layer.css';
+@import '@mantine/core/styles/Overlay.layer.css';
+@import '@mantine/core/styles/Avatar.layer.css';
+@import '@mantine/dates/styles.layer.css';
+@import '@mantine/charts/styles.layer.css';
+@import '@mantine/carousel/styles.layer.css';
+
+/* The wrapper is only where the variables and portals live; it takes no box, so the page's layout sees
+   through it. */
+.michi-mantine { display: contents; }
+
+/* Desk's own tokens, as its block sheets read them (agent-desk desk.css and styles.css), pointed at Michi's
+   palette tokens (cssVarsFor in components/terminal/tokens.ts). One map serves every palette because the
+   values are variables. */
+.michi-mantine {
+  --accent: var(--term-accent);
+  --accent-ink: var(--term-bg);
+  --accent-light: var(--term-accent-f);
+  --positive: var(--term-digest);
+  --danger: var(--term-danger);
+  --desk-ink: var(--term-fg);
+  --desk-name: var(--term-fg);
+  --text-2: var(--term-mid);
+  --desk-meta: var(--term-muted);
+  --desk-meta-soft: var(--term-muted);
+  --faint: var(--term-faint);
+  --line: var(--term-line);
+  --line-strong: var(--term-line-s);
+  --desk-edge: var(--term-line);
+  --desk-paper: var(--term-surface);
+  --surface: var(--term-surface);
+  --desk-panel: var(--term-alt);
+  --subtle: var(--term-alt);
+  --soft: var(--term-alt2);
+  --desk-field: var(--term-alt2);
+  --desk-hover: var(--term-hover-bg, var(--term-alt));
+  --desk-active: var(--term-alt2);
+  --desk-link: var(--term-accent);
+  --desk-link-hover: color-mix(in srgb, var(--term-accent) 80%, var(--term-fg));
+  --desk-done: var(--term-digest);
+  --desk-doing: var(--term-accent);
+  --desk-stalled: var(--term-mauve);
+  --warning: var(--term-select);
+
+  /* Desk's chart rule (desk.css): the accent, then greys; status colours never stand for a series. */
+  --desk-chart-0: var(--term-accent);
+  --desk-chart-1: var(--term-fg);
+  --desk-chart-2: var(--term-mid);
+  --desk-chart-3: var(--term-muted);
+  --desk-chart-4: var(--term-faint);
+  --desk-chart-5: color-mix(in srgb, var(--term-accent) 60%, var(--term-bg));
+  --desk-chart-6: color-mix(in srgb, var(--term-fg) 70%, var(--term-mid));
+  --desk-chart-7: color-mix(in srgb, var(--term-accent) 70%, var(--term-fg));
+  --desk-chart-8: color-mix(in srgb, var(--term-muted) 50%, var(--term-faint));
+  --desk-chart-9: var(--term-line-s);
+  --desk-ramp-0: color-mix(in srgb, var(--term-accent) 18%, var(--term-bg));
+  --desk-ramp-1: color-mix(in srgb, var(--term-accent) 42%, var(--term-bg));
+  --desk-ramp-2: color-mix(in srgb, var(--term-accent) 68%, var(--term-bg));
+  --desk-ramp-3: var(--term-accent);
+
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+}
+
+/* Native controls in the blocks (audio and video players, scrollbars) follow the page's scheme, as Desk sets
+   color-scheme on its root. */
+.michi-mantine[data-mantine-color-scheme='light'] { color-scheme: light; }
+.michi-mantine[data-mantine-color-scheme='dark'] { color-scheme: dark; }
+
+/* On a dark page the foreground is the brightest thing there, so a grey series in it would outshine the
+   accent series it stands next to (Gruvbox's muted blue is dimmer than its beige text). The accent series
+   is lifted toward the foreground and the greys start below it and keep stepping down, none under 2.6:1
+   on the page. */
+.michi-mantine[data-mantine-color-scheme='dark'] {
+  --desk-chart-0: color-mix(in srgb, var(--term-accent) 78%, var(--term-fg));
+  --desk-chart-1: color-mix(in srgb, var(--term-fg) 58%, var(--term-bg));
+  --desk-chart-2: color-mix(in srgb, var(--term-fg) 48%, var(--term-bg));
+  --desk-chart-3: color-mix(in srgb, var(--term-fg) 40%, var(--term-bg));
+  --desk-chart-4: color-mix(in srgb, var(--term-fg) 33%, var(--term-bg));
+  --desk-chart-6: color-mix(in srgb, var(--term-fg) 53%, var(--term-bg));
+  --desk-chart-8: color-mix(in srgb, var(--term-fg) 44%, var(--term-bg));
+  --desk-chart-9: color-mix(in srgb, var(--term-fg) 20%, var(--term-bg));
+}
+
+/* Excerpts of agent-desk project-page.css and desk.css that the mirrored blocks read. */
+.michi-mantine .desk-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.michi-mantine .desk-quiet { margin: 0; font-size: var(--fs-lg); color: var(--desk-meta-soft); }
+/* A Desk block's own h2 is drawn as Michi's block title (.michi-doc-block-title in deskPage.css). */
+.michi-mantine .desk-block-title { margin: 0 0 10px; color: var(--term-fg); font-size: var(--fs-lg); font-weight: 600; line-height: 1.4; letter-spacing: 0; }
+
+/* Mantine's modal frame is fixed with a width but no left edge: it relies on its static position, which is the
+   viewport's edge only when the portal sits in <body>. Here the portal is inside the page, so it is pinned. */
+.michi-mantine .mantine-Modal-inner { left: 0; }
+
+/* Mantine's floating tooltip drawn as Michi's floating surface (components/ui/Menu.css). */
+.michi-mantine .mantine-Tooltip-tooltip {
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+  background: var(--term-surface);
+  color: var(--term-fg);
+  box-shadow: var(--ui-popover-shadow);
+  font-family: var(--ui-font);
+}
+.michi-mantine .mantine-Tooltip-arrow { border-color: var(--term-line); background: var(--term-surface); }

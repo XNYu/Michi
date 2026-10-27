@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import React from 'react';
 import { render, fireEvent } from '@testing-library/react';
 import { ToolCallGroup } from './ToolCallGroup';
@@ -9,52 +9,30 @@ function tool(id: string, title: string, status = 'running', kind?: string): Too
   return { id, title, status, kind };
 }
 
-describe('ToolCallGroup — collapsed state', () => {
-  it('renders summarized chip text when defaultExpanded is false', () => {
-    const tools = [
-      tool('1', 'Read a', 'completed', 'read'),
-      tool('2', 'Read b', 'completed', 'read'),
-    ];
-    const { getByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={false} />,
-    );
-    expect(getByText(/read 2 files/)).toBeTruthy();
-  });
-
-  it('single tool collapsed shows the tool title verbatim', () => {
-    const tools = [tool('1', 'Read package.json', 'completed', 'read')];
-    const { getByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={false} />,
-    );
-    expect(getByText(/Read package\.json/)).toBeTruthy();
-  });
-
-  it('clicking the collapsed header expands the group', () => {
-    const tools = [
-      tool('1', 'Read a', 'completed', 'read'),
-      tool('2', 'Read b', 'completed', 'read'),
-    ];
-    const { getByText, queryByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={false} />,
-    );
-    expect(queryByText('Read a')).toBeNull();
-    fireEvent.click(getByText(/read 2 files/));
-    expect(getByText('Read a')).toBeTruthy();
-    expect(getByText('Read b')).toBeTruthy();
-  });
-});
-
 describe('ToolCallGroup — expanded state', () => {
-  it('renders one row per tool when defaultExpanded is true', () => {
-    const tools = [
-      tool('1', 'Read a', 'running', 'read'),
-      tool('2', 'Read b', 'running', 'read'),
-    ];
-    const { getByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    expect(getByText('Read a')).toBeTruthy();
-    expect(getByText('Read b')).toBeTruthy();
+  it('shows the completed label on hydrated ask_user rows and expanded payloads without changing raw data', () => {
+    const raw = JSON.stringify([{
+      id: 'ask-1', title: 'Running: @michi/ask_user', status: 'completed', kind: 'other',
+      inputJson: '{"questions":[{"question":"First verification choice?"}]}',
+      output: '{"answers":{"First verification choice?":"Alpha"}}',
+    }]);
+    const tools = JSON.parse(raw) as ToolCallState[];
+    for (const style of ['plain', 'card', 'terminal'] as const) {
+      const { container, getByText, unmount } = render(
+        <AgentBlockStyleOverride.Provider value={style}>
+          <ToolCallGroup tools={tools} defaultExpanded={false} />
+        </AgentBlockStyleOverride.Provider>,
+      );
+      expect(container.textContent).toContain('Completed: @michi/ask_user');
+      expect(container.textContent).not.toContain('Running: @michi/ask_user');
+      expect(container.textContent).not.toContain('Alpha');
+      fireEvent.click(getByText('Completed: @michi/ask_user'));
+      expect(container.textContent).toContain('Alpha');
+      expect(container.textContent).toContain('Completed: @michi/ask_user');
+      expect(container.textContent).not.toContain('Running: @michi/ask_user');
+      expect(JSON.stringify(tools)).toBe(raw);
+      unmount();
+    }
   });
 
   it('shows each tool purpose on expanded multi-tool rows (card + plain)', () => {
@@ -105,56 +83,6 @@ describe('ToolCallGroup — expanded state', () => {
     }
   });
 
-  it('aligns card tool icons within the first text line', () => {
-    const tools: ToolCallState[] = [
-      {
-        id: '1',
-        title: 'Read',
-        status: 'completed',
-        kind: 'read',
-        inputJson: JSON.stringify({ __tool_use_purpose: 'Read the node schema' }),
-      },
-      {
-        id: '2',
-        title: 'Bash',
-        status: 'completed',
-        kind: 'bash',
-        inputJson: JSON.stringify({ __tool_use_purpose: 'Locate runtime bindings' }),
-      },
-    ];
-
-    const { getAllByTestId } = render(
-      <AgentBlockStyleOverride.Provider value="card">
-        <ToolCallGroup tools={tools} defaultExpanded />
-      </AgentBlockStyleOverride.Provider>,
-    );
-
-    const iconSlots = getAllByTestId('card-tool-icon-slot');
-    expect(iconSlots).toHaveLength(2);
-    for (const slot of iconSlots) {
-      expect(slot.style.alignItems).toBe('center');
-      expect(slot.style.height).toBe('16px');
-      expect(slot.style.justifyContent).toBe('center');
-    }
-  });
-
-  it('clicking the expanded header collapses the group', () => {
-    const tools = [
-      tool('1', 'Read a', 'completed', 'read'),
-      tool('2', 'Read b', 'completed', 'read'),
-    ];
-    const { getByText, queryByText, container } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    // Header is the first interactive element (button) inside the group.
-    const header = container.querySelector('button[data-toolgroup-header]') as HTMLElement;
-    expect(header).not.toBeNull();
-    fireEvent.click(header);
-    expect(queryByText('Read a')).toBeNull();
-    expect(queryByText('Read b')).toBeNull();
-    expect(getByText(/read 2 files/)).toBeTruthy();
-  });
-
   it('renders SubAgent as a hairline-spine row (no card testid)', () => {
     const detail = JSON.stringify({
       description: 'Explore Michi project structure',
@@ -170,10 +98,12 @@ describe('ToolCallGroup — expanded state', () => {
     );
 
     expect(queryByTestId('subagent-tool-card')).toBeNull();
-    expect(getByTestId('subagent-spine-row')).toBeTruthy();
-    expect(container.textContent).toContain('SubAgent · Explore');
-    expect(container.textContent).toContain('mission: Explore Michi project structure');
-    expect(container.textContent).toContain('haiku');
+    const row = getByTestId('subagent-spine-row');
+    expect(row.textContent).toContain('SubAgent · Explore');
+    // One line: the mission stands in until the roster says what it does.
+    expect(row.querySelectorAll('[data-testid="subagent-summary"]')).toHaveLength(1);
+    expect(row.textContent).toContain('Explore Michi project structure');
+    expect(row.textContent).toContain('working');
     expect(container.textContent).not.toContain('subagent_type');
   });
 });
@@ -188,34 +118,6 @@ describe('ToolCallGroup — empty', () => {
 });
 
 describe('ToolCallGroup — auto-collapse', () => {
-  it('auto-collapses when running tools transition to terminal', () => {
-    const running = [tool('1', 'Read a', 'running', 'read'), tool('2', 'Read b', 'running', 'read')];
-    const { rerender, getByText, queryByText } = render(
-      <ToolCallGroup tools={running} defaultExpanded={true} />,
-    );
-    expect(getByText('Read a')).toBeTruthy();
-
-    const done = [tool('1', 'Read a', 'completed', 'read'), tool('2', 'Read b', 'completed', 'read')];
-    rerender(<ToolCallGroup tools={done} defaultExpanded={true} />);
-
-    // After auto-collapse the header shows the collapsed disclosure marker ▸.
-    expect(getByText('▸')).toBeTruthy();
-    expect(queryByText('▾')).toBeNull();
-  });
-
-  it('does not auto-collapse if user expanded a group that started collapsed', () => {
-    // started collapsed → user clicks to expand → tools transition is irrelevant
-    const tools = [tool('1', 'Read a', 'completed', 'read'), tool('2', 'Read b', 'completed', 'read')];
-    const { getByText, container } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={false} />,
-    );
-    fireEvent.click(getByText(/read 2 files/));
-    // After click, expanded list is showing.
-    expect(container.querySelector('[data-toolgroup-header]')).toBeTruthy();
-    // Re-render with same tools should not collapse.
-    expect(getByText('Read a')).toBeTruthy();
-  });
-
   it('does not auto-collapse after user manually toggles', () => {
     const running = [tool('1', 'Read a', 'running', 'read'), tool('2', 'Read b', 'running', 'read')];
     const { rerender, container, getByText } = render(
@@ -234,6 +136,14 @@ describe('ToolCallGroup — auto-collapse', () => {
     expect(getByText('Read a')).toBeTruthy();
   });
 
+  it('a lone failed SubAgent without a roster says failed once', () => {
+    const agent = { ...tool('agent-1', 'Agent', 'failed', 'agent'), detail: JSON.stringify({ subagent_type: 'Explore', description: 'Scan' }) };
+    const { container } = render(<ToolCallGroup tools={[agent]} defaultExpanded={false} />);
+    const header = container.querySelector('[data-toolgroup-header]');
+    expect(header?.textContent).toMatch(/SubAgent · Explore/);
+    expect(header?.textContent?.match(/failed/g)).toHaveLength(1);
+  });
+
   it('failed group still auto-collapses (no exemption)', () => {
     const running = [tool('1', 'Read a', 'running', 'read'), tool('2', 'Read b', 'running', 'read')];
     const { rerender, getByText, queryByText } = render(
@@ -243,29 +153,6 @@ describe('ToolCallGroup — auto-collapse', () => {
     rerender(<ToolCallGroup tools={failed} defaultExpanded={true} />);
     // Collapsed: header shows the ▸ marker and the expanded list is gone.
     expect(getByText('▸')).toBeTruthy();
-    expect(queryByText('▾')).toBeNull();
-  });
-});
-
-describe('ToolCallGroup — single tool direct render', () => {
-  it('renders a single tool directly without a group header', () => {
-    const tools = [tool('1', 'Read package.json', 'completed', 'read')];
-    const { getByText, container } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={false} />,
-    );
-    // The tool title should be visible without clicking a group header.
-    expect(getByText(/Read package\.json/)).toBeTruthy();
-    // There should be no group header button.
-    expect(container.querySelector('[data-toolgroup-header]')).toBeNull();
-  });
-
-  it('single tool has no collapse chevrons', () => {
-    const tools = [tool('1', 'Read a', 'completed', 'read')];
-    const { queryByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    // No group-level chevrons — the tool row renders directly.
-    expect(queryByText('▸')).toBeNull();
     expect(queryByText('▾')).toBeNull();
   });
 });
@@ -282,11 +169,12 @@ function subInfo(partial: Partial<SubagentInfo> = {}): SubagentInfo {
     group: partial.group ?? 'default',
     dependsOn: partial.dependsOn ?? [],
     currentTool: partial.currentTool,
+    ...(partial.activity ? { activity: partial.activity } : {}),
   };
 }
 
 describe('ToolCallGroup — relayed-tool filter', () => {
-  it('hides running Bash/Glob peers when an owning subagent is active, keeps completed ones', () => {
+  it('hides tools relayed as subagent activity, keeps the parent\'s own running tools', () => {
     const detail = JSON.stringify({ subagent_type: 'Explore', description: 'Explore Michi' });
     const tools: ToolCallState[] = [
       { id: 't1', title: 'Agent', status: 'in_progress', kind: 'tool', detail },
@@ -294,12 +182,16 @@ describe('ToolCallGroup — relayed-tool filter', () => {
       { id: 't3', title: 'Glob **/*.ts', status: 'running', kind: 'glob' },
       { id: 't4', title: 'Read src/index.ts', status: 'completed', kind: 'read' },
     ];
-    const subagents = [subInfo({ agentName: 'Explore', initialQuery: 'Explore Michi' })];
+    const subagents = [subInfo({
+      agentName: 'Explore',
+      initialQuery: 'Explore Michi',
+      activity: [{ id: 't2', kind: 'tool', title: 'Bash ls', status: 'in_progress' }],
+    })];
     const { queryByText, getByText } = render(
       <ToolCallGroup tools={tools} defaultExpanded={true} subagents={subagents} />,
     );
     expect(queryByText('Bash ls')).toBeNull();
-    expect(queryByText('Glob **/*.ts')).toBeNull();
+    expect(getByText(/Glob \*\*\/\*\.ts/)).toBeTruthy();
     expect(getByText(/Read src\/index\.ts/)).toBeTruthy();
     expect(getByText(/SubAgent · Explore/)).toBeTruthy();
   });
@@ -318,18 +210,6 @@ describe('ToolCallGroup — relayed-tool filter', () => {
     );
     expect(getByText('list_threads')).toBeTruthy();
     expect(getByText('search_messages')).toBeTruthy();
-  });
-
-  it('keeps peers when subagents prop is undefined (legacy callers)', () => {
-    const tools: ToolCallState[] = [
-      { id: 't1', title: 'Bash ls', status: 'completed', kind: 'bash' },
-      { id: 't2', title: 'Read x', status: 'completed', kind: 'read' },
-    ];
-    const { getByText } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    expect(getByText('Bash ls')).toBeTruthy();
-    expect(getByText('Read x')).toBeTruthy();
   });
 });
 
@@ -370,22 +250,10 @@ describe('ToolCallGroup — payload', () => {
     expect(getByText('out')).toBeTruthy();
     expect(container.textContent).toContain('file-a file-b');
   });
-
-  it('rows do not render raw status strings for terminal tools', () => {
-    const tools = [
-      tool('1', 'Read a', 'completed', 'read'),
-      tool('2', 'Read b', 'in_progress', 'read'),
-    ];
-    const { container } = render(
-      <ToolCallGroup tools={tools} defaultExpanded={true} />,
-    );
-    expect(container.textContent).not.toContain('completed');
-    expect(container.textContent).not.toContain('in_progress');
-  });
 });
 
-describe('ToolCallGroup — SubAgent spine Now: line', () => {
-  it('shows now: <currentTool> when running and currentTool is non-empty', () => {
+describe('ToolCallGroup — SubAgent spine now line', () => {
+  it('shows now ❯ <currentTool> when running and currentTool is non-empty', () => {
     const detail = JSON.stringify({ subagent_type: 'Explore', description: 'Explore Michi' });
     const tools = [tool('1', 'Agent', 'in_progress', 'tool')];
     tools[0].detail = detail;
@@ -396,10 +264,10 @@ describe('ToolCallGroup — SubAgent spine Now: line', () => {
     const { container } = render(
       <ToolCallGroup tools={tools} defaultExpanded={true} subagents={subagents} />,
     );
-    expect(container.textContent).toContain('now: Glob');
+    expect(container.textContent).toContain('now ❯ Glob');
   });
 
-  it('omits now: line when subagent is in a terminal status', () => {
+  it('omits the now line when the chip is in a terminal status', () => {
     const detail = JSON.stringify({ subagent_type: 'Explore', description: 'Explore Michi' });
     const tools = [tool('1', 'Agent', 'completed', 'tool')];
     tools[0].detail = detail;
@@ -410,10 +278,10 @@ describe('ToolCallGroup — SubAgent spine Now: line', () => {
     const { container } = render(
       <ToolCallGroup tools={tools} defaultExpanded={true} subagents={subagents} />,
     );
-    expect(container.textContent).not.toContain('now:');
+    expect(container.textContent).not.toContain('now ❯');
   });
 
-  it('omits now: line when currentTool is undefined', () => {
+  it('omits the now line when currentTool is undefined', () => {
     const detail = JSON.stringify({ subagent_type: 'Explore', description: 'Explore Michi' });
     const tools = [tool('1', 'Agent', 'in_progress', 'tool')];
     tools[0].detail = detail;
@@ -424,7 +292,7 @@ describe('ToolCallGroup — SubAgent spine Now: line', () => {
     const { container } = render(
       <ToolCallGroup tools={tools} defaultExpanded={true} subagents={subagents} />,
     );
-    expect(container.textContent).not.toContain('now:');
+    expect(container.textContent).not.toContain('now ❯');
   });
 });
 

@@ -235,7 +235,7 @@ describe('streamMessage cancellation recovery', () => {
     foregroundReplay.emit(chunk(), permission(), failure(), done());
     monitor.emit(failure('cleanup transport failed'), done());
     await flush();
-    expect(h.onChunk).toHaveBeenCalledExactlyOnceWith('before stop', 2, undefined, TURN);
+    expect(h.onChunk).toHaveBeenCalledExactlyOnceWith('before stop', 2, undefined, TURN, undefined);
     expect(h.onPermissionRequest).not.toHaveBeenCalled();
     expect(h.onDone).not.toHaveBeenCalled();
     expect(h.onError).not.toHaveBeenCalled();
@@ -292,7 +292,7 @@ describe('streamMessage cancellation recovery', () => {
     await flush();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(onStatus).toHaveBeenCalledTimes(1);
-    expect(h.onChunk).toHaveBeenCalledExactlyOnceWith('new answer', 2, undefined, 'next-turn');
+    expect(h.onChunk).toHaveBeenCalledExactlyOnceWith('new answer', 2, undefined, 'next-turn', undefined);
     expect(h.onDone).toHaveBeenCalledExactlyOnceWith('cancelled', undefined, 'next-turn', true, undefined);
     expect(h.onError).not.toHaveBeenCalled();
     expect(h.onAborted).not.toHaveBeenCalled();

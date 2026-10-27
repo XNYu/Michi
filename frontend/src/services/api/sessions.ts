@@ -1,3 +1,6 @@
+import { serverEntityId } from '../../config/backendIdentity';
+import { backendFetch } from './backendRequest';
+import { responseError } from './httpError';
 import {
   activeBackendApiBase,
   backendApiBase,
@@ -19,7 +22,7 @@ export interface ModelInfo {
 
 export async function listModels(): Promise<{ models: ModelInfo[]; defaultModel: string | null }> {
   try {
-    const res = await fetch(`${activeBackendApiBase()}/models`);
+    const res = await backendFetch(`${activeBackendApiBase()}/models`);
     if (!res.ok) throw new Error(`status ${res.status}`);
     const body = await res.json();
     return { models: body.models || [], defaultModel: body.default_model ?? null };
@@ -43,10 +46,10 @@ export interface AgentModesResult {
 export async function listAgentModes(workspaceId?: string, signal?: AbortSignal): Promise<AgentModesResult> {
   const base = workspaceId ? workspaceBackendApiBase(workspaceId) : activeBackendApiBase();
   const route = workspaceId
-    ? `/workspaces/${encodeURIComponent(workspaceId)}/modes`
+    ? `/workspaces/${encodeURIComponent(serverEntityId(workspaceId))}/modes`
     : '/modes';
-  const res = await fetch(`${base}${route}`, { signal });
-  if (!res.ok) throw new Error(`listAgentModes failed: ${res.status}`);
+  const res = await backendFetch(`${base}${route}`, { signal });
+  if (!res.ok) throw await responseError(res, 'listAgentModes');
   const body = await res.json();
   return {
     availableModes: Array.isArray(body.availableModes) ? body.availableModes : [],
@@ -68,15 +71,16 @@ export async function listAgentModes(workspaceId?: string, signal?: AbortSignal)
  * a prerequisite. If it fails, first chat just falls through the old
  * slow path instead of the fast pool-hit path.
  */
-export async function warmCwd(cwd: string, connectionId?: string): Promise<void> {
+export async function warmCwd(cwd: string, connectionId?: string, signal?: AbortSignal): Promise<void> {
   const startedAt = Date.now();
   startupMark('warm_request_start', { cwd });
   let res: Response;
   try {
-    res = await fetch(`${backendApiBase(connectionId)}/warm`, {
+    res = await backendFetch(`${backendApiBase(connectionId)}/warm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cwd }),
+      signal,
     });
   } catch (err) {
     startupMark('warm_request_failed', { cwd, durMs: Date.now() - startedAt, error: (err as Error).message });
@@ -84,7 +88,7 @@ export async function warmCwd(cwd: string, connectionId?: string): Promise<void>
   }
   if (!res.ok) {
     startupMark('warm_request_failed', { cwd, status: res.status, durMs: Date.now() - startedAt });
-    throw new Error(`warmCwd failed: ${res.status}`);
+    throw await responseError(res, 'warmCwd');
   }
   startupMark('warm_request_done', { cwd, status: res.status, durMs: Date.now() - startedAt });
 }
@@ -102,7 +106,7 @@ export async function checkRuntimeHealth(
   let res: Response;
   try {
     const base = target.workspaceId ? workspaceBackendApiBase(target.workspaceId) : activeBackendApiBase();
-    res = await fetch(`${base}/runtime/health`, {
+    res = await backendFetch(`${base}/runtime/health`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(target),
@@ -181,8 +185,8 @@ export async function listPrimaryAgentDefinitions(
   signal?: AbortSignal,
 ): Promise<PrimaryAgentDefinitionOption[]> {
   const backendConnectionId = backendConnectionIdForWorkspace(workspaceId);
-  const response = await fetch(
-    `${workspaceBackendApiBase(workspaceId)}/agents?workspaceId=${encodeURIComponent(workspaceId)}&discover=enabled`,
+  const response = await backendFetch(
+    `${workspaceBackendApiBase(workspaceId)}/agents?workspaceId=${encodeURIComponent(serverEntityId(workspaceId))}&discover=enabled`,
     { signal },
   );
   const payload: unknown = await response.json().catch(() => null);
@@ -239,7 +243,7 @@ export function allocateNodeIdsLocal(count = 1): string[] {
  */
 export async function allocateNodeIds(count = 1, connectionId?: string): Promise<string[]> {
   const base = connectionId ? backendApiBase(connectionId) : activeBackendApiBase();
-  const res = await fetch(`${base}/node-ids/allocate`, {
+  const res = await backendFetch(`${base}/node-ids/allocate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ count }),
@@ -288,7 +292,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   }
 
   const base = opts.workspaceId ? workspaceBackendApiBase(opts.workspaceId) : nodeBackendApiBase(opts.nodeId);
-  const res = await fetch(`${base}/nodes/${encodeURIComponent(opts.nodeId)}/ensure-session`, {
+  const res = await backendFetch(`${base}/nodes/${encodeURIComponent(opts.nodeId)}/ensure-session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -344,7 +348,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
 }
 
 export async function setChatMode(chatId: string, modeId: string): Promise<string> {
-  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/set-mode`, {
+  const res = await backendFetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/set-mode`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ modeId }),
@@ -367,7 +371,7 @@ export async function executeChatCommand(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<{ success: boolean; message?: string; data?: unknown; sessionState?: AgentSessionState }> {
-  const res = await fetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/execute-command`, {
+  const res = await backendFetch(`${nodeBackendApiBase(chatId)}/chats/${chatId}/execute-command`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ command, ...(args ? { args } : {}) }),

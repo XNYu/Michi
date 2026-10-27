@@ -1,5 +1,6 @@
 import { isChatPermissionMode, selectWindowComposerDraft } from 'michi-shared';
 import { WINDOW_ID } from '../config/windowIdentity';
+import { backendEntityId, mapBackendPayload, serverEntityId } from '../config/backendIdentity';
 import { finalizeAssistantBlocks, migrateAssistantToBlocks, parseAssistantBlocks } from './assistantBlocks';
 import type {
   ChatMessage,
@@ -14,7 +15,8 @@ import type {
   TrimSnapshot,
 } from './chatTypes';
 import type { DigestState } from './digest';
-import { parseBranchOverviewEntries, parseSteeringReports, parseThreadMessageSource, threadMessageBody } from 'michi-shared';
+import { isSystemWorkspace, parseSystemWorkspace } from './assistant/systemWorkspace';
+import { parseBranchOverviewEntries, parseSteeringReports, parseSubagentRoster, parseThreadMessageSource, threadMessageBody } from 'michi-shared';
 
 export const STATE_SCHEMA_VERSION = 6;
 
@@ -59,7 +61,7 @@ function inferRuntimeId(row: Record<string, unknown>, nodeId: string): string | 
   if (explicit) return explicit;
   const sessionId = asString(row.acp_session_id);
   if (!sessionId) return undefined;
-  return sessionId === nodeId ? 'pi' : 'kiro';
+  return sessionId === serverEntityId(nodeId) ? 'pi' : 'kiro';
 }
 
 function asNumber(v: unknown, fallback = 0): number {
@@ -184,7 +186,9 @@ function parseComposerDraft(raw: unknown): ComposerDraft | undefined {
     ? d.quotedText
     : undefined;
   if (!text && mentions.length === 0 && !quotedText) return undefined;
-  return { value: text, mentions, quotedText };
+  const source = d.quoteSource as ComposerDraft['quoteSource'];
+  const quoteSource = source && (source.type === 'attached' || (source.type === 'artifact' && typeof source.filePath === 'string')) ? source : undefined;
+  return { value: text, mentions, quotedText, ...(quotedText && quoteSource ? { quoteSource } : {}) };
 }
 
 /** Read the server-owned spawn outbox without rendering it as a composer draft. */
@@ -409,6 +413,7 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
     streaming: false,
     createdAt: asOptionalNumber(row.created_at),
     quotedText: asString(metadata.quotedText),
+    ...(metadata.quoteSource && typeof metadata.quoteSource === 'object' ? { quoteSource: metadata.quoteSource as ChatMessage['quoteSource'] } : {}),
     attachments: Array.isArray(metadata.attachments)
       ? metadata.attachments.flatMap((item) => {
           if (!item || typeof item !== 'object') return [];
@@ -425,8 +430,12 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
     plan: Array.isArray(metadata.plan)
       ? metadata.plan as ChatMessage['plan']
       : undefined,
+    ...(role === 'assistant' && metadata.usageSummary && typeof metadata.usageSummary === 'object' ? { usageSummary: metadata.usageSummary as ChatMessage['usageSummary'] } : {}),
+    ...(role === 'assistant' && Array.isArray(metadata.warnings) ? { warnings: metadata.warnings as ChatMessage['warnings'] } : {}),
     ...(role === 'assistant' && Array.isArray(metadata.steeringReports)
       ? { steeringReports: parseSteeringReports(metadata.steeringReports) } : {}),
+    ...(role === 'assistant' && Array.isArray(metadata.subagents)
+      ? { subagents: parseSubagentRoster(metadata.subagents) } : {}),
   };
   return role === 'assistant' ? finalizeAssistantBlocks(migrateAssistantToBlocks(baseMsg)) : baseMsg;
 }
@@ -447,6 +456,10 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
   return {
     nodeId,
     kind,
+    // Native page helper binding is authoritative backend metadata. It is
+    // intentionally read-only in the renderer and omitted from sync writes.
+    pageId: asString(row.page_id) ?? null,
+    maintenanceJobId: asString(row.maintenance_job_id) ?? null,
     // Compatibility marker only: a bound node always uses its nodeId on the
     // public API. Runtime-native ids remain in SQLite/backend adapters.
     chatId: hasRuntimeBinding ? nodeId : null,
@@ -471,6 +484,9 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
       return entries.length > 0 ? entries[entries.length - 1].text : undefined;
     })(),
     status: row.status === 'streaming' ? 'streaming' : row.status === 'error' ? 'error' : 'idle',
+    // Persisted error rows do not retain a trusted failure classification or
+    // failed-turn identity. An old watermark must not authorize execution.
+    ...(row.status === 'error' ? { errorKind: 'turn_outcome_unknown', error: 'The previous turn outcome could not be confirmed.' } : {}),
     activeTurnId: row.status === 'streaming' ? asString(row.last_applied_turn_id) : undefined,
     lastAppliedTurnId: asString(row.last_applied_turn_id),
     lastAppliedSeq: asOptionalNumber(row.last_applied_seq),
@@ -484,6 +500,7 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
     deletionGroupId: asString(row.deletion_group_id),
     trimSnapshot: parseTrimSnapshot(row.trim_snapshot),
     pinnedAt: asOptionalNumber(row.pinned_at),
+    viewedAt: asOptionalNumber(row.viewed_at),
     currentModeId: asString(row.current_mode_id) ?? null,
     permissionMode: isChatPermissionMode(row.permission_mode) ? row.permission_mode : undefined,
     paneWidth: asOptionalNumber(row.pane_width),
@@ -499,6 +516,7 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
 export function hydrateBackendWorkspaces(
   rawWorkspaces: unknown[],
   preferredActiveProjectId?: string | null,
+  connectionId = 'local',
 ): HydratedState {
   if (!Array.isArray(rawWorkspaces) || rawWorkspaces.length === 0) return emptyHydrated();
 
@@ -507,7 +525,7 @@ export function hydrateBackendWorkspaces(
 
   for (const raw of rawWorkspaces) {
     if (!raw || typeof raw !== 'object') continue;
-    const full = raw as BackendFullWorkspace;
+    const full = mapBackendPayload(raw, connectionId, 'renderer') as BackendFullWorkspace;
     const workspace = full.workspace;
     const projectId = workspace ? asString(workspace.id) : undefined;
     if (!workspace || !projectId) continue;
@@ -561,13 +579,19 @@ export function hydrateBackendWorkspaces(
     });
     if (trees.length === 0 && chatIds[0]) {
       const createdAt = asNumber(workspace.created_at, Date.now());
-      trees = [{ id: `t-${projectId}-root`, rootNodeId: chatIds[0], createdAt, lastActiveAt: createdAt }];
+      trees = [{ id: backendEntityId(connectionId, `t-${serverEntityId(projectId)}-root`), rootNodeId: chatIds[0], createdAt, lastActiveAt: createdAt }];
     }
 
+    // A page helper's or maintenance run's tree is newest the moment it is
+    // created, but it is not a conversation the shell should land on: panes
+    // opened "beside chat" would join the hidden tree instead of the user's thread.
+    const helperRootIds = new Set(nodeRows.filter((row) => asString(row.page_id) || asString(row.maintenance_job_id)).map((row) => asString(row.id)));
+    const landable = (tree: Tree) => !tree.archivedAt && !helperRootIds.has(tree.rootNodeId);
     const requestedActiveTreeId = asString(workspace.active_tree_id);
-    const activeTreeId = requestedActiveTreeId && trees.some((t) => t.id === requestedActiveTreeId)
-      ? requestedActiveTreeId
-      : [...trees].filter((t) => !t.archivedAt).sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0]?.id ?? null;
+    const requestedTree = requestedActiveTreeId ? trees.find((t) => t.id === requestedActiveTreeId) : undefined;
+    const activeTreeId = requestedTree && !helperRootIds.has(requestedTree.rootNodeId)
+      ? requestedTree.id
+      : [...trees].filter(landable).sort((a, b) => b.lastActiveAt - a.lastActiveAt)[0]?.id ?? null;
 
     // Backend bulk loaders return artifact rows under the `contexts` wire key;
     // accept `artifacts` too so a later key alignment can't silently drop them.
@@ -585,12 +609,14 @@ export function hydrateBackendWorkspaces(
     // shape. Today it carries aiGlobalContext and instructions.
     let instructions: string | undefined;
     let aiGlobalContext: boolean | undefined;
+    let system: string | undefined;
     const rawSettings = asString(workspace.settings);
     if (rawSettings) {
       try {
         const parsed = JSON.parse(rawSettings) as Record<string, unknown>;
         if (typeof parsed.instructions === 'string') instructions = parsed.instructions;
         if (parsed.aiGlobalContext === false) aiGlobalContext = false;
+        system = parseSystemWorkspace(parsed);
       } catch {
         // ignore malformed JSON — defaults apply
       }
@@ -598,6 +624,7 @@ export function hydrateBackendWorkspaces(
 
     const project: Project = {
       id: projectId,
+      ...(connectionId !== 'local' ? { backendConnectionId: connectionId } : {}),
       name: asString(workspace.name) ?? 'Untitled',
       cwd: asString(workspace.cwd),
       folders: hydrateFolders(workspace),
@@ -612,6 +639,7 @@ export function hydrateBackendWorkspaces(
       pinnedAt: asOptionalNumber(workspace.pinned_at),
       aiGlobalContext,
       instructions,
+      ...(system ? { system } : {}),
     };
     projects.push(project);
 
@@ -652,7 +680,8 @@ export function hydrateBackendWorkspaces(
     }
   }
 
-  const isLive = (p: Project) => !p.deletedAt && !p.archivedAt;
+  // A system workspace (the assistant's) never becomes the active one on load.
+  const isLive = (p: Project) => !p.deletedAt && !p.archivedAt && !isSystemWorkspace(p);
   const preferredIsLive =
     preferredActiveProjectId &&
     projects.some((p) => p.id === preferredActiveProjectId && isLive(p));
@@ -754,7 +783,8 @@ export function hydrateSavedState(saved: unknown): HydratedState {
         const legacy = (raw as any).branchOverview;
         return typeof legacy === 'string' && legacy.trim().length > 0 ? legacy : undefined;
       })(),
-      status: 'idle',
+      status: (raw as any).status === 'error' ? 'error' : 'idle',
+      ...((raw as any).status === 'error' ? { errorKind: 'turn_outcome_unknown', error: 'The previous turn outcome could not be confirmed.' } : {}),
       minimized: raw.minimized,
       position: validPos,
       viewedAt: typeof (raw as any).viewedAt === 'number' ? (raw as any).viewedAt : undefined,

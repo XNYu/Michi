@@ -24,11 +24,14 @@ const voidElements = new Set([
 const openTagPatternCache = new Map<string, RegExp>();
 const closeTagPatternCache = new Map<string, RegExp>();
 
+export type MarkdownBlockKind = 'heading' | 'list' | 'table' | 'other' | 'space';
+
 export interface StreamingMarkdownBlock {
   index: number;
   text: string;
   start: number;
   end: number;
+  kind: MarkdownBlockKind;
 }
 
 /**
@@ -102,11 +105,12 @@ export function splitStreamingMarkdownBlocks(markdown: string): StreamingMarkdow
   if (markdown.length === 0) return [];
 
   if (footnoteReferencePattern.test(markdown) || footnoteDefinitionPattern.test(markdown)) {
-    return [{ index: 0, text: markdown, start: 0, end: markdown.length }];
+    return [{ index: 0, text: markdown, start: 0, end: markdown.length, kind: 'other' }];
   }
 
   const tokens = Lexer.lex(markdown, { gfm: true });
   const blocks: string[] = [];
+  const kinds: MarkdownBlockKind[] = [];
   const htmlStack: string[] = [];
   let previousTokenWasCode = false;
 
@@ -146,6 +150,8 @@ export function splitStreamingMarkdownBlocks(markdown: string): StreamingMarkdow
     }
 
     blocks.push(currentBlock);
+    kinds.push(token.type === 'heading' || token.type === 'list' || token.type === 'table' || token.type === 'space'
+      ? token.type : 'other');
     if (token.type !== 'space') previousTokenWasCode = token.type === 'code';
   }
 
@@ -154,7 +160,7 @@ export function splitStreamingMarkdownBlocks(markdown: string): StreamingMarkdow
     const start = cursor;
     const end = start + text.length;
     cursor = end;
-    return { index, text, start, end };
+    return { index, text, start, end, kind: kinds[index] };
   });
 }
 

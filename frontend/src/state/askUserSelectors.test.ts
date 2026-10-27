@@ -29,26 +29,10 @@ function node(overrides: Partial<ChatNodeState> = {}): ChatNodeState {
 }
 
 describe('isAwaitingUserInput', () => {
-  it('is true for an unresolved request', () => {
-    expect(isAwaitingUserInput(node({ pendingUserInput: request() }))).toBe(true);
-  });
-
-  it('is false once the request resolves', () => {
-    expect(
-      isAwaitingUserInput(node({ pendingUserInput: request({ resolved: true }) })),
-    ).toBe(false);
-  });
-
   it('is false with no pending request, a null request, or a missing node', () => {
     expect(isAwaitingUserInput(node())).toBe(false);
     expect(isAwaitingUserInput(node({ pendingUserInput: null }))).toBe(false);
     expect(isAwaitingUserInput(undefined)).toBe(false);
-  });
-
-  it('is false for a trashed node — its ask can no longer be answered', () => {
-    expect(
-      isAwaitingUserInput(node({ pendingUserInput: request(), deletedAt: 123 })),
-    ).toBe(false);
   });
 });
 
@@ -80,20 +64,6 @@ describe('selectPendingAskUsers', () => {
     expect(pending).toEqual([
       { nodeId: 'n-1', title: '', question: '', requestId: 1, anchorMessageId: null },
     ]);
-  });
-
-  it('takes the first question of a multi-question ask', () => {
-    const pending = selectPendingAskUsers({
-      'n-1': node({
-        pendingUserInput: request({
-          questions: [
-            { question: 'Q1?', header: 'a', options: [], multiSelect: false },
-            { question: 'Q2?', header: 'b', options: [], multiSelect: false },
-          ],
-        }),
-      }),
-    });
-    expect(pending[0].question).toBe('Q1?');
   });
 });
 

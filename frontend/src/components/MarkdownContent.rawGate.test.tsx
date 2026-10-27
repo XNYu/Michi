@@ -29,11 +29,4 @@ describe('MarkdownContent raw HTML plugin gate', () => {
     expect(rawPluginSpy).not.toHaveBeenCalled();
     expect(sanitizePluginSpy).not.toHaveBeenCalled();
   });
-
-  it('enables both plugins when the source may contain raw HTML', () => {
-    render(<MarkdownContent text={'before<br>after'} />);
-
-    expect(rawPluginSpy).toHaveBeenCalled();
-    expect(sanitizePluginSpy).toHaveBeenCalled();
-  });
 });

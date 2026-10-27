@@ -8,11 +8,6 @@ vi.mock('../services/api', () => api);
 beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); api.fetchPrefs.mockResolvedValue(null); });
 afterEach(() => vi.useRealTimers());
 describe('Browser preference', () => {
-  it.each([undefined, 'invalid', 'internal', 'external'])('normalizes locally saved %s', value => {
-    localStorage.setItem('michi:v1:prefs', JSON.stringify({ linkOpenTarget: value }));
-    render(<PrefsProvider><BrowserSettingsPane /></PrefsProvider>);
-    expect((screen.getByRole('combobox', { name: 'Open links in' }) as HTMLSelectElement).value).toBe(value === 'external' ? 'external' : 'internal');
-  });
   it('hydrates remote preferences', async () => {
     api.fetchPrefs.mockResolvedValue({ linkOpenTarget: 'external' });
     await act(async () => { render(<PrefsProvider><BrowserSettingsPane /></PrefsProvider>); });

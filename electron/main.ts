@@ -1,3 +1,7 @@
+import type {
+  BackgroundServiceStatus, BrowserSurfaceState, DesktopCommandContract, DesktopEventContract, DesktopInvokeContract,
+  DesktopInvokeArgs, DesktopInvokeResult, ScheduledRunTarget, TerminalSurfaceSnapshot,
+} from 'michi-shared';
 import { app, BrowserWindow, Menu, WebContentsView, ipcMain, dialog, shell, nativeTheme, powerSaveBlocker, Notification as ElectronNotification } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import * as pty from 'node-pty';
@@ -22,6 +26,19 @@ import { applyBrowserTheme, normalizeBrowserTheme, type BrowserTheme } from './b
 import { toSurfaceBounds } from './browserBounds';
 import { remoteAuthenticationProcess } from './remoteAuthentication';
 import { SIGN_IN_COMMANDS } from './remoteCredentials';
+import {
+  appBundlePath,
+  buildServiceLaunchSpec,
+  expectedServerId,
+  installAndStartService,
+  readServiceState,
+  runLaunchctl,
+  serviceBuildStamp,
+  servicePaths,
+  stopService,
+  writeServiceState,
+} from './backgroundService';
+import { describeNotice, ScheduledNotificationFeed, type ScheduledRunNotice } from './scheduledNotifications';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -34,6 +51,23 @@ import { SIGN_IN_COMMANDS } from './remoteCredentials';
     /* best effort */
   }
 })();
+
+function handleDesktopInvoke<K extends keyof DesktopInvokeContract>(
+  channel: K,
+  handler: (event: Electron.IpcMainInvokeEvent, ...args: DesktopInvokeArgs<K>) => DesktopInvokeResult<K> | Promise<DesktopInvokeResult<K>>,
+): void {
+  ipcMain.handle(channel, handler);
+}
+
+function sendDesktopEvent<K extends keyof DesktopEventContract>(target: Pick<Electron.WebContents, 'send'>, channel: K, ...args: DesktopEventContract[K]): void {
+  target.send(channel, ...args);
+}
+function onDesktopCommand<K extends keyof DesktopCommandContract>(
+  channel: K,
+  handler: (event: Electron.IpcMainEvent, ...args: DesktopCommandContract[K]) => void,
+): void {
+  ipcMain.on(channel, handler);
+}
 
 const isDev = process.env.ELECTRON_DEV === '1';
 
@@ -131,6 +165,15 @@ const windowSlots = new WeakMap<BrowserWindow, number>();
 let nextWindowSlot = 0;
 let backendChild: ChildProcess | null = null;
 let resolvedBackendPort: number | null = null;
+/** child: forked with the app. service: launchd LaunchAgent. external: dev server. */
+let backendMode: 'child' | 'service' | 'external' = 'child';
+
+// The background service launches the app with this flag so it can deliver
+// notifications without opening a window (see backend appLauncher.ts).
+const BACKGROUND_LAUNCH_ARG = '--michi-background-launch';
+const launchedInBackground = process.argv.includes(BACKGROUND_LAUNCH_ARG);
+/** Background launches quit after this long without any window. */
+const BACKGROUND_IDLE_QUIT_MS = 15 * 60_000;
 
 const MAX_TERMINAL_REPLAY_CHARS = 1024 * 1024;
 
@@ -177,7 +220,7 @@ function normalizeSurfaceUrl(value: unknown): string | null {
   }
 }
 
-function browserState(surface: BrowserSurface) {
+function browserState(surface: BrowserSurface): BrowserSurfaceState {
   const contents = surface.view.webContents;
   return {
     surfaceId: surface.surfaceId,
@@ -192,7 +235,7 @@ function browserState(surface: BrowserSurface) {
 
 function emitBrowserState(surface: BrowserSurface): void {
   if (!surface.host.isDestroyed()) {
-    surface.host.webContents.send('browser:state', browserState(surface));
+    sendDesktopEvent(surface.host.webContents, 'browser:state', browserState(surface));
   }
 }
 
@@ -233,7 +276,7 @@ function destroyOwnedSurfaces(ownerId: number): void {
   }
 }
 
-function createTerminalSurface(event: Electron.IpcMainInvokeEvent, surfaceId: unknown, cwd: unknown, cols: unknown, rows: unknown, authentication?: unknown) {
+function createTerminalSurface(event: Electron.IpcMainInvokeEvent, surfaceId: unknown, cwd: unknown, cols: unknown, rows: unknown, authentication?: unknown): TerminalSurfaceSnapshot {
   if (!validSurfaceId(surfaceId)) throw new Error('Invalid terminal surface id');
   const key = surfaceKey(event.sender.id, surfaceId);
   const existing = terminalSurfaces.get(key);
@@ -273,44 +316,44 @@ function createTerminalSurface(event: Electron.IpcMainInvokeEvent, surfaceId: un
       surface.flushTimer = null;
       const chunk = surface.pending;
       surface.pending = '';
-      if (!event.sender.isDestroyed() && chunk) event.sender.send('terminal:data', surfaceId, chunk);
+      if (!event.sender.isDestroyed() && chunk) sendDesktopEvent(event.sender, 'terminal:data', surfaceId, chunk);
     }, 8);
   });
   processHandle.onExit(({ exitCode }) => {
     if (surface.flushTimer) { clearTimeout(surface.flushTimer); surface.flushTimer = null; }
-    if (!event.sender.isDestroyed() && surface.pending) event.sender.send('terminal:data', surfaceId, surface.pending);
+    if (!event.sender.isDestroyed() && surface.pending) sendDesktopEvent(event.sender, 'terminal:data', surfaceId, surface.pending);
     surface.pending = '';
     surface.exited = true;
     surface.exitCode = exitCode;
-    if (!event.sender.isDestroyed()) event.sender.send('terminal:exit', surfaceId, exitCode);
+    if (!event.sender.isDestroyed()) sendDesktopEvent(event.sender, 'terminal:exit', surfaceId, exitCode);
   });
   return { surfaceId, data: '', exited: false };
 }
 
-ipcMain.handle('terminal:create', (event, surfaceId, cwd, cols, rows) => createTerminalSurface(event, surfaceId, cwd, cols, rows));
-ipcMain.handle('remote-auth:create', (event, surfaceId, target, cols, rows) => {
+handleDesktopInvoke('terminal:create', (event, surfaceId, cwd, cols, rows) => createTerminalSurface(event, surfaceId, cwd, cols, rows));
+handleDesktopInvoke('remote-auth:create', (event, surfaceId, target, cols, rows) => {
   remoteAuthenticationProcess(target, SIGN_IN_COMMANDS);
   return createTerminalSurface(event, surfaceId, os.homedir(), cols, rows, target);
 });
 
-ipcMain.on('terminal:write', (event, surfaceId: unknown, data: unknown) => {
+onDesktopCommand('terminal:write', (event, surfaceId: unknown, data: unknown) => {
   if (!validSurfaceId(surfaceId) || typeof data !== 'string') return;
   const surface = terminalSurfaces.get(surfaceKey(event.sender.id, surfaceId));
   if (surface && !surface.exited) surface.process.write(data);
 });
 
-ipcMain.on('terminal:resize', (event, surfaceId: unknown, cols: unknown, rows: unknown) => {
+onDesktopCommand('terminal:resize', (event, surfaceId: unknown, cols: unknown, rows: unknown) => {
   if (!validSurfaceId(surfaceId) || typeof cols !== 'number' || typeof rows !== 'number') return;
   const surface = terminalSurfaces.get(surfaceKey(event.sender.id, surfaceId));
   if (!surface || surface.exited) return;
   try { surface.process.resize(Math.max(2, Math.floor(cols)), Math.max(1, Math.floor(rows))); } catch { /* process exited */ }
 });
 
-ipcMain.on('terminal:destroy', (event, surfaceId: unknown) => {
+onDesktopCommand('terminal:destroy', (event, surfaceId: unknown) => {
   if (validSurfaceId(surfaceId)) destroyTerminalSurface(surfaceKey(event.sender.id, surfaceId));
 });
 
-ipcMain.handle('terminal:listActive', (event) => {
+handleDesktopInvoke('terminal:listActive', (event) => {
   const ownerId = event.sender.id;
   const active: Array<{ surfaceId: string }> = [];
   for (const [key, surface] of terminalSurfaces) {
@@ -321,7 +364,7 @@ ipcMain.handle('terminal:listActive', (event) => {
   return active;
 });
 
-ipcMain.handle('browser:create', async (event, surfaceId: unknown, projectId: unknown, rawUrl: unknown) => {
+handleDesktopInvoke('browser:create', async (event, surfaceId: unknown, projectId: unknown, rawUrl: unknown) => {
   if (!validSurfaceId(surfaceId)) throw new Error('Invalid browser surface id');
   const url = normalizeSurfaceUrl(rawUrl);
   if (!url) throw new Error('Only HTTP(S) URLs are supported');
@@ -368,12 +411,12 @@ ipcMain.handle('browser:create', async (event, surfaceId: unknown, projectId: un
     view.webContents.on('did-navigate-in-page', syncState);
     view.webContents.on('page-title-updated', syncState);
     view.webContents.on('focus', () => {
-      if (!host.isDestroyed()) host.webContents.send('browser:focus', surfaceId);
+      if (!host.isDestroyed()) sendDesktopEvent(host.webContents, 'browser:focus', surfaceId);
     });
     view.webContents.on('before-input-event', (inputEvent, input) => {
       if (!isClosePaneShortcut(input)) return;
       inputEvent.preventDefault();
-      if (!host.isDestroyed()) host.webContents.send('browser:close-request', surfaceId);
+      if (!host.isDestroyed()) sendDesktopEvent(host.webContents, 'browser:close-request', surfaceId);
     });
     view.webContents.on('did-fail-load', (_loadEvent, code, description, failedUrl, isMainFrame) => {
       if (!isMainFrame || code === -3) return;
@@ -386,7 +429,7 @@ ipcMain.handle('browser:create', async (event, surfaceId: unknown, projectId: un
   return browserState(surface);
 });
 
-ipcMain.handle('browser:navigate', async (event, surfaceId: unknown, rawUrl: unknown) => {
+handleDesktopInvoke('browser:navigate', async (event, surfaceId: unknown, rawUrl: unknown) => {
   if (!validSurfaceId(surfaceId)) throw new Error('Invalid browser surface id');
   const url = normalizeSurfaceUrl(rawUrl);
   if (!url) throw new Error('Only HTTP(S) URLs are supported');
@@ -397,7 +440,7 @@ ipcMain.handle('browser:navigate', async (event, surfaceId: unknown, rawUrl: unk
   return browserState(surface);
 });
 
-ipcMain.on('browser:set-bounds', (event, surfaceId: unknown, value: unknown, visible: unknown) => {
+onDesktopCommand('browser:set-bounds', (event, surfaceId: unknown, value: unknown, visible: unknown) => {
   if (!validSurfaceId(surfaceId)) return;
   const surface = browserSurfaces.get(surfaceKey(event.sender.id, surfaceId));
   if (!surface) return;
@@ -424,7 +467,7 @@ for (const [channel, action] of [
   ['browser:reload', 'reload'],
   ['browser:stop', 'stop'],
 ] as const) {
-  ipcMain.on(channel, (event, surfaceId: unknown) => {
+  onDesktopCommand(channel, (event, surfaceId: unknown) => {
     if (!validSurfaceId(surfaceId)) return;
     const surface = browserSurfaces.get(surfaceKey(event.sender.id, surfaceId));
     if (!surface) return;
@@ -436,7 +479,7 @@ for (const [channel, action] of [
   });
 }
 
-ipcMain.on('browser:destroy', (event, surfaceId: unknown) => {
+onDesktopCommand('browser:destroy', (event, surfaceId: unknown) => {
   if (validSurfaceId(surfaceId)) destroyBrowserSurface(surfaceKey(event.sender.id, surfaceId));
 });
 
@@ -660,7 +703,7 @@ function probeNamedBins(binName: string, extraFiles: string[] = []): boolean {
   return extras.some((cand) => fs.existsSync(cand));
 }
 /**
- * Mirror of backend/src/services/acpClient.ts findKiroCli() for the
+ * Mirror of runtime/src/adapters/kiro/kiroCli.ts findKiroCli() for the
  * packaged-default decision. Kept in sync by hand — both probes look in
  * the same set of locations.
  */
@@ -700,7 +743,7 @@ function probeKiroCli(): boolean {
 }
 
 /**
- * Mirror of backend/src/agents/codex/codexBinary.ts findCodexBinary() for
+ * Mirror of runtime/src/adapters/codex/codexBinary.ts findCodexBinary() for
  * the packaged-default decision. Kept in sync by hand.
  */
 function probeCodexCli(): boolean {
@@ -713,7 +756,7 @@ function probeCodexCli(): boolean {
 }
 
 /**
- * Mirror of backend/src/agents/claude/claudeBinary.ts findClaudeBinary()
+ * Mirror of runtime/src/adapters/claude/claudeBinary.ts findClaudeBinary()
  * for the packaged-default decision. Kept in sync by hand.
  */
 function probeClaudeCli(): boolean {
@@ -794,9 +837,8 @@ async function forkBackend(): Promise<number | null> {
     elog('INFO', 'boot', 'loaded ~/.michi/.env', { keys: userDotenvKeys.length });
   }
 
-  // Packaged builds fall back to Pi only when kiro-cli is not installed, so
-  // the dmg works for users without kiro-cli while developers with kiro-cli on
-  // disk still get the kiro default. Dev keeps the agentConfig default (Kiro)
+  // Packaged builds select an installed CLI, falling back to Pi.
+  // Dev keeps the agentConfig default (Kiro)
   // unless the developer explicitly sets MICHI_AGENT_RUNTIME. We pass via
   // MICHI_DEFAULT_RUNTIME (read by agentConfig.ts) so an existing on-disk
   // config still wins — only first-run packaged builds with no config see
@@ -813,6 +855,13 @@ async function forkBackend(): Promise<number | null> {
     MICHI_BIND_HOST: '127.0.0.1',
   };
   delete env.MICHI_REMOTE_TOKEN;
+  if (app.isPackaged) {
+    // Dev-renderer flags make the backend trust another local page's origin
+    // (backend/src/services/localOrigins.ts). The installed app serves its
+    // own UI, so drop them when a shell or ~/.michi/.env passes them on.
+    delete env.MICHI_DEV_RENDERER;
+    delete env.MICHI_RENDERER_URL;
+  }
   if (startupTraceEnabled()) {
     env.MICHI_STARTUP_TRACE = '1';
     env.MICHI_STARTUP_RUN_ID = startupRunId();
@@ -853,6 +902,284 @@ async function stopBackend(): Promise<void> {
     try { child.kill('SIGTERM'); } catch { resolve(); }
   });
 }
+
+// ── Background service (macOS LaunchAgent) ─────────────────────────────────
+// When enabled, the backend runs under launchd and outlives the app, so
+// scheduled jobs keep running after Michi quits. The app attaches to it on
+// launch and never stops it on quit.
+
+const SERVICE_PATHS = servicePaths();
+let dockHidden = false;
+
+function showDock(): void {
+  if (process.platform !== 'darwin' || !dockHidden || !app.dock) return;
+  dockHidden = false;
+  void app.dock.show();
+}
+
+function serviceSupport(): { supported: boolean; reason?: string } {
+  if (process.platform !== 'darwin') return { supported: false, reason: 'The background service is available on macOS.' };
+  if (isDev || !app.isPackaged) return { supported: false, reason: 'The background service is available in the installed app.' };
+  if (!resolveBackendEntry()) return { supported: false, reason: 'The bundled backend is missing.' };
+  return { supported: true };
+}
+
+interface BackendHealth {
+  service?: string;
+  serverId?: string;
+  serviceMode?: boolean;
+  serviceBuild?: string | null;
+}
+
+function probeHealth(port: number, timeoutMs = 1500): Promise<BackendHealth | null> {
+  return new Promise((resolve) => {
+    const req = http.get({ hostname: '127.0.0.1', port, path: '/api/health', timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => {
+        body += chunk;
+        if (body.length > 64_000) req.destroy();
+      });
+      res.on('end', () => {
+        if (res.statusCode !== 200) return resolve(null);
+        try { resolve(JSON.parse(body) as BackendHealth); } catch { resolve(null); }
+      });
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(null));
+  });
+}
+
+function isOurService(health: BackendHealth | null): boolean {
+  return !!health
+    && health.service === 'michi-backend'
+    && health.serverId === expectedServerId()
+    && health.serviceMode === true;
+}
+
+async function waitForPortFree(port: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isPortAvailable(port)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return false;
+}
+
+/**
+ * Make sure our LaunchAgent serves `port` with the current app build,
+ * installing or restarting it as needed. Resolves true once healthy.
+ */
+async function ensureServiceRunning(port: number): Promise<boolean> {
+  const build = serviceBuildStamp(app.getAppPath(), app.getVersion());
+  const health = await probeHealth(port);
+  if (isOurService(health) && health!.serviceBuild === build) return true;
+  if (health && !isOurService(health)) {
+    elog('WARN', 'service', 'port is held by a different backend', { port, serviceMode: health.serviceMode });
+    return false;
+  }
+  const entry = resolveBackendEntry();
+  if (!entry) return false;
+  const helper = (process as NodeJS.Process & { helperExecPath?: string }).helperExecPath || process.execPath;
+  const spec = buildServiceLaunchSpec({
+    nodeExecPath: helper,
+    entry,
+    port,
+    logDir: LOG_DIR,
+    bundlePath: appBundlePath(process.execPath),
+    build,
+    baseEnv: process.env,
+    defaultRuntime: detectDefaultRuntime(),
+  });
+  try {
+    elog('INFO', 'service', health ? 'restarting background service for this build' : 'starting background service', { port, build });
+    await installAndStartService({ spec, run: runLaunchctl, uid: os.userInfo().uid, plistFile: SERVICE_PATHS.plistFile });
+    await waitForBackend(port, 30_000);
+  } catch (err) {
+    elog('ERROR', 'service', 'background service did not start', { port, err: (err as Error).message });
+    return false;
+  }
+  return isOurService(await probeHealth(port));
+}
+
+/** Attach to the background service when enabled, else fork the app-owned backend. */
+async function startBackend(): Promise<number | null> {
+  if (!resolveBackendEntry()) {
+    backendMode = 'external';
+    return forkBackend();
+  }
+  const state = serviceSupport().supported ? readServiceState(SERVICE_PATHS.stateFile) : null;
+  if (state?.enabled) {
+    startupMark('backend_service_attach_start', { port: state.port });
+    if (await ensureServiceRunning(state.port)) {
+      backendMode = 'service';
+      elog('INFO', 'service', 'attached to background service', { port: state.port });
+      return state.port;
+    }
+    elog('ERROR', 'service', 'background service unavailable; using an app-owned backend this session', { port: state.port });
+    await stopService({ run: runLaunchctl, uid: os.userInfo().uid, plistFile: SERVICE_PATHS.plistFile }).catch(() => {});
+  }
+  backendMode = 'child';
+  return forkBackend();
+}
+
+function backgroundServiceStatus(): BackgroundServiceStatus {
+  const support = serviceSupport();
+  const state = support.supported ? readServiceState(SERVICE_PATHS.stateFile) : null;
+  return {
+    supported: support.supported,
+    ...(support.reason ? { reason: support.reason } : {}),
+    enabled: !!state?.enabled,
+    running: backendMode === 'service',
+    port: resolvedBackendPort,
+  };
+}
+
+let serviceTransition: Promise<unknown> | null = null;
+
+/**
+ * Hand the backend over between the app-owned child and the LaunchAgent on
+ * the same port, so the renderer origin (and its local state) is unchanged.
+ */
+async function setBackgroundServiceEnabled(enabled: boolean): Promise<BackgroundServiceStatus> {
+  const support = serviceSupport();
+  if (!support.supported) throw new Error(support.reason ?? 'The background service is not available.');
+  while (serviceTransition) await serviceTransition.catch(() => {});
+  const uid = os.userInfo().uid;
+  const work = (async () => {
+    if (enabled && backendMode !== 'service') {
+      const port = resolvedBackendPort ?? await chooseBackendPort();
+      await stopBackend();
+      await waitForPortFree(port, 10_000);
+      writeServiceState(SERVICE_PATHS.stateFile, { enabled: true, port });
+      if (await ensureServiceRunning(port)) {
+        backendMode = 'service';
+        resolvedBackendPort = port;
+      } else {
+        writeServiceState(SERVICE_PATHS.stateFile, { enabled: false, port });
+        await stopService({ run: runLaunchctl, uid, plistFile: SERVICE_PATHS.plistFile, removePlist: true }).catch(() => {});
+        await waitForPortFree(port, 10_000);
+        backendMode = 'child';
+        resolvedBackendPort = await forkBackend();
+        if (resolvedBackendPort) await waitForBackend(resolvedBackendPort).catch(() => {});
+        throw new Error(`The background service did not start. See ${path.join(LOG_DIR, 'service.err.log')}.`);
+      }
+    } else if (!enabled && backendMode === 'service') {
+      const port = resolvedBackendPort;
+      const state = readServiceState(SERVICE_PATHS.stateFile);
+      if (state) writeServiceState(SERVICE_PATHS.stateFile, { ...state, enabled: false });
+      await stopService({ run: runLaunchctl, uid, plistFile: SERVICE_PATHS.plistFile, removePlist: true });
+      if (port) await waitForPortFree(port, 15_000);
+      backendMode = 'child';
+      resolvedBackendPort = await forkBackend();
+      if (resolvedBackendPort) await waitForBackend(resolvedBackendPort);
+      if (resolvedBackendPort !== port) {
+        for (const win of windows) {
+          if (!win.isDestroyed()) void win.loadURL(`http://127.0.0.1:${resolvedBackendPort}`);
+        }
+      }
+    } else if (!enabled) {
+      const state = readServiceState(SERVICE_PATHS.stateFile);
+      if (state?.enabled) writeServiceState(SERVICE_PATHS.stateFile, { ...state, enabled: false });
+    }
+    notificationFeed.restart();
+    return backgroundServiceStatus();
+  })();
+  serviceTransition = work;
+  try {
+    return await work;
+  } finally {
+    serviceTransition = null;
+  }
+}
+
+// ── Scheduled job notifications ────────────────────────────────────────────
+
+const liveNotifications = new Set<ElectronNotification>();
+let backgroundIdleTimer: ReturnType<typeof setTimeout> | null = null;
+
+function devBackendPort(): number {
+  return parsePort(process.env.MICHI_BACKEND_PORT) ?? parsePort(process.env.PORT) ?? 3000;
+}
+
+const notificationFeed = new ScheduledNotificationFeed({
+  port: () => resolvedBackendPort ?? (backendMode === 'external' ? devBackendPort() : null),
+  onNotice: (notice) => handleScheduledNotice(notice),
+  log: (level, message, meta) => elog(level, 'schedule', message, meta),
+});
+
+function cancelBackgroundIdleQuit(): void {
+  if (backgroundIdleTimer) clearTimeout(backgroundIdleTimer);
+  backgroundIdleTimer = null;
+}
+
+/** A hidden background launch exits again if the user never opens a window. */
+function armBackgroundIdleQuit(): void {
+  if (!launchedInBackground) return;
+  cancelBackgroundIdleQuit();
+  backgroundIdleTimer = setTimeout(() => {
+    if (windows.size === 0) {
+      elog('INFO', 'schedule', 'background launch idle; quitting');
+      app.quit();
+    }
+  }, BACKGROUND_IDLE_QUIT_MS);
+}
+
+function targetOf(notice: ScheduledRunNotice): ScheduledRunTarget {
+  return { runId: notice.runId, jobId: notice.jobId, workspaceId: notice.workspaceId, nodeId: notice.nodeId };
+}
+
+function openScheduledRun(target: ScheduledRunTarget): void {
+  cancelBackgroundIdleQuit();
+  showDock();
+  const existing = BrowserWindow.getFocusedWindow() ?? [...windows].find((win) => !win.isDestroyed()) ?? null;
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    sendDesktopEvent(existing.webContents, 'scheduled:open-run', target);
+  } else {
+    void createWindow(resolvedBackendPort, undefined, target);
+  }
+  if (process.platform === 'darwin') app.focus({ steal: true });
+}
+
+function handleScheduledNotice(notice: ScheduledRunNotice): void {
+  if (notice.phase === 'started') return;
+  const content = describeNotice(notice);
+  if (!content) {
+    notificationFeed.acknowledge(notice.runId);
+    return;
+  }
+  const target = targetOf(notice);
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && windows.has(focused) && !focused.isDestroyed()) {
+    // The user is looking at Michi: an in-app toast, not an OS banner.
+    sendDesktopEvent(focused.webContents, 'scheduled:notice', { ...content, target });
+    notificationFeed.acknowledge(notice.runId);
+    return;
+  }
+  if (ElectronNotification.isSupported()) {
+    const notification = new ElectronNotification({ title: content.title, subtitle: content.subtitle, body: content.body });
+    // Hold a reference until the user acts on it, or its click handler can be collected.
+    liveNotifications.add(notification);
+    notification.on('click', () => {
+      liveNotifications.delete(notification);
+      openScheduledRun(target);
+    });
+    notification.on('close', () => liveNotifications.delete(notification));
+    notification.show();
+  }
+  notificationFeed.acknowledge(notice.runId);
+  armBackgroundIdleQuit();
+}
+
+handleDesktopInvoke('service:getStatus', () => backgroundServiceStatus());
+
+handleDesktopInvoke('service:setEnabled', (_ev, enabled: unknown) => {
+  if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
+  return setBackgroundServiceEnabled(enabled);
+});
 
 // Custom application menu. macOS's default menu binds Cmd+W to "Close Window",
 // which intercepts the accelerator before the renderer can use it for "close
@@ -912,7 +1239,12 @@ function buildAppMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function createWindow(backendPort: number | null, healthPromise?: Promise<void>): Promise<void> {
+async function createWindow(
+  backendPort: number | null,
+  healthPromise?: Promise<void>,
+  openRun?: ScheduledRunTarget,
+): Promise<void> {
+  showDock();
   const slot = nextWindowSlot++;
   const savedState = loadWindowState(slot);
   const cascade = slot * 32;
@@ -1040,7 +1372,7 @@ async function createWindow(backendPort: number | null, healthPromise?: Promise<
   const routeLink = (url: string) => {
     try {
       const parsed = new URL(url);
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') win.webContents.send('app:openUrl', parsed.href);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') sendDesktopEvent(win.webContents, 'app:openUrl', parsed.href);
       else if (parsed.protocol === 'mailto:' || parsed.protocol === 'tel:') void shell.openExternal(parsed.href);
     } catch { /* Ignore malformed navigation. */ }
   };
@@ -1064,6 +1396,13 @@ async function createWindow(backendPort: number | null, healthPromise?: Promise<
     url.searchParams.set('michiWindowId', windowId);
     if (app.isPackaged) url.searchParams.set('michiPackaged', '1');
     if (VIBRANCY_ENABLED) url.searchParams.set('michiVibrancy', '1');
+    if (openRun) {
+      // Read once by the preload; the renderer opens the run after hydration.
+      url.searchParams.set('michiOpenRun', openRun.runId);
+      url.searchParams.set('michiOpenJob', openRun.jobId);
+      url.searchParams.set('michiOpenWorkspace', openRun.workspaceId);
+      if (openRun.nodeId) url.searchParams.set('michiOpenNode', openRun.nodeId);
+    }
     return url.toString();
   };
 
@@ -1126,13 +1465,13 @@ function pickerDefaultPath(): string {
 }
 
 // Explicit system-browser actions bypass the preferred link destination.
-ipcMain.on('app:openExternal', (_ev, url: string) => {
+onDesktopCommand('app:openExternal', (_ev, url: string) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
     void shell.openExternal(url);
   }
 });
 
-ipcMain.handle('app:chooseFolder', async () => {
+handleDesktopInvoke('app:chooseFolder', async () => {
   const r = await dialog.showOpenDialog({
     properties: ['openDirectory', 'createDirectory'],
     defaultPath: pickerDefaultPath(),
@@ -1148,7 +1487,7 @@ ipcMain.handle('app:chooseFolder', async () => {
   };
 });
 
-ipcMain.handle('app:chooseFolders', async () => {
+handleDesktopInvoke('app:chooseFolders', async () => {
   const r = await dialog.showOpenDialog({
     properties: ['openDirectory', 'createDirectory', 'multiSelections'],
     defaultPath: pickerDefaultPath(),
@@ -1164,7 +1503,7 @@ ipcMain.handle('app:chooseFolders', async () => {
 
 // Mint a per-project scratch cwd outside macOS-protected directories so
 // kiro-cli doesn't trip TCC prompts when the user skips folder selection.
-ipcMain.handle('app:resolveSkipCwd', async (_ev, projectId: string) => {
+handleDesktopInvoke('app:resolveSkipCwd', async (_ev, projectId: string) => {
   if (typeof projectId !== 'string' || projectId.length === 0) {
     throw new Error('resolveSkipCwd: projectId required');
   }
@@ -1178,7 +1517,7 @@ ipcMain.handle('app:resolveSkipCwd', async (_ev, projectId: string) => {
 // to open pinned files on click; the path is the resolved cwd-relative path
 // the renderer already has, so no extra validation is needed beyond the
 // shell call's own existence check.
-ipcMain.handle('app:openPath', async (_ev, absPath: string) => {
+handleDesktopInvoke('app:openPath', async (_ev, absPath: string) => {
   if (typeof absPath !== 'string' || absPath.length === 0) {
     return { ok: false, error: 'absPath required' };
   }
@@ -1187,7 +1526,7 @@ ipcMain.handle('app:openPath', async (_ev, absPath: string) => {
   return { ok: true };
 });
 
-ipcMain.handle('app:chooseFiles', async () => {
+handleDesktopInvoke('app:chooseFiles', async () => {
   const r = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
     defaultPath: pickerDefaultPath(),
@@ -1198,7 +1537,7 @@ ipcMain.handle('app:chooseFiles', async () => {
   return { canceled: false, paths: r.filePaths };
 });
 
-ipcMain.handle('app:saveMarkdown', async (_ev, suggestedName: string, content: string) => {
+handleDesktopInvoke('app:saveMarkdown', async (_ev, suggestedName: string, content: string) => {
   const r = await dialog.showSaveDialog({
     defaultPath: suggestedName,
     filters: [{ name: 'Markdown', extensions: ['md'] }],
@@ -1208,7 +1547,7 @@ ipcMain.handle('app:saveMarkdown', async (_ev, suggestedName: string, content: s
   return { canceled: false, path: r.filePath };
 });
 
-ipcMain.handle('app:listDirectory', async (_ev, absPath: unknown, rawRoots: unknown) => {
+handleDesktopInvoke('app:listDirectory', async (_ev, absPath: unknown, rawRoots: unknown) => {
   return listWorkspaceDirectory(absPath, rawRoots);
 });
 
@@ -1220,7 +1559,7 @@ const IMAGE_MIME = new Map<string, string>([
   ['webp', 'image/webp'],
 ]);
 
-ipcMain.handle('app:readFilePreview', async (_ev, absPath: unknown) => {
+handleDesktopInvoke('app:readFilePreview', async (_ev, absPath: unknown) => {
   try {
     if (typeof absPath !== 'string' || !path.isAbsolute(absPath)) return null;
     const stat = await fs.promises.stat(absPath);
@@ -1239,7 +1578,7 @@ ipcMain.handle('app:readFilePreview', async (_ev, absPath: unknown) => {
   }
 });
 
-ipcMain.handle('app:listGitChanges', async (_ev, cwd: unknown, rawRoots: unknown) => {
+handleDesktopInvoke('app:listGitChanges', async (_ev, cwd: unknown, rawRoots: unknown) => {
   const { directory } = await resolveAllowedDirectory(cwd, rawRoots);
   return new Promise<Array<{ path: string; status: string }>>((resolve) => {
     execFile('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
@@ -1266,7 +1605,7 @@ ipcMain.handle('app:listGitChanges', async (_ev, cwd: unknown, rawRoots: unknown
 // that live outside the workspace cwd (bypassing the backend sandbox).
 // Security: Electron main process already has full disk access; this is no more
 // privileged than the existing openPath handler. Limited to text files < 512KB.
-ipcMain.handle('app:readFile', async (_ev, absPath: string) => {
+handleDesktopInvoke('app:readFile', async (_ev, absPath: string) => {
   try {
     if (!absPath || !path.isAbsolute(absPath)) return null;
     const stat = await fs.promises.stat(absPath);
@@ -1278,7 +1617,7 @@ ipcMain.handle('app:readFile', async (_ev, absPath: string) => {
   }
 });
 
-ipcMain.handle('app:statFile', async (_ev, absPath: string) => {
+handleDesktopInvoke('app:statFile', async (_ev, absPath: string) => {
   try {
     if (!absPath || !path.isAbsolute(absPath)) return null;
     const stat = await fs.promises.stat(absPath);
@@ -1290,7 +1629,7 @@ ipcMain.handle('app:statFile', async (_ev, absPath: string) => {
 });
 
 // OS-level notification triggered from the renderer via preload bridge.
-ipcMain.on('app:showNotification', (_ev, title: string, body: string) => {
+onDesktopCommand('app:showNotification', (_ev, title: string, body: string) => {
   const n = new ElectronNotification({ title, body });
   n.on('click', () => {
     focusedWindow()?.focus();
@@ -1298,10 +1637,16 @@ ipcMain.on('app:showNotification', (_ev, title: string, body: string) => {
   n.show();
 });
 
-// Relaunch the app (used after self-update).
-ipcMain.on('app:relaunch', () => {
-  app.relaunch();
-  app.exit(0);
+// Relaunch the app (used after self-update). app.exit() skips before-quit,
+// so stop an app-owned backend first; otherwise the orphan keeps the port
+// and the relaunched app starts a second backend on the same data.
+onDesktopCommand('app:relaunch', () => {
+  void (async () => {
+    notificationFeed.stop();
+    await stopBackend();
+    app.relaunch();
+    app.exit(0);
+  })();
 });
 
 // isPackaged and vibrancy flags are injected via URL query params by
@@ -1313,7 +1658,7 @@ ipcMain.on('app:relaunch', () => {
 // Keep native chrome, vibrancy, and Browser WebContentsViews aligned with the
 // active Michi palette. Browser views receive a Chromium preferred-color-scheme
 // emulation, so sites with native dark CSS update without destructive filters.
-ipcMain.on('app:setDarkMaterial', (_ev, dark: boolean, backgroundColor?: string) => {
+onDesktopCommand('app:setDarkMaterial', (_ev, dark: boolean, backgroundColor?: string) => {
   currentBrowserTheme = normalizeBrowserTheme(dark, backgroundColor);
   nativeTheme.themeSource = currentBrowserTheme.colorScheme;
   for (const surface of browserSurfaces.values()) void syncBrowserTheme(surface);
@@ -1325,7 +1670,7 @@ ipcMain.on('app:setDarkMaterial', (_ev, dark: boolean, backgroundColor?: string)
 // 'menu', 'hud'). Applies to every open window. No-op unless vibrancy is on
 // (off macOS / MICHI_NO_VIBRANCY) or on an invalid material string.
 const VIBRANCY_MATERIALS = new Set(['under-window', 'sidebar', 'menu', 'hud']);
-ipcMain.on('app:setVibrancy', (_ev, material: string) => {
+onDesktopCommand('app:setVibrancy', (_ev, material: string) => {
   if (!VIBRANCY_ENABLED || !VIBRANCY_MATERIALS.has(material)) return;
   for (const w of windows) {
     if (!w.isDestroyed()) w.setVibrancy(material as 'under-window' | 'sidebar' | 'menu' | 'hud');
@@ -1360,7 +1705,9 @@ if (!app.requestSingleInstanceLock()) {
   app.exit(0);
 }
 
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
+  // A background wake while we are already running needs no window.
+  if (argv.includes(BACKGROUND_LAUNCH_ARG)) return;
   void createWindow(resolvedBackendPort);
 });
 
@@ -1382,7 +1729,13 @@ app.whenReady().then(async () => {
     // wait. In dev mode forkBackend returns null (external Vite serves the
     // frontend); in prod the backend serves the frontend HTML so the window
     // initially loads a local skeleton and navigates once health passes.
-    const backendPort = await forkBackend();
+    // A hidden background launch (woken by the service to deliver a
+    // notification) keeps the Dock icon away until a window opens.
+    if (launchedInBackground && process.platform === 'darwin' && app.dock) {
+      app.dock.hide();
+      dockHidden = true;
+    }
+    const backendPort = await startBackend();
     resolvedBackendPort = backendPort;
 
     // Start backend health check and window creation in parallel.
@@ -1402,11 +1755,17 @@ app.whenReady().then(async () => {
       : Promise.resolve();
 
     await installDevExtensions();
-    await createWindow(backendPort, healthPromise);
+    if (launchedInBackground) {
+      elog('INFO', 'boot', 'background launch; delivering notifications without a window', { backendMode });
+      armBackgroundIdleQuit();
+    } else {
+      await createWindow(backendPort, healthPromise);
+    }
 
     // Wait for backend health to finish (may already be resolved by now).
     await healthPromise;
-    elog('INFO', 'boot', 'window created', { backendPort });
+    elog('INFO', 'boot', launchedInBackground ? 'backend ready (background)' : 'window created', { backendPort, backendMode });
+    notificationFeed.start();
     initAutoUpdate({
       isDev,
       isPackaged: app.isPackaged,
@@ -1418,7 +1777,10 @@ app.whenReady().then(async () => {
     });
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) void createWindow(resolvedBackendPort);
+      if (BrowserWindow.getAllWindows().length === 0) {
+        cancelBackgroundIdleQuit();
+        void createWindow(resolvedBackendPort);
+      }
     });
   } catch (err) {
     elog('ERROR', 'boot', 'startup failed', { err: (err as Error).message, stack: (err as Error).stack });
@@ -1433,6 +1795,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async (ev) => {
+  notificationFeed.stop();
+  // Only an app-owned backend stops with the app. The background service
+  // (backendMode === 'service') deliberately keeps running.
   if (backendChild) {
     ev.preventDefault();
     elog('INFO', 'boot', 'stopping backend on quit');

@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, use, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { PALETTES } from '../components/terminal/tokens';
 import { fetchPrefs, savePrefs } from '../services/api';
 import { savePermissionSettings } from '../services/api/prefs';
@@ -56,6 +56,8 @@ export const UI_FONT_OPTS: readonly UiFont[] = [
 export type MessageFont = 'Source Serif 4' | 'Geist';
 
 export interface Prefs {
+  /** Show Pages recommendations and custom content on Home. */
+  homeRecommendations: boolean;
   linkOpenTarget: 'internal' | 'external';
   fontFamily: 'sans' | 'serif' | 'mono';
   /** When true, show the agent's streamed reasoning (agent_thought_chunk) + execution plan inside the assistant message. */
@@ -161,6 +163,9 @@ export interface Prefs {
   paneWidthMode: PaneWidthMode;
   /** Maximum content column width when only one pane is open. null = full width. */
   singlePaneContentWidth: number | null;
+  /** Browser-style single page: the active tree's panes open as topbar tabs
+   *  and only the focused one is shown. Browser panes stay in the dock. */
+  singlePageMode: boolean;
   /** How many lines of quoted text to show in the composer's quote bar before clamping. 1 = single-line ellipsis. */
   quoteMaxLines: number;
   /** When true, run a separate Kiro prompt to title untitled chats while the main turn is active. */
@@ -198,6 +203,7 @@ export interface Prefs {
 }
 
 export const DEFAULT_PREFS: Prefs = {
+  homeRecommendations: true,
   linkOpenTarget: 'internal',
   fontFamily: 'sans',
   showThoughts: true,
@@ -205,14 +211,14 @@ export const DEFAULT_PREFS: Prefs = {
   terminalAccentOverrides: {},
   uiFont: 'Geist',
   messageFont: 'Geist',
-  messageFontSize: 14.5,
+  messageFontSize: 16,
   composerFontSize: 14.5,
   codeBlockStyle: 'hairline',
   agentBlockStyle: 'card',
   codeWrap: false,
   terminalDensity: 'compact',
   paneRules: true,
-  terminalSidebarWidth: 280,
+  terminalSidebarWidth: 252,
   sidebarDensity: 'comfortable',
   sidebarInset: 2,
   sidebarRowStyle: 'square-full',
@@ -233,7 +239,8 @@ export const DEFAULT_PREFS: Prefs = {
   defaultPaneWidth: 600,
   paneWidthMode: 'half',
   paneSpawnAnimation: 'soft-fade',
-  singlePaneContentWidth: 800,
+  singlePaneContentWidth: 676,
+  singlePageMode: false,
   quoteMaxLines: 2,
   enableKiroSidecarTitles: false,
   enableFollowUps: true,
@@ -283,6 +290,7 @@ function readInitial(): Prefs {
   try {
     const parsed = JSON.parse(raw);
     const merged = { ...DEFAULT_PREFS, ...parsed };
+    merged.homeRecommendations = typeof parsed.homeRecommendations === 'boolean' ? parsed.homeRecommendations : DEFAULT_PREFS.homeRecommendations;
     merged.globalPermissions = typeof parsed.globalPermissions === 'boolean' ? parsed.globalPermissions : parsed.bypassPermissions === true;
     merged.permissionMode = isChatPermissionMode(parsed.permissionMode) ? parsed.permissionMode : parsed.bypassPermissions === true ? 'trust' : 'ask';
     delete (merged as { bypassPermissions?: unknown }).bypassPermissions;
@@ -388,6 +396,9 @@ function readInitial(): Prefs {
     if (typeof merged.reduceMotion !== 'boolean') {
       merged.reduceMotion = DEFAULT_PREFS.reduceMotion;
     }
+    if (typeof merged.singlePageMode !== 'boolean') {
+      merged.singlePageMode = DEFAULT_PREFS.singlePageMode;
+    }
     if (
       merged.singlePaneContentWidth !== null &&
       merged.singlePaneContentWidth !== undefined &&
@@ -434,6 +445,14 @@ interface PrefsContextValue {
 }
 
 const PrefsContext = createContext<PrefsContextValue | null>(null);
+// React 19 propagates an outer context change through nested providers of the
+// same context, so sidebar contents read their shielded value from a separate one.
+const SidebarContentPrefsContext = createContext<PrefsContextValue | null>(null);
+
+/** Inside the sidebar shield, rows never subscribe to the outer prefs context. */
+function usePrefsContext(): PrefsContextValue | null {
+  return use(SidebarContentPrefsContext) ?? use(PrefsContext);
+}
 
 export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const [prefs, setPrefs] = useState<Prefs>(readInitial);
@@ -460,6 +479,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       const merged = {
         ...DEFAULT_PREFS,
         ...remote,
+        homeRecommendations: typeof remote.homeRecommendations === 'boolean' ? remote.homeRecommendations : DEFAULT_PREFS.homeRecommendations,
         linkOpenTarget: remote.linkOpenTarget === 'external' ? 'external' : 'internal',
         paneWidthMode: normalizePaneWidthMode(remote.paneWidthMode),
         paneSpawnAnimation: normalizePaneMotion(remote.paneSpawnAnimation),
@@ -674,7 +694,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function usePrefs(): PrefsContextValue {
-  const v = useContext(PrefsContext);
+  const v = usePrefsContext();
   if (!v) throw new Error('usePrefs must be used within a PrefsProvider');
   return v;
 }
@@ -692,7 +712,7 @@ const SidebarContentPrefs = React.memo(function SidebarContentPrefs({
     () => ({ ...value, prefs: { ...value.prefs, sidebarCollapsed: false } }),
     [value],
   );
-  return <PrefsContext.Provider value={contentValue}>{children}</PrefsContext.Provider>;
+  return <SidebarContentPrefsContext.Provider value={contentValue}>{children}</SidebarContentPrefsContext.Provider>;
 }, (previous, next) => (
   previous.children === next.children &&
   previous.value.setPref === next.value.setPref &&
@@ -717,6 +737,16 @@ export const AgentBlockStyleOverride = createContext<AgentBlockStyle | null>(nul
  *  it falls back to 'plain', keeping the baseline render path. */
 export function useAgentBlockStyle(): AgentBlockStyle {
   const override = useContext(AgentBlockStyleOverride);
-  const ctx = useContext(PrefsContext);
+  const ctx = usePrefsContext();
   return override ?? ctx?.prefs.agentBlockStyle ?? 'plain';
+}
+
+/** Home also supports isolated previews outside the app provider. */
+export function useHomeRecommendations(): boolean {
+  return usePrefsContext()?.prefs.homeRecommendations ?? DEFAULT_PREFS.homeRecommendations;
+}
+
+/** Page components follow the active palette, including standalone previews. */
+export function usePagePalette(): TerminalPalette {
+  return usePrefsContext()?.prefs.terminalPalette ?? 'bone';
 }

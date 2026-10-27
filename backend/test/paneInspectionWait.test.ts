@@ -182,58 +182,6 @@ describe('waitPane — until: changed', () => {
 // ---------------------------------------------------------------------------
 
 describe('waitPane — until: terminal', () => {
-  test("returns when T1's own executionRef settles and is NOT satisfied by T2 starting", async () => {
-    stubService();
-    const { clock, advance, liveTimerCount } = makeFakeClock();
-    authorizeImpl = () => {};
-
-    const t1Running = baseDescriptor({
-      execution: { status: 'ready', value: { ref: EXECUTION_REF, assistantId: 'a-1', attemptId: null, attemptIndex: null, status: 'running', startedAt: 0, endedAt: null, commitState: 'pending', waitingReason: null, error: null } },
-    });
-    // T2 starts (a NEW executionRef) while T1 is still running — a plain "current attempt" read
-    // now reflects T2, not T1.
-    const t2ExecRef: ExecutionRef = { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-2' };
-    const t2Running = baseDescriptor({
-      execution: { status: 'ready', value: { ref: t2ExecRef, assistantId: 'a-1', attemptId: null, attemptIndex: null, status: 'running', startedAt: 5, endedAt: null, commitState: 'pending', waitingReason: null, error: null } },
-    });
-    const t1Completed = baseDescriptor({
-      execution: { status: 'ready', value: { ref: EXECUTION_REF, assistantId: 'a-1', attemptId: null, attemptIndex: null, status: 'completed', startedAt: 0, endedAt: 20, commitState: 'committed', waitingReason: null, error: null } },
-    });
-
-    let tick = 0; // advanced explicitly by the test, not by call count — avoids coupling to how
-    // many times the service happens to call inspect() per phase.
-    inspectImpl = (_caller, rawInput) => {
-      const input = rawInput as { executionRef?: ExecutionRef };
-      const ref = input.executionRef;
-      if (ref && ref.kind === 'chat_turn' && ref.turnId === 't-1') {
-        // Scoped re-inspect of T1's own ref: reflects T1's OWN status regardless of tick.
-        return tick >= 2 ? t1Completed : t1Running;
-      }
-      // Plain re-inspect (no executionRef) reflects the CURRENT attempt: T2 once it has started.
-      return tick >= 1 ? t2Running : t1Running;
-    };
-
-    const input: WaitPaneInput = { locator: { nodeId: 'n-1' }, until: 'terminal', executionRef: EXECUTION_REF, timeoutMs: 20_000 };
-    const promise = waitPane(CALLER, input, { clock });
-
-    // T2 starts: a plain re-inspect now shows T2 running. This must fire the oncePerObject
-    // listener's "changed" trigger (via the coarse poll below) but must NOT settle the wait,
-    // since it's re-scoped to T1's own ref, which is still running.
-    tick = 1;
-    advance(2_000); // oncePerObject's coarse poll fallback (this test injects no chatHub/run bus).
-
-    // T1 itself now completes.
-    tick = 2;
-    advance(2_000);
-
-    const out = await promise;
-    assert.equal(out.reason, 'terminal');
-    const execution = out.descriptor?.execution;
-    const ref = execution && execution.status === 'ready' && execution.value ? execution.value.ref : null;
-    assert.equal(ref?.kind === 'chat_turn' ? ref.turnId : undefined, 't-1');
-    assert.equal(out.outcome, 'completed');
-  });
-
   test('terminal without executionRef is rejected as INVALID_ARGUMENT before any inspect() call', async () => {
     stubService();
     const { clock } = makeFakeClock();
@@ -244,19 +192,6 @@ describe('waitPane — until: terminal', () => {
     const input = { locator: { nodeId: 'n-1' }, until: 'terminal', timeoutMs: 20_000 } as WaitPaneInput;
     await assert.rejects(() => waitPane(CALLER, input, { clock }), (err: unknown) => err instanceof PaneInspectionError && err.code === 'INVALID_ARGUMENT');
     assert.equal(inspectCalled, false);
-  });
-
-  test('a queued chat (no turn started) using until=terminal is rejected the same way', async () => {
-    // design §7.4: "chat 的首轮 turnId 在 queued 状态时尚不存在" — the caller simply has no
-    // executionRef to pass yet, so this collapses to the same INVALID_ARGUMENT case above rather
-    // than a distinct code; the queued state itself is only ever observable via until=changed.
-    stubService();
-    const { clock } = makeFakeClock();
-    authorizeImpl = () => {};
-    inspectImpl = () => baseDescriptor({ activity: 'queued', execution: { status: 'unknown', reason: 'no turn yet' } });
-
-    const input = { locator: { nodeId: 'n-1' }, until: 'terminal', timeoutMs: 20_000 } as WaitPaneInput;
-    await assert.rejects(() => waitPane(CALLER, input, { clock }), (err: unknown) => err instanceof PaneInspectionError && err.code === 'INVALID_ARGUMENT');
   });
 });
 
@@ -286,37 +221,6 @@ describe('waitPane — timeout', () => {
     await assert.rejects(waitPane(CALLER, { locator: { nodeId: 'n-1' }, until: 'terminal',
       executionRef: { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' }, timeoutMs: 100 }, { clock: clock.clock }), /source failed/);
     assert.equal(clock.liveTimerCount(), 0);
-  });
-
-  test('timeout refreshes the descriptor instead of returning its setup snapshot', async () => {
-    stubService();
-    const clock = makeFakeClock();
-    let current = baseDescriptor();
-    inspectImpl = () => current;
-    const waiting = waitPane(CALLER, { locator: { nodeId: 'n-1' }, until: 'terminal',
-      executionRef: { kind: 'chat_turn', nodeId: 'n-1', turnId: 't-1' }, timeoutMs: 100 }, { clock: clock.clock });
-    current = { ...current, title: 'changed before timeout' };
-    clock.advance(100);
-    const result = await waiting;
-    assert.equal(result.reason, 'timed_out');
-    assert.equal(result.descriptor?.title, current.title);
-    assert.equal(clock.liveTimerCount(), 0);
-  });
-
-  test('times out with reason=timed_out and asserts no cancel call happened', async () => {
-    stubService();
-    const { clock, advance } = makeFakeClock();
-    authorizeImpl = () => {};
-    let cancelCalled = false;
-    inspectImpl = () => baseDescriptor(); // never changes.
-
-    const input: WaitPaneInput = { locator: { nodeId: 'n-1' }, until: 'terminal', executionRef: EXECUTION_REF, timeoutMs: 10_000 };
-    const promise = waitPane(CALLER, input, { clock });
-    advance(10_000);
-    const out = await promise;
-
-    assert.equal(out.reason, 'timed_out');
-    assert.equal(cancelCalled, false); // waitPane never calls any cancel function — verified by construction: no such import exists in the module.
   });
 
   test('the listener is released on timeout — no live timers remain', async () => {

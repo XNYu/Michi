@@ -15,9 +15,11 @@ if (process.env.MICHI_CREW_LIVE_TEST !== '1') {
 const root = path.resolve(__dirname, '../..');
 process.env.TS_NODE_PROJECT = path.join(root, 'backend/tsconfig.json');
 require('ts-node/register');
-const { AcpClient } = require('../src/services/acpClient');
-const { CrewGatewayClient } = require('../src/agents/crew/acp/gatewayClient');
-const { parseCrewAcpConfig } = require('../src/agents/crew/acp/main');
+const { AcpClient } = require('michi-runtime/internal/adapters/kiro/acpClient');
+const { CrewGatewayClient } = require('michi-runtime/internal/adapters/crew/acp/gatewayClient');
+const { parseCrewAcpConfig } = require('michi-runtime/internal/adapters/crew/acp/main');
+const { createMichiRuntimeHost } = require('../src/agents/michiRuntimeHost');
+const { observability } = createMichiRuntimeHost();
 const adapter = path.join(root, 'backend/dist/crewAcp.js');
 assert.ok(fs.existsSync(adapter), 'Build the adapter first with npm run backend:build');
 const config = parseCrewAcpConfig([], process.env);
@@ -48,7 +50,7 @@ async function client(memoryMode = 'temporary') {
         args: () => [adapter, '--model', model],
         standardFork: true,
         cancelTimeoutMs: 15000,
-    });
+    }, undefined, { observability });
     clients.push(c);
     try { c.start(); }
     finally {

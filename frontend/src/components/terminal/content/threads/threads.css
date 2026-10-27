@@ -1,0 +1,361 @@
+/* All threads: the page, board cards, the calendar and the batch bar (the
+   database views add db.css). Palette tokens only (--term-*, --sel-bar-*), so
+   Monokai, Bone, Slate and Gruvbox all read. */
+
+.michi-threads {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+}
+
+.michi-threads__mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Toolbar ───────────────────────────────────────────────── */
+.michi-threads__toggle:focus-visible,
+.michi-board__more:focus-visible,
+.michi-cal__nav:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
+}
+.michi-threads__spacer {
+  flex: 1;
+}
+.michi-threads__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.michi-threads__toggle:hover {
+  color: var(--term-fg);
+}
+.michi-threads__switch {
+  position: relative;
+  width: 22px;
+  height: 12px;
+  border-radius: var(--ui-radius-pill);
+  background: var(--term-line);
+  transition: background var(--t-quick) ease;
+}
+.michi-threads__switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--ui-radius-pill);
+  background: var(--term-mid);
+  transition: transform var(--t-quick) ease, background var(--t-quick) ease;
+}
+.michi-threads__toggle[aria-checked='true'] .michi-threads__switch {
+  background: var(--term-accent);
+}
+.michi-threads__toggle[aria-checked='true'] .michi-threads__switch::after {
+  transform: translateX(10px);
+  background: var(--term-surface);
+}
+
+.michi-threads__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.michi-threads__failed {
+  margin: 0;
+  padding: 16px 20px;
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+}
+/* Screen-reader-only live text (the selection count). */
+.michi-threads__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Every clickable thread: keyboard focus and the peeked/selected states. */
+.michi-item {
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.michi-item:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: 1px;
+}
+/* A write for it is on its way (archive, ignore, a state). */
+.michi-item[data-pending='true'] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+/* ── Board cards ─────────────────────────────────────────────── */
+.michi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+  background: var(--term-surface);
+  transition: border-color var(--t-quick) ease, background var(--t-quick) ease;
+}
+.michi-card:hover {
+  border-color: var(--term-line-s);
+}
+.michi-card[data-selected='true'] {
+  background: var(--term-accent-f);
+}
+.michi-card[data-agent-done='true'] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--term-digest) 60%, var(--term-line));
+}
+.michi-card[aria-current='true'] {
+  border-color: var(--term-accent);
+  box-shadow: 0 0 0 1px var(--term-accent);
+}
+.michi-card__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-lg);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.michi-card__agent {
+  color: var(--term-digest);
+  font-size: var(--fs-md);
+}
+.michi-card__next {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.michi-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-card__project {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-board__more {
+  align-self: flex-start;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--term-muted);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.michi-board__more:hover {
+  color: var(--term-fg);
+}
+
+/* ── Calendar ────────────────────────────────────────────────── */
+.michi-cal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px 24px;
+}
+.michi-cal__head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.michi-cal__month {
+  margin-right: 8px;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+}
+.michi-cal__nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+}
+.michi-cal__nav:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+  color: var(--term-fg);
+}
+.michi-cal__grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-top: 1px solid var(--term-line);
+  border-left: 1px solid var(--term-line);
+}
+.michi-cal__weekday {
+  padding: 6px 8px;
+  border-right: 1px solid var(--term-line);
+  border-bottom: 1px solid var(--term-line);
+  color: var(--term-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.michi-cal__day {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  min-height: 96px;
+  padding: 6px;
+  border-right: 1px solid var(--term-line);
+  border-bottom: 1px solid var(--term-line);
+}
+.michi-cal__day[data-in-month='false'] {
+  background: color-mix(in srgb, var(--term-surface) 45%, transparent);
+}
+.michi-cal__num {
+  padding: 0 4px 2px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.michi-cal__day[data-in-month='false'] .michi-cal__num {
+  color: var(--term-faint);
+}
+.michi-cal__day[data-today='true'] .michi-cal__num {
+  color: var(--term-accent);
+  font-weight: 600;
+}
+.michi-cal__item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+.michi-cal__item:hover {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.michi-cal__item[data-selected='true'] {
+  background: var(--term-accent-f);
+}
+.michi-cal__item[aria-current='true'] {
+  box-shadow: inset 0 0 0 1px var(--term-accent);
+}
+.michi-cal__item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-cal__more {
+  padding: 0 4px;
+  color: var(--term-muted);
+  font-size: var(--fs-xs);
+}
+
+/* ── Batch bar (Michi's inverted selection bar) ───────────────── */
+.michi-batch {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  z-index: var(--z-pane-overlay);
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--sel-bar-line);
+  border-radius: var(--ui-radius);
+  background: var(--sel-bar-bg);
+  box-shadow: var(--sel-bar-shadow);
+  color: var(--sel-bar-fg);
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  white-space: nowrap;
+  animation: fadeIn var(--t-soft) ease-out both;
+}
+.michi-batch__count {
+  margin-right: 6px;
+  color: var(--sel-bar-mid);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.michi-batch__sep {
+  width: 1px;
+  height: 16px;
+  margin-right: 4px;
+  background: var(--sel-bar-line);
+}
+.michi-batch__btn {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--sel-bar-fg);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--t-quick) ease, color var(--t-quick) ease;
+}
+.michi-batch__btn:hover {
+  background: var(--sel-bar-hover);
+}
+.michi-batch__btn:focus-visible {
+  outline: 2px solid var(--sel-bar-fg);
+  outline-offset: -2px;
+}
+.michi-batch__close {
+  padding: 0 8px;
+  color: var(--sel-bar-muted);
+  font-size: var(--fs-xl);
+}
+.michi-batch__close:hover {
+  color: var(--sel-bar-fg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .michi-batch { animation: none; }
+  .michi-card, .michi-threads__switch, .michi-threads__switch::after, .michi-batch__btn { transition: none; }
+}

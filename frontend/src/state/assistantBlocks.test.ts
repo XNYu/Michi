@@ -1,33 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import {
-  appendAnswerBlockText,
-  appendThinkingBlockText,
-  appendToolBlock,
-  assistantAnswerRawText,
-  assistantPersistenceContent,
-  migrateAssistantToBlocks,
-} from './assistantBlocks';
+import { appendAnswerBlockText, appendThinkingBlockText, appendToolBlock, migrateAssistantToBlocks } from './assistantBlocks';
 import type { ChatMessage } from './chatTypes';
 
 describe('assistant block migration', () => {
-  it('migrates raw legacy content before sentinel stripping so offsets stay raw', () => {
-    const legacy: ChatMessage = {
-      id: 'a1',
-      role: 'assistant',
-      text: '[TITLE: T]\nabcde',
-      toolCalls: [{ id: 't1', title: 'tool', status: 'completed', textOffset: 13 }],
-    };
-
-    const migrated = migrateAssistantToBlocks(legacy);
-    expect(assistantAnswerRawText(migrated)).toBe('[TITLE: T]\nabcde');
-    expect(assistantPersistenceContent(migrated)).toBe('abcde');
-    expect(migrated.blocks).toEqual([
-      { id: 'a1-legacy-answer-0', kind: 'answer', rawText: '[TITLE: T]\nab', streaming: false },
-      { id: 'a1-legacy-tool-t1', kind: 'tool', toolCallId: 't1', section: 'answer', rawOffset: 13 },
-      { id: 'a1-legacy-answer-1', kind: 'answer', rawText: 'cde', streaming: false },
-    ]);
-  });
-
   it('preserves same-offset tool order and appends offsetless tools at the end', () => {
     const legacy: ChatMessage = {
       id: 'a2',

@@ -1,5 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { useOverlayFocus } from './useOverlayFocus';
 
 /**
  * Shared centered modal shell. Every dialog (New Workspace, Move Thread, Create
@@ -62,8 +63,7 @@ export function ModalShell({
   const ariaLabel = rest['aria-label'];
   const paneRef = React.useRef<HTMLDivElement>(null);
   const titleId = React.useMemo(() => `modal-title-${++modalTitleSeq}`, []);
-  // Remember what was focused when we opened so we can restore it on close.
-  const restoreRef = React.useRef<HTMLElement | null>(null);
+  useOverlayFocus({ open, panelRef: paneRef, initialFocus: 'first', deferInitialFocus: true, restore: 'always' });
 
   // Keep the latest onClose/dismissible in refs so the focus/trap effects below
   // depend ONLY on `open`. Call sites pass fresh inline `onClose` arrows, so a
@@ -76,31 +76,7 @@ export function ModalShell({
   const dismissibleRef = React.useRef(dismissible);
   dismissibleRef.current = dismissible;
 
-  // Focus capture on open + restore on close — runs only on the open transition.
-  React.useEffect(() => {
-    if (!open) return;
-    restoreRef.current = document.activeElement as HTMLElement | null;
-
-    // Focus the first focusable inside the pane (unless a child already grabbed
-    // focus via autoFocus). Deferred a frame so portaled content is mounted.
-    const raf = requestAnimationFrame(() => {
-      const pane = paneRef.current;
-      if (!pane) return;
-      if (pane.contains(document.activeElement) && document.activeElement !== pane) return;
-      const focusable = pane.querySelector<HTMLElement>(
-        'input:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      focusable?.focus();
-    });
-
-    return () => {
-      cancelAnimationFrame(raf);
-      // Restore focus to the trigger element captured at open time.
-      restoreRef.current?.focus?.();
-    };
-  }, [open]);
-
-  // Escape + Tab focus-trap — reads onClose/dismissible via refs.
+  // Dismissal reads the latest callback without resetting focus.
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -111,22 +87,6 @@ export function ModalShell({
         if (captureEscape) e.stopImmediatePropagation();
         onCloseRef.current();
         return;
-      }
-      if (e.key !== 'Tab') return;
-      const pane = paneRef.current;
-      if (!pane) return;
-      const focusables = pane.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
       }
     };
     window.addEventListener('keydown', onKey, { capture: captureEscape });
@@ -156,6 +116,7 @@ export function ModalShell({
         <div
           ref={paneRef}
           className="ui-modal-panel term-glass"
+          tabIndex={-1}
           role="dialog"
           aria-modal="true"
           // An explicit aria-label wins over the visible (uppercased, terse)

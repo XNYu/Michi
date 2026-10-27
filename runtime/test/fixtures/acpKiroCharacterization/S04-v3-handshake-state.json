@@ -1,0 +1,1490 @@
+[
+  {
+    "step": "setup"
+  },
+  {
+    "step": "start",
+    "log": [
+      [
+        "info",
+        "acp",
+        "kiro process spawned",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "m1",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ]
+    ],
+    "perf": [
+      [
+        "mark",
+        "acp:spawn_requested",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ],
+    "spawn": [
+      {
+        "bin": "/fake/kiro-cli",
+        "args": [
+          "acp",
+          "--agent-engine",
+          "v3",
+          "--auth-method",
+          "cli"
+        ],
+        "cwd": "/work",
+        "env": {
+          "HOST_MARKER": "host"
+        }
+      }
+    ],
+    "startup": [
+      [
+        "kiro_spawn_start",
+        {
+          "cwd": "/work",
+          "binaryPath": "/fake/kiro-cli"
+        }
+      ],
+      [
+        "kiro_spawn_done",
+        {
+          "cwd": "/work",
+          "pid": 4242
+        }
+      ]
+    ]
+  },
+  {
+    "step": "initialize",
+    "=initialize": [
+      "<resolved>"
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:initialize",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_initialize_start",
+        {
+          "cwd": "/work"
+        }
+      ],
+      [
+        "kiro_initialize_done",
+        {
+          "cwd": "/work"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {
+          "protocolVersion": 1,
+          "clientInfo": {
+            "name": "michi",
+            "version": "1.0.0"
+          },
+          "clientCapabilities": {}
+        }
+      }
+    ]
+  },
+  {
+    "step": "capabilities",
+    "capabilities": [
+      {
+        "loadSession": true,
+        "promptCapabilities": {
+          "image": true
+        },
+        "sessionCapabilities": {
+          "fork": {},
+          "list": {}
+        },
+        "_meta": {
+          "kiro": {
+            "extensionMethods": [
+              "_kiro/session/compact",
+              "_kiro/session/context",
+              "_kiro/workflow/pause",
+              "_kiro/workflow/resume",
+              "_kiro/session/history"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new with options",
+    "=newSession": [
+      {
+        "sessionId": "S1",
+        "configOptions": [
+          {
+            "id": "model",
+            "type": "select",
+            "category": "model",
+            "currentValue": "m1",
+            "options": [
+              {
+                "value": "m1",
+                "name": "Model one"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "select",
+            "category": "mode",
+            "currentValue": "agent",
+            "options": [
+              {
+                "value": "agent",
+                "name": "Agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          {
+            "id": "effortLevel",
+            "type": "select",
+            "currentValue": "low",
+            "options": [
+              {
+                "group": "Effort",
+                "options": [
+                  {
+                    "value": "low"
+                  },
+                  {
+                    "value": "high"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "models": {
+          "currentModelId": "m1",
+          "availableModels": [
+            {
+              "value": "m1",
+              "name": "Model one",
+              "modelId": "m1"
+            },
+            {
+              "value": "m2",
+              "name": "Model two",
+              "_meta": {
+                "kiro": {
+                  "hasEffort": true,
+                  "effortLevels": [
+                    "low",
+                    "high"
+                  ],
+                  "defaultEffortLevel": "low"
+                }
+              },
+              "modelId": "m2"
+            }
+          ]
+        },
+        "modes": {
+          "currentModeId": "agent",
+          "availableModes": [
+            {
+              "value": "agent",
+              "name": "Agent",
+              "id": "agent"
+            },
+            {
+              "value": "planner",
+              "name": "Planner",
+              "id": "planner"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S1"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 1
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S1",
+          "mcpServerCount": 1
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [
+            {
+              "name": "michi",
+              "type": "http",
+              "url": "http://127.0.0.1:1/api/mcp/slot",
+              "headers": [],
+              "_meta": {
+                "kiro": {
+                  "waitForReady": true,
+                  "versionNegotiation": "legacy"
+                }
+              }
+            }
+          ],
+          "_meta": {
+            "kiro": {
+              "modelId": "m2",
+              "modeId": "planner",
+              "settings": {
+                "workflows": {
+                  "enabled": true
+                }
+              }
+            },
+            "chatId": "c1"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "session/new without options",
+    "=newSession2": [
+      {
+        "sessionId": "S2",
+        "configOptions": [
+          {
+            "id": "model",
+            "type": "select",
+            "category": "model",
+            "currentValue": "m1",
+            "options": [
+              {
+                "value": "m1",
+                "name": "Model one"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": "mode",
+            "type": "select",
+            "category": "mode",
+            "currentValue": "agent",
+            "options": [
+              {
+                "value": "agent",
+                "name": "Agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner"
+              }
+            ]
+          },
+          {
+            "id": "effortLevel",
+            "type": "select",
+            "currentValue": "low",
+            "options": [
+              {
+                "group": "Effort",
+                "options": [
+                  {
+                    "value": "low"
+                  },
+                  {
+                    "value": "high"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "models": {
+          "currentModelId": "m1",
+          "availableModels": [
+            {
+              "value": "m1",
+              "name": "Model one",
+              "modelId": "m1"
+            },
+            {
+              "value": "m2",
+              "name": "Model two",
+              "_meta": {
+                "kiro": {
+                  "hasEffort": true,
+                  "effortLevels": [
+                    "low",
+                    "high"
+                  ],
+                  "defaultEffortLevel": "low"
+                }
+              },
+              "modelId": "m2"
+            }
+          ]
+        },
+        "modes": {
+          "currentModeId": "agent",
+          "availableModes": [
+            {
+              "value": "agent",
+              "name": "Agent",
+              "id": "agent"
+            },
+            {
+              "value": "planner",
+              "name": "Planner",
+              "id": "planner"
+            }
+          ]
+        }
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S2"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S2",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [],
+          "_meta": {
+            "kiro": {
+              "modelId": "m1"
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "subscribe",
+    "unsubscribe": [
+      "function"
+    ]
+  },
+  {
+    "step": "commands, MCP status and tools"
+  },
+  {
+    "step": "state",
+    "notified": [
+      [
+        "S1",
+        "S1"
+      ]
+    ],
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "configOptions": [
+            {
+              "id": "model",
+              "type": "select",
+              "category": "model",
+              "currentValue": "m1",
+              "options": [
+                {
+                  "value": "m1",
+                  "name": "Model one"
+                },
+                {
+                  "value": "m2",
+                  "name": "Model two",
+                  "_meta": {
+                    "kiro": {
+                      "hasEffort": true,
+                      "effortLevels": [
+                        "low",
+                        "high"
+                      ],
+                      "defaultEffortLevel": "low"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mode",
+              "type": "select",
+              "category": "mode",
+              "currentValue": "agent",
+              "options": [
+                {
+                  "value": "agent",
+                  "name": "Agent"
+                },
+                {
+                  "value": "planner",
+                  "name": "Planner"
+                }
+              ]
+            },
+            {
+              "id": "effortLevel",
+              "type": "select",
+              "currentValue": "low",
+              "options": [
+                {
+                  "group": "Effort",
+                  "options": [
+                    {
+                      "value": "low"
+                    },
+                    {
+                      "value": "high"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "models": {
+            "currentModelId": "m1",
+            "availableModels": [
+              {
+                "value": "m1",
+                "name": "Model one",
+                "modelId": "m1"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                },
+                "modelId": "m2"
+              }
+            ]
+          },
+          "modes": {
+            "currentModeId": "agent",
+            "availableModes": [
+              {
+                "value": "agent",
+                "name": "Agent",
+                "id": "agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner",
+                "id": "planner"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact",
+              "description": "Compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "history"
+            },
+            {
+              "name": "usage"
+            }
+          ],
+          "mcpErrors": [
+            {
+              "serverName": "broken",
+              "error": "boom"
+            },
+            {
+              "serverName": "other",
+              "error": "MCP server connection failed"
+            }
+          ],
+          "nativeEngine": "v3"
+        }
+      }
+    ]
+  },
+  {
+    "step": "command catalog",
+    "=effortBad": [
+      {
+        "success": false,
+        "message": "Current effort: low. Available: low, high."
+      }
+    ],
+    "=effortList": [
+      {
+        "success": true,
+        "message": "Current effort: low. Available: low, high."
+      }
+    ],
+    "=mcp": [
+      {
+        "success": true,
+        "data": [
+          {
+            "name": "michi",
+            "status": "connected",
+            "error": "<undefined>"
+          },
+          {
+            "name": "broken",
+            "status": "failed",
+            "error": "boom"
+          },
+          {
+            "name": "other",
+            "status": "error",
+            "error": "<undefined>"
+          }
+        ]
+      }
+    ],
+    "=tools": [
+      {
+        "success": true,
+        "data": [
+          {
+            "name": "read"
+          },
+          {
+            "name": "write"
+          }
+        ],
+        "message": "<undefined>"
+      }
+    ],
+    "=toolsUnknown": [
+      {
+        "success": true,
+        "data": [],
+        "message": "Kiro has not published its tool catalog yet."
+      }
+    ],
+    "=unsupported": [
+      {
+        "success": false,
+        "message": "/doctor is not supported by Michi's Kiro V3 command interface."
+      }
+    ]
+  },
+  {
+    "step": "effort",
+    "=effort": [
+      {
+        "success": true,
+        "message": "Effort set to high."
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "session/set_config_option",
+        "params": {
+          "sessionId": "S1",
+          "configId": "effortLevel",
+          "value": "high"
+        }
+      }
+    ]
+  },
+  {
+    "step": "advertised command",
+    "=context": [
+      {
+        "success": true,
+        "message": "ctx",
+        "data": {
+          "success": true,
+          "message": "ctx",
+          "files": 3
+        }
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "_kiro/session/context",
+        "params": {
+          "verbose": true,
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "command the server declines",
+    "=compactCommand": [
+      {
+        "success": false,
+        "message": "nothing to compact",
+        "data": {
+          "success": false,
+          "message": "nothing to compact"
+        }
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "_kiro/session/compact",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "unadvertised command",
+    "=export": [
+      {
+        "success": false,
+        "message": "This Kiro server does not support _kiro/session/export"
+      }
+    ]
+  },
+  {
+    "step": "advertised method that is missing",
+    "=history": [
+      {
+        "success": false,
+        "message": "This Kiro server does not support _kiro/session/history"
+      }
+    ],
+    "log": [
+      [
+        "error",
+        "acp",
+        "rpc request failed",
+        {
+          "pid": 4242,
+          "cwd": "/work",
+          "model": "m1",
+          "rpcId": 6,
+          "method": "_kiro/session/history",
+          "sessionId": "S1",
+          "rpcCode": -32601,
+          "rpcMessage": "Method not found",
+          "rpcData": "<undefined>"
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "_kiro/session/history",
+        "params": {
+          "sessionId": "S1"
+        }
+      }
+    ]
+  },
+  {
+    "step": "after -32601",
+    "notified": [
+      [
+        "S1",
+        "S1",
+        "S1",
+        "S1"
+      ]
+    ],
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "configOptions": [
+            {
+              "id": "model",
+              "type": "select",
+              "category": "model",
+              "currentValue": "m1",
+              "options": [
+                {
+                  "value": "m1",
+                  "name": "Model one"
+                },
+                {
+                  "value": "m2",
+                  "name": "Model two",
+                  "_meta": {
+                    "kiro": {
+                      "hasEffort": true,
+                      "effortLevels": [
+                        "low",
+                        "high"
+                      ],
+                      "defaultEffortLevel": "low"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mode",
+              "type": "select",
+              "category": "mode",
+              "currentValue": "agent",
+              "options": [
+                {
+                  "value": "agent",
+                  "name": "Agent"
+                },
+                {
+                  "value": "planner",
+                  "name": "Planner"
+                }
+              ]
+            },
+            {
+              "id": "effortLevel",
+              "type": "select",
+              "currentValue": "high",
+              "options": [
+                {
+                  "group": "Effort",
+                  "options": [
+                    {
+                      "value": "low"
+                    },
+                    {
+                      "value": "high"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "models": {
+            "currentModelId": "m1",
+            "availableModels": [
+              {
+                "value": "m1",
+                "name": "Model one",
+                "modelId": "m1"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                },
+                "modelId": "m2"
+              }
+            ]
+          },
+          "modes": {
+            "currentModeId": "agent",
+            "availableModes": [
+              {
+                "value": "agent",
+                "name": "Agent",
+                "id": "agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner",
+                "id": "planner"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "agent",
+          "modelId": "m1",
+          "reasoning": "high",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact",
+              "description": "Compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "usage"
+            }
+          ],
+          "mcpErrors": [
+            {
+              "serverName": "broken",
+              "error": "boom"
+            },
+            {
+              "serverName": "other",
+              "error": "MCP server connection failed"
+            }
+          ],
+          "nativeEngine": "v3"
+        }
+      }
+    ],
+    "supports": [
+      [
+        "_kiro/session/history",
+        false
+      ],
+      [
+        "_session/steer",
+        true
+      ],
+      [
+        "_kiro/account/getUsage",
+        true
+      ],
+      [
+        "_kiro/other",
+        false
+      ]
+    ]
+  },
+  {
+    "step": "set_model through config",
+    "=setModel": [
+      "<undefined>"
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "session/set_config_option",
+        "params": {
+          "sessionId": "S1",
+          "configId": "model",
+          "value": "m2"
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_config_option",
+    "=setConfigOption": [
+      [
+        {
+          "id": "model",
+          "type": "select",
+          "category": "model",
+          "currentValue": "m1",
+          "options": [
+            {
+              "value": "m1",
+              "name": "Model one"
+            },
+            {
+              "value": "m2",
+              "name": "Model two",
+              "_meta": {
+                "kiro": {
+                  "hasEffort": true,
+                  "effortLevels": [
+                    "low",
+                    "high"
+                  ],
+                  "defaultEffortLevel": "low"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "mode",
+          "type": "select",
+          "category": "mode",
+          "currentValue": "planner",
+          "options": [
+            {
+              "value": "agent",
+              "name": "Agent"
+            },
+            {
+              "value": "planner",
+              "name": "Planner"
+            }
+          ]
+        },
+        {
+          "id": "effortLevel",
+          "type": "select",
+          "currentValue": "low",
+          "options": [
+            {
+              "group": "Effort",
+              "options": [
+                {
+                  "value": "low"
+                },
+                {
+                  "value": "high"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "session/set_config_option",
+        "params": {
+          "sessionId": "S1",
+          "configId": "mode",
+          "value": "planner"
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_config_option not applied",
+    "=setConfigRefused": [
+      {
+        "error": "ACPError",
+        "message": "Kiro did not apply config option mode"
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "session/set_config_option",
+        "params": {
+          "sessionId": "S1",
+          "configId": "mode",
+          "value": "refuse"
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_config_option without options",
+    "=setConfigNone": [
+      {
+        "error": "ACPError",
+        "message": "Kiro returned no config options after configuration"
+      }
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "session/set_config_option",
+        "params": {
+          "sessionId": "S1",
+          "configId": "mode",
+          "value": "none"
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_mode",
+    "=setMode": [
+      "<undefined>"
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "session/set_mode",
+        "params": {
+          "sessionId": "S1",
+          "modeId": "planner"
+        }
+      }
+    ]
+  },
+  {
+    "step": "state after configuration",
+    "state": [
+      {
+        "sessionId": "S1",
+        "alive": true,
+        "hasSession": true,
+        "needsSessionRecovery": false,
+        "hasHealthyWork": false,
+        "hasUnconfirmedExit": false,
+        "info": {
+          "sessionId": "S1",
+          "configOptions": [
+            {
+              "id": "model",
+              "type": "select",
+              "category": "model",
+              "currentValue": "m1",
+              "options": [
+                {
+                  "value": "m1",
+                  "name": "Model one"
+                },
+                {
+                  "value": "m2",
+                  "name": "Model two",
+                  "_meta": {
+                    "kiro": {
+                      "hasEffort": true,
+                      "effortLevels": [
+                        "low",
+                        "high"
+                      ],
+                      "defaultEffortLevel": "low"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "id": "mode",
+              "type": "select",
+              "category": "mode",
+              "currentValue": "planner",
+              "options": [
+                {
+                  "value": "agent",
+                  "name": "Agent"
+                },
+                {
+                  "value": "planner",
+                  "name": "Planner"
+                }
+              ]
+            },
+            {
+              "id": "effortLevel",
+              "type": "select",
+              "currentValue": "low",
+              "options": [
+                {
+                  "group": "Effort",
+                  "options": [
+                    {
+                      "value": "low"
+                    },
+                    {
+                      "value": "high"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "models": {
+            "currentModelId": "m1",
+            "availableModels": [
+              {
+                "value": "m1",
+                "name": "Model one",
+                "modelId": "m1"
+              },
+              {
+                "value": "m2",
+                "name": "Model two",
+                "_meta": {
+                  "kiro": {
+                    "hasEffort": true,
+                    "effortLevels": [
+                      "low",
+                      "high"
+                    ],
+                    "defaultEffortLevel": "low"
+                  }
+                },
+                "modelId": "m2"
+              }
+            ]
+          },
+          "modes": {
+            "currentModeId": "planner",
+            "availableModes": [
+              {
+                "value": "agent",
+                "name": "Agent",
+                "id": "agent"
+              },
+              {
+                "value": "planner",
+                "name": "Planner",
+                "id": "planner"
+              }
+            ]
+          }
+        },
+        "sessionState": {
+          "runtimeId": "kiro",
+          "version": "<version>",
+          "currentModeId": "planner",
+          "modelId": "m1",
+          "reasoning": "low",
+          "availableModes": [
+            {
+              "id": "agent",
+              "name": "Agent"
+            },
+            {
+              "id": "planner",
+              "name": "Planner"
+            }
+          ],
+          "availableModels": [
+            {
+              "id": "m1",
+              "label": "Model one"
+            },
+            {
+              "id": "m2",
+              "label": "Model two",
+              "supportsReasoning": true,
+              "supportedReasoningLevels": [
+                "low",
+                "high"
+              ],
+              "defaultReasoning": "low"
+            }
+          ],
+          "commands": [
+            {
+              "name": "clear"
+            },
+            {
+              "name": "tools"
+            },
+            {
+              "name": "mcp"
+            },
+            {
+              "name": "effort"
+            },
+            {
+              "name": "compact",
+              "description": "Compact"
+            },
+            {
+              "name": "context"
+            },
+            {
+              "name": "usage"
+            }
+          ],
+          "mcpErrors": [
+            {
+              "serverName": "broken",
+              "error": "boom"
+            },
+            {
+              "serverName": "other",
+              "error": "MCP server connection failed"
+            }
+          ],
+          "nativeEngine": "v3"
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_model without a model option",
+    "=newSession3": [
+      {
+        "sessionId": "S3"
+      }
+    ],
+    "perf": [
+      [
+        "measure",
+        "acp:session_new",
+        {
+          "cwd": "/work",
+          "sessionId": "S3"
+        }
+      ]
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ],
+      [
+        "kiro_session_new_done",
+        {
+          "cwd": "/work",
+          "sessionId": "S3",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [],
+          "_meta": {
+            "kiro": {
+              "modelId": "m1"
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "step": "set_model refused",
+    "=setModelMissing": [
+      {
+        "error": "ACPError",
+        "message": "This Kiro session does not expose a model config option"
+      }
+    ]
+  },
+  {
+    "step": "session/new without a sessionId",
+    "=newSessionBad": [
+      {
+        "error": "ACPError",
+        "message": "session/new returned no sessionId"
+      }
+    ],
+    "startup": [
+      [
+        "kiro_session_new_start",
+        {
+          "cwd": "/work",
+          "mcpServerCount": 0
+        }
+      ]
+    ],
+    "wire": [
+      {
+        "jsonrpc": "2.0",
+        "id": 13,
+        "method": "session/new",
+        "params": {
+          "cwd": "/work",
+          "mcpServers": [],
+          "_meta": {
+            "kiro": {
+              "modelId": "m1"
+            }
+          }
+        }
+      }
+    ]
+  }
+]

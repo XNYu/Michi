@@ -42,6 +42,27 @@
     "source": "docs/runtime-capabilities.md"
   },
   {
+    "id": "pages-and-components",
+    "title": "Pages, databases and native components",
+    "summary": "Pages navigation, Assistant, native blocks/databases, tasks and task boards, responsive grid, per-item Sources, layout preferences, write receipts and the component sandbox contract.",
+    "keywords": "pages page spaces database component custom view sandbox props data call onMichiComponentUpdate list_pages read_page edit_page create_page read_database edit_database list_page_components read_page_component save_page_component configure_database_view open_task_database list_tasks task tasks task-view board needsYou 页面 数据库 组件 沙箱 视图 任务 任务库 看板 待办 grid segmentSources sources layout preferences assistant full screen ignore archive responsive 布局 偏好 来源 网格 全屏 all-tasks upkeep suggestion 全部任务",
+    "source": "docs/pages-and-components.md"
+  },
+  {
+    "id": "pages-maintenance",
+    "title": "Pages automatic updates and the Meta agent",
+    "summary": "Local Meta agent configuration, initial Home generation, conversation maintenance, catch-up, evidence, protected proposals and durable progress.",
+    "keywords": "pages maintenance meta agent automatic updates first run home conversation completion cursor catch-up reconsider paused runtime kiro claude pi codex crew 后台 自动更新 页面维护 初次生成 补读 追赶 maintenance_list_tasks task database tasks 任务库",
+    "source": "docs/pages-maintenance.md"
+  },
+  {
+    "id": "page-component-design",
+    "title": "Design generated components for Michi Pages",
+    "summary": "Design conventions for native and generated UI, supported theme tokens, sandbox styling limits, authoring workflow and unimplemented design-system follow-ups.",
+    "keywords": "pages component design generated UI theme tokens palette hover tooltip radius typography English Mantine React sandbox styling layout preview 设计规范 生成组件 主题 样式 悬停 提示 字体 圆角",
+    "source": "docs/page-component-design.md"
+  },
+  {
     "id": "permissions",
     "title": "Permissions and tool approvals",
     "summary": "Global/per-chat modes, approval cards, grant lifetimes, revocation and sandbox boundaries.",
@@ -109,7 +130,7 @@
     "title": "Use KiroCrew in Michi",
     "summary": "Official Crew App setup, required MCP and sessionApproval, Sync, Memory and known limits.",
     "keywords": "kirocrew crew gateway mcp sessionApproval sync memory stub routed command changed 接入 记忆 同步 审批",
-    "source": "agents/crew/GETTING_STARTED.md"
+    "source": "../../runtime/src/adapters/crew/GETTING_STARTED.md"
   },
   {
     "id": "remote-backend",

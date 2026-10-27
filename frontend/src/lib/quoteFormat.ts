@@ -1,5 +1,10 @@
+import { formatFileSnapshotContext, type FileReadSnapshot } from '../state/fileFeedback';
+
 const QUOTED_SELECTION_CONTEXT =
   'Context: The user selected the passage below from the previous assistant reply. Treat it as source context, not as text authored by the user.';
+
+const ATTACHED_CONTEXT =
+  'Context: The user attached the material below in Michi: what was on screen, items they handed over (threads, blocks, rows) and any passage they selected. Treat it as source context, not as text authored by the user.';
 
 /**
  * Optional source metadata for the selection. When the selection comes from
@@ -18,7 +23,22 @@ export interface QuoteSource {
    * character offsets in the source document.
    */
   selector?: import('./textSelector').TextSelector;
+  snapshot?: FileReadSnapshot;
 }
+
+/**
+ * Context the user attached rather than selected from a reply: the ⌘J
+ * assistant's page line and the Michi items handed to it (any selection the
+ * user also quoted rides in the same block).
+ */
+export interface AttachedQuoteSource {
+  type: 'attached';
+}
+
+/** Every source a quote's framing can name: an artifact, or attached context. */
+export type AnyQuoteSource = QuoteSource | AttachedQuoteSource;
+
+export const ATTACHED_QUOTE_SOURCE: AttachedQuoteSource = { type: 'attached' };
 
 export function formatQuoteBlock(quote: string): string {
   return quote
@@ -29,9 +49,13 @@ export function formatQuoteBlock(quote: string): string {
     .join('\n');
 }
 
-export function formatQuotedSelectionContext(quote: string, source?: QuoteSource): string {
+export function formatQuotedSelectionContext(quote: string, source?: AnyQuoteSource): string {
   const trimmedQuote = quote.trim();
   if (!trimmedQuote) return '';
+
+  if (source?.type === 'attached') {
+    return [ATTACHED_CONTEXT, '', 'Attached context:', formatQuoteBlock(trimmedQuote)].join('\n');
+  }
 
   if (source?.type === 'artifact') {
     const label = source.name ? `artifact "${source.name}"` : 'an artifact document';
@@ -42,7 +66,9 @@ export function formatQuotedSelectionContext(quote: string, source?: QuoteSource
       'Selected passage:',
       formatQuoteBlock(trimmedQuote),
       '',
-      `The full document is available at \`${source.filePath}\`. Read it if you need more context.`,
+      source.snapshot
+        ? formatFileSnapshotContext(source.snapshot)
+        : `The full document is available at \`${source.filePath}\`. Read it if you need more context.`,
     ].join('\n');
   }
 
@@ -62,7 +88,7 @@ export function formatQuotedSelectionContext(quote: string, source?: QuoteSource
  * When `source` is provided, the context prefix identifies the artifact
  * document and appends a "read the full document" instruction for the agent.
  */
-export function formatQuotedMessage(quote: string, prompt: string, source?: QuoteSource): string {
+export function formatQuotedMessage(quote: string, prompt: string, source?: AnyQuoteSource): string {
   const trimmedQuote = quote.trim();
   const trimmedPrompt = prompt.trim();
   if (!trimmedQuote) return trimmedPrompt;

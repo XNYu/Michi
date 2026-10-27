@@ -1,11 +1,5 @@
 // backend/src/agents/ports.ts
-import type {
-  RuntimeId,
-  AgentReasoning,
-  RuntimePermissionBroker,
-  RuntimeSessionOwner,
-  RuntimeToolProfile,
-} from "./types";
+import type { RuntimeId, AgentReasoning } from "./types";
 
 /** Minimal structural shapes the runtime layer reads. Michi's richer DB rows
  *  are structurally assignable to these. `parent_node_id` / `owner_user_id`
@@ -76,13 +70,4 @@ export interface AgentConfigResolver {
   getAgentConfig(userId?: string): AgentConfigLike;
   resolveModel(runtimeId: string, userId?: string): string;
   resolveReasoning(runtimeId: string, userId?: string): AgentReasoning | undefined;
-}
-
-/** Optional adapter hooks used by Agent Run executors. They live in the
- * runtime port layer so the runtime package does not depend on coordinator or
- * repository implementations. */
-export interface RuntimeRunBindings {
-  owner: RuntimeSessionOwner;
-  toolProfile?: RuntimeToolProfile;
-  permissionBroker?: RuntimePermissionBroker;
 }

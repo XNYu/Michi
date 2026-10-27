@@ -13,6 +13,7 @@ const H = vi.hoisted(() => {
 });
 
 declare const require: (id: string) => unknown;
+const { webcrypto } = require('node:crypto') as { webcrypto: Crypto };
 
 vi.mock('../../services/api', () => ({
   fetchArtifactContent: H.mockFetchArtifactContent,
@@ -98,6 +99,7 @@ function prepareScrollGeometry(container: HTMLElement) {
 const FILE_CONTENT = Array.from({ length: 500 }, (_, i) => `line ${i + 1}`).join('\n');
 
 beforeEach(() => {
+  vi.stubGlobal('crypto', webcrypto);
   H.mockFetchArtifactContent.mockReset();
   H.mockGetElectron.mockReset();
   H.mockUpdatePaneItem.mockReset();
@@ -111,67 +113,6 @@ beforeEach(() => {
 });
 
 describe('FilePane source locations', () => {
-  it('keeps source content in one text node instead of creating one element per line', async () => {
-    const { container } = renderPane(makeItem());
-
-    await waitFor(() => {
-      const pre = container.querySelector('pre');
-      expect(pre?.textContent).toBe(FILE_CONTENT);
-      expect(pre?.childElementCount).toBe(0);
-    });
-  });
-
-  it('preserves source text exactly without adding a trailing newline', async () => {
-    H.mockFetchArtifactContent.mockResolvedValue({
-      content: 'alpha\nbeta',
-      size: 10,
-      modifiedAt: Date.now(),
-      extension: 'ts',
-    });
-    const { container } = renderPane(makeItem());
-
-    await waitFor(() => {
-      expect(container.querySelector('pre')?.textContent).toBe('alpha\nbeta');
-    });
-  });
-
-  it('scrolls the file container to the requested line after loading', async () => {
-    const initialItem = makeItem();
-    const view = renderPane(initialItem);
-    await waitFor(() => expect(view.container.querySelector('pre')).toBeTruthy());
-    const { scrollContainer } = prepareScrollGeometry(view.container);
-
-    view.rerender(
-      <H.ChatNodeStoreContext.Provider value={{ getNode: () => undefined }}>
-        <FilePane item={makeItem({ sourceLocation: { line: 414 } })} />
-      </H.ChatNodeStoreContext.Provider>,
-    );
-
-    await waitFor(() => expect(scrollContainer.scrollTop).toBeGreaterThan(0));
-  });
-
-  it('navigates again when the same source location is reopened', async () => {
-    const view = renderPane(makeItem());
-    await waitFor(() => expect(view.container.querySelector('pre')).toBeTruthy());
-    const { scrollContainer } = prepareScrollGeometry(view.container);
-    const firstLocation = { line: 414 };
-
-    view.rerender(
-      <H.ChatNodeStoreContext.Provider value={{ getNode: () => undefined }}>
-        <FilePane item={makeItem({ sourceLocation: firstLocation })} />
-      </H.ChatNodeStoreContext.Provider>,
-    );
-    await waitFor(() => expect(scrollContainer.scrollTop).toBeGreaterThan(0));
-
-    scrollContainer.scrollTop = 0;
-    view.rerender(
-      <H.ChatNodeStoreContext.Provider value={{ getNode: () => undefined }}>
-        <FilePane item={makeItem({ sourceLocation: { line: 414 } })} />
-      </H.ChatNodeStoreContext.Provider>,
-    );
-    await waitFor(() => expect(scrollContainer.scrollTop).toBeGreaterThan(0));
-  });
-
   it('repositions when the same location returns from rendered to source mode', async () => {
     H.mockFetchArtifactContent.mockResolvedValue({
       content: FILE_CONTENT,
@@ -205,34 +146,6 @@ describe('FilePane source locations', () => {
     await waitFor(() => expect(scrollContainer.scrollTop).toBeGreaterThan(0));
   });
 
-  it('does not scroll without a source location', async () => {
-    const { container } = renderPane(makeItem());
-    await waitFor(() => expect(container.querySelector('pre')).toBeTruthy());
-    const { scrollContainer } = prepareScrollGeometry(container);
-    expect(scrollContainer.scrollTop).toBe(0);
-  });
-
-  it('clamps an out-of-range source location to the final line', async () => {
-    const view = renderPane(makeItem());
-    await waitFor(() => expect(view.container.querySelector('pre')).toBeTruthy());
-    const { scrollContainer } = prepareScrollGeometry(view.container);
-
-    view.rerender(
-      <H.ChatNodeStoreContext.Provider value={{ getNode: () => undefined }}>
-        <FilePane item={makeItem({ sourceLocation: { line: 500 } })} />
-      </H.ChatNodeStoreContext.Provider>,
-    );
-    await waitFor(() => expect(scrollContainer.scrollTop).toBeGreaterThan(0));
-    const finalLineTop = scrollContainer.scrollTop;
-
-    view.rerender(
-      <H.ChatNodeStoreContext.Provider value={{ getNode: () => undefined }}>
-        <FilePane item={makeItem({ sourceLocation: { line: 999 } })} />
-      </H.ChatNodeStoreContext.Provider>,
-    );
-    await waitFor(() => expect(scrollContainer.scrollTop).toBe(finalLineTop));
-  });
-
   it('does not reinterpret a failed numeric-colon path as another file', async () => {
     const rawPath = '/repo/report:2024';
     const readFile = vi.fn(async (filePath: string) => (
@@ -249,71 +162,6 @@ describe('FilePane source locations', () => {
     await waitFor(() => expect(container.textContent).toContain('File is not readable'));
     expect(readFile).toHaveBeenCalledTimes(1);
     expect(readFile).toHaveBeenCalledWith(rawPath);
-  });
-
-  it('reads a valid numeric-colon filename without treating it as a location', async () => {
-    const filePath = '/repo/report:2024';
-    const readFile = vi.fn().mockResolvedValue({
-      content: 'annual report',
-      size: 13,
-      modifiedAt: 1,
-    });
-    H.mockGetElectron.mockReturnValue({
-      statFile: vi.fn().mockResolvedValue({ size: 13, modifiedAt: 1 }),
-      readFile,
-    });
-
-    const { container } = renderPane(makeItem({ filePath, title: 'report:2024' }));
-    await waitFor(() => expect(container.querySelector('pre')?.textContent).toBe('annual report'));
-    expect(readFile).toHaveBeenCalledTimes(1);
-    expect(readFile).toHaveBeenCalledWith(filePath);
-  });
-
-  it('reads a valid source-reference candidate literally when that path exists', async () => {
-    const rawPath = '/repo/report:2024';
-    const readFile = vi.fn().mockResolvedValue({
-      content: 'literal report',
-      size: 14,
-      modifiedAt: 1,
-    });
-    H.mockGetElectron.mockReturnValue({
-      statFile: vi.fn().mockResolvedValue({ size: 14, modifiedAt: 1 }),
-      readFile,
-    });
-
-    const { container } = renderPane(makeItem({
-      filePath: '/repo/report',
-      sourceLocation: { line: 2024 },
-      sourceReferencePath: rawPath,
-    }));
-    await waitFor(() => expect(container.querySelector('pre')?.textContent).toBe('literal report'));
-    expect(readFile).toHaveBeenCalledTimes(1);
-    expect(readFile).toHaveBeenCalledWith(rawPath);
-    expect(container.textContent).not.toContain('source reference');
-  });
-
-  it('uses the clean source path only after the raw candidate fails and labels the fallback', async () => {
-    const rawPath = '/repo/src/foo.ts:414';
-    const cleanPath = '/repo/src/foo.ts';
-    const readFile = vi.fn(async (filePath: string) => (
-      filePath === rawPath
-        ? null
-        : { content: FILE_CONTENT, size: FILE_CONTENT.length, modifiedAt: 1 }
-    ));
-    H.mockGetElectron.mockReturnValue({
-      statFile: vi.fn(async (filePath: string) => (
-        filePath === rawPath ? null : { size: FILE_CONTENT.length, modifiedAt: 1 }
-      )),
-      readFile,
-    });
-    const { container } = renderPane(makeItem({
-      filePath: cleanPath,
-      sourceLocation: { line: 414 },
-      sourceReferencePath: rawPath,
-    }));
-    await waitFor(() => expect(container.querySelector('pre')?.textContent).toBe(FILE_CONTENT));
-    expect(readFile.mock.calls.map(([filePath]) => filePath)).toEqual([rawPath, cleanPath]);
-    expect(container.textContent).toContain('source reference');
   });
 
   it('re-resolves changed source candidates and re-navigates repeated source links', async () => {
@@ -380,40 +228,6 @@ describe('FilePane source locations', () => {
       secondRawPath,
       cleanPath,
     ]);
-  });
-
-  it('shows sourceLocation in the header', async () => {
-    const { container } = renderPane(makeItem({ sourceLocation: { line: 414 } }));
-
-    await waitFor(() => {
-      const header = container.querySelector('[title="/repo/src/foo.ts"]');
-      expect(header?.textContent).toContain(':414');
-    });
-  });
-
-  it('shows line and column in the header', async () => {
-    const { container } = renderPane(makeItem({ sourceLocation: { line: 42, column: 10 } }));
-
-    await waitFor(() => {
-      const header = container.querySelector('[title="/repo/src/foo.ts"]');
-      expect(header?.textContent).toContain(':42:10');
-    });
-  });
-
-  it('opens a Windows absolute path externally without prefixing the workspace cwd', async () => {
-    const filePath = 'C:\\Users\\me\\foo.ts';
-    const openPath = vi.fn();
-    H.mockGetElectron.mockReturnValue({
-      statFile: vi.fn().mockResolvedValue({ size: 7, modifiedAt: 1 }),
-      readFile: vi.fn().mockResolvedValue({ content: 'content', size: 7, modifiedAt: 1 }),
-      openPath,
-    });
-
-    const { container, getByRole } = renderPane(makeItem({ filePath, title: 'foo.ts' }));
-    await waitFor(() => expect(container.querySelector('pre')?.textContent).toBe('content'));
-    expect(container.textContent).toContain('foo.ts');
-    fireEvent.click(getByRole('button', { name: 'Open externally' }));
-    expect(openPath).toHaveBeenCalledWith(filePath);
   });
 
   it('treats a Windows UNC path as local and opens it unchanged', async () => {

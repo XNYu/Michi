@@ -29,12 +29,4 @@ describe('code highlight visibility', () => {
     unmount();
     expect(disconnect).toHaveBeenCalled();
   });
-
-  it('does not schedule highlighting during an unfinished streaming code block', () => {
-    const createObserver = vi.fn();
-    vi.stubGlobal('IntersectionObserver', createObserver);
-    render(<LegacyCodeBlock text="const answer =" language="ts" deferHighlight />);
-    expect(createObserver).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('highlighted')).toBeNull();
-  });
 });

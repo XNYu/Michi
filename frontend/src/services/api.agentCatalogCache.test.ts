@@ -64,5 +64,20 @@ describe('agent catalog request caching', () => {
     await listAgentModels();
     await listAgentModels();
     expect(fetch).toHaveBeenCalledTimes(5);
+    expect(new URL(fetch.mock.calls[0][0]).searchParams.get('expectedRuntime')).toBe('cache-active');
   });
+});
+
+it('does not reuse a remote catalog snapshot after the connection generation changes', async () => {
+  const { markBackendConnectionUnavailable, markBackendConnectionReady } = await import('../config/backendConnectionState');
+  const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(catalog('before-disconnect'))))
+    .mockResolvedValueOnce(new Response(JSON.stringify(catalog('after-reconnect'))));
+  vi.stubGlobal('fetch', fetchMock);
+  const opts = { connectionId: 'catalog-generation' };
+  expect((await fetchRuntimeCatalog('runtime-generation', undefined, opts)).models[0].id).toBe('before-disconnect');
+  markBackendConnectionUnavailable('catalog-generation');
+  markBackendConnectionReady('catalog-generation');
+  expect((await fetchRuntimeCatalog('runtime-generation', undefined, opts)).models[0].id).toBe('after-reconnect');
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  vi.unstubAllGlobals();
 });

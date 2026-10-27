@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 test('the Home agent pick survives a reload and applies to the next thread', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -44,7 +45,7 @@ test('the Home agent pick survives a reload and applies to the next thread', asy
   await page.reload();
   await expect(page.locator('[title^="Switch agent"]').first()).toHaveAttribute('title', 'Switch agent — Plan');
 
-  await page.locator('[contenteditable="true"]').first().fill('Plan the release');
+  await page.locator(COMPOSER_EDITOR).first().fill('Plan the release');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await expect.poll(() => ensureSessionBodies.at(-1)?.modeId).toBe('plan');
 });

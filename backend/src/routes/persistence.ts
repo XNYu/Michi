@@ -1,4 +1,7 @@
+import { jsonConfigErrorResponse } from './jsonConfigErrorResponse';
 import { urlOpenRequests } from '../services/urlOpenRequests';
+import { requestOwnerUserId } from '../services/accessPolicy';
+import { requireRequestAccess } from './middleware/sessionAccess';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { log } from '../services/logger';
@@ -23,15 +26,21 @@ import { normalizeIncomingMessageRow } from '../services/messageSerialization';
 import { requireWorkspaceOwner, requireNodeOwner } from './middleware/ownership';
 import { ensureDurableGraphNode } from '../services/graphCommands';
 import { applyWorkspaceCommands } from '../services/domainCommands';
+import { domainErrorResponse } from './domainErrorResponse';
 import { loadProfileActivity } from '../services/profileActivity';
 import { extractNodeTree, planNodeExtraction } from '../services/extractNodeTree';
 import { acquireSessionRestoreLock } from '../services/nativeResume';
 import { chatHub } from '../agents/chatHub';
 import { dropSessionForOwner, getSessionForOwner } from '../agents/sessionRegistry';
+import { chatOwner } from '../agents/ownerMapping';
 import { getRuntime } from '../agents/registry';
+
+/** A node id as Michi mints them (and as assistant links carry them). */
+const NODE_ID_SHAPE = /^[A-Za-z0-9._:~@+=-]{1,128}$/;
 
 export function setupPersistenceRoutes(): express.Router {
   const router = express.Router();
+  router.use(requireRequestAccess);
 
   router.post('/workspaces/:id/nodes/:nodeId/extract-tree', requireWorkspaceOwner, async (req, res) => {
     const { id: workspaceId, nodeId } = req.params;
@@ -41,7 +50,7 @@ export function setupPersistenceRoutes(): express.Router {
     }
     const releases: Array<() => void> = [];
     try {
-      const userId = req.user?.id;
+      const userId = requestOwnerUserId(req);
       // The caller retains treeId across an uncertain response. A retry reads
       // the committed result without copying history or resetting a session again.
       if (listTrees(workspaceId, userId).some(tree => tree.id === treeId && tree.root_node_id === nodeId)) {
@@ -61,7 +70,7 @@ export function setupPersistenceRoutes(): express.Router {
       assertIdle();
       // Rebuild this root from its new durable transcript on the next send.
       // Reusing its old runtime would retain the old parent-chain pointer.
-      const owner = { kind: 'chat_node' as const, nodeId };
+      const owner = chatOwner(nodeId);
       const session = getSessionForOwner(nodeId, owner, userId ?? null);
       if (session) await getRuntime(session.runtimeId)?.releaseSession(nodeId, owner);
       dropSessionForOwner(nodeId, owner);
@@ -102,11 +111,14 @@ export function setupPersistenceRoutes(): express.Router {
       if (!getNode(nodeId)) {
         const prerequisite = req.body?.graphPrerequisite;
         if (prerequisite?.node?.id !== nodeId) return res.status(409).json({ error: 'durable node prerequisite required' });
-        ensureDurableGraphNode({ ...prerequisite, ownerUserId: process.env.MICHI_CLOUD === '1' ? req.user!.id : null });
+        ensureDurableGraphNode({ ...prerequisite, ownerUserId: (requestOwnerUserId(req) ?? null) });
       }
       writeNodePermissionMode(nodeId, req.body.mode, req.user?.id);
       res.json({ mode: req.body.mode, effectiveMode: resolveChatPermissionMode(nodeId, req.user?.id) });
-    } catch (err) { res.status(409).json({ error: (err as Error).message }); }
+    } catch (err) {
+      const failure = domainErrorResponse(err);
+      res.status(failure.status).json({ error: failure.error });
+    }
   });
 
   router.get('/persistence/capabilities', (_req, res) => {
@@ -129,7 +141,7 @@ export function setupPersistenceRoutes(): express.Router {
 
   router.get('/profile/activity', (req, res) => {
     const timeZone = typeof req.query.timeZone === 'string' ? req.query.timeZone : 'UTC';
-    const userId = req.user?.id;
+    const userId = requestOwnerUserId(req);
     if (process.env.MICHI_CLOUD === '1' && !userId) {
       return res.status(401).json({ error: 'unauthorized' });
     }
@@ -159,7 +171,7 @@ export function setupPersistenceRoutes(): express.Router {
   // List all workspaces (lightweight, no messages)
   router.get('/workspaces', (req, res) => {
     try {
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       const workspaces = listWorkspaces(userId);
       res.json({ workspaces });
     } catch (err) {
@@ -173,7 +185,7 @@ export function setupPersistenceRoutes(): express.Router {
   //   (default) → full snapshot including every message body (legacy path).
   router.get('/workspaces/all', (req, res) => {
     try {
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       const meta = req.query.meta === '1' || req.query.meta === 'true';
       const data = meta ? loadAllWorkspacesMeta(userId) : loadAllWorkspaces(userId);
       res.json({ workspaces: data });
@@ -186,7 +198,7 @@ export function setupPersistenceRoutes(): express.Router {
   // activated / opened and its nodes are still unloaded placeholders.
   router.get('/workspaces/:id/trees/:treeId/messages', requireWorkspaceOwner, (req, res) => {
     try {
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       const messages = loadTreeMessages(req.params.id, req.params.treeId, userId);
       res.json({ messages });
     } catch (err) {
@@ -197,7 +209,7 @@ export function setupPersistenceRoutes(): express.Router {
   // Get full workspace with all nested data
   router.get('/workspaces/:id', requireWorkspaceOwner, (req, res) => {
     try {
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       const data = loadFullWorkspace(req.params.id, userId);
       if (!data) return res.status(404).json({ error: 'Workspace not found' });
       res.json(data);
@@ -220,13 +232,12 @@ export function setupPersistenceRoutes(): express.Router {
       }
       const result = ensureDurableGraphNode({
         ...req.body,
-        ownerUserId: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
+        ownerUserId: (requestOwnerUserId(req) ?? null),
       });
       res.json({ ok: true, ...result });
     } catch (err) {
-      const message = (err as Error).message;
-      const status = /not found/i.test(message) ? 404 : /must|different|same workspace|same tree/i.test(message) ? 409 : 500;
-      res.status(status).json({ error: message });
+      const failure = domainErrorResponse(err);
+      res.status(failure.status).json({ error: failure.error });
     }
   });
 
@@ -238,15 +249,14 @@ export function setupPersistenceRoutes(): express.Router {
   }, (req, res) => {
     try {
       const result = applyWorkspaceCommands(req.params.id, {
-        operationId: String(req.body?.operationId ?? ''),
-        commands: Array.isArray(req.body?.commands) ? req.body.commands : [],
-        ownerUserId: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
+        operationId: req.body?.operationId,
+        commands: req.body?.commands,
+        ownerUserId: (requestOwnerUserId(req) ?? null),
       });
       res.json({ ok: true, ...result });
     } catch (err) {
-      const message = (err as Error).message;
-      const status = /not found/i.test(message) ? 404 : /must|different|same workspace|same tree|reused/i.test(message) ? 409 : 500;
-      res.status(status).json({ error: message });
+      const failure = domainErrorResponse(err);
+      res.status(failure.status).json({ error: failure.error });
     }
   });
 
@@ -281,7 +291,7 @@ export function setupPersistenceRoutes(): express.Router {
         folders: req.body.folders ? JSON.stringify(req.body.folders) : null,
         // In cloud mode, stamp owner on INSERT; COALESCE in saveWorkspace
         // preserves the existing owner on UPDATE so this null is fine there.
-        owner_user_id: process.env.MICHI_CLOUD === '1' ? (req.user?.id ?? null) : null,
+        owner_user_id: (requestOwnerUserId(req) ?? null),
       };
       saveWorkspace(ws);
       log.info('workspace', existed ? 'updated' : 'created', { id: ws.id, name: ws.name, cwd: ws.cwd ?? undefined });
@@ -295,7 +305,7 @@ export function setupPersistenceRoutes(): express.Router {
   // Delete workspace (cascade)
   router.delete('/workspaces/:id', requireWorkspaceOwner, (req, res) => {
     try {
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       deleteWorkspace(req.params.id, userId);
       log.info('workspace', 'deleted', { id: req.params.id });
       res.json({ ok: true });
@@ -456,7 +466,7 @@ export function setupPersistenceRoutes(): express.Router {
       }
       // Cloud-mode: caller must own BOTH source and target workspaces.
       if (process.env.MICHI_CLOUD === '1') {
-        const userId = req.user?.id;
+        const userId = requestOwnerUserId(req);
         const src = getWorkspace(fromWorkspaceId);
         const dst = getWorkspace(toWorkspaceId);
         if (!src || src.owner_user_id !== userId) return res.status(404).json({ error: 'not_found' });
@@ -465,7 +475,7 @@ export function setupPersistenceRoutes(): express.Router {
       if (fromWorkspaceId === toWorkspaceId) {
         return res.json({ ok: true, movedNodes: 0, movedEdges: 0, droppedEdges: 0 });
       }
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       const result = moveTreeToWorkspace(treeId, fromWorkspaceId, toWorkspaceId, userId);
       log.info('tree', 'moved', { treeId, fromWorkspaceId, toWorkspaceId, ...result });
       res.json({ ok: true, ...result });
@@ -476,10 +486,32 @@ export function setupPersistenceRoutes(): express.Router {
     }
   });
 
+  // Which workspace and thread hold a live node: a window loads one thread
+  // it doesn't have yet (an assistant link to a thread made in another
+  // window) without reading every workspace. Deleted nodes and workspaces
+  // are not found; requireNodeOwner hides other owners' nodes in cloud mode.
+  // The id is checked before anything (the ownership check included) reads it.
+  const requireNodeIdShape = (req: express.Request<{ nodeId: string }>, res: express.Response, next: express.NextFunction) => {
+    if (!NODE_ID_SHAPE.test(req.params.nodeId ?? '')) {
+      res.status(400).json({ error: 'nodeId must be 1-128 characters of letters, digits and ._:~@+=-' });
+      return;
+    }
+    next();
+  };
+  router.get('/nodes/:nodeId/workspace', requireNodeIdShape, requireNodeOwner, (req, res) => {
+    const { nodeId } = req.params;
+    const node = getNode(nodeId);
+    const workspace = node ? getWorkspace(node.workspace_id) : null;
+    if (!node || node.deleted_at != null || !workspace || workspace.deleted_at != null) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    res.json({ workspaceId: workspace.id, treeId: node.tree_id ?? null });
+  });
+
   // Save a single message to a node
   router.post('/nodes/:nodeId/messages', requireNodeOwner, (req, res) => {
     try {
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       saveMessage(normalizeIncomingMessageRow(
         req.body ?? {},
         req.params.nodeId,
@@ -557,7 +589,7 @@ export function setupPersistenceRoutes(): express.Router {
   // Stored inside workspaces.settings JSON. Default ON.
   router.get('/workspaces/:id/ai-global-context', requireWorkspaceOwner, (req, res) => {
     try {
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       const enabled = getAiGlobalContext(req.params.id, userId);
       res.json({ enabled });
     } catch (err) {
@@ -572,7 +604,7 @@ export function setupPersistenceRoutes(): express.Router {
       return res.status(400).json({ error: 'enabled must be a boolean' });
     }
     try {
-      const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
+      const userId: string | undefined = requestOwnerUserId(req);
       setAiGlobalContext(id, enabled, userId);
       res.json({ ok: true, enabled });
     } catch (err) {
@@ -599,7 +631,8 @@ export function setupPersistenceRoutes(): express.Router {
       }
       res.json({ prefs: { ...prefs, ...permissionPrefs } });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      const mapped = jsonConfigErrorResponse(err);
+      res.status(mapped?.status ?? 500).json(mapped?.body ?? { error: (err as Error).message });
     }
   });
 
@@ -608,7 +641,8 @@ export function setupPersistenceRoutes(): express.Router {
       writePrefs(req.body);
       res.json({ ok: true });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      const mapped = jsonConfigErrorResponse(err);
+      res.status(mapped?.status ?? 500).json(mapped?.body ?? { error: (err as Error).message });
     }
   });
 

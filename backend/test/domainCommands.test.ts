@@ -168,6 +168,34 @@ describe('workspace domain commands', () => {
     assert.equal(getWorkspace('ws-1')?.backend, 'claude');
   });
 
+  test('workspace commands persist folder configuration', () => {
+    const folders = JSON.stringify([{ id: 'root', path: '/workspace', addedAt: 1 }, { id: 'extra', path: '/reference', addedAt: 2 }]);
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'folders-seed',
+      commands: [{ type: 'workspace.upsert', payload: { id: 'ws-1', name: 'Folders', cwd: '/workspace', folders } }],
+    });
+
+    assert.equal(getWorkspace('ws-1')?.cwd, '/workspace');
+    assert.equal(getWorkspace('ws-1')?.folders, folders);
+  });
+
+  test('workspace commands preserve omitted folders and clear an explicit null', () => {
+    const folders = JSON.stringify([{ id: 'root', path: '/workspace', addedAt: 1 }]);
+    saveWorkspace({ id: 'ws-1', name: 'Before', cwd: '/workspace', folders, created_at: 1, updated_at: 1 });
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'folders-rename',
+      commands: [{ type: 'workspace.upsert', payload: { id: 'ws-1', name: 'After' } }],
+    });
+    assert.equal(getWorkspace('ws-1')?.folders, folders);
+
+    applyWorkspaceCommands('ws-1', {
+      operationId: 'folders-clear',
+      commands: [{ type: 'workspace.upsert', payload: { id: 'ws-1', cwd: null, folders: null } }],
+    });
+    assert.equal(getWorkspace('ws-1')?.folders, null);
+    assert.equal(getWorkspace('ws-1')?.cwd, null);
+  });
+
   test('rejects tree, edge, and context ids that already belong to another workspace', () => {
     applyWorkspaceCommands('ws-a', {
       operationId: 'seed-collision-a',

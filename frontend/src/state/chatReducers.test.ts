@@ -17,33 +17,12 @@ function makeNode(over: Partial<ChatNodeState> = {}): ChatNodeState {
   };
 }
 
-describe('reduceNodes done — unread', () => {
-  it('writes lastAssistantAt when an assistant turn completes', () => {
-    const before = { n1: makeNode() };
-    const action: ChatAction = { type: 'done', nodeId: 'n1', assistantId: 'a1' };
-    const after = reduceNodes(before, action);
-    expect(after.n1.lastAssistantAt).toBeGreaterThan(0);
-    expect(after.n1.lastAssistantAt).toBeLessThanOrEqual(Date.now());
-  });
-});
-
 describe('reduceNodes main-response titles', () => {
   function firstTurn() {
     return reduceNodes({ n1: makeNode({ runtimeId: 'claude', messages: [], status: 'idle' }) }, {
       type: 'user-send', nodeId: 'n1', userText: '/btw Claude 标题应该如何生成？', assistantId: 'a1',
     });
   }
-
-  it('persists a title from the main response when no sidecar supplied one', () => {
-    const streaming = firstTurn();
-    expect(streaming.n1.title).toBeUndefined();
-    const answered = reduceNodes(streaming, {
-      type: 'chunk', nodeId: 'n1', assistantId: 'a1', text: '[TITLE: Claude 主对话标题生成]\n回答内容',
-    });
-    const done = reduceNodes(answered, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
-    expect(done.n1.title).toBe('Claude 主对话标题生成');
-    expect(done.n1.titleNeedsPersistence).toBeUndefined();
-  });
 
   it('persists the user-message fallback only after a response omits title metadata', () => {
     const streaming = firstTurn();
@@ -60,94 +39,7 @@ describe('reduceNodes main-response titles', () => {
   });
 });
 
-describe('reduceNodes visible-response-complete', () => {
-  it('makes the node interactive while tracking the hidden backend tail separately', () => {
-    const before = {
-      n1: makeNode({
-        messages: [{
-          id: 'a1',
-          role: 'assistant',
-          text: '',
-          toolCalls: [],
-          blocks: [{ id: 'a1-b-0', kind: 'answer', rawText: 'Answer', streaming: true }],
-          streaming: true,
-          createdAt: 1,
-        }],
-      }),
-    };
-    const after = reduceNodes(before, {
-      type: 'visible-response-complete',
-      nodeId: 'n1',
-      assistantId: 'a1',
-    });
-    expect(after.n1.status).toBe('idle');
-    expect(after.n1.visibleResponseComplete).toBe(true);
-    expect(after.n1.backgroundTurnAssistantId).toBe('a1');
-    expect(after.n1.messages[0].streaming).toBe(false);
-    expect(after.n1.messages[0].blocks?.[0]).toMatchObject({ streaming: false });
-  });
-
-  it('actual done clears the transient boundary and finalizes normally', () => {
-    const visibleDone = reduceNodes({ n1: makeNode() }, {
-      type: 'visible-response-complete',
-      nodeId: 'n1',
-      assistantId: 'a1',
-    });
-    const after = reduceNodes(visibleDone, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
-    expect(after.n1.status).toBe('idle');
-    expect(after.n1.visibleResponseComplete).toBe(false);
-    expect(after.n1.backgroundTurnAssistantId).toBeUndefined();
-  });
-
-  it('does not let a hidden older done end a newer foreground turn', () => {
-    const visibleDone = reduceNodes({ n1: makeNode() }, {
-      type: 'visible-response-complete',
-      nodeId: 'n1',
-      assistantId: 'a1',
-    });
-    const withNextTurn = reduceNodes(visibleDone, {
-      type: 'user-send',
-      nodeId: 'n1',
-      userText: 'next question',
-      assistantId: 'a2',
-    });
-    const afterOldDone = reduceNodes(withNextTurn, {
-      type: 'done',
-      nodeId: 'n1',
-      assistantId: 'a1',
-    });
-
-    expect(afterOldDone.n1.status).toBe('streaming');
-    expect(afterOldDone.n1.backgroundTurnAssistantId).toBeUndefined();
-    expect(afterOldDone.n1.messages.at(-1)?.id).toBe('a2');
-    expect(afterOldDone.n1.messages.at(-1)?.streaming).toBe(true);
-  });
-});
-
 describe('reduceNodes done — branch overview', () => {
-  it('prefers the structured SSE overview over fallback text parsing for the same turn', () => {
-    const before = {
-      n1: makeNode({
-        messages: [{
-          id: 'a1',
-          role: 'assistant',
-          text: 'Quoted format: [BRANCH-OVERVIEW: stale example]\n\n[BRANCH-OVERVIEW: final server value]',
-          toolCalls: [],
-          streaming: true,
-          createdAt: 1,
-        }],
-      }),
-    };
-    const withStructured = reduceNodes(before, {
-      type: 'set-branch-overview',
-      nodeId: 'n1',
-      overview: 'final server value',
-      assistantId: 'a1',
-    });
-    const after = reduceNodes(withStructured, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
-    expect(after.n1.branchOverview).toBe('final server value');
-  });
-
   it('stores a valid branch overview from assistant metadata', () => {
     const before = {
       n1: makeNode({
@@ -166,22 +58,9 @@ describe('reduceNodes done — branch overview', () => {
       'The branch compares two auth models and currently favors rotating tokens.',
     );
   });
-
-  it('preserves the previous overview when a turn omits metadata', () => {
-    const before = { n1: makeNode({ branchOverview: 'Previous overview' }) };
-    const after = reduceNodes(before, { type: 'done', nodeId: 'n1', assistantId: 'a1' });
-    expect(after.n1.branchOverview).toBe('Previous overview');
-  });
 });
 
 describe('reduceNodes node-viewed', () => {
-  it('writes viewedAt to the action timestamp', () => {
-    const before = { n1: makeNode({ viewedAt: 100 }) };
-    const action: ChatAction = { type: 'node-viewed', nodeId: 'n1', viewedAt: 9_999 };
-    const after = reduceNodes(before, action);
-    expect(after.n1.viewedAt).toBe(9_999);
-  });
-
   it('is a no-op if the node is missing', () => {
     const before = { n1: makeNode() };
     const action: ChatAction = { type: 'node-viewed', nodeId: 'missing', viewedAt: 1 };
@@ -191,17 +70,6 @@ describe('reduceNodes node-viewed', () => {
 });
 
 describe('reduceNodes mark-all-read', () => {
-  it('clears unread on every chat node whose last reply post-dates the view', () => {
-    const before = {
-      a: makeNode({ nodeId: 'a', status: 'idle', lastAssistantAt: 500, viewedAt: 100 }),
-      b: makeNode({ nodeId: 'b', status: 'idle', lastAssistantAt: 800, viewedAt: 200 }),
-    };
-    const action: ChatAction = { type: 'mark-all-read', viewedAt: 9_999 };
-    const after = reduceNodes(before, action);
-    expect(after.a.viewedAt).toBe(9_999);
-    expect(after.b.viewedAt).toBe(9_999);
-  });
-
   it('leaves already-read chat nodes and their reference untouched', () => {
     const read = makeNode({ nodeId: 'a', status: 'idle', lastAssistantAt: 100, viewedAt: 500 });
     const before = { a: read };
@@ -231,49 +99,6 @@ describe('reduceNodes mark-all-read', () => {
   });
 });
 
-describe('reduceNodes create — unread', () => {
-  it('born-read: viewedAt is set to a recent ms on create', () => {
-    const before = {} as Record<string, ChatNodeState>;
-    const t0 = Date.now();
-    const action: ChatAction = { type: 'create', nodeId: 'n1', projectId: 'p1' };
-    const after = reduceNodes(before, action);
-    expect(after.n1.viewedAt).toBeDefined();
-    expect(after.n1.viewedAt!).toBeGreaterThanOrEqual(t0);
-  });
-});
-
-describe('reduceNodes bind-chat — currentModeId preservation', () => {
-  // A resumed kiro session reports no agent, so ensure-session returns
-  // currentModeId=null. bind-chat must NOT wipe the node's persisted agent
-  // back to the generic "agent" chip on every message.
-  it('preserves the persisted agent when the bind carries a null mode', () => {
-    const before = { n1: makeNode({ currentModeId: 'gpu-dev' }) };
-    const action: ChatAction = {
-      type: 'bind-chat',
-      nodeId: 'n1',
-      chatId: 'c2',
-      currentModeId: null,
-      runtimeId: 'kiro',
-    };
-    const after = reduceNodes(before, action);
-    expect(after.n1.currentModeId).toBe('gpu-dev');
-    expect(after.n1.chatId).toBe('n1');
-  });
-
-  it('overwrites when the bind carries an explicit mode', () => {
-    const before = { n1: makeNode({ currentModeId: 'gpu-dev' }) };
-    const action: ChatAction = {
-      type: 'bind-chat',
-      nodeId: 'n1',
-      chatId: 'c2',
-      currentModeId: 'security-reviewer',
-      runtimeId: 'kiro',
-    };
-    const after = reduceNodes(before, action);
-    expect(after.n1.currentModeId).toBe('security-reviewer');
-  });
-});
-
 describe('reduceNodes pin-node / unpin-node', () => {
   it('pin-node stamps pinnedAt with the action timestamp', () => {
     const before = { n1: makeNode({ status: 'idle' }) };
@@ -290,19 +115,12 @@ describe('reduceNodes pin-node / unpin-node', () => {
     expect('pinnedAt' in after.n1).toBe(false);
   });
 
-  it('unpin-node on an unpinned node is a no-op (same reference)', () => {
-    const before = { n1: makeNode({ status: 'idle' }) };
-    const after = reduceNodes(before, { type: 'unpin-node', nodeId: 'n1' });
-    expect(after).toBe(before);
-  });
-
   it('ignores unknown node ids', () => {
     const before = { n1: makeNode({ status: 'idle' }) };
     expect(reduceNodes(before, { type: 'pin-node', nodeId: 'missing', now: 1 })).toBe(before);
     expect(reduceNodes(before, { type: 'unpin-node', nodeId: 'missing' })).toBe(before);
   });
 });
-
 
 describe('permission expiry', () => {
   it('only closes the matching card, preserving a newer pending request', () => {

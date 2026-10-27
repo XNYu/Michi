@@ -11,6 +11,8 @@ import {
   type UpdateAgentDefinitionRequestV1,
 } from 'michi-shared';
 import { getRuntime } from '../agents/registry';
+import { assertModelReasoningCompatible } from '../agents/modelReasoning';
+import type { AgentReasoning } from '../agents/types';
 import { getProviderApiKey } from './secrets';
 import { AgentCapabilityCatalog } from './agentCapabilityCatalog';
 import { AgentDefinitionsRepository } from './agentDefinitionsRepository';
@@ -53,7 +55,7 @@ export interface AgentDefinitionServiceDeps {
 class RegisteredRuntimeReadiness implements RuntimeProfileReadiness {
   constructor(private readonly adapterRegistry?: RuntimeRunAdapterRegistry) {}
 
-  validate(profile: RuntimeProfileV1, ownerUserId: string): void {
+  async validate(profile: RuntimeProfileV1, ownerUserId: string): Promise<void> {
     const runtime = getRuntime(profile.runtimeId);
     if (!runtime) throw new Error(`runtime ${profile.runtimeId} is not available`);
     if (this.adapterRegistry && !this.adapterRegistry.has(profile.runtimeId)) {
@@ -70,6 +72,8 @@ class RegisteredRuntimeReadiness implements RuntimeProfileReadiness {
     if (runtime.capabilities.models && !profile.modelId) {
       throw new Error(`runtime ${profile.runtimeId} requires a model`);
     }
+    await assertModelReasoningCompatible(runtime, profile.modelId, profile.providerId,
+      profile.reasoning as AgentReasoning | null);
     if (runtime.capabilities.apiKeys) {
       if (!profile.providerId) throw new Error(`runtime ${profile.runtimeId} requires a provider credential`);
       const keyOwner = process.env.MICHI_CLOUD === '1' ? ownerUserId : undefined;

@@ -1,9 +1,8 @@
 import type { MenuSection } from '../components/ContextMenu';
 import type { ChatNodeState, Project } from '../state/chatStore';
-import { activeTreeRootNodeId } from '../state/chatStore';
 import { findTreeIdForNode } from '../state/tree';
 
-import { requestDigest } from '../lib/digestPrompt';
+import { requestDigest } from './digestPrompt';
 
 export interface TreeMenuActions {
   openPane: (id: string) => void;
@@ -59,14 +58,14 @@ export function buildTreeContextMenu({
   selection: ReadonlySet<string>;
   actions: TreeMenuActions;
 }): MenuSection[] {
-  const rootId = activeTreeRootNodeId(project) ?? project.chatIds[0];
+  const rootIds = new Set(project.trees.map((tree) => tree.rootNodeId));
   const targetIsSelected = selection.has(targetId);
   const scope: string[] = targetIsSelected && selection.size >= 2
     ? Array.from(selection)
     : [targetId];
   const isMulti = scope.length >= 2;
   const chatScope = scope.filter((id) => nodes[id]?.kind === 'chat');
-  const anyRoot = scope.includes(rootId);
+  const anyRoot = scope.some((id) => rootIds.has(id));
 
   // Map live tree-root nodeId → tree id. Used to decide whether the multi-
   // selection is "all roots" (i.e. archive-able as a batch).
@@ -134,7 +133,7 @@ export function buildTreeContextMenu({
             : [
                 {
                   // Archive each selected node out of the conversation
-                  // (children slide up). Active root is skipped — same
+                  // (children slide up). Tree roots are skipped — same
                   // protection as bulk delete.
                   id: 'archive-nodes',
                   label: anyRoot
@@ -142,7 +141,7 @@ export function buildTreeContextMenu({
                     : `Archive ${scope.length}`,
                   run: () => {
                     for (const id of scope) {
-                      if (id === rootId) continue;
+                      if (rootIds.has(id)) continue;
                       actions.archiveNode(id);
                     }
                     actions.clearSelection();
@@ -164,7 +163,7 @@ export function buildTreeContextMenu({
             keys: 'D',
             run: () => {
               for (const id of scope) {
-                if (id === rootId) continue;
+                if (rootIds.has(id)) continue;
                 actions.deleteNode(id);
               }
               actions.clearSelection();
@@ -177,7 +176,7 @@ export function buildTreeContextMenu({
   }
 
   // Single target
-  const isRoot = targetId === rootId;
+  const isRoot = rootIds.has(targetId);
   const isChat = nodes[targetId]?.kind === 'chat';
   const owningTree = project.trees.find(t => t.id === findTreeIdForNode(targetId, project));
   const canExtract = isChat && !!actions.extractNodeTree && !!owningTree

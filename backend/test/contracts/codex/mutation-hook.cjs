@@ -1,16 +1,16 @@
 // Opt-in, process-local AST mutations. Never rewrites shared workspace files.
 const { readFileSync } = require('node:fs');
-const path = require('node:path');
 const ts = require('typescript');
 
 const mutation = process.env.MICHI_CODEX_CONTRACT_MUTATION;
 const targets = {
-  'compact-spelling': 'codexEventTranslator.ts',
-  'declined-as-completed': 'codexEventTranslator.ts',
-  'question-label-as-id': 'CodexSession.ts',
+  'compact-spelling': 'codexEventTranslator',
+  'declined-as-completed': 'codexEventTranslator',
+  'question-label-as-id': 'CodexSession',
 };
 if (!targets[mutation]) throw new Error(`Unknown contract mutation: ${mutation}`);
-const target = path.resolve(__dirname, '../../../src/agents/codex', targets[mutation]);
+// The file the tests load through the package path, wherever the adapter lives.
+const target = require.resolve(`michi-runtime/internal/adapters/codex/${targets[mutation]}`);
 const original = require.extensions['.ts'];
 require.extensions['.ts'] = (module, filename) => {
   if (filename !== target) return original(module, filename);

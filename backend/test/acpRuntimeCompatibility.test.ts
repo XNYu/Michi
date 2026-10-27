@@ -1,10 +1,11 @@
+import { michiTestHost } from './helpers/michiTestHost';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import * as kiro from '../src/services/acpClient';
+import * as kiro from 'michi-runtime/internal/adapters/acp/errors';
 import * as generic from '../src/services/acp/client';
-import { classifyAcpError } from '../src/agents/kiro/acpErrors';
+import { classifyAcpError } from 'michi-runtime/internal/adapters/kiro/acpErrors';
 import { AcpSession } from '../src/agents/acp/AcpSession';
-import { KiroSession } from '../src/agents/kiro/KiroSession';
+import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
 
 test('Kiro and generic ACP preserve shared error identities', () => {
   assert.equal(kiro.ACPError, generic.ACPError);
@@ -21,6 +22,6 @@ test('public ACP sessions retain their runtime identity alongside Kiro', () => {
     const session = new AcpSession('node', 'native', { id } as any, '/tmp');
     assert.equal(session.runtimeId, id);
   }
-  const session = new KiroSession('node', 'native', { id: 'kiro' } as any, '/tmp');
+  const session = new KiroSession('node', 'native', { id: 'kiro', host: michiTestHost() } as any, '/tmp');
   assert.equal(session.runtimeId, 'kiro');
 });

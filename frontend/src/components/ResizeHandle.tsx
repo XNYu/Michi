@@ -2,7 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 
 interface ResizeHandleProps {
   /** Current pane element ref — used to read its width at drag start. */
-  paneRef: React.RefObject<HTMLElement>;
+  paneRef: React.RefObject<HTMLElement | null>;
   /** Called on every pointer move during drag with the current width. */
   onResize: (width: number) => void;
   /** Called on double-click to reset width. */

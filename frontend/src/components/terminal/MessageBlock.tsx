@@ -1,7 +1,11 @@
+import type { DurableUserInput, UsageCharge } from 'michi-shared';
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AssistantBlock, ChatMessage, ToolCallState, SubagentInfo, UserInputRequest } from '../../state/chatTypes';
-import { isRunningStatus, formatDurationMs, toolSpanMs } from './toolCallGrouping';
+import { turnErrorAction } from '../../state/turnErrorRecovery';
+import { isRunningStatus, formatDurationMs, toolSpanMs, summarizeWork } from './toolCallGrouping';
+import { activityWindow, activityWindowMs } from './agentBlockTiming';
 import { ToolCallGroup } from './ToolCallGroup';
+import { PageReceipt } from './PageReceipt';
 import { type TerminalDensity, useAgentBlockStyle } from '../../state/prefs';
 import { CardSpinner, SparkleIcon, LiveTimerLabel } from './AgentBlockVariants';
 import type { PlanEntry } from '../../services/api';
@@ -30,6 +34,7 @@ import { streamingMarkdownBlocksEnabled } from './streamingMarkdownBlocksFlag';
 import UserInputBanner, { ResolvedUserInput } from './UserInputBanner';
 import { useChatActions } from '../../state/chatStore';
 import { BranchIcon, CheckIcon, CopyIcon, EditIcon, RetryIcon } from './icons';
+import { useMetaChatDecorations } from '../../state/metaChat/metaChatDecorations';
 
 const StreamingMarkdownContent = React.lazy(() => import('./StreamingMarkdownContent'));
 
@@ -45,24 +50,24 @@ export interface NodeUserInputContextValue {
 export const NodeUserInputContext = createContext<NodeUserInputContextValue | null>(null);
 
 /** Renders a user-input segment inline within the weave pipeline. */
-function InlineUserInputSegment({ requestId }: { requestId: number }) {
+function InlineUserInputSegment({ requestId, interaction }: { requestId: number; interaction?: DurableUserInput }) {
   const ctx = useContext(NodeUserInputContext);
+  const current = ctx?.userInput;
+  const matchesCurrent = current?.requestId === requestId && (!interaction || !current.interactionId || current.interactionId === interaction.interactionId);
+  const ui: UserInputRequest | undefined = interaction
+    ? { ...interaction, resolved: interaction.status !== 'pending', interrupted: interaction.status === 'interrupted' }
+    : matchesCurrent ? current : undefined;
+  if (!ui) return null;
+  if (ui.resolved) return <ResolvedUserInput userInput={ui} />;
+  if (!matchesCurrent || !ctx) return <UserInputBanner userInput={ui} readOnly onSubmit={() => {}} onSkip={() => {}} />;
+  return <ActiveUserInputSegment userInput={ui} nodeId={ctx.nodeId} />;
+}
+
+function ActiveUserInputSegment({ userInput, nodeId }: { userInput: UserInputRequest; nodeId: string }) {
   const { resolveUserInputRequest, skipUserInputRequest } = useChatActions();
-  const ui = ctx?.userInput;
-  if (!ui || ui.requestId !== requestId) return null;
-  if (ui.resolved) {
-    return <ResolvedUserInput userInput={ui} />;
-  }
-  // Pending: render the interactive card INLINE in the message flow (not as a
-  // docked overlay). It scrolls with the transcript, never steals layout space
-  // (no page jump), and — once resolved — swaps in place to ResolvedUserInput.
-  return (
-    <UserInputBanner
-      userInput={ui}
-      onSubmit={(answers) => resolveUserInputRequest(ctx.nodeId, answers)}
-      onSkip={() => skipUserInputRequest(ctx.nodeId)}
-    />
-  );
+  return <UserInputBanner userInput={userInput}
+    onSubmit={(answers) => resolveUserInputRequest(nodeId, answers)}
+    onSkip={() => skipUserInputRequest(nodeId)} />;
 }
 
 function formatMessageTime(ms: number | undefined): string {
@@ -82,6 +87,7 @@ function formatMessageTime(ms: number | undefined): string {
 export interface TurnUsageInfo {
   durationMs?: number;
   credits?: number;
+  charge?: UsageCharge;
   unverifiable?: boolean;
   totalTokens?: number;
   inputTokens?: number;
@@ -112,12 +118,17 @@ function usageLabel(usage: TurnUsageInfo): string {
       : '';
     return `usage ${formatTokenCount(usage.totalTokens)} tokens${breakdown}${duration}`;
   }
+  if (usage.charge) {
+    const estimate = usage.charge.provenance === 'sdk_estimate' || usage.charge.provenance === 'catalog_estimate' ? 'estimated ' : '';
+    return `usage ${estimate}${usage.charge.amount.toFixed(usage.charge.unit === 'USD' ? 4 : 2)} ${usage.charge.unit}${duration}`;
+  }
   if (usage.credits !== undefined) return `usage ${usage.credits.toFixed(2)} credits${duration}`;
   return `usage${duration}`;
 }
 
 function usageTitle(usage: TurnUsageInfo): string {
   const details = usage.durationMs === undefined ? [] : [`Duration ${(usage.durationMs / 1000).toFixed(1)} seconds`];
+  if (usage.charge) details.push(`${usage.charge.amount} ${usage.charge.unit} (${usage.charge.provenance.replaceAll('_', ' ')})`);
   if (usage.totalTokens !== undefined) details.push(`${Math.round(usage.totalTokens).toLocaleString('en-US')} total tokens`);
   if (usage.inputTokens !== undefined) details.push(`${Math.round(usage.inputTokens).toLocaleString('en-US')} input tokens`);
   if (usage.cachedInputTokens !== undefined && usage.cachedInputTokens > 0) {
@@ -342,8 +353,12 @@ export function TermThoughtBlock({
   toolCount,
   runtimeId,
   durationMs,
+  startedAt,
+  endedAt,
+  clockKey,
   segments,
   subagents,
+  tools,
   initialMode,
 }: {
   text: string;
@@ -354,11 +369,21 @@ export function TermThoughtBlock({
   runtimeId?: string | null;
   /** Fallback duration (e.g. tool-span of the run) for hydrated turns. */
   durationMs?: number;
+  /** Durable activity window (backend clock, see agentBlockTiming). The live
+   *  timer counts from `startedAt`, so remounts, reloads and other windows
+   *  agree; with `endedAt` too it also gives the finished duration. */
+  startedAt?: number;
+  endedAt?: number;
+  /** Backend clock key (the assistant message id) for the live timer. */
+  clockKey?: string;
   /** When provided, the body renders these interleaved chunks instead of
    *  `text` + `children` (which are then only used for the header label). */
   segments?: readonly ThoughtSegment[];
   /** Roster for tool groups rendered from `segments`. */
   subagents?: readonly SubagentInfo[];
+  /** Tools this block ran, for the card header's work summary. Defaults to
+   *  the tools inside `segments`. */
+  tools?: readonly ToolCallState[];
   /** Initial user-mode override — used by the dev specimen to show an
    *  expanded body statically. Live rendering leaves this unset. */
   initialMode?: ThoughtMode;
@@ -368,6 +393,8 @@ export function TermThoughtBlock({
   const [userMode, setUserMode] = useState<ThoughtMode | null>(initialMode ?? null);
   const tailRef = useRef<HTMLDivElement | null>(null);
   const expandedRef = useRef<HTMLDivElement | null>(null);
+  const expandedStickyRef = useRef(true);
+  const [expandedScrollable, setExpandedScrollable] = useState(false);
   const liveElapsed = useThinkingTimer(streaming);
   const variant = useAgentBlockStyle();
 
@@ -379,6 +406,17 @@ export function TermThoughtBlock({
 
   const mode: ThoughtMode = userMode ?? (streaming ? 'tail' : 'collapsed');
 
+  useLayoutEffect(() => {
+    const el = expandedRef.current;
+    if (mode !== 'expanded' || !el) return;
+    const measure = () => setExpandedScrollable(el.scrollHeight > el.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    for (const child of el.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, [mode, text, segments, children, variant]);
+
   // Pin tail-mode scroll to the bottom as new tokens arrive. `segments`
   // changes identity when cluster content grows (new tool rows), keeping the
   // tail pinned during tool activity too.
@@ -386,7 +424,7 @@ export function TermThoughtBlock({
     if (mode === 'tail' && tailRef.current) {
       tailRef.current.scrollTop = tailRef.current.scrollHeight;
     }
-    if (mode === 'expanded' && streaming && expandedRef.current) {
+    if (mode === 'expanded' && streaming && expandedStickyRef.current && expandedRef.current) {
       expandedRef.current.scrollTop = expandedRef.current.scrollHeight;
     }
   }, [text, mode, streaming, segments]);
@@ -399,15 +437,17 @@ export function TermThoughtBlock({
       setUserMode(streaming ? 'tail' : 'collapsed');
     } else {
       // Tail or collapsed → expanded.
+      expandedStickyRef.current = true;
       setUserMode('expanded');
     }
   };
 
   // Pure reasoning → "thought for 12s". Any tool activity → "worked for".
-  // Duration is the live cluster timer (thinking + tools) when this block
-  // streamed, or the tool-span for hydrated turns.
+  // Duration is the durable activity window when the blocks carry it;
+  // otherwise (legacy turns) the mount-scoped live timer when this block
+  // streamed here, or the tool-span for hydrated turns.
   const hasTools = (toolCount ?? 0) > 0;
-  const dur = liveElapsed ?? durationMs;
+  const dur = activityWindowMs(startedAt, endedAt) ?? liveElapsed ?? durationMs;
   const codexStepCount = runtimeId === 'codex'
     ? text.split('\n').filter((s) => s.trim().length > 0).length
     : 0;
@@ -448,6 +488,7 @@ export function TermThoughtBlock({
           tools={seg.tools}
           defaultExpanded={seg.tools.some((t) => isRunningStatus(t.status))}
           subagents={subagents}
+          receipts={false}
         />
       ),
     )
@@ -461,6 +502,16 @@ export function TermThoughtBlock({
   const body = (ref: React.Ref<HTMLDivElement>, tail: boolean, chrome?: React.CSSProperties) => (
     <div
       ref={ref}
+      tabIndex={!tail && expandedScrollable ? 0 : undefined}
+      role={!tail && expandedScrollable ? 'region' : undefined}
+      aria-label={!tail && expandedScrollable ? 'Activity details' : undefined}
+      onScroll={tail ? undefined : (event) => {
+        const el = event.currentTarget;
+        // Nested tool lists also scroll; only this activity viewport controls
+        // whether newly streamed content follows the bottom.
+        if (event.target !== el) return;
+        expandedStickyRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+      }}
       style={{
         ...(chrome ?? {
           paddingLeft: 10,
@@ -471,6 +522,7 @@ export function TermThoughtBlock({
           marginTop: 4,
         }),
         ...(tail ? { maxHeight: THOUGHT_TAIL_MAX_HEIGHT, overflow: 'hidden' } : null),
+        ...(!tail ? { maxHeight: 'min(60vh, 480px)', overflowY: 'auto' } : null),
       }}
     >
       {bodyContent}
@@ -491,6 +543,11 @@ export function TermThoughtBlock({
       : codexStepCount > 0
         ? `· ${codexStepCount} ${codexStepCount === 1 ? 'step' : 'steps'}`
         : '';
+    // Finished blocks with tools lead with what they did; the duration moves
+    // to the right edge. Computed only once done, never per streamed token.
+    const work = !streaming && hasTools
+      ? summarizeWork(tools ?? segments?.flatMap((s) => (s.kind === 'tools' ? s.tools : [])) ?? [], subagents)
+      : null;
     return (
       <div style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
         <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
@@ -513,7 +570,30 @@ export function TermThoughtBlock({
                 <span className="term-shimmer" style={{ fontSize: 'var(--fs-md)', fontWeight: 500 }}>
                   {phase === 'working' ? 'Working…' : 'Thinking…'}
                 </span>
-                <LiveTimerLabel active={streaming} />
+                <LiveTimerLabel active={streaming} startedAt={startedAt} clockKey={clockKey} />
+              </>
+            ) : work?.text ? (
+              <>
+                <span style={{ display: 'inline-flex', flexShrink: 0 }}>
+                  <SparkleIcon size={13} color="var(--term-muted)" />
+                </span>
+                <span
+                  title={work.text}
+                  style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                  {work.text}
+                </span>
+                {work.failed > 0 && (
+                  <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-danger)', flexShrink: 0 }}>
+                    · {work.failed} failed
+                  </span>
+                )}
+                <span style={{ marginLeft: 'auto', paddingLeft: 4, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                  {dur != null ? formatDurationMs(dur) : ''}
+                </span>
+                <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>
+                  {mode === 'expanded' ? '▾' : '▸'}
+                </span>
               </>
             ) : (
               <>
@@ -808,7 +888,7 @@ function renderSegments(
     }
     if (seg.kind === 'user-input') {
       chipIdx += 1;
-      return <InlineUserInputSegment key={`ui-${seg.requestId}`} requestId={seg.requestId} />;
+      return <InlineUserInputSegment key={seg.interaction?.interactionId ?? `ui-${seg.requestId}`} requestId={seg.requestId} interaction={seg.interaction} />;
     }
     const groupKey = seg.tools[0].id;
     const defaultExpanded = seg.tools.some((t) => isRunningStatus(t.status));
@@ -905,9 +985,15 @@ interface ThinkingRunViewProps {
   streaming: boolean;
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
+  /** Durable activity window and clock key, forwarded to TermThoughtBlock. */
+  startedAt?: number;
+  endedAt?: number;
+  clockKey?: string;
 }
 
-function ThinkingRunViewInner({ blocks, tools, streaming, subagents, runtimeId }: ThinkingRunViewProps) {
+function ThinkingRunViewInner({
+  blocks, tools, streaming, subagents, runtimeId, startedAt, endedAt, clockKey,
+}: ThinkingRunViewProps) {
   const toolsById = useMemo(() => toolMap(tools), [tools]);
   const text = useMemo(() => thinkingRunRawText(blocks), [blocks]);
   const groups = useMemo(() => thinkingToolGroups(blocks, toolsById), [blocks, toolsById]);
@@ -917,26 +1003,36 @@ function ThinkingRunViewInner({ blocks, tools, streaming, subagents, runtimeId }
   // the best available duration approximation. Keep the block live while
   // tools still run so the timer covers thinking + tool work, not thought only.
   const spanMs = useMemo(() => toolSpanMs(tools), [tools]);
+  const groupedTools = useMemo(() => groups.flat(), [groups]);
   return (
-    <TermThoughtBlock
-      text={text}
-      streaming={streaming || toolsActive}
-      phase={streaming ? 'thinking' : toolsActive ? 'working' : 'done'}
-      toolCount={toolCount}
-      runtimeId={runtimeId}
-      durationMs={spanMs}
-    >
-      {groups.length > 0
-        ? groups.map((group) => (
-            <ToolCallGroup
-              key={group[0].id}
-              tools={group}
-              defaultExpanded={group.some((t) => isRunningStatus(t.status))}
-              subagents={subagents}
-            />
-          ))
-        : null}
-    </TermThoughtBlock>
+    <>
+      <TermThoughtBlock
+        text={text}
+        streaming={streaming || toolsActive}
+        phase={streaming ? 'thinking' : toolsActive ? 'working' : 'done'}
+        toolCount={toolCount}
+        runtimeId={runtimeId}
+        durationMs={spanMs}
+        startedAt={startedAt}
+        endedAt={endedAt}
+        clockKey={clockKey}
+        tools={groupedTools}
+        subagents={subagents}
+      >
+        {groups.length > 0
+          ? groups.map((group) => (
+              <ToolCallGroup
+                key={group[0].id}
+                tools={group}
+                defaultExpanded={group.some((t) => isRunningStatus(t.status))}
+                subagents={subagents}
+                receipts={false}
+              />
+            ))
+          : null}
+      </TermThoughtBlock>
+      {/* Outside the block: it collapses once the turn ends. */}
+    </>
   );
 }
 
@@ -945,7 +1041,10 @@ const ThinkingRunView = React.memo(ThinkingRunViewInner, (prev, next) =>
   sameToolRefs(prev.tools, next.tools) &&
   prev.streaming === next.streaming &&
   prev.subagents === next.subagents &&
-  prev.runtimeId === next.runtimeId,
+  prev.runtimeId === next.runtimeId &&
+  prev.startedAt === next.startedAt &&
+  prev.endedAt === next.endedAt &&
+  prev.clockKey === next.clockKey,
 );
 
 /* ── Agent-run clustering (card / terminal variants) ──
@@ -997,9 +1096,15 @@ interface AgentClusterViewProps {
   phase: StreamPhase;
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
+  /** Durable activity window and clock key, forwarded to TermThoughtBlock. */
+  startedAt?: number;
+  endedAt?: number;
+  clockKey?: string;
 }
 
-function AgentClusterViewInner({ runs, tools, streaming, phase, subagents, runtimeId }: AgentClusterViewProps) {
+function AgentClusterViewInner({
+  runs, tools, streaming, phase, subagents, runtimeId, startedAt, endedAt, clockKey,
+}: AgentClusterViewProps) {
   const toolsById = useMemo(() => toolMap(tools), [tools]);
   const segments = useMemo(() => {
     const out: ThoughtSegment[] = [];
@@ -1028,17 +1133,27 @@ function AgentClusterViewInner({ runs, tools, streaming, phase, subagents, runti
     [segments],
   );
   const spanMs = useMemo(() => toolSpanMs(tools), [tools]);
+  const segmentTools = useMemo(
+    () => segments.flatMap((s) => (s.kind === 'tools' ? s.tools : [])),
+    [segments],
+  );
   return (
-    <TermThoughtBlock
-      text={text}
-      segments={segments}
-      streaming={streaming}
-      phase={phase}
-      toolCount={tools.length}
-      runtimeId={runtimeId}
-      durationMs={spanMs}
-      subagents={subagents}
-    />
+    <>
+      <TermThoughtBlock
+        text={text}
+        segments={segments}
+        streaming={streaming}
+        phase={phase}
+        toolCount={tools.length}
+        runtimeId={runtimeId}
+        durationMs={spanMs}
+        startedAt={startedAt}
+        endedAt={endedAt}
+        clockKey={clockKey}
+        subagents={subagents}
+      />
+      {/* Outside the block: it collapses once the turn ends. */}
+    </>
   );
 }
 
@@ -1057,7 +1172,10 @@ const AgentClusterView = React.memo(AgentClusterViewInner, (prev, next) =>
   prev.streaming === next.streaming &&
   prev.phase === next.phase &&
   prev.subagents === next.subagents &&
-  prev.runtimeId === next.runtimeId,
+  prev.runtimeId === next.runtimeId &&
+  prev.startedAt === next.startedAt &&
+  prev.endedAt === next.endedAt &&
+  prev.clockKey === next.clockKey,
 );
 
 function LegacyAssistantBody({
@@ -1135,6 +1253,10 @@ function BlockAssistantBody({
   return (
     <>
       {clusters.map((cluster, clusterIndex) => {
+        const following = clusters[clusterIndex + 1];
+        const nextBlock = following
+          ? (following.kind === 'agent' ? following.runs[0]?.blocks[0] : following.run.blocks[0])
+          : undefined;
         if (cluster.kind === 'agent') {
           const clusterTools = cluster.runs.flatMap((r) => relevantTools(r.blocks, byId));
           if (!showThoughts) {
@@ -1173,6 +1295,7 @@ function BlockAssistantBody({
             !!m.streaming;
           const active = isThinking || isTooling || isBetweenSteps;
           const phase: StreamPhase = isThinking ? 'thinking' : active ? 'working' : 'done';
+          const activity = activityWindow(cluster.runs.flatMap((r) => r.blocks), byId, nextBlock);
           return (
             <AgentClusterView
               key={cluster.id}
@@ -1182,6 +1305,9 @@ function BlockAssistantBody({
               phase={phase}
               subagents={subagents}
               runtimeId={runtimeId}
+              startedAt={activity.startedAt}
+              endedAt={activity.endedAt}
+              clockKey={m.id}
             />
           );
         }
@@ -1192,6 +1318,7 @@ function BlockAssistantBody({
         }
         if (run.kind === 'thinking') {
           if (!showThoughts) return null;
+          const activity = activityWindow(run.blocks, byId, nextBlock);
           return (
             <ThinkingRunView
               key={run.id}
@@ -1200,6 +1327,9 @@ function BlockAssistantBody({
               streaming={run.id === liveThinkingId}
               subagents={subagents}
               runtimeId={runtimeId}
+              startedAt={activity.startedAt}
+              endedAt={activity.endedAt}
+              clockKey={m.id}
             />
           );
         }
@@ -1245,6 +1375,7 @@ function CollapsibleUserText({
   children: React.ReactNode;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const contentId = React.useId();
   const [overflowing, setOverflowing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [clampHeight, setClampHeight] = useState<number | null>(null);
@@ -1253,6 +1384,9 @@ function CollapsibleUserText({
     const el = contentRef.current;
     if (!el) return;
     const measure = () => {
+      // A pane mounted at zero width makes every message look overflowing;
+      // the observer measures again once the content has a width.
+      if (el.clientWidth === 0) return;
       const cs = window.getComputedStyle(el);
       let lineHeight = parseFloat(cs.lineHeight);
       if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
@@ -1278,28 +1412,29 @@ function CollapsibleUserText({
     <div style={{ position: 'relative' }}>
       <div
         ref={contentRef}
+        id={contentId}
         style={
           collapsed && clampHeight != null
-            ? { maxHeight: clampHeight, overflow: 'hidden' }
-            : undefined
+            ? { position: 'relative', maxHeight: clampHeight, overflow: 'hidden' }
+            : { position: 'relative' }
         }
       >
         {children}
+        {collapsed && (
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: '2.6em',
+              pointerEvents: 'none',
+              background: `linear-gradient(to bottom, transparent, ${USER_BUBBLE_BG})`,
+            }}
+          />
+        )}
       </div>
-      {collapsed && (
-        <div
-          aria-hidden
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: '2.6em',
-            pointerEvents: 'none',
-            background: `linear-gradient(to bottom, transparent, ${USER_BUBBLE_BG})`,
-          }}
-        />
-      )}
       {overflowing && (
         <button
           type="button"
@@ -1307,7 +1442,9 @@ function CollapsibleUserText({
             e.stopPropagation();
             setExpanded((v) => !v);
           }}
-          className="t-hover-fg"
+          className="t-hover-fg t-user-text-toggle"
+          aria-expanded={expanded}
+          aria-controls={contentId}
           style={{
             marginTop: 4,
             padding: 0,
@@ -1316,7 +1453,6 @@ function CollapsibleUserText({
             cursor: 'pointer',
             fontFamily: 'var(--ui-font)',
             fontSize: 'var(--fs-md)',
-            color: 'var(--term-muted)',
             letterSpacing: 'var(--ls-wide)',
           }}
         >
@@ -1328,8 +1464,9 @@ function CollapsibleUserText({
 }
 
 /**
- * Terminal error tail below a failed assistant turn. Three variants keyed by
- * `errorKind` (from the Kiro runtime, see backend acpErrors.ts):
+ * Terminal error tail below a failed assistant turn. Variants keyed by
+ * `errorKind` distinguish unknown outcomes from ordinary execution failures:
+ *   - unknown outcome: check the existing turn; an explicit rerun preserves output.
  *   - connection: the backend already auto-retried once and still failed →
  *     friendly banner + Retry + Test Connection (force-respawn probe).
  *   - auth: SSO/login expired → prompt to re-authenticate (e.g. kiro login).
@@ -1340,16 +1477,21 @@ function CollapsibleUserText({
 function ErrorTail({
   errorMessage,
   errorKind,
+  errorRecovery,
   onRetry,
+  onRunAgain,
   onTestConnection,
 }: {
   errorMessage?: string;
   errorKind?: string;
+  errorRecovery?: 'checking' | 'unavailable';
   onRetry?: () => void;
+  onRunAgain?: () => void;
   onTestConnection?: () => Promise<{ ok: boolean; detail?: string }>;
 }) {
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   const [testDetail, setTestDetail] = useState<string | undefined>();
+  const [confirmRerun, setConfirmRerun] = useState(false);
 
   const runTest = async () => {
     if (!onTestConnection || testState === 'testing') return;
@@ -1378,9 +1520,13 @@ function ErrorTail({
 
   const isConnection = errorKind === 'connection';
   const isAuth = errorKind === 'auth';
+  const inspectOriginal = turnErrorAction(errorKind) === 'inspect-existing-turn';
+  const checking = errorRecovery === 'checking';
 
   // Headline scaled to the class. Connection: we already retried once, so say so.
-  const headline = isConnection
+  const headline = inspectOriginal
+    ? errorKind === 'turn_persistence_failed' ? 'Result could not be saved' : 'Original result is not confirmed'
+    : isConnection
     ? 'Cannot reach Kiro · auto-retry failed'
     : isAuth
       ? 'Kiro session expired · please re-authenticate'
@@ -1400,16 +1546,23 @@ function ErrorTail({
           {headline}
         </span>
         <span style={{ color: 'var(--term-faint)' }}>·</span>
-        {!isAuth && (
+        {!isAuth && onRetry && (
           <button
             type="button"
             data-testid="error-tail-retry"
-            onClick={(e) => { e.stopPropagation(); onRetry?.(); }}
+            disabled={checking}
+            onClick={(e) => { e.stopPropagation(); setConfirmRerun(false); onRetry(); }}
             style={btnStyle}
             onMouseEnter={onHoverIn}
             onMouseLeave={onHoverOut}
           >
-            ↻ retry
+            {inspectOriginal ? checking ? 'Checking original turn…' : 'Check original turn' : '↻ retry'}
+          </button>
+        )}
+        {inspectOriginal && onRunAgain && (
+          <button type="button" disabled={checking} style={btnStyle}
+            onClick={(e) => { e.stopPropagation(); setConfirmRerun(true); }}>
+            Run again
           </button>
         )}
         {(isConnection || isAuth) && onTestConnection && (
@@ -1426,6 +1579,23 @@ function ErrorTail({
           </button>
         )}
       </div>
+      {inspectOriginal && (
+        <div role="status" style={{ marginTop: 6, maxWidth: 720, color: 'var(--term-muted)', font: 'var(--fs-sm) var(--ui-font)', lineHeight: 1.45 }}>
+          {checking
+            ? 'Checking the original task without sending it again.'
+            : errorRecovery === 'unavailable'
+              ? 'The original result could not be confirmed. Existing output is kept. Running again may repeat actions.'
+              : 'Existing output is kept. Check the original task before running it again; it may already have performed actions.'}
+        </div>
+      )}
+      {inspectOriginal && confirmRerun && !checking && onRunAgain && (
+        <div role="group" aria-label="Confirm running again" style={{ marginTop: 8, font: 'var(--fs-sm) var(--ui-font)', color: 'var(--term-fg)' }}>
+          <p style={{ margin: '0 0 8px' }}>This sends the same request again and may repeat file changes or other actions. The previous output will stay in this conversation.</p>
+          <button type="button" style={btnStyle} onClick={(e) => { e.stopPropagation(); setConfirmRerun(false); onRunAgain(); }}>Run again anyway</button>
+          {' '}
+          <button type="button" style={btnStyle} onClick={(e) => { e.stopPropagation(); setConfirmRerun(false); }}>Keep current result</button>
+        </div>
+      )}
       {testState === 'ok' && (
         <div style={{ marginTop: 6, color: 'var(--term-digest)', font: 'var(--fs-sm) var(--ui-font)' }}>
           Connection restored — click retry to resend.
@@ -1456,6 +1626,8 @@ function ErrorTail({
 
 interface MessageBlockProps {
   m: ChatMessage;
+  workspaceId?: string;
+  backendConnectionId?: string;
   index: number;
   isDark: boolean;
   onRetry?: () => void;
@@ -1469,9 +1641,10 @@ interface MessageBlockProps {
   usageInfo?: TurnUsageInfo | null;
   isErrorTail?: boolean;
   errorMessage?: string;
-  /** Error classification from the Kiro runtime: 'connection' | 'auth' |
-   * 'generic'. Drives the error-tail banner variant. */
+  /** Runtime/storage/transport classification, including uncertain turn outcomes. */
   errorKind?: string;
+  errorRecovery?: 'checking' | 'unavailable';
+  onRunAgain?: () => void;
   /** Probe backend connectivity ("Test Connection"). Present only when the
    * error is connection/auth class and a cwd/workspace is resolvable. */
   onTestConnection?: () => Promise<{ ok: boolean; detail?: string }>;
@@ -1507,10 +1680,21 @@ interface MessageBlockProps {
    *  UI when the node is still streaming after hydration (m.streaming is
    *  false but the turn has not finished). */
   hideActions?: boolean;
+  /** Frames the message, with this mark above it; the hover actions stay
+   *  below the frame. Pass a stable element: it takes part in memoization. */
+  highlight?: React.ReactNode;
+}
+
+/** A highlighted message's frame, its mark first; any other message as it is. */
+function MessageHighlight({ mark, children }: { mark: React.ReactNode; children: React.ReactNode }) {
+  if (mark == null || mark === false) return <>{children}</>;
+  return <div className="terminal-message-highlight">{mark}{children}</div>;
 }
 
 function MessageBlockInner({
   m,
+  workspaceId,
+  backendConnectionId,
   index,
   isDark,
   onRetry,
@@ -1524,6 +1708,8 @@ function MessageBlockInner({
   isErrorTail,
   errorMessage,
   errorKind,
+  errorRecovery,
+  onRunAgain,
   onTestConnection,
   subagents,
   runtimeId,
@@ -1536,11 +1722,13 @@ function MessageBlockInner({
   onEditSave,
   onEditCancel,
   hideActions,
+  highlight,
 }: MessageBlockProps) {
   const [hover, setHover] = useState(false);
   const [editText, setEditText] = useState(m.text);
   const editAreaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = m.role === 'user';
+  const decorations = useMetaChatDecorations();
 
   useEffect(() => {
     if (editing) {
@@ -1554,13 +1742,6 @@ function MessageBlockInner({
   const dMarginBottom = density === 'dense' ? 6 : density === 'compact' ? 10 : 16;
   const dLabelFontSize = density === 'dense' ? 9 : density === 'compact' ? 10 : 10.5;
   const dLabelMarginBottom = density === 'dense' ? 2 : density === 'compact' ? 3 : 4;
-  // Density only adjusts rhythm (leading/tracking), never type size — the
-  // slider is the single source of truth for font size. Mirrors the values
-  // applied to assistant prose via .terminal-message[data-density=*] in
-  // index.css so the two bubbles breathe in sync.
-  const dMsgLineHeight = density === 'dense' ? 1.3 : density === 'compact' ? 1.45 : 1.6;
-  const dMsgLetterSpacing =
-    density === 'dense' ? '-0.005em' : density === 'compact' ? '0' : '0.01em';
   // Assistant-only inline vertical padding. The user bubble's padding lives in
   // index.css (paper-card recipe) and scales via the [data-density] attribute.
   const dPadV = density === 'dense' ? 4 : density === 'compact' ? 5 : 6;
@@ -1573,6 +1754,7 @@ function MessageBlockInner({
         animation: 'fadeIn var(--t-enter) ease-out both',
       }}
     >
+      <MessageHighlight mark={highlight}>
       {!isUser && (
         <div
           style={{
@@ -1582,7 +1764,7 @@ function MessageBlockInner({
             textAlign: 'left',
           }}
         >
-          {'> michi'}
+          {decorations?.assistantLabel ?? '> michi'}
         </div>
       )}
       {isUser ? (
@@ -1640,8 +1822,8 @@ function MessageBlockInner({
             } : undefined}
             style={{
               fontFamily: 'var(--ui-font)',
-              lineHeight: dMsgLineHeight,
-              letterSpacing: dMsgLetterSpacing,
+              lineHeight: 'var(--message-body-leading)',
+              letterSpacing: 0,
               color: 'var(--term-fg)',
               wordBreak: 'break-word',
             }}
@@ -1667,7 +1849,7 @@ function MessageBlockInner({
             )}
             {m.steered && <div className="terminal-message-steered" title="Sent to the active turn">Steered</div>}
             {m.comments && m.comments.length > 0 && <CommentChips comments={m.comments} />}
-            {m.quotedText && <QuoteChip text={m.quotedText} />}
+            {m.quotedText && <QuoteChip text={m.quotedText} source={m.quoteSource} />}
             {m.attachments && m.attachments.length > 0 && (
               <AttachmentPills items={m.attachments} />
             )}
@@ -1764,11 +1946,14 @@ function MessageBlockInner({
         </div>
       )}
       {!isUser && <SteeringReports reports={m.steeringReports} />}
+      {!isUser && workspaceId && backendConnectionId && <PageReceipt tools={m.toolCalls} workspaceId={workspaceId} backendConnectionId={backendConnectionId} variant="conversation" />}
       {!isUser && !m.streaming && isErrorTail && (
         <ErrorTail
           errorMessage={errorMessage}
           errorKind={errorKind}
+          errorRecovery={errorRecovery}
           onRetry={onRetry}
+          onRunAgain={onRunAgain}
           onTestConnection={onTestConnection}
         />
       )}
@@ -1787,6 +1972,7 @@ function MessageBlockInner({
           ))}
         </section>
       )}
+      </MessageHighlight>
       {!(m.streaming || hideActions) && (
         isUser ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -1805,13 +1991,14 @@ function MessageBlockInner({
             visible={hover}
             time={formatMessageTime(m.createdAt)}
             onCopy={onCopy}
-            onRetry={onRetry}
+            onRetry={isErrorTail && turnErrorAction(errorKind) === 'inspect-existing-turn' ? undefined : onRetry}
             onEdit={onEdit}
             onBranch={onBranch}
             usageInfo={usageInfo}
           />
         )
       )}
+      {decorations?.afterMessage?.(m)}
     </div>
   );
 }
@@ -1859,6 +2046,8 @@ function childAnchorsEqual(
 
 const MessageBlock = React.memo(MessageBlockInner, (prev, next) =>
   prev.m === next.m &&
+  prev.workspaceId === next.workspaceId &&
+  prev.backendConnectionId === next.backendConnectionId &&
   prev.index === next.index &&
   prev.isDark === next.isDark &&
   prev.showThoughts === next.showThoughts &&
@@ -1871,6 +2060,8 @@ const MessageBlock = React.memo(MessageBlockInner, (prev, next) =>
   !!prev.isErrorTail === !!next.isErrorTail &&
   prev.errorMessage === next.errorMessage &&
   prev.errorKind === next.errorKind &&
+  prev.errorRecovery === next.errorRecovery &&
+  prev.onRunAgain === next.onRunAgain &&
   prev.onTestConnection === next.onTestConnection &&
   prev.subagents === next.subagents &&
   prev.runtimeId === next.runtimeId &&
@@ -1879,7 +2070,8 @@ const MessageBlock = React.memo(MessageBlockInner, (prev, next) =>
   prev.onOpenBranch === next.onOpenBranch &&
   prev.contextNames === next.contextNames &&
   prev.onMentionClick === next.onMentionClick &&
-  prev.onVisibleSmoothingChange === next.onVisibleSmoothingChange,
+  prev.onVisibleSmoothingChange === next.onVisibleSmoothingChange &&
+  prev.highlight === next.highlight,
 );
 
 export { MessageBlock };

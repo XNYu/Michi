@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { mergeLegacyComposerDraft, mergeWindowComposerDraft } from 'michi-shared';
 import { getDb, runInTransaction } from './db';
+import { DomainError } from './domainErrors';
+import { assertNodePlacement } from './nodePlacement';
+import { nodePlacementRepository } from './nodePlacementRepository';
 import {
   deleteContext,
   deleteEdge,
@@ -8,6 +11,7 @@ import {
   getNode,
   getWorkspace,
   listTrees,
+  markNodeViewed,
   saveContext,
   saveEdge,
   saveNode,
@@ -50,7 +54,7 @@ export interface ApplyWorkspaceCommandsResult {
 function readId(payload: Record<string, unknown>, label: string): string {
   const id = payload.id;
   if (typeof id !== 'string' || !id.trim() || id.length > 160) {
-    throw new Error(`${label}.id must be a non-empty string <=160 chars`);
+    throw new DomainError('invalid_argument', 'invalid_entity_id', `${label}.id must be a non-empty string <=160 chars`);
   }
   return id;
 }
@@ -68,7 +72,7 @@ function updatedComposerDraft(raw: string | null | undefined, payload: Record<st
   if (!('composer_draft_window_id' in payload)) return mergeLegacyComposerDraft(raw, draft);
   const windowId = payload.composer_draft_window_id;
   if (typeof windowId !== 'string' || !windowId || windowId.length > 160) {
-    throw new Error('composer_draft_window_id must be a non-empty string <=160 chars');
+    throw new DomainError('invalid_argument', 'invalid_composer_window', 'composer_draft_window_id must be a non-empty string <=160 chars');
   }
   return mergeWindowComposerDraft(raw, windowId, draft);
 }
@@ -80,7 +84,7 @@ function payloadHash(workspaceId: string, commands: readonly WorkspaceCommand[])
 function assertOwnedWorkspace(workspaceId: string, ownerUserId?: string | null): void {
   if (process.env.MICHI_CLOUD !== '1') return;
   const workspace = getWorkspace(workspaceId);
-  if (workspace && workspace.owner_user_id !== ownerUserId) throw new Error('workspace not found');
+  if (workspace && workspace.owner_user_id !== ownerUserId) throw new DomainError('not_found', 'workspace_not_found', 'workspace not found');
 }
 
 function commandEntityId(command: WorkspaceCommand): string {
@@ -95,7 +99,7 @@ function assertEntityWorkspace(
   const row = getDb().prepare(`SELECT workspace_id FROM ${table} WHERE id = ?`)
     .get(id) as { workspace_id: string } | undefined;
   if (row && row.workspace_id !== workspaceId) {
-    throw new Error(`${table.slice(0, -1)} ${id} belongs to a different workspace`);
+    throw new DomainError('conflict', 'entity_workspace_mismatch', `${table.slice(0, -1)} ${id} belongs to a different workspace`);
   }
 }
 
@@ -103,11 +107,17 @@ export function applyWorkspaceCommands(
   workspaceId: string,
   input: ApplyWorkspaceCommandsInput,
 ): ApplyWorkspaceCommandsResult {
-  if (!input.operationId || input.operationId.length > 200) {
-    throw new Error('operationId must be a non-empty string <=200 chars');
+  if (typeof input.operationId !== 'string' || !input.operationId.trim() || input.operationId.length > 200) {
+    throw new DomainError('invalid_argument', 'invalid_operation_id', 'operationId must be a non-empty string <=200 chars');
   }
   if (!Array.isArray(input.commands) || input.commands.length > 500) {
-    throw new Error('commands must be an array of at most 500 items');
+    throw new DomainError('invalid_argument', 'invalid_commands', 'commands must be an array of at most 500 items');
+  }
+  for (const command of input.commands) {
+    if (!command || typeof command !== 'object' || typeof command.type !== 'string'
+      || !command.payload || typeof command.payload !== 'object' || Array.isArray(command.payload)) {
+      throw new DomainError('invalid_argument', 'invalid_command', 'each command must have a type and object payload');
+    }
   }
   const hash = payloadHash(workspaceId, input.commands);
   return runInTransaction(() => {
@@ -118,7 +128,7 @@ export function applyWorkspaceCommands(
     `).get(workspaceId, input.operationId) as { payload_hash: string; result_json: string } | undefined;
     if (prior) {
       if (prior.payload_hash !== hash) {
-        throw new Error(`operation ${input.operationId} was reused with a different payload`);
+        throw new DomainError('conflict', 'operation_id_reused', `operation ${input.operationId} was reused with a different payload`);
       }
       return JSON.parse(prior.result_json) as ApplyWorkspaceCommandsResult;
     }
@@ -130,12 +140,13 @@ export function applyWorkspaceCommands(
       const id = commandEntityId(command);
       switch (command.type) {
         case 'workspace.upsert': {
-          if (id !== workspaceId) throw new Error('workspace command id must match route workspace');
+          if (id !== workspaceId) throw new DomainError('conflict', 'workspace_id_mismatch', 'workspace command id must match route workspace');
           const existing = getWorkspace(workspaceId);
           saveWorkspace({
             id,
             name: typeof payload.name === 'string' && payload.name.trim() ? payload.name : existing?.name ?? 'Untitled',
             cwd: payload.cwd === undefined ? existing?.cwd ?? null : optionalString(payload.cwd),
+            folders: payload.folders === undefined ? existing?.folders ?? null : optionalString(payload.folders),
             active_tree_id: payload.active_tree_id === undefined
               ? existing?.active_tree_id ?? null
               : optionalString(payload.active_tree_id),
@@ -151,7 +162,7 @@ export function applyWorkspaceCommands(
           break;
         }
         case 'tree.upsert': {
-          if (payload.workspace_id !== workspaceId) throw new Error('tree must belong to route workspace');
+          if (payload.workspace_id !== workspaceId) throw new DomainError('conflict', 'tree_workspace_mismatch', 'tree must belong to route workspace');
           assertEntityWorkspace('trees', id, workspaceId);
           touchedTreeIds.add(id);
           saveTree({
@@ -171,25 +182,14 @@ export function applyWorkspaceCommands(
           deleteTree(id, input.ownerUserId ?? undefined);
           break;
         case 'node.upsert': {
-          if (payload.workspace_id !== workspaceId) throw new Error('node must belong to route workspace');
+          if (payload.workspace_id !== workspaceId) throw new DomainError('conflict', 'node_workspace_mismatch', 'node must belong to route workspace');
           const parentId = optionalString(payload.parent_node_id);
           const treeId = optionalString(payload.tree_id);
-          if (treeId && !listTrees(workspaceId).some((tree) => tree.id === treeId)) {
-            throw new Error('node tree must belong to the same workspace');
-          }
-          if (parentId) {
-            const parent = getNode(parentId);
-            if (!parent || parent.workspace_id !== workspaceId) {
-              throw new Error('node parent and child must belong to the same workspace');
-            }
-            if ((parent.tree_id ?? null) !== treeId) {
-              throw new Error('node parent and child must belong to the same tree');
-            }
-          }
+          assertNodePlacement(workspaceId, treeId, parentId, nodePlacementRepository);
           const existing = getNode(id);
           if (existing) {
             if (existing.workspace_id !== workspaceId) {
-              throw new Error(`node ${id} belongs to a different workspace`);
+              throw new DomainError('conflict', 'node_workspace_mismatch', `node ${id} belongs to a different workspace`);
             }
           } else {
             saveNode({
@@ -219,25 +219,25 @@ export function applyWorkspaceCommands(
         }
         case 'node.patch': {
           const node = getNode(id);
-          if (!node || node.workspace_id !== workspaceId) throw new Error('node not found');
+          if ('viewed_at' in payload) {
+            const viewedAt = payload.viewed_at;
+            if (typeof viewedAt !== 'number' || !Number.isFinite(viewedAt) || viewedAt <= 0) {
+              throw new DomainError('invalid_argument', 'invalid_viewed_at', 'viewed_at must be a positive number');
+            }
+            // A view mark alone never fails the batch: the node may be gone or not yet written.
+            if (Object.keys(payload).every((key) => key === 'id' || key === 'viewed_at')) {
+              if (node && node.workspace_id === workspaceId) markNodeViewed(id, workspaceId, viewedAt);
+              break;
+            }
+          }
+          if (!node || node.workspace_id !== workspaceId) throw new DomainError('not_found', 'node_not_found', 'node not found');
           const effectiveTreeId = 'tree_id' in payload
             ? optionalString(payload.tree_id)
             : node.tree_id ?? null;
           const effectiveParentId = 'parent_node_id' in payload
             ? optionalString(payload.parent_node_id)
             : node.parent_node_id ?? null;
-          if (effectiveTreeId && !listTrees(workspaceId).some((tree) => tree.id === effectiveTreeId)) {
-            throw new Error('node tree must belong to the same workspace');
-          }
-          if (effectiveParentId) {
-            const parent = getNode(effectiveParentId);
-            if (!parent || parent.workspace_id !== workspaceId) {
-              throw new Error('node parent and child must belong to the same workspace');
-            }
-            if ((parent.tree_id ?? null) !== effectiveTreeId) {
-              throw new Error('node parent and child must belong to the same tree');
-            }
-          }
+          assertNodePlacement(workspaceId, effectiveTreeId, effectiveParentId, nodePlacementRepository);
           const columns: Record<string, string> = {
             tree_id: 'tree_id', parent_node_id: 'parent_node_id', kind: 'kind',
             title: 'title', current_mode_id: 'current_mode_id', pane_width: 'pane_width',
@@ -258,21 +258,22 @@ export function applyWorkspaceCommands(
             params.push(id);
             getDb().prepare(`UPDATE nodes SET ${sets.join(', ')} WHERE id = ?`).run(...params);
           }
+          if (typeof payload.viewed_at === 'number') markNodeViewed(id, workspaceId, payload.viewed_at);
           break;
         }
         case 'edge.upsert': {
-          if (payload.workspace_id !== workspaceId) throw new Error('edge must belong to route workspace');
+          if (payload.workspace_id !== workspaceId) throw new DomainError('conflict', 'edge_workspace_mismatch', 'edge must belong to route workspace');
           assertEntityWorkspace('edges', id, workspaceId);
           const sourceNodeId = String(payload.source_node_id ?? '');
           const targetNodeId = String(payload.target_node_id ?? '');
           const source = getNode(sourceNodeId);
           const target = getNode(targetNodeId);
           if (!source || !target || source.workspace_id !== workspaceId || target.workspace_id !== workspaceId) {
-            throw new Error('edge endpoints must belong to the same workspace');
+            throw new DomainError('conflict', 'edge_workspace_mismatch', 'edge endpoints must belong to the same workspace');
           }
           const kind = optionalString(payload.kind) ?? 'branch';
           if ((kind === 'branch' || kind === 'link') && source.tree_id !== target.tree_id) {
-            throw new Error(`${kind} edge endpoints must belong to the same tree`);
+            throw new DomainError('conflict', 'edge_tree_mismatch', `${kind} edge endpoints must belong to the same tree`);
           }
           saveEdge({
             id,
@@ -290,13 +291,13 @@ export function applyWorkspaceCommands(
           deleteEdge(id, input.ownerUserId ?? undefined);
           break;
         case 'context.upsert': {
-          if (payload.workspace_id !== workspaceId) throw new Error('context must belong to route workspace');
+          if (payload.workspace_id !== workspaceId) throw new DomainError('conflict', 'context_workspace_mismatch', 'context must belong to route workspace');
           assertEntityWorkspace('contexts', id, workspaceId);
           const originNodeId = optionalString(payload.origin_node_id);
           if (originNodeId) {
             const originNode = getNode(originNodeId);
             if (!originNode || originNode.workspace_id !== workspaceId) {
-              throw new Error('context origin node must belong to the same workspace');
+              throw new DomainError('conflict', 'context_origin_workspace_mismatch', 'context origin node must belong to the same workspace');
             }
           }
           const originMessageId = optionalString(payload.origin_message_id);
@@ -305,7 +306,7 @@ export function applyWorkspaceCommands(
               SELECT n.workspace_id FROM messages m JOIN nodes n ON n.id = m.node_id WHERE m.id = ?
             `).get(originMessageId) as { workspace_id: string } | undefined;
             if (!originMessage || originMessage.workspace_id !== workspaceId) {
-              throw new Error('context origin message must belong to the same workspace');
+              throw new DomainError('conflict', 'context_origin_workspace_mismatch', 'context origin message must belong to the same workspace');
             }
           }
           saveContext({
@@ -332,7 +333,7 @@ export function applyWorkspaceCommands(
           deleteContext(id, input.ownerUserId ?? undefined);
           break;
         default:
-          throw new Error(`unsupported workspace command ${(command as WorkspaceCommand).type}`);
+          throw new DomainError('invalid_argument', 'unsupported_workspace_command', `unsupported workspace command ${(command as WorkspaceCommand).type}`);
       }
       applied.push({ type: command.type, id });
     }
@@ -348,7 +349,7 @@ export function applyWorkspaceCommands(
         || root.workspace_id !== workspaceId
         || root.tree_id !== treeId
       ) {
-        throw new Error(`tree ${treeId} root must belong to the same workspace and tree`);
+        throw new DomainError('conflict', 'tree_root_mismatch', `tree ${treeId} root must belong to the same workspace and tree`);
       }
     }
     const workspace = getWorkspace(workspaceId);
@@ -356,7 +357,7 @@ export function applyWorkspaceCommands(
       workspace?.active_tree_id
       && !listTrees(workspaceId).some((tree) => tree.id === workspace.active_tree_id)
     ) {
-      throw new Error('active tree must belong to the same workspace');
+      throw new DomainError('conflict', 'active_tree_workspace_mismatch', 'active tree must belong to the same workspace');
     }
 
     getDb().prepare('UPDATE workspaces SET persistence_version = 2 WHERE id = ?').run(workspaceId);

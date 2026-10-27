@@ -42,6 +42,13 @@ Pi's composer offers Ask / Trust. Unknown or external MCP tools require approval
 
 Install and authenticate `claude`, or configure `CLAUDE_CLI_BIN` and the relevant Anthropic, Bedrock or Vertex credentials. The CLI supplies native tools. Claude supports Ask / Trust / YOLO. YOLO uses the native bypass mode; approval policy and tool availability are separate controls.
 
+Michi connects through the pinned Claude Agent SDK while retaining the installed
+CLI's authentication and native history. Native AskUserQuestion uses Michi's
+question card. `/status`, `/model`, `/context` and `/mcp` are host commands and
+can initialize or restore a cold chat without sending a model prompt. Agent Run
+restrictions continue to apply before tool execution, including when native
+settings would automatically approve a tool.
+
 ## Codex
 
 Install `@openai/codex` and run `codex login`, or configure `CODEX_CLI_BIN` and optionally `CODEX_HOME`. Michi uses app-server JSON-RPC. The documented minimum tested CLI version is 0.138.0; this is a tested baseline, not a claim that every newer version has been verified.

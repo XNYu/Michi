@@ -1,4 +1,5 @@
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
+import { isVisibleConversationNode } from '../../../state/conversationVisibility';
 import type { ProfileActivitySnapshot } from '../../../services/api/persistence';
 
 export type ActivityMetric = 'nodes' | 'branches' | 'messages';
@@ -41,10 +42,12 @@ export function buildProfileActivity(
   let totalThreads = 0;
   let totalBranches = 0;
 
+  // Page helpers and Meta agent maintenance runs are not the user's conversations.
+  const hidden = (id: string) => !!nodes[id] && !isVisibleConversationNode(nodes[id]);
   for (const project of liveProjects) {
-    for (const id of project.chatIds) nodeIds.add(id);
-    totalThreads += project.trees.length;
-    totalBranches += project.edges.filter((e) => (e.kind ?? 'branch') === 'branch').length;
+    for (const id of project.chatIds) if (!hidden(id)) nodeIds.add(id);
+    totalThreads += project.trees.filter((tree) => !hidden(tree.rootNodeId)).length;
+    totalBranches += project.edges.filter((e) => (e.kind ?? 'branch') === 'branch' && !hidden(e.target)).length;
   }
 
   const dayCounts: Record<ActivityMetric, Map<string, number>> = {

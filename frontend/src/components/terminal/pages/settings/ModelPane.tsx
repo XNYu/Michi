@@ -115,6 +115,10 @@ export function ModelPane({
         <NativeSessionToggle key={`${agentStatus.runtime}-fork`} status={agentStatus} preference="nativeForkByRuntime" label="Native Fork" onChanged={refreshAgentStatus} />
       )}
 
+      {agentStatus && (agentStatus.workflowRuntimes ?? []).map((runtimeId) => (
+        <WorkflowsToggle key={`${runtimeId}-workflows`} status={agentStatus} runtimeId={runtimeId} onChanged={refreshAgentStatus} />
+      ))}
+
       {showApiKeys && agentStatus && (() => {
         const active = (agentStatus.providers ?? []).find((p) => p.id === agentStatus.provider);
         if (!active) return null;
@@ -177,6 +181,45 @@ function NativeSessionToggle({ status, preference, label, onChanged }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`${label} for ${status.label}`} />
         <span>{label} <span style={{ color: 'var(--term-muted)' }}>({status.label})</span></span>
+      </div>
+      {error && <div role="alert" style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', marginTop: 6 }}>{error}</div>}
+    </div>
+  );
+}
+
+/**
+ * Kiro CLI workflows are opt-in: a workflow runs long, multi-agent work in
+ * the background. Applies to sessions opened after the change.
+ */
+function WorkflowsToggle({ status, runtimeId, onChanged }: { status: AgentStatus; runtimeId: string; onChanged: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(status.workflowsByRuntime?.[runtimeId] === true);
+  useEffect(() => { setEnabled(status.workflowsByRuntime?.[runtimeId] === true); }, [status, runtimeId]);
+  const label = status.availableRuntimes.find((runtime) => runtime.id === runtimeId)?.label ?? runtimeId;
+
+  const save = async (value: boolean) => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await saveAgentOptions({ workflowsByRuntime: { [runtimeId]: value } });
+      if (!result.ok) { setError(result.error); return; }
+      setEnabled(value);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save Workflows');
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div style={{ marginBottom: 18, fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`Workflows for ${label}`} />
+        <span>Workflows <span style={{ color: 'var(--term-muted)' }}>({label})</span></span>
+      </div>
+      <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', marginTop: 4, lineHeight: 1.45 }}>
+        Lets the agent run multi-step workflows in the background. Progress shows under the message that launched it. Applies to new chats.
       </div>
       {error && <div role="alert" style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', marginTop: 6 }}>{error}</div>}
     </div>
@@ -989,7 +1032,15 @@ function FollowUpsToggle() {
   );
 }
 
+/**
+ * Settings apply to Claude chats in every workspace, including ones this
+ * window does not follow, so the restart note is static rather than tied to
+ * workflows seen running here.
+ */
+const CLAUDE_YOLO_RESTART_NOTE = 'Moving a Claude chat into or out of YOLO restarts it on its next message, which stops any workflow it is running.';
+
 function PermissionSettings({ apiBase, runtimeIds }: { apiBase?: string; runtimeIds: readonly string[] }) {
+  const claudeAvailable = runtimeIds.includes('claude');
   const permissions = usePermissionPreferences(apiBase);
   const supportsYolo = runtimeIds.some(supportsChatYolo);
   const [saving, setSaving] = useState(false);
@@ -1015,13 +1066,16 @@ function PermissionSettings({ apiBase, runtimeIds }: { apiBase?: string; runtime
     {permissions.global && <div style={{ marginTop: 10 }}>
       <ComposerPermissionControl scope="global" mode={permissions.mode} disabled={saving || permissions.loading}
         runtimeIds={runtimeIds}
+        yoloRestartHint={claudeAvailable ? CLAUDE_YOLO_RESTART_NOTE : undefined}
         onChange={(mode) => save(true, mode)} />
     </div>}
-    {permissions.error && <p role="alert" style={{ color: 'var(--term-muted)' }}>{permissions.error}</p>}
+    {permissions.error && <p role="alert" style={{ color: 'var(--term-muted)' }}>{permissions.error} <button type="button" onClick={() => { void permissions.retry(); }} disabled={permissions.loading}>Retry</button></p>}
     <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 10 }}>
       {supportsYolo
         ? 'Changes apply to the next turn. Trust keeps native sandbox limits; YOLO uses full access where supported. Kiro, Crew and Pi use Trust for YOLO. Agent Runs use their own permissions.'
         : 'Changes apply to the next turn. Ask requests approval; Trust approves tools automatically. Agent Runs use their own permissions.'}
+      {/* Turning global permissions on or off can also cross YOLO. */}
+      {claudeAvailable && supportsYolo ? ` ${CLAUDE_YOLO_RESTART_NOTE}` : null}
     </p>
   </div>;
 }

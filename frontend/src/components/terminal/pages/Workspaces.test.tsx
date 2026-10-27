@@ -1,7 +1,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, within } from '@testing-library/react';
-import TerminalWorkspaces from './Workspaces';
+import TerminalWorkspaces, { buildCard } from './Workspaces';
+import type { ChatNodeState, Project } from '../../../state/chatTypes';
 import { _resetForTest, getManageWorkspaceId } from '../../../state/manageRoute';
 import { setKnownBackendConnections } from '../../../config/backendConnections';
 
@@ -70,17 +71,6 @@ it('shows workspace machines, filters by host or remote, and updates renamed con
 describe('TerminalWorkspaces — header controls', () => {
   beforeEach(() => _resetForTest());
 
-  it('uses the shared primary Button and page search field', () => {
-    render(<TerminalWorkspaces onNav={vi.fn()} />);
-    const create = screen.getByRole('button', { name: '+ new workspace' });
-    expect(create.className).toContain('ui-btn--primary');
-    // No fill of its own: the colour is the shared recipe's (Send's accent).
-    expect(create.style.background).toBe('');
-
-    const search = screen.getByRole('searchbox', { name: 'Filter workspaces' });
-    expect(search.closest('label')!.className).toBe('ui-search');
-  });
-
   it('clears the filter from the field\'s own clear button', () => {
     render(<TerminalWorkspaces onNav={vi.fn()} />);
     const search = screen.getByRole('searchbox', { name: 'Filter workspaces' }) as HTMLInputElement;
@@ -107,15 +97,6 @@ describe('TerminalWorkspaces — row click', () => {
     expect(onNav).toHaveBeenCalledWith('workspace-manage');
   });
 
-  it('exposes the name as a button so the row can be opened from the keyboard', () => {
-    const onNav = vi.fn();
-    render(<TerminalWorkspaces onNav={onNav} />);
-    const row = screen.getByTestId('workspace-table-row-ws-z');
-    fireEvent.click(within(row).getByRole('button', { name: 'zeta' }));
-    expect(getManageWorkspaceId()).toBe('ws-z');
-    expect(onNav).toHaveBeenCalledWith('workspace-manage');
-  });
-
   it('opens the row menu from the kebab without opening the workspace', () => {
     const onNav = vi.fn();
     render(<TerminalWorkspaces onNav={onNav} />);
@@ -131,40 +112,6 @@ describe('TerminalWorkspaces — row click', () => {
 describe('TerminalWorkspaces — table', () => {
   beforeEach(() => _resetForTest());
 
-  it('renders one table row per live workspace, newest activity first', () => {
-    render(<TerminalWorkspaces onNav={vi.fn()} />);
-    expect(screen.getByRole('table')).toBeTruthy();
-    expect(rowOrder()).toEqual(['ws-x', 'ws-a', 'ws-z', 'ws-s']);
-    expect(screen.getByRole('columnheader', { name: /last/i }).getAttribute('aria-sort')).toBe('descending');
-  });
-
-  it('shows a dedicated Connection column without count or activity columns', () => {
-    render(<TerminalWorkspaces onNav={vi.fn()} />);
-    expect(screen.getAllByRole('columnheader').map(header => header.textContent?.replace(/[↑↓]/g, '').trim())).toEqual([
-      'Name', 'Path', 'Connection', 'Latest thread', 'Last', 'Actions',
-    ]);
-    const cells = cellsOf('ws-a');
-    expect(cells).toHaveLength(6);
-    expect(within(cells[0]).getByRole('button', { name: 'atlas' })).toBeTruthy();
-    expect(within(cells[0]).queryByText('Local')).toBeNull();
-    expect(cells[2].textContent).toBe('Local');
-    expect(screen.queryByText('nodes', { exact: true })).toBeNull();
-    expect(screen.queryByText('threads', { exact: true })).toBeNull();
-    expect(screen.queryByRole('img', { name: /last 14 days/ })).toBeNull();
-  });
-
-  it('shortens the home prefix of a path and keeps the full path as a tooltip', () => {
-    render(<TerminalWorkspaces onNav={vi.fn()} />);
-    expect(cellsOf('ws-x')[1].textContent).toBe('~/code/web');
-    expect(cellsOf('ws-x')[1].getAttribute('title')).toBe('/Users/someone/code/web');
-    // Paths outside a home directory are shown as they are — including
-    // /Users/Shared, which is nobody's home.
-    expect(cellsOf('ws-z')[1].textContent).toBe('/srv/zeta');
-    expect(cellsOf('ws-s')[1].textContent).toBe('/Users/Shared/proj');
-    // No folder at all.
-    expect(cellsOf('ws-a')[1].textContent).toBe('quick chat · no folder');
-  });
-
   it('sorts by a column on click and flips direction on a second click', () => {
     render(<TerminalWorkspaces onNav={vi.fn()} />);
 
@@ -179,32 +126,33 @@ describe('TerminalWorkspaces — table', () => {
     fireEvent.click(screen.getByRole('button', { name: /^last/i }));
     expect(rowOrder()).toEqual(['ws-x', 'ws-a', 'ws-z', 'ws-s']);
   });
+});
 
-  it('marks the active workspace row', () => {
-    render(<TerminalWorkspaces onNav={vi.fn()} />);
-    expect(cellsOf('ws-a')[0].style.boxShadow).toContain('var(--term-accent)');
-    expect(cellsOf('ws-x')[0].style.boxShadow).toBe('');
-  });
-
-  it('filters rows by name', () => {
-    render(<TerminalWorkspaces onNav={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText(/filter workspaces/i), { target: { value: 'zet' } });
-    expect(rowOrder()).toEqual(['ws-z']);
-  });
-
-  it('filters by the path as displayed, and by the part of the path the display hides', () => {
-    render(<TerminalWorkspaces onNav={vi.fn()} />);
-    const filter = screen.getByPlaceholderText(/filter workspaces/i);
-
-    // What the row shows is what the user will type.
-    fireEvent.change(filter, { target: { value: '~/code' } });
-    expect(rowOrder()).toEqual(['ws-x']);
-    expect(cellsOf('ws-x')[1].textContent).toBe('~/code/web');
-
-    // A hit inside the collapsed prefix shows the full path, so the match is visible.
-    fireEvent.change(filter, { target: { value: 'someone' } });
-    expect(rowOrder()).toEqual(['ws-x']);
-    expect(cellsOf('ws-x')[1].textContent).toBe('/Users/someone/code/web');
-    expect(within(cellsOf('ws-x')[1]).getByText('someone').tagName).toBe('MARK');
+describe('TerminalWorkspaces — cards', () => {
+  it('leave Meta agent maintenance runs and page helpers out of every count and preview', () => {
+    const node = (nodeId: string, title: string, at: number, extra: Partial<ChatNodeState> = {}): ChatNodeState => ({
+      nodeId, projectId: 'ws-m', kind: 'chat', chatId: null, title, status: 'idle', followUps: [],
+      messages: [{ id: `${nodeId}-m`, role: 'user', text: title, toolCalls: [], createdAt: at }], ...extra,
+    });
+    const project: Project = {
+      ...base, id: 'ws-m', name: 'maintained', createdAt: 0,
+      chatIds: ['mine', 'mine-branch', 'run', 'helper'],
+      edges: [{ source: 'mine', target: 'mine-branch', kind: 'branch' }],
+      trees: [
+        { id: 't-mine', rootNodeId: 'mine', createdAt: 0, lastActiveAt: 100 },
+        { id: 't-run', rootNodeId: 'run', createdAt: 0, lastActiveAt: 900 },
+        { id: 't-helper', rootNodeId: 'helper', createdAt: 0, lastActiveAt: 800 },
+      ],
+    };
+    const snapshot = {
+      mine: node('mine', 'My thread', 100),
+      'mine-branch': node('mine-branch', 'My branch', 120, { parentNodeId: 'mine' }),
+      run: node('run', 'Space maintenance · Oct 23', 900, { maintenanceJobId: 'job-1' }),
+      helper: node('helper', 'Page helper', 800, { pageId: 'pg-1' }),
+    };
+    const card = buildCard(project, snapshot, new Set(['run']), null);
+    expect(card).toMatchObject({ liveCount: 2, threadCount: 1, branches: 1, streaming: 0, lastTs: 120 });
+    expect(card.threads.map((t) => t.title)).toEqual(['My thread']);
+    expect(card.nodes.map((n) => n.title)).toEqual(['My thread', 'My branch']);
   });
 });

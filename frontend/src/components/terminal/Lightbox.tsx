@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useOverlayFocus } from '../ui/useOverlayFocus';
 
 function formatBytes(n: number | undefined): string {
   if (typeof n !== 'number' || !Number.isFinite(n) || n <= 0) return '';
@@ -27,6 +28,8 @@ export interface LightboxProps {
  * dismiss. Fades in on mount.
  */
 export function Lightbox({ src, alt, filename, mimeType, size, caption, onClose }: LightboxProps) {
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  useOverlayFocus({ open: true, panelRef, restore: 'always' });
   const [visible, setVisible] = useState(false);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
 
@@ -34,12 +37,16 @@ export function Lightbox({ src, alt, filename, mimeType, size, caption, onClose 
     // Flip on after mount so the opacity transition runs (fade-in).
     const raf = requestAnimationFrame(() => setVisible(true));
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onClose();
+      }
     };
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKey, true);
     };
   }, [onClose]);
 
@@ -55,6 +62,8 @@ export function Lightbox({ src, alt, filename, mimeType, size, caption, onClose 
   // escapes that containing block so the overlay covers the whole app.
   return createPortal(
     <div
+      ref={panelRef}
+      tabIndex={-1}
       role="dialog"
       aria-modal="true"
       aria-label={filename || 'Image viewer'}
@@ -76,6 +85,13 @@ export function Lightbox({ src, alt, filename, mimeType, size, caption, onClose 
         transition: 'opacity var(--t-soft) ease-out',
       }}
     >
+      <button
+        type="button"
+        aria-label="Close image viewer"
+        onClick={(event) => { event.stopPropagation(); onClose(); }}
+        className="ui-overlay-close"
+        style={{ position: 'absolute', top: 16, right: 16, color: 'rgba(255,255,255,0.92)' }}
+      >×</button>
       <img
         src={src}
         alt={alt ?? ''}

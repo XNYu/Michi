@@ -1,0 +1,350 @@
+{
+  "static": {
+    "kiro": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "sidecar",
+        "hostTitleRequiresOptIn": true,
+        "clearCreatesNewNativeSession": false
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "crew": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-relay"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "native-update",
+        "clearCreatesNewNativeSession": false
+      },
+      "run": null
+    },
+    "pi": {
+      "topology": {
+        "identityTiming": "none",
+        "cancel": "native-ack",
+        "toolDelivery": [
+          "in-process"
+        ],
+        "historyReplay": "messages",
+        "backgroundTurns": false,
+        "titles": "none"
+      },
+      "run": {
+        "toolMode": "allowlist",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": false
+      }
+    },
+    "claude": {
+      "topology": {
+        "identityTiming": "on-first-turn",
+        "cancel": "native-ack",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": true,
+        "titles": "none"
+      },
+      "run": {
+        "toolMode": "allowlist",
+        "steering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "codex": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "native-ack",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "in-stream"
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "antigravity": {
+      "topology": {
+        "identityTiming": "on-first-turn",
+        "cancel": "process-restart",
+        "toolDelivery": [],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "none"
+      },
+      "run": null
+    },
+    "cursor": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "native-update"
+      },
+      "run": null
+    },
+    "grok": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "native-update"
+      },
+      "run": null
+    }
+  },
+  "instances": {
+    "kiro-v2": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "sidecar",
+        "hostTitleRequiresOptIn": true,
+        "clearCreatesNewNativeSession": false
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "kiro-v2-without-mcp": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "sidecar",
+        "hostTitleRequiresOptIn": true,
+        "clearCreatesNewNativeSession": false
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "kiro-v2-sidecar-off": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "none",
+        "hostTitleRequiresOptIn": true,
+        "clearCreatesNewNativeSession": false
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "kiro-v3-local": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-http-grouped",
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": true,
+        "titles": "sidecar",
+        "hostTitleRequiresOptIn": true,
+        "workflowsRequireOptIn": true,
+        "clearCreatesNewNativeSession": true
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "kiro-v3-cloud": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": true,
+        "titles": "sidecar",
+        "hostTitleRequiresOptIn": true,
+        "workflowsRequireOptIn": true,
+        "clearCreatesNewNativeSession": true
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "kiro-v3-without-mcp": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [],
+        "historyReplay": "preamble",
+        "backgroundTurns": true,
+        "titles": "sidecar",
+        "hostTitleRequiresOptIn": true,
+        "workflowsRequireOptIn": true,
+        "clearCreatesNewNativeSession": true
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "kiro-v3-isolated-worker": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": true,
+        "titles": "sidecar",
+        "hostTitleRequiresOptIn": true,
+        "workflowsRequireOptIn": true,
+        "clearCreatesNewNativeSession": true
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "crew": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [
+          "mcp-relay"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "native-update",
+        "clearCreatesNewNativeSession": false
+      },
+      "run": null
+    },
+    "crew-without-mcp": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "inferred-keep-session",
+        "toolDelivery": [],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "native-update",
+        "clearCreatesNewNativeSession": false
+      },
+      "run": null
+    },
+    "codex": {
+      "topology": {
+        "identityTiming": "on-open",
+        "cancel": "native-ack",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": false,
+        "titles": "in-stream"
+      },
+      "run": {
+        "toolMode": "runtime_default",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "claude": {
+      "topology": {
+        "identityTiming": "on-first-turn",
+        "cancel": "native-ack",
+        "toolDelivery": [
+          "mcp-http"
+        ],
+        "historyReplay": "preamble",
+        "backgroundTurns": true,
+        "titles": "none"
+      },
+      "run": {
+        "toolMode": "allowlist",
+        "steering": "next_turn",
+        "supportsNativeResume": true
+      }
+    },
+    "pi": {
+      "topology": {
+        "identityTiming": "none",
+        "cancel": "native-ack",
+        "toolDelivery": [
+          "in-process"
+        ],
+        "historyReplay": "messages",
+        "backgroundTurns": false,
+        "titles": "none"
+      },
+      "run": {
+        "toolMode": "allowlist",
+        "steering": "native",
+        "immediateSteering": "next_turn",
+        "supportsNativeResume": false
+      }
+    }
+  }
+}

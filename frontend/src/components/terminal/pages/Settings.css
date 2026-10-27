@@ -121,6 +121,10 @@
 }
 
 @container (max-width: 540px) {
+  .terminal-settings--drawer .terminal-settings-layout {
+    grid-template-columns: 124px minmax(0, 1fr);
+  }
+
   .terminal-settings-sidebar {
     padding: 12px 8px;
   }
@@ -128,4 +132,17 @@
   .terminal-settings-content {
     padding: 16px;
   }
+}
+
+/* These panes now share a drawer with navigation, even in a wide window. */
+.terminal-settings--drawer .components-settings__workspace { flex-wrap: wrap; gap: 8px; }
+.terminal-settings--drawer .components-settings__workspace select { min-width: 0; max-width: 100%; }
+.terminal-settings--drawer .page-component-library-grid { grid-template-columns: minmax(0, 1fr); }
+.terminal-settings--drawer .page-component-list { border-right: 0; padding-right: 0; }
+
+@container (max-width: 740px) {
+  .terminal-settings--drawer .meta-set__row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
+  .terminal-settings--drawer .meta-set__row-v { grid-column: 1; grid-row: 2; font-size: var(--fs-md); color: var(--term-muted); }
+  .terminal-settings--drawer .meta-set__ctl { grid-column: 2; grid-row: 1 / span 2; }
+  .terminal-settings--drawer .meta-set__notice { flex-wrap: wrap; }
 }

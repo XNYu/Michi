@@ -166,6 +166,9 @@
 .michi-menu-badge { flex-shrink: 0; max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--term-muted); font-size: var(--m-captionSize); border: 1px solid var(--term-line); padding: 0 4px; border-radius: var(--m-itemRadius); }
 .michi-menu-command { flex-shrink: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .michi-menu-footer { flex-shrink: 0; margin-top: 4px; padding: 4px var(--m-rowX); border-top: 1px solid var(--term-line); color: var(--term-muted); font-size: var(--m-captionSize); font-weight: 400; }
+/* The context-usage hover reads as a label, not a menu column: hug the content
+   and keep the row inset small so it does not double the surface padding. */
+.michi-menu[data-menu='usage'] { --m-width: max-content; --m-rowX: 4px; --m-rowY: 2px; }
 .michi-menu-usage { display: flex; flex-direction: column; gap: var(--m-textGap); pointer-events: none; }
 .michi-menu-usage-primary { display: flex; align-items: center; gap: 4px; padding: var(--m-rowY) var(--m-rowX); }
 .michi-menu-usage-details { display: flex; flex-wrap: wrap; gap: 4px var(--m-gap); padding: 0 var(--m-rowX) var(--m-rowY); color: var(--term-muted); font-size: var(--m-captionSize); font-variant-numeric: tabular-nums; }

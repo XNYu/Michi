@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { installMockApi, bootWithWorkspace, sseBody } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 const waitingLabel = 'Waiting for cancellation to finish';
 const cleanupError = 'Pi session cleanup timed out. Original history retained; retry when cleanup finishes.';
@@ -106,7 +107,7 @@ async function installCancellationStreams(page: Page, deferFirstMessageHeaders =
 }
 
 async function startAndStop(page: Page) {
-  const composer = page.locator('[contenteditable="true"]').first();
+  const composer = page.locator(COMPOSER_EDITOR).first();
   await composer.fill('start the long turn');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   await expect.poll(() => page.evaluate(() => window.__cancelResume.messages.length)).toBe(1);
@@ -167,7 +168,7 @@ async function expectContained(locator: Locator, width: number) {
 test('cancel before message headers aborts the pending fetch and the next message gets a clean reply', async ({ page }) => {
   await installCancellationStreams(page, true);
   await bootWithWorkspace(page);
-  const composer = page.locator('[contenteditable="true"]').first();
+  const composer = page.locator(COMPOSER_EDITOR).first();
   await composer.fill('cancel before response headers');
   await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
   // Stop can appear during ensure-session; explicitly wait for POST /message.
@@ -226,7 +227,7 @@ test.describe('cancel + resume', () => {
     const first = await startAndStop(page);
     const pending = page.getByRole('status', { name: waitingLabel, exact: true });
     await expect(pending).toHaveCount(0);
-    const composer = page.locator('[contenteditable="true"]').first();
+    const composer = page.locator(COMPOSER_EDITOR).first();
     await composer.fill('Retry when cleanup finishes');
     await expect(page.getByRole('button', { name: /Send \(Enter\)/ })).toBeEnabled();
     await expect(pending).toBeVisible();
@@ -267,7 +268,7 @@ test.describe('cancel + resume', () => {
     await acknowledgeCancel(page, first);
     const pending = page.getByRole('status', { name: waitingLabel, exact: true });
     await expect(pending).toBeVisible();
-    const composer = page.locator('[contenteditable="true"]').first();
+    const composer = page.locator(COMPOSER_EDITOR).first();
     await composer.fill('Continue after cleanup');
     await page.evaluate((body) => window.__cancelResume.observers[0].write(body, true), sseBody([
       { event: 'cancel_phase', data: { phase: 'settled', turnId: first.turnId, seq: 1 } },
@@ -285,7 +286,7 @@ test.describe('cancel + resume', () => {
   test('an immediate next send detaches the old observer and rejects its delayed events', async ({ page }) => {
     const first = await startAndStop(page);
     await acknowledgeCancel(page, first);
-    const composer = page.locator('[contenteditable="true"]').first();
+    const composer = page.locator(COMPOSER_EDITOR).first();
     await composer.fill('second turn');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
     await expect.poll(() => page.evaluate(() => window.__cancelResume.messages.length)).toBe(2);

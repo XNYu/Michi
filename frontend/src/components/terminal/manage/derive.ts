@@ -1,4 +1,5 @@
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
+import { isVisibleConversationNode } from '../../../state/conversationVisibility';
 
 export interface HeaderCounts {
   chats: number;
@@ -23,9 +24,13 @@ export interface DigestSummary {
 
 const EXCERPT_LEN = 200;
 
-function isLiveChatNode(node: ChatNodeState | undefined): boolean {
-  return !!node && node.kind === 'chat' && !node.deletedAt;
+/** A chat the user has, not a page helper or a Meta agent maintenance run. */
+function isLiveChatNode(node: ChatNodeState | undefined): node is ChatNodeState {
+  return !!node && node.kind === 'chat' && !node.deletedAt && isVisibleConversationNode(node);
 }
+
+const isShownTree = (tree: Project['trees'][number], nodes: Record<string, ChatNodeState>): boolean =>
+  isVisibleConversationNode(nodes[tree.rootNodeId]);
 
 export function deriveHeaderCounts(
   project: Project,
@@ -36,8 +41,8 @@ export function deriveHeaderCounts(
     return acc + (isLiveChatNode(node) ? 1 : 0);
   }, 0);
   const artifacts = project.artifacts?.length ?? 0;
-  const branches = project.edges.filter((e) => (e.kind ?? 'branch') === 'branch').length;
-  const lastActiveAt = project.trees.reduce((acc, t) => Math.max(acc, t.lastActiveAt), 0);
+  const branches = project.edges.filter((e) => (e.kind ?? 'branch') === 'branch' && isVisibleConversationNode(nodes[e.target])).length;
+  const lastActiveAt = project.trees.reduce((acc, t) => (isShownTree(t, nodes) ? Math.max(acc, t.lastActiveAt) : acc), 0);
   return { chats, artifacts, branches, lastActiveAt };
 }
 
@@ -73,19 +78,15 @@ export function deriveTreeRows(
   for (const tree of orderedTrees) {
     if (tree.archivedAt) continue;
     const rootNode = nodes[tree.rootNodeId];
-    if (!rootNode || rootNode.deletedAt) continue;
+    if (!rootNode || rootNode.deletedAt || !isVisibleConversationNode(rootNode)) continue;
 
-    const directBranchIds = (childrenOf.get(tree.rootNodeId) ?? []).filter((id) => {
-      const n = nodes[id];
-      return n && !n.deletedAt && n.kind === 'chat';
-    });
+    const directBranchIds = (childrenOf.get(tree.rootNodeId) ?? []).filter((id) => isLiveChatNode(nodes[id]));
 
     let deeperCount = 0;
     for (const branchId of directBranchIds) {
       const grandKids = childrenOf.get(branchId) ?? [];
       for (const gid of grandKids) {
-        const gn = nodes[gid];
-        if (gn && !gn.deletedAt && gn.kind === 'chat') deeperCount += 1;
+        if (isLiveChatNode(nodes[gid])) deeperCount += 1;
       }
     }
     if (deeperCount > 0) {
@@ -154,7 +155,7 @@ export function deriveArchivedTreeRows(
 
   for (const tree of archivedTrees) {
     const rootNode = nodes[tree.rootNodeId];
-    if (!rootNode || rootNode.deletedAt) continue;
+    if (!rootNode || rootNode.deletedAt || !isVisibleConversationNode(rootNode)) continue;
 
     if (norm) {
       const title = (tree.name?.trim() || rootNode.title || '').toLowerCase();

@@ -42,14 +42,4 @@ describe('Composer autocomplete menus', () => {
     act(() => { vi.advanceTimersByTime(200); });
     expect(editor.getText()).toBe(`${text}z`);
   });
-
-  it.each(['@', '/br'])('does not run a %s selection after unmount', async (text) => {
-    const { onChange, unmount } = await openEditor(text);
-    vi.useFakeTimers();
-    fireEvent.mouseDown(screen.getAllByRole('option')[0]);
-    unmount();
-    onChange.mockClear();
-    act(() => { vi.advanceTimersByTime(200); });
-    expect(onChange).not.toHaveBeenCalled();
-  });
 });

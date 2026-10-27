@@ -48,9 +48,19 @@ test('replay recovery never reads another node\'s turn or exposes its error', ()
     assert.equal(chatReplayUnavailable('node', 'other-turn').code, 'turn_replay_unavailable');
 });
 
-test('a completed or unknown turn asks for saved-state reconciliation without claiming a restart', () => {
-    getDb().prepare("UPDATE turns SET status = 'completed', error = NULL WHERE turn_id = ?").run('turn');
-    const result = chatReplayUnavailable('node', 'turn');
-    assert.equal(result.code, 'turn_replay_unavailable');
-    assert.match(result.error, /saved state/);
+test('replay preserves an existing runtime failure without enabling blind retry', () => {
+    getDb().prepare('UPDATE turns SET error = ? WHERE turn_id = ?')
+        .run('ACP process exited mid-prompt', 'turn');
+    assert.deepEqual(chatReplayUnavailable('node', 'turn'), {
+        error: 'ACP process exited mid-prompt', code: 'turn_replay_unavailable',
+    });
+    assert.equal(chatReplayUnavailable('other-node', 'turn').code, 'turn_replay_unavailable');
+    assert.ok(!chatReplayUnavailable('other-node', 'turn').error.includes('ACP'));
+});
+
+test('completed turns and missing errors keep the generic replay explanation', () => {
+    for (const [status, error] of [['completed', 'old error'], ['error', null]]) {
+        getDb().prepare('UPDATE turns SET status = ?, error = ? WHERE turn_id = ?').run(status, error, 'turn');
+        assert.match(chatReplayUnavailable('node', 'turn').error, /live reply is no longer available/);
+    }
 });

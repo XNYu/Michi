@@ -15,12 +15,14 @@
 
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { CodexRuntime } from '../src/agents/codex/CodexRuntime';
-import { CodexSession } from '../src/agents/codex/CodexSession';
-import { CODEX_SERVER_REQUESTS } from '../src/agents/codex/codexProtocol';
-import type { CodexAppServerClient } from '../src/agents/codex/CodexAppServerClient';
-import type { McpSlotRegistry } from '../src/services/mcpServer';
+import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
+import { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSession';
+import { CODEX_SERVER_REQUESTS } from 'michi-runtime/internal/adapters/codex/codexProtocol';
+import type { CodexAppServerClient } from 'michi-runtime/internal/adapters/codex/CodexAppServerClient';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
+import { runOwner } from './helpers/owners';
+import { fakeMcpRegistry, type FakeMcpRegistry } from './helpers/fakeMcpRegistry';
+import { codexTestOptions } from './helpers/codexTestOptions';
 
 // ---- Stubs ------------------------------------------------------------------
 
@@ -91,15 +93,8 @@ function makeStubClient(threadId = 'thread-approval-test'): CodexAppServerClient
   return client as ReturnType<typeof makeStubClient>;
 }
 
-function makeStubMcpRegistry(): McpSlotRegistry {
-  const registry: any = {
-    create: (_parentChatId: string, _cwd: string, _ownerUserId: string | null, _cbs: any, _opts?: any) => ({
-      slotId: 'test-slot-' + Math.random().toString(36).slice(2),
-    }),
-    dispose: async (_slotId: string) => {},
-    get: (_slotId: string) => undefined,
-  };
-  return registry as McpSlotRegistry;
+function makeStubMcpRegistry(): FakeMcpRegistry {
+  return fakeMcpRegistry({}, { mcpPort: 3001 });
 }
 
 function makeStubBridge(): AgentToolBridge {
@@ -112,9 +107,7 @@ function makeStubBridge(): AgentToolBridge {
 
 function makeRuntime(client: CodexAppServerClient) {
   return new CodexRuntime(
-    makeStubBridge(),
-    makeStubMcpRegistry(),
-    3001,
+    { ...codexTestOptions(), bridge: makeStubBridge(), mcpSlots: makeStubMcpRegistry() },
     { client },
   );
 }
@@ -153,8 +146,8 @@ async function makeRuntimeWithSession(t: TestContext, threadId = 'thread-approva
 
 test('permission profiles fail closed without using generic tool approval', async (t) => {
   // `item/permissions/requestApproval` is NOT in CODEX_APPROVAL_ALIASES.
-  // resolvePolicy would return 'allow' for it (since it's not in ASK_TOOLS),
-  // so it MUST NOT be fed to resolvePolicy or the generic approval UI.
+  // The chat tool policy allows any tool in Trust and YOLO, so it MUST NOT be
+  // fed to that policy or the generic approval UI.
   const { runtime, session, client } = await makeRuntimeWithSession(t);
 
   const responsePromise = client._fireServerRequest(
@@ -226,81 +219,6 @@ test('MCP elicitation without a matching session declines with its own contract'
   });
 });
 
-test('allow_once → { decision: accept } for commandExecution and fileChange', async (t) => {
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  // --- commandExecution ---
-  const cmdResponsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-approval-test', command: 'echo hello' },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  assert.equal(session.pendingPermissions.size, 1);
-  const [cmdRequestId] = session.pendingPermissions.keys();
-  session.respondToPermission(cmdRequestId, 'allow_once');
-
-  const cmdResult = await cmdResponsePromise;
-  assert.deepEqual(cmdResult, { decision: 'accept' }, 'allow_once should produce accept');
-
-  // --- fileChange ---
-  const fileResponsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.fileChangeApproval,
-    { threadId: 'thread-approval-test', file_path: '/tmp/foo.txt' },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  assert.equal(session.pendingPermissions.size, 1);
-  const [fileRequestId] = session.pendingPermissions.keys();
-  session.respondToPermission(fileRequestId, 'allow_once');
-
-  const fileResult = await fileResponsePromise;
-  assert.deepEqual(fileResult, { decision: 'accept' }, 'allow_once should produce accept for fileChange');
-  await runtime.shutdown();
-});
-
-test('reject_once → { decision: decline }', async (t) => {
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  const responsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-approval-test', command: 'rm -rf /' },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  const [requestId] = session.pendingPermissions.keys();
-  session.respondToPermission(requestId, 'reject_once');
-
-  const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'decline' }, 'reject_once should produce decline');
-  await runtime.shutdown();
-});
-
-test('chat allow_always uses a single native approval without a workspace grant', async (t) => {
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  const alwaysAllowCalls: string[] = [];
-  session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);
-
-  const responsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-approval-test', command: 'npm test' },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  const [requestId] = session.pendingPermissions.keys();
-  session.respondToPermission(requestId, 'allow_always');
-
-  const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'accept' }, 'chat grants stay in Michi and remain revocable');
-  assert.deepEqual(
-    alwaysAllowCalls,
-    [],
-    'chat grants must not invoke the legacy workspace grant hook',
-  );
-  await runtime.shutdown();
-});
-
 test('chat fileChange approval does not persist a native session-wide grant', async (t) => {
   const { runtime, session, client } = await makeRuntimeWithSession(t);
 
@@ -342,46 +260,6 @@ test('cancelPermission resolves to decline (null → decline path)', async (t) =
   await runtime.shutdown();
 });
 
-test('markCrashed cancels all pending permissions with decline', async (t) => {
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  // Queue two approval requests without responding
-  const response1Promise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-approval-test', command: 'cmd1' },
-  );
-  const response2Promise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.fileChangeApproval,
-    { threadId: 'thread-approval-test', file_path: '/tmp/a.ts' },
-  );
-
-  await new Promise((r) => setImmediate(r));
-  assert.equal(session.pendingPermissions.size, 2, 'should have 2 pending permissions');
-
-  // Crash the session
-  session.markCrashed('daemon exited unexpectedly');
-
-  const [result1, result2] = await Promise.all([response1Promise, response2Promise]);
-  assert.deepEqual(result1, { decision: 'decline' }, 'crashed session should decline all pending');
-  assert.deepEqual(result2, { decision: 'decline' }, 'crashed session should decline all pending');
-  assert.equal(session.pendingPermissions.size, 0, 'pendingPermissions should be cleared after crash');
-  await runtime.shutdown();
-});
-
-test('approval for unknown threadId → immediate decline (fail-safe)', async () => {
-  // Fire a server request with a threadId that has NO associated session.
-  // The runtime must not hang or throw — it must immediately respond with decline.
-  const client = makeStubClient();
-  makeRuntime(client); // runtime with no sessions registered
-
-  const result = await client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-that-does-not-exist', command: 'whoami' },
-  );
-
-  assert.deepEqual(result, { decision: 'decline' }, 'unknown threadId should get immediate decline');
-});
-
 test('approval with missing threadId in params → immediate decline', async () => {
   const client = makeStubClient();
   makeRuntime(client);
@@ -394,10 +272,9 @@ test('approval with missing threadId in params → immediate decline', async () 
   assert.deepEqual(result, { decision: 'decline' }, 'missing threadId should get immediate decline');
 });
 
-
 // ---- Agent Run approval routing tests (T06) ---------------------------------
 
-test('agent_run approval delegates to permissionBroker, not resolvePolicy', async (t) => {
+test('agent_run approval delegates to permissionBroker, not the chat policy', async (t) => {
   const brokerRequests: Array<{ toolName: string }> = [];
   const broker: any = {
     async requestPermission(req: any) {
@@ -413,7 +290,7 @@ test('agent_run approval delegates to permissionBroker, not resolvePolicy', asyn
     sessionId: 'attempt-approval-1',
     cwd: '/tmp/test',
     model: 'test-model',
-    owner: { kind: 'agent_run', runId: 'run-approval', attemptId: 'attempt-approval-1' },
+    owner: runOwner('run-approval', 'attempt-approval-1'),
     permissionBroker: broker,
     toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
   }) as CodexSession;
@@ -445,7 +322,7 @@ test('agent_run allow_always from broker produces acceptForSession without grant
     sessionId: 'attempt-grant-1',
     cwd: '/tmp/test',
     model: 'test-model',
-    owner: { kind: 'agent_run', runId: 'run-grant', attemptId: 'attempt-grant-1' },
+    owner: runOwner('run-grant', 'attempt-grant-1'),
     permissionBroker: broker,
     toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
     workspaceId: 'ws-test',
@@ -480,7 +357,7 @@ test('agent_run deny from broker produces decline', async (t) => {
     sessionId: 'attempt-deny-1',
     cwd: '/tmp/test',
     model: 'test-model',
-    owner: { kind: 'agent_run', runId: 'run-deny', attemptId: 'attempt-deny-1' },
+    owner: runOwner('run-deny', 'attempt-deny-1'),
     permissionBroker: broker,
     toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
   }) as CodexSession;
@@ -496,62 +373,26 @@ test('agent_run deny from broker produces decline', async (t) => {
   await runtime.shutdown();
 });
 
-test('agent_run permission profiles fail closed without a generic broker decision', async (t) => {
-  const brokerRequests: Array<{ toolName: string }> = [];
-  const broker: any = {
-    async requestPermission(req: any) {
-      brokerRequests.push({ toolName: req.toolName });
-      return 'deny';
-    },
-  };
-
-  const client = makeStubClient('thread-run-unknown');
-
+for (const answer of ['allow_once', 'allow_always', 'reject_once']) test(`agent_run ask answered ${answer} is a single-use decision`, async (t) => {
+  const client = makeStubClient('thread-run-ask');
   const runtime = makeRuntime(client);
   const session = await runtime.newSession({
-    sessionId: 'attempt-unknown-1',
+    sessionId: 'attempt-ask-1',
     cwd: '/tmp/test',
     model: 'test-model',
-    owner: { kind: 'agent_run', runId: 'run-unknown', attemptId: 'attempt-unknown-1' },
-    permissionBroker: broker,
-    toolProfile: { allowedToolNames: ['submit_agent_result'] },
+    owner: runOwner('run-ask', 'attempt-ask-1'),
+    permissionBroker: { async requestPermission() { return 'ask'; } },
+    toolProfile: { allowedToolNames: ['submit_agent_result', 'bash'] },
   }) as CodexSession;
   await startActiveTurn(t, runtime, session, client);
-
-  const result = await client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.permissionsApproval,
-    { threadId: 'thread-run-unknown' },
-  );
-
-  assert.equal(brokerRequests.length, 0, 'generic tool decisions cannot grant permission scopes');
-  assert.deepEqual(result, { permissions: {}, scope: 'turn' });
-
-  await runtime.shutdown();
-});
-
-test('chat session approval does not persist legacy workspace grants', async (t) => {
-  // This test verifies existing chat behavior is unchanged after T06 changes.
-  const { runtime, session, client } = await makeRuntimeWithSession(t);
-
-  const alwaysAllowCalls: string[] = [];
-  session.onAlwaysAllow = (canonical) => alwaysAllowCalls.push(canonical);
-
-  const responsePromise = client._fireServerRequest(
-    CODEX_SERVER_REQUESTS.commandApproval,
-    { threadId: 'thread-approval-test', command: 'echo chat-test' },
-  );
-  await new Promise((r) => setImmediate(r));
-
-  // Should land in pendingPermissions (chat session asks the user)
-  assert.equal(session.pendingPermissions.size, 1);
+  const response = client._fireServerRequest(CODEX_SERVER_REQUESTS.commandApproval, { threadId: 'thread-run-ask', command: 'npm test' });
+  await new Promise((resolve) => setImmediate(resolve));
   const [requestId] = session.pendingPermissions.keys();
-  session.respondToPermission(requestId, 'allow_always');
-
-  const result = await responsePromise;
-  assert.deepEqual(result, { decision: 'accept' });
-  assert.deepEqual(alwaysAllowCalls, [], 'chat session must not persist a workspace grant');
-
-  await runtime.shutdown();
+  assert.ok(requestId != null, 'the ask is shown as a Run interaction');
+  // RuntimeRunExecutor sends the answer "allow_always" as this option id; like
+  // Claude and Pi, a Run approves only this request and keeps no grant.
+  session.respondToPermission(requestId, answer);
+  assert.deepEqual(await response, { decision: answer === 'reject_once' ? 'decline' : 'accept' });
 });
 
 for (const choice of ['allow_always', 'allow_session']) {
@@ -605,4 +446,54 @@ for (const choice of ['allow_always', 'allow_session']) test(`Codex ${choice} dr
   session.respondToPermission(ids[1], choice);
   assert.deepEqual(await Promise.all([command, edit]), [{ decision: 'accept' }, { decision: 'accept' }]);
   assert.equal(session.pendingPermissions.size, 0);
+});
+
+// Cloud mode: a chat's grants belong to its user. One user's session in a
+// workspace another user owns must not pass on the owner's always-allow grant.
+for (const grantedTo of ['owner-b', 'user-a']) test(`cloud chat approval reads the session user's grants, not the workspace owner's (grant of ${grantedTo})`, async (t) => {
+  const { configureRuntimeDeps, __resetRuntimeDeps } = await import('../src/agents/runtimeDeps');
+  const nodeId = 'node-cloud-approval';
+  const grants = new Set([`${nodeId}\u0000bash\u0000${grantedTo}`]);
+  const previousCloud = process.env.MICHI_CLOUD;
+  process.env.MICHI_CLOUD = '1';
+  configureRuntimeDeps({
+    dataDir: '/tmp/michi-codex-approval-tests',
+    historyStore: {
+      getNode: (id: string) => (id === nodeId ? { id, workspace_id: 'ws-owner-b' } : null) as never,
+      listMessages: () => [],
+      getWorkspace: (id: string) => (id === 'ws-owner-b' ? { id, owner_user_id: 'owner-b' } : null) as never,
+      getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {},
+    },
+    agentConfig: { getAgentConfig: () => ({ runtime: 'codex', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined },
+    chatPermissions: {
+      getMode: () => 'ask',
+      hasGrant: (id, tool, userId) => grants.has(`${id}\u0000${tool}\u0000${userId ?? ''}`),
+      grant: () => { throw new Error('no grant is written'); },
+      resetToken: () => '0',
+    },
+  });
+  t.after(() => {
+    __resetRuntimeDeps();
+    if (previousCloud === undefined) delete process.env.MICHI_CLOUD;
+    else process.env.MICHI_CLOUD = previousCloud;
+  });
+  const client = makeStubClient('thread-cloud-approval');
+  const runtime = makeRuntime(client);
+  const session = await runtime.newSession({
+    sessionId: nodeId, cwd: '/tmp/test', model: 'test-model', ownerUserId: 'user-a', workspaceId: 'ws-owner-b',
+  }) as CodexSession;
+  await startActiveTurn(t, runtime, session, client);
+
+  const answer = client._fireServerRequest(CODEX_SERVER_REQUESTS.commandApproval,
+    { threadId: session.threadId, turnId: 'turn-1', command: 'echo cloud' });
+  await new Promise((resolve) => setImmediate(resolve));
+  if (grantedTo === 'user-a') {
+    assert.equal(session.pendingPermissions.size, 0, 'the session user\'s own grant applies');
+    assert.deepEqual(await answer, { decision: 'accept' });
+    return;
+  }
+  const [requestId] = session.pendingPermissions.keys();
+  assert.ok(requestId != null, 'user A is asked: owner B\'s grant does not cover A\'s session');
+  session.respondToPermission(requestId, 'reject_once');
+  assert.deepEqual(await answer, { decision: 'decline' });
 });

@@ -81,7 +81,7 @@ describe('usePanePresenceIntegration', () => {
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
 
-    expect(probe).toHaveBeenCalledWith(CONN);
+    expect(probe).toHaveBeenCalledWith(CONN, { configureTransport: false });
     expect(submitSpy).toHaveBeenCalledTimes(1);
     const [, , req] = submitSpy.mock.calls[0];
     expect(req.views).toEqual([expect.objectContaining({ paneId: 'node:root-1' })]);
@@ -211,6 +211,34 @@ describe('usePanePresenceIntegration', () => {
     const [, , req] = submitSpy.mock.calls[0];
     const paneIds = req.views.map((v) => v.paneId).sort();
     expect(paneIds).toEqual(['node:root-1', 'run:run-42']);
+  });
+
+  it('does not allocate or report runtime presence for a native Page pane', async () => {
+    vi.spyOn(persistenceApi, 'fetchPersistenceCapabilities').mockResolvedValue(capabilities('v1'));
+    const submit = vi.spyOn(panePresenceApi.panePresenceTransport, 'submit')
+      .mockResolvedValue({ ok: true, rendererLeaseId: 'page-lease', accepted: 1, rejectedTargets: [] });
+    const allocate = vi.spyOn(panePresenceApi, 'allocateSurfaceRegistration');
+    const project = makeProject();
+    const id = 'pane:page:local:owner-ws:page-1';
+    const item: PaneItem = {
+      id, kind: 'page', projectId: project.id, treeId: project.activeTreeId,
+      title: 'Roadmap', createdAt: 1, backendConnectionId: CONN,
+      workspaceId: 'owner-ws', pageId: 'page-1',
+    };
+    renderHook(() => usePanePresenceIntegration({
+      windowId: WINDOW_ID,
+      hydrated: true,
+      projects: [project],
+      activeProjectId: project.id,
+      activeBackendConnectionId: CONN,
+      openPanesMap: { [`${project.id}::tree-1`]: ['root-1', id] },
+      paneItems: { [id]: item },
+    }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(allocate).not.toHaveBeenCalled();
+    expect(submit.mock.calls.at(-1)![2].views.map((view) => view.paneId)).toEqual(['node:root-1']);
   });
 
   it('reports every open pane slot of the active project across every tree, not just the visible one', async () => {
@@ -407,7 +435,7 @@ describe('usePanePresenceIntegration', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-    let lastReq = submitSpy.mock.calls.at(-1)![2];
+    const lastReq = submitSpy.mock.calls.at(-1)![2];
     expect(lastReq.views).toEqual([expect.objectContaining({ paneId: 'surface:reg-1' })]);
 
     // Close the terminal pane (no longer present in any slot of the active project).
@@ -599,7 +627,7 @@ describe('usePanePresenceIntegration', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await act(async () => { await Promise.resolve(); });
 
-    expect(probe).toHaveBeenCalledWith('conn-b');
+    expect(probe).toHaveBeenCalledWith('conn-b', { configureTransport: false });
     // No submission for B's workspace while its probe is still pending.
     expect(submitSpy.mock.calls.some((call) => call[1] === projectB.id)).toBe(false);
 

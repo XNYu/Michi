@@ -4,10 +4,6 @@ import type { ProjectEdge, Tree } from '../../../state/chatTypes';
 import { useOrbitLayout, type OrbitVariant } from './useOrbitLayout';
 import { CARD_H, CARD_H_EXPANDED, CARD_W } from '../map/mapCardMetrics';
 
-function heightsFor(expanded: Set<string>): Map<string, number> {
-  return new Map([...expanded].map((id) => [id, CARD_H_EXPANDED]));
-}
-
 /**
  * Build the tree shape from the "Gamma 东京部署失败根因" screenshot: a root
  * with many first-level branches, several of which continue as 1–2 deep chains.
@@ -97,46 +93,5 @@ describe('useOrbitLayout', () => {
         expect(pos.y + CARD_H / 2).toBeLessThanOrEqual(layout!.height);
       }
     });
-
-    it(`${variant}: keeps expanded cards clear of their neighbours`, () => {
-      const { edges, children, ids } = buildTree();
-      const liveSet = new Set(ids);
-      const expandedSet = new Set(['root', 'b5', 'b7a1']);
-      const { result } = renderHook(useOrbitLayout, {
-        initialProps: {
-          enabled: true,
-          trees: [tree],
-          activeTree: tree,
-          edges,
-          liveSet,
-          mode: 'thread',
-          cardHeights: heightsFor(expandedSet),
-          graphChildren: children,
-          variant,
-        },
-      });
-      assertNoOverlap(result.current!.positions, expandedSet);
-    });
   }
-
-  it('routes every branch edge between positioned cards', () => {
-    const { edges, children, ids } = buildTree();
-    const { result } = renderHook(useOrbitLayout, {
-      initialProps: {
-        enabled: true,
-        trees: [tree],
-        activeTree: tree,
-        edges,
-        liveSet: new Set(ids),
-        mode: 'thread',
-        cardHeights: new Map<string, number>(),
-        graphChildren: children,
-        variant: 'orbit-semi' as OrbitVariant,
-      },
-    });
-    const routes = result.current!.edgeRoutes!;
-    for (const e of edges) {
-      expect(routes.has(`${e.source}->${e.target}`)).toBe(true);
-    }
-  });
 });

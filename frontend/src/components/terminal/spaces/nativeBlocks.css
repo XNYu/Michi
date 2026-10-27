@@ -1,0 +1,112 @@
+/* Native pages lay out figures, next steps and timelines the way Spaces pages
+   read: figures without cards, titles at the home's section size, a timeline
+   of rings on one rail. Michi's own pages keep michiPage.css as it is. */
+
+[data-native-page] [data-tone='info'] { --tone: var(--term-accent); }
+[data-native-page] [data-tone='warn'] { --tone: var(--term-select); }
+[data-native-page] [data-tone='success'] { --tone: var(--term-digest); }
+[data-native-page] [data-tone='danger'] { --tone: var(--term-danger); }
+
+[data-native-page] :is([data-michi-block='next-steps'], [data-michi-block='timeline']) .michi-doc-block-title {
+  margin: 0 0 10px;
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+  line-height: 1.4;
+}
+[data-native-page] [data-michi-block='timeline'] > .michi-doc-block-head { margin-bottom: 10px; }
+[data-native-page] [data-michi-block='timeline'] > .michi-doc-block-head .michi-doc-block-title { margin: 0; }
+
+[data-native-page] .michi-doc-metrics { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 18px 28px; padding: 4px 0; }
+[data-native-page] .michi-doc-metric { gap: 0; padding: 0; border: 0; }
+[data-native-page] .michi-doc-metric > dt {
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+}
+/* 26px is Michi's page title size (.michi-doc-title); the type scale has no step there. */
+[data-native-page] .michi-doc-metric__value {
+  font-family: var(--ui-font);
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: var(--ls-tight);
+}
+[data-native-page] .michi-doc-metric__hint { font-size: var(--fs-md); line-height: 1.45; }
+
+[data-native-page] [data-michi-block='timeline'] .michi-doc-dated { position: relative; gap: 14px; padding-left: 26px; }
+[data-native-page] [data-michi-block='timeline'] .michi-doc-dated::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 7px;
+  width: 1px;
+  background: var(--term-line);
+}
+[data-native-page] [data-michi-block='timeline'] .michi-doc-dated li {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 0;
+  border: 0;
+  font-size: var(--message-body-size-base);
+  line-height: 1.45;
+}
+[data-native-page] [data-michi-block='timeline'] .michi-doc-dated__glyph { position: absolute; top: 3px; left: -26px; }
+[data-native-page] [data-michi-block='timeline'] .michi-doc-dated__dot {
+  width: 17px;
+  height: 17px;
+  border: 2px solid var(--tone, var(--term-line-s));
+  background: var(--term-bg);
+}
+[data-native-page] [data-michi-block='timeline'] .michi-doc-dated__title { order: 1; min-width: 0; color: var(--term-fg); font-weight: 600; overflow-wrap: anywhere; }
+[data-native-page] [data-michi-block='timeline'] .michi-doc-dated__when { order: 2; font-size: var(--fs-sm); }
+[data-native-page] [data-michi-block='timeline'] .michi-doc-dated__text {
+  order: 3;
+  flex-basis: 100%;
+  color: var(--term-mid);
+  font-size: calc(var(--message-body-size-base) - 1px);
+}
+
+/* A pick, tick or kept version the page did not save says so on its block. */
+.native-page-decision-note {
+  margin: 6px 0 0;
+  color: var(--term-danger-text);
+  font-size: var(--fs-sm);
+}
+
+/* The pointer marker spans the destination block, including across Home segments. */
+.native-page-drop {
+  position: fixed;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--term-accent);
+  pointer-events: none;
+  z-index: 2000;
+}
+[data-native-page] .michi-doc-block__handle { touch-action: none; }
+[data-native-page][data-dragging] { user-select: none; }
+
+/* Native block actions are a quiet icon strip, with labels available on hover and focus. */
+[data-native-page] .michi-doc-toolbar--icons {
+  top: -6px;
+  transform: translateY(-100%);
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--ui-radius);
+}
+[data-native-page] .michi-doc-toolbar--icons .michi-doc-toolbar__btn {
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--term-mid);
+}
+[data-native-page] .michi-doc-toolbar--icons .michi-doc-toolbar__btn svg { width: 14px; height: 14px; }
+[data-native-page] .michi-doc-toolbar--icons .michi-doc-toolbar__btn[aria-pressed='true'] { color: var(--term-accent); background: var(--term-accent-f); }
+[data-native-page] .michi-doc-toolbar--icons .michi-doc-toolbar__btn:disabled { opacity: 0.4; cursor: default; }

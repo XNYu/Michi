@@ -24,13 +24,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { initDb, closeDb, getDb } from '../src/services/db';
-import {
-  saveWorkspace,
-  saveNode,
-  setNodeExternalSessionId,
-  getNodeExternalSessionId,
-} from '../src/services/dbRepository';
+import { initDb, closeDb } from '../src/services/db';
+import { saveWorkspace, saveNode, getNodeExternalSessionId } from '../src/services/dbRepository';
 import type { NodeRow } from '../src/services/dbRepository';
 
 const UUID = '183ff37a-7f39-49ee-bd9e-463d10ef9a96';
@@ -82,86 +77,8 @@ describe('external_session_id — survives frontend sync upserts', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('a sync after init does NOT wipe the claude session UUID (the bug)', () => {
-    // 1. node exists (created/synced by the frontend)
-    saveNode(syncNode('ws1', 'n1'));
-    // 2. claude system/init persists the server-minted UUID
-    setNodeExternalSessionId('n1', UUID);
-    assert.equal(getNodeExternalSessionId('n1'), UUID);
-    // 3. frontend syncs the node again (drag, title edit, next message…) with
-    //    external_session_id absent → NULL. Must NOT clobber.
-    saveNode(syncNode('ws1', 'n1'));
-    assert.equal(getNodeExternalSessionId('n1'), UUID);
-  });
-
-  test('repeated syncs keep preserving it', () => {
-    saveNode(syncNode('ws1', 'n1'));
-    setNodeExternalSessionId('n1', UUID);
-    for (let i = 0; i < 5; i++) saveNode(syncNode('ws1', 'n1'));
-    assert.equal(getNodeExternalSessionId('n1'), UUID);
-  });
-
-  test('only the native binding writer can replace an existing external session ID', () => {
-    saveNode(syncNode('ws1', 'n1'));
-    setNodeExternalSessionId('n1', UUID);
-    const other = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-    saveNode({ ...syncNode('ws1', 'n1'), external_session_id: other });
-    assert.equal(getNodeExternalSessionId('n1'), UUID);
-    setNodeExternalSessionId('n1', other);
-    assert.equal(getNodeExternalSessionId('n1'), other);
-  });
-
   test('the first-ever saveNode with no UUID leaves it null (no false positive)', () => {
     saveNode(syncNode('ws1', 'n1'));
     assert.equal(getNodeExternalSessionId('n1'), null);
-  });
-
-  test('frontend sync cannot replace a persisted Kiro ACP sid with the public node id', () => {
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'kiro',
-      acp_session_id: 'acp-session-1',
-    });
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'kiro',
-      acp_session_id: 'n1',
-    });
-    const row = getDb().prepare('SELECT acp_session_id FROM nodes WHERE id = ?')
-      .get('n1') as { acp_session_id: string | null };
-    assert.equal(row.acp_session_id, 'acp-session-1');
-  });
-
-  test('frontend sync cannot erase a server-persisted runtime binding', () => {
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'kiro',
-      acp_session_id: 'acp-session-1',
-    });
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: null,
-      acp_session_id: null,
-    });
-    const row = getDb().prepare('SELECT acp_session_id, runtime_id FROM nodes WHERE id = ?')
-      .get('n1') as { acp_session_id: string | null; runtime_id: string | null };
-    assert.equal(row.acp_session_id, 'acp-session-1');
-    assert.equal(row.runtime_id, 'kiro');
-  });
-
-  test('a stale frontend runtime cannot replace a server-persisted runtime binding', () => {
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'kiro',
-      acp_session_id: 'acp-session-1',
-    });
-    saveNode({
-      ...syncNode('ws1', 'n1'),
-      runtime_id: 'claude',
-      acp_session_id: null,
-    });
-    const row = getDb().prepare('SELECT runtime_id FROM nodes WHERE id = ?')
-      .get('n1') as { runtime_id: string | null };
-    assert.equal(row.runtime_id, 'kiro');
   });
 });

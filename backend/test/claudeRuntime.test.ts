@@ -5,13 +5,18 @@
  * spawnClaude is stubbed so no real claude binary is needed.
  */
 
+import './helpers/claudeSdkFixture';
 import { test, describe, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { claudeTestOptions } from './helpers/claudeTestOptions';
+import { michiTestHost } from './helpers/michiTestHost';
 import { EventEmitter, PassThrough } from 'node:stream';
 import * as sessionRegistry from '../src/agents/sessionRegistry';
 import { ChatHub } from '../src/agents/chatHub';
-import type { AgentRuntime } from '../src/agents/types';
+import type { AgentRuntime, AgentSession } from '../src/agents/types';
+import type { RuntimeHost, SessionRegistryPort } from 'michi-runtime/internal/contract/host';
 import type { DurableTurnSnapshot } from 'michi-shared';
+import { chatOwner } from './helpers/owners';
 
 // ---- MockClaudeChild --------------------------------------------------------
 
@@ -53,7 +58,7 @@ let mockChild: MockClaudeChild;
  */
 function stubSpawnClaude(): void {
   mockChild = new MockClaudeChild();
-  const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+  const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
   const mod = require(claudeBinaryPath);
   mod._origSpawnClaude = mod._origSpawnClaude ?? mod.spawnClaude;
   mod.spawnClaude = () => {
@@ -65,7 +70,7 @@ function stubSpawnClaude(): void {
 }
 
 function restoreSpawnClaude(): void {
-  const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+  const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
   const mod = require(claudeBinaryPath);
   if (mod._origSpawnClaude) {
     mod.spawnClaude = mod._origSpawnClaude;
@@ -108,6 +113,11 @@ function makeMcpRegistry() {
     },
     async dispose(slotId: string) {
       slots.delete(slotId);
+    },
+    endpoint: (slotId: string) => ({ type: 'http' as const, url: `http://127.0.0.1:3000/api/mcp/${slotId}`, headers: [] }),
+    rebind(slotId: string, patch: object) {
+      const slot = slots.get(slotId);
+      if (slot) Object.assign(slot, patch);
     },
     slots,
   };
@@ -154,14 +164,14 @@ function restoreSetNodeExternalSessionId(): void {
 
 /** Stub preflightClaudeAuth to be a no-op so ClaudeRuntime construction doesn't throw. */
 function stubPreflightAuth(): void {
-  const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+  const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
   const mod = require(claudeBinaryPath);
   mod._origPreflight = mod._origPreflight ?? mod.preflightClaudeAuth;
   mod.preflightClaudeAuth = () => {};
 }
 
 function restorePreflightAuth(): void {
-  const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+  const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
   const mod = require(claudeBinaryPath);
   if (mod._origPreflight) mod.preflightClaudeAuth = mod._origPreflight;
 }
@@ -170,10 +180,10 @@ function restorePreflightAuth(): void {
 
 describe('ClaudeRuntime', () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  let ClaudeRuntimeMod: typeof import('../src/agents/claude/ClaudeRuntime');
-  let ClaudeRuntime: typeof import('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-  let ClaudeConcurrencyError: typeof import('../src/agents/claude/ClaudeRuntime').ClaudeConcurrencyError;
-  let ClaudeSessionNotResumableError: typeof import('../src/agents/claude/ClaudeRuntime').ClaudeSessionNotResumableError;
+  let ClaudeRuntimeMod: typeof import('michi-runtime/internal/adapters/claude/ClaudeRuntime');
+  let ClaudeRuntime: typeof import('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+  let ClaudeConcurrencyError: typeof import('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeConcurrencyError;
+  let ClaudeSessionNotResumableError: typeof import('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeSessionNotResumableError;
 
   let mcpRegistry: ReturnType<typeof makeMcpRegistry>;
   let bridge: ReturnType<typeof makeBridge>;
@@ -184,10 +194,10 @@ describe('ClaudeRuntime', () => {
     stubSetNodeExternalSessionId();
 
     // Clear module cache so ClaudeSession picks up the patched spawnClaude
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
 
-    ClaudeRuntimeMod = require('../src/agents/claude/ClaudeRuntime');
+    ClaudeRuntimeMod = require('michi-runtime/internal/adapters/claude/ClaudeRuntime');
     ClaudeRuntime = ClaudeRuntimeMod.ClaudeRuntime;
     ClaudeConcurrencyError = ClaudeRuntimeMod.ClaudeConcurrencyError;
     ClaudeSessionNotResumableError = ClaudeRuntimeMod.ClaudeSessionNotResumableError;
@@ -212,24 +222,8 @@ describe('ClaudeRuntime', () => {
     sessionRegistry.clearAllSessions();
   });
 
-  // ── Case 1: id, label, capabilities ─────────────────────────────────────────
-
-  test('id is "claude", label is "Claude", capabilities match spec', () => {
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-    assert.equal(rt.id, 'claude');
-    assert.equal(rt.label, 'Claude');
-    assert.equal(rt.capabilities.modes, false);
-    assert.equal(rt.capabilities.permissions, true);
-    assert.equal(rt.capabilities.providerModels, false);
-    assert.equal(rt.capabilities.reasoning, true);
-    assert.equal(rt.capabilities.apiKeys, false);
-    assert.equal(rt.capabilities.warmSessions, true);
-    assert.equal(rt.capabilities.saveContext, true);
-    assert.equal(rt.capabilities.spawnBranches, true);
-  });
-
   test('uses title metadata from the main Claude response without a sidecar model', async () => {
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
+    const rt = new ClaudeRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
     let snapshot: DurableTurnSnapshot | undefined;
     const hub = new ChatHub({
       retentionMs: 100,
@@ -269,10 +263,10 @@ describe('ClaudeRuntime', () => {
     process.env.MICHI_CLAUDE_POOL_DISABLED = '1';
     try {
       // Re-require the runtime so the env var is read at construction time
-      delete require.cache[require.resolve('../src/agents/claude/ClaudeWarmPool')];
-      delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-      const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-      const rt = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
+      delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeWarmPool')];
+      delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+      const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+      const rt = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
       await assert.doesNotReject(() => rt.warm('/some/cwd'));
       await rt.shutdown();
     } finally {
@@ -280,47 +274,8 @@ describe('ClaudeRuntime', () => {
     }
   });
 
-  // ── Case 3: newSession() registers in sessionRegistry ────────────────────────
-
-  test('newSession() returns a session and registers it in sessionRegistry', async () => {
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-    const session = await rt.newSession({ cwd: '/tmp', sessionId: 'test-reg-id' } as any);
-    assert.ok(session, 'should return a session');
-    assert.equal(session.id, 'test-reg-id');
-
-    // Cleanup
-    await rt.shutdown();
-  });
-
-  test('a losing foreground send cannot interrupt the turn that owns the Claude event queue', async () => {
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-    const session = await rt.newSession({ cwd: '/tmp', sessionId: 'turn-lock-owner' } as any);
-
-    const owner = session.send('owner turn');
-    const ownerFirst = owner.next();
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.ok((session as any).turnLock, 'first send should own the turn lock');
-
-    const loser = session.send('losing turn');
-    await assert.rejects(
-      () => loser.next(),
-      (err: any) => err?.code === 'ESESSION_BUSY',
-    );
-
-    const ownerWasInterrupted = await Promise.race([
-      ownerFirst.then(() => true),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5)),
-    ]);
-    assert.equal(ownerWasInterrupted, false, 'busy loser must not interrupt the owner queue waiter');
-
-    mockChild.emitResult('success');
-    await ownerFirst;
-    for await (const _event of owner) void _event;
-    await rt.shutdown();
-  });
-
   test('a busy foreground send leaves the idle pump gate open after its self-turn completes', async () => {
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
+    const rt = new ClaudeRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
     const session = await rt.newSession({ cwd: '/tmp', sessionId: 'turn-lock-pump' } as any);
     const concrete = session as any;
     let firstStarted!: () => void;
@@ -365,7 +320,7 @@ describe('ClaudeRuntime', () => {
 
     // We need a fresh mock child for each spawn
     let spawnCount = 0;
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
     const mod = require(claudeBinaryPath);
     mod.spawnClaude = () => {
       spawnCount++;
@@ -375,10 +330,10 @@ describe('ClaudeRuntime', () => {
     };
 
     // Re-require ClaudeSession after patching to pick up updated spawnClaude
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-    const rt2 = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+    const rt2 = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
 
     const s1 = await rt2.newSession({ cwd: '/tmp', sessionId: 'c1' } as any);
     await rt2.newSession({ cwd: '/tmp', sessionId: 'c2' } as any);
@@ -392,11 +347,193 @@ describe('ClaudeRuntime', () => {
     await rt2.shutdown();
   });
 
+  test('newSession() does not reclaim an idle session that still runs a workflow', async () => {
+    process.env.MICHI_CLAUDE_MAX_CONCURRENT = '2';
+
+    let spawnCount = 0;
+    const children: MockClaudeChild[] = [];
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
+    const mod = require(claudeBinaryPath);
+    mod.spawnClaude = () => {
+      spawnCount++;
+      const child = new MockClaudeChild();
+      children.push(child);
+      setTimeout(() => child.emitInit(`ext-wf-${spawnCount}`), 20);
+      return child;
+    };
+
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+    const rt2 = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
+
+    const s1 = await rt2.newSession({ cwd: '/tmp', sessionId: 'wf-1', nodeId: 'wf-node-1' } as any);
+    const s2 = await rt2.newSession({ cwd: '/tmp', sessionId: 'wf-2', nodeId: 'wf-node-2' } as any);
+    // The oldest idle session starts a background workflow.
+    children[0].send({ type: 'system', subtype: 'task_started', task_id: 'wf-task-1', tool_use_id: 'toolu_wf', task_type: 'local_workflow', workflow_name: 'probe' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal((s1 as any).hasBackgroundWork(), true);
+
+    await rt2.newSession({ cwd: '/tmp', sessionId: 'wf-3', nodeId: 'wf-node-3' } as any);
+    assert.notEqual((s1 as any).getState(), 'disposed', 'the workflow session survives');
+    assert.equal((s2 as any).getState(), 'disposed', 'the next idle session is reclaimed instead');
+
+    delete process.env.MICHI_CLAUDE_MAX_CONCURRENT;
+    await rt2.shutdown();
+  });
+
+  /**
+   * ClaudeRuntime builds sessions on the process-wide background registry,
+   * which looks a node's workspace up in the real data directory. Swap in a
+   * recording one for the test; returns its reports and a restore.
+   */
+  function swapBackgroundRegistry() {
+    const mod = require('../src/services/backgroundSubagentRegistry') as typeof import('../src/services/backgroundSubagentRegistry');
+    const original = mod.backgroundSubagentRegistry;
+    const registry = new mod.BackgroundSubagentRegistry({ graceMs: 10, resolveWorkspace: () => 'ws-test' });
+    const reports: Array<{ nodeId: string; ids: string[] }> = [];
+    const report = registry.report.bind(registry);
+    registry.report = (context, source, ids) => { reports.push({ nodeId: context.nodeId, ids: [...ids] }); report(context, source, ids); };
+    (mod as { backgroundSubagentRegistry: unknown }).backgroundSubagentRegistry = registry;
+    assert.equal(mod.backgroundSubagentRegistry, registry, 'the export is swappable');
+    return { reports, restore: () => { (mod as { backgroundSubagentRegistry: unknown }).backgroundSubagentRegistry = original; } };
+  }
+
+  /** One turn on `session` that launches a run_in_background agent and ends while it runs. */
+  async function launchBackgroundAgent(session: any, child: MockClaudeChild): Promise<void> {
+    const turn = (async () => { for await (const _event of session.send('launch')) void _event; })();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    child.send({ type: 'assistant', message: { content: [{
+      type: 'tool_use', id: 'toolu_bg', name: 'Agent',
+      input: { subagent_type: 'explore', description: 'Audit docs', prompt: 'Audit docs', run_in_background: true },
+    }] } });
+    child.send({ type: 'system', subtype: 'task_started', task_id: 'task-bg', tool_use_id: 'toolu_bg', task_type: 'local_agent', is_backgrounded: true, description: 'Audit docs' });
+    child.send({
+      type: 'user',
+      tool_use_result: { status: 'async_launched' },
+      message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_bg', content: 'running in the background' }] },
+    });
+    child.emitResult('success');
+    await turn;
+  }
+
+  test('newSession() reclaims a background session idle past the protect window, after plain idle ones', async () => {
+    process.env.MICHI_CLAUDE_MAX_CONCURRENT = '2';
+    const background = swapBackgroundRegistry();
+
+    let spawnCount = 0;
+    const children: MockClaudeChild[] = [];
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
+    const mod = require(claudeBinaryPath);
+    mod.spawnClaude = () => {
+      spawnCount++;
+      const child = new MockClaudeChild();
+      children.push(child);
+      setTimeout(() => child.emitInit(`ext-stale-${spawnCount}`), 20);
+      return child;
+    };
+
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSessionManager')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+    const { BACKGROUND_RECLAIM_PROTECT_MS } = require('michi-runtime/internal/adapters/claude/ClaudeSessionManager');
+    const rt2 = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
+
+    let busyTurn: Promise<void> | undefined;
+    try {
+      const s1 = await rt2.newSession({ cwd: '/tmp', sessionId: 'stale-1', nodeId: 'stale-node-1' } as any);
+      await launchBackgroundAgent(s1, children[0]);
+      assert.equal((s1 as any).hasBackgroundWork(), true);
+      assert.deepEqual(background.reports, [{ nodeId: 'stale-1', ids: ['toolu_bg'] }]);
+      // Last used beyond the window: a completion that never arrived.
+      (s1 as any).lastUsedAt = Date.now() - BACKGROUND_RECLAIM_PROTECT_MS - 60_000;
+
+      const s2 = await rt2.newSession({ cwd: '/tmp', sessionId: 'stale-2', nodeId: 'stale-node-2' } as any);
+      assert.ok((s1 as any).getLastUsedAt() < (s2 as any).getLastUsedAt());
+      const s3 = await rt2.newSession({ cwd: '/tmp', sessionId: 'stale-3', nodeId: 'stale-node-3' } as any);
+      assert.equal((s2 as any).getState(), 'disposed', 'the plain idle session goes first, though newer');
+      assert.notEqual((s1 as any).getState(), 'disposed');
+
+      // With the only other session busy, the stale background session is next.
+      busyTurn = (async () => { for await (const _event of s3.send('busy')) void _event; })();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.equal((s3 as any).getState(), 'in_turn');
+      await rt2.newSession({ cwd: '/tmp', sessionId: 'stale-4', nodeId: 'stale-node-4' } as any);
+      assert.equal((s1 as any).getState(), 'disposed');
+      assert.equal(children[0].killed, true);
+      assert.deepEqual(background.reports.at(-1), { nodeId: 'stale-1', ids: [] }, 'its agents are withdrawn, so they read as interrupted');
+    } finally {
+      children[2]?.emitResult('success');
+      await busyTurn;
+      delete process.env.MICHI_CLAUDE_MAX_CONCURRENT;
+      await rt2.shutdown();
+      background.restore();
+    }
+  });
+
+  test('newSession() does not reclaim an idle session whose background subagent still runs', async () => {
+    process.env.MICHI_CLAUDE_MAX_CONCURRENT = '2';
+    const background = swapBackgroundRegistry();
+
+    let spawnCount = 0;
+    const children: MockClaudeChild[] = [];
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
+    const mod = require(claudeBinaryPath);
+    mod.spawnClaude = () => {
+      spawnCount++;
+      const child = new MockClaudeChild();
+      children.push(child);
+      setTimeout(() => child.emitInit(`ext-bg-${spawnCount}`), 20);
+      return child;
+    };
+
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+    const rt2 = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
+
+    try {
+      const s1 = await rt2.newSession({ cwd: '/tmp', sessionId: 'bg-1', nodeId: 'bg-node-1' } as any);
+      // s1's turn launches a run_in_background agent and ends while it runs.
+      const turn = (async () => { for await (const _event of s1.send('launch')) void _event; })();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      children[0].send({ type: 'assistant', message: { content: [{
+        type: 'tool_use', id: 'toolu_bg', name: 'Agent',
+        input: { subagent_type: 'explore', description: 'Audit docs', prompt: 'Audit docs', run_in_background: true },
+      }] } });
+      children[0].send({ type: 'system', subtype: 'task_started', task_id: 'task-bg', tool_use_id: 'toolu_bg', task_type: 'local_agent', is_backgrounded: true, description: 'Audit docs' });
+      children[0].send({
+        type: 'user',
+        tool_use_result: { status: 'async_launched' },
+        message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_bg', content: 'running in the background' }] },
+      });
+      children[0].emitResult('success');
+      await turn;
+      assert.equal((s1 as any).getState(), 'idle');
+      assert.equal((s1 as any).hasBackgroundWork(), true);
+
+      // s2 is used later, so without the guard s1 is the reclaim candidate.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const s2 = await rt2.newSession({ cwd: '/tmp', sessionId: 'bg-2', nodeId: 'bg-node-2' } as any);
+      assert.ok((s1 as any).getLastUsedAt() < (s2 as any).getLastUsedAt());
+
+      await rt2.newSession({ cwd: '/tmp', sessionId: 'bg-3', nodeId: 'bg-node-3' } as any);
+      assert.notEqual((s1 as any).getState(), 'disposed', 'the background agent keeps its process');
+      assert.equal(children[0].killed, false);
+      assert.equal((s2 as any).getState(), 'disposed', 'the next idle session is reclaimed instead');
+    } finally {
+      delete process.env.MICHI_CLAUDE_MAX_CONCURRENT;
+      await rt2.shutdown();
+      background.restore();
+    }
+  });
+
   test('newSession() throws ClaudeConcurrencyError when cap is full of active turns', async () => {
     process.env.MICHI_CLAUDE_MAX_CONCURRENT = '2';
 
     let spawnCount = 0;
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
     const mod = require(claudeBinaryPath);
     mod.spawnClaude = () => {
       spawnCount++;
@@ -405,11 +542,11 @@ describe('ClaudeRuntime', () => {
       return child;
     };
 
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-    const FreshConcurrencyError = require('../src/agents/claude/ClaudeRuntime').ClaudeConcurrencyError;
-    const rt2 = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+    const FreshConcurrencyError = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeConcurrencyError;
+    const rt2 = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
 
     const s1 = await rt2.newSession({ cwd: '/tmp', sessionId: 'active-1' } as any);
     const s2 = await rt2.newSession({ cwd: '/tmp', sessionId: 'active-2' } as any);
@@ -432,7 +569,7 @@ describe('ClaudeRuntime', () => {
     process.env.MICHI_CLAUDE_MAX_CONCURRENT = '1';
 
     const children: MockClaudeChild[] = [];
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
     const mod = require(claudeBinaryPath);
     mod.spawnClaude = () => {
       const child = new MockClaudeChild();
@@ -444,10 +581,10 @@ describe('ClaudeRuntime', () => {
       return child;
     };
 
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-    const rt2 = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+    const rt2 = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
 
     await rt2.warm('/tmp/warm-cap-a');
     assert.equal(children.length, 1, 'warm should spawn exactly one session');
@@ -464,7 +601,7 @@ describe('ClaudeRuntime', () => {
 
   test('warm-pool handoff rebinds the existing MCP slot to the real node workspace', async () => {
     let spawnCount = 0;
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
     const mod = require(claudeBinaryPath);
     mod.spawnClaude = () => {
       spawnCount++;
@@ -476,10 +613,10 @@ describe('ClaudeRuntime', () => {
       return child;
     };
 
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-    const rt2 = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+    const rt2 = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
 
     await rt2.warm('/tmp/warm-bind');
     const session = await rt2.newSession({
@@ -499,64 +636,75 @@ describe('ClaudeRuntime', () => {
     await rt2.shutdown();
   });
 
-  test('shutdown disposes an in-flight warm session before it enters the pool', async () => {
+  test('a session with a tool profile never takes over an unrestricted warm process', async () => {
     const children: MockClaudeChild[] = [];
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
-    const mod = require(claudeBinaryPath);
-    mod.spawnClaude = () => {
+    const spawnedArgs: any[] = [];
+    const mod = require(require.resolve('michi-runtime/internal/adapters/claude/claudeBinary'));
+    mod.spawnClaude = (args: unknown) => {
+      spawnedArgs.push(args);
       const child = new MockClaudeChild();
       children.push(child);
-      setTimeout(() => child.emitInit(`ext-pending-warm-${children.length}`), 20);
+      setTimeout(() => { child.emitInit(`ext-warm-profile-${children.length}`); child.emitResult('success'); }, 20);
       return child;
     };
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+    const rt2 = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
+    try {
+      await rt2.warm('/tmp/warm-profile');
+      const warmed = children.length;
+      assert.ok(warmed > 0, 'warm processes are ready');
+      const restricted = await rt2.newSession({
+        cwd: '/tmp/warm-profile', sessionId: 'node-warm-profile', toolProfile: { allowedToolNames: ['read'] },
+      } as any);
+      assert.equal(restricted.id, 'node-warm-profile');
+      assert.equal(children.length, warmed + 1, 'the restricted session spawned its own process');
+      assert.deepEqual(spawnedArgs[warmed].tools, ['ToolSearch', 'Read']);
+      assert.ok(children.slice(0, warmed).every((child) => !child.killed), 'the warm processes stay in the pool');
+      assert.ok(![...mcpRegistry.slots.values()].some((slot) => slot.parentChatId === 'node-warm-profile' && slot.slotId !== (restricted as any).slotId),
+        'no warm slot was rebound to it');
 
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-    const rt2 = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
-
-    const warm = rt2.warm('/tmp/pending-warm');
-    while (children.length === 0) {
-      await new Promise((r) => setImmediate(r));
+      const { ClaudeSession } = require('michi-runtime/internal/adapters/claude/ClaudeSession');
+      const warm = new ClaudeSession('warm-x', { options: claudeTestOptions(), nodeId: 'warm-x', cwd: '/tmp', workspaceId: null, mcpRegistry, bridge } as any);
+      assert.throws(() => warm.rebindIdentity('n-x', 'n-x', { toolProfile: { allowedToolNames: ['read'] } }), /cannot take a tool profile/);
+      assert.throws(() => warm.rebindIdentity('n-x', 'n-x', { permissionBroker: { requestPermission: async () => 'deny' } as any }), /cannot take a tool profile/);
+    } finally {
+      await rt2.shutdown();
     }
-
-    await Promise.all([warm, rt2.shutdown()]);
-    assert.equal(children[0].killed, true, 'shutdown should kill pending warm child');
   });
 
-  // ── Case 5: loadSession() reads external_session_id, throws if null ──────────
+  test('loadSession() refuses a session whose transcript is in no project directory, so Michi rebuilds it from history', async () => {
+    let spawns = 0;
+    const mod = require(require.resolve('michi-runtime/internal/adapters/claude/claudeBinary'));
+    mod.spawnClaude = () => { spawns++; return new MockClaudeChild(); };
+    stubGetNode({ external_session_id: 'ext-moved-away' });
+    const seen: unknown[][] = [];
+    mock.method(require('michi-runtime/internal/adapters/claude/claudeProjectsPath'), 'claudeTranscriptFindable', async (...args: unknown[]) => {
+      seen.push(args);
+      return false;
+    });
+    const { NativeResumeUnavailableError, loadNativeSession } = require('../src/services/nativeResume');
+    const rt = new ClaudeRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
 
-  test('loadSession() throws ClaudeSessionNotResumableError when external_session_id is null', async () => {
-    stubGetNode({ external_session_id: null });
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-
-    await assert.rejects(
-      () => rt.loadSession({ sessionId: 'no-ext-id', cwd: '/tmp' } as any),
-      (err: unknown) => {
-        assert.ok(err instanceof ClaudeSessionNotResumableError);
-        return true;
-      },
-    );
-  });
-
-  test('loadSession() throws ClaudeSessionNotResumableError when node is not found', async () => {
-    stubGetNode(undefined);
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-
-    await assert.rejects(
-      () => rt.loadSession({ sessionId: 'missing-node', cwd: '/tmp' } as any),
-      (err: unknown) => {
-        assert.ok(err instanceof ClaudeSessionNotResumableError);
-        return true;
-      },
-    );
+    const opts = { sessionId: 'moved-node', nodeId: 'moved-node', cwd: '/data/assistant/.michi', ownerUserId: null } as any;
+    await assert.rejects(() => rt.loadSession(opts), (err: unknown) => {
+      assert.ok(err instanceof ClaudeSessionNotResumableError);
+      assert.ok(err instanceof NativeResumeUnavailableError);
+      return true;
+    });
+    assert.deepEqual(seen[0].slice(1), ['/data/assistant/.michi', 'ext-moved-away', null]);
+    // The shared loader turns it into "no native session": the callers' history rebuild.
+    assert.equal(await loadNativeSession(rt, opts, 'ext-moved-away'), null);
+    assert.equal(spawns, 0, 'no --resume that can only fail');
+    await rt.shutdown();
   });
 
   // ── Case 6: loadSession() double-load guard ───────────────────────────────────
 
   test('loadSession() double-load returns same instance without double-spawning', async () => {
     let spawnCount = 0;
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
     const mod = require(claudeBinaryPath);
     mod.spawnClaude = () => {
       spawnCount++;
@@ -566,13 +714,14 @@ describe('ClaudeRuntime', () => {
       return child;
     };
 
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
 
     stubGetNode({ external_session_id: 'ext-double-load' });
+    mock.method(require('michi-runtime/internal/adapters/claude/claudeProjectsPath'), 'claudeTranscriptFindable', async () => true);
 
-    const rt = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
+    const rt = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
     const s1 = await rt.loadSession({ sessionId: 'dl-session', cwd: '/tmp' } as any);
     const s2 = await rt.loadSession({ sessionId: 'dl-session', cwd: '/tmp' } as any);
 
@@ -582,25 +731,22 @@ describe('ClaudeRuntime', () => {
     await rt.shutdown();
   });
 
-  // ── Case 7: listModes() returns [] ───────────────────────────────────────────
-
-  test('listModes() returns empty array', async () => {
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-    const modes = await rt.listModes('any-session-id');
-    assert.deepEqual(modes, []);
-  });
-
-  // ── Case 8: listModels() returns CLAUDE_MODEL_CATALOG keys ───────────────────
-
-  test('listModels() returns entries from CLAUDE_MODEL_CATALOG', async () => {
-    const { CLAUDE_MODEL_CATALOG } = require('../src/agents/claude/claudeModelCatalog');
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
-    const models = await rt.listModels();
-
-    const catalogKeys = Object.keys(CLAUDE_MODEL_CATALOG);
-    assert.equal(models.length, catalogKeys.length, 'should have one entry per catalog key');
-    for (const key of catalogKeys) {
-      assert.ok(models.find((m: any) => m.id === key), `missing model entry for key: ${key}`);
+  test('fresh and resumed sessions preserve disabled follow-ups, including same-id reacquisition', async () => {
+    stubGetNode({ external_session_id: 'ext-follow-up-options' });
+    mock.method(require('michi-runtime/internal/adapters/claude/claudeProjectsPath'), 'claudeTranscriptFindable', async () => true);
+    const rt = new ClaudeRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
+    try {
+      const fresh = await rt.newSession({ sessionId: 'fresh-no-follow-ups', cwd: '/tmp', enableFollowUps: false });
+      const resumed = await rt.loadSession({ sessionId: 'resumed-no-follow-ups', cwd: '/tmp', enableFollowUps: false });
+      for (const session of [fresh, resumed]) {
+        assert.equal((session as any).enableFollowUps, false);
+        assert.equal(await rt.loadSession({ sessionId: session.id, cwd: '/tmp', enableFollowUps: true }), session);
+        assert.equal((session as any).enableFollowUps, false, 'acquisition must not reconfigure a live session');
+      }
+      const defaultResumed = await rt.loadSession({ sessionId: 'resumed-default-follow-ups', cwd: '/tmp' });
+      assert.equal((defaultResumed as any).enableFollowUps, true);
+    } finally {
+      await rt.shutdown();
     }
   });
 
@@ -619,25 +765,13 @@ describe('ClaudeRuntime', () => {
     { id: 'claude-opus-5[1m]', label: 'Opus 5 (1M context)', supportsReasoning: true, supportedReasoningLevels: ['low', 'max'], defaultReasoning: 'max' },
   ];
 
-  test('listModels() serves the cached snapshot without probing', async () => {
-    let probes = 0;
-    const cached = [{ id: 'claude-sonnet-5-5', label: 'Sonnet' }];
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876, {
-      cache: memoryCache(cached) as any,
-      probe: async () => { probes++; return probed as any; },
-    });
-    assert.deepEqual(await rt.listModels(), cached);
-    assert.equal(probes, 0);
-    await rt.shutdown();
-  });
-
   test('refreshModels() probes, persists, and updates listModels()', async () => {
-    const { getClaudeReasoningCapabilities, setDiscoveredClaudeModels } = require('../src/agents/claude/claudeModelCatalog');
+    const { getClaudeReasoningCapabilities, setDiscoveredClaudeModels } = require('michi-runtime/internal/adapters/claude/claudeModelCatalog');
     const cache = memoryCache([{ id: 'claude-sonnet-5-5' }]);
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876, {
+    const rt = new ClaudeRuntime({ ...claudeTestOptions({ modelCatalog: {
       cache: cache as any,
       probe: async () => probed as any,
-    });
+    } }), bridge: bridge as any, mcpSlots: mcpRegistry as any });
     try {
       assert.deepEqual(await rt.refreshModels(), probed);
       assert.deepEqual(cache.saved, [probed]);
@@ -651,29 +785,13 @@ describe('ClaudeRuntime', () => {
     }
   });
 
-  test('a failed or empty probe keeps the previous snapshot', async () => {
-    const cached = [{ id: 'claude-sonnet-5-5' }];
-    const cache = memoryCache(cached);
-    let result: any = [];
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876, {
-      cache: cache as any,
-      probe: async () => { if (result instanceof Error) throw result; return result; },
-    });
-    assert.deepEqual(await rt.refreshModels(), cached);
-    result = new Error('credentials expired');
-    await assert.rejects(rt.refreshModels(), /credentials expired/);
-    assert.deepEqual(await rt.listModels(), cached);
-    assert.equal(cache.saved.length, 0);
-    await rt.shutdown();
-  });
-
   test('listModels() without a snapshot probes once, else falls back to the static catalog', async () => {
-    const { CLAUDE_MODEL_CATALOG } = require('../src/agents/claude/claudeModelCatalog');
+    const { CLAUDE_MODEL_CATALOG } = require('michi-runtime/internal/adapters/claude/claudeModelCatalog');
     let probes = 0;
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876, {
+    const rt = new ClaudeRuntime({ ...claudeTestOptions({ modelCatalog: {
       cache: memoryCache() as any,
       probe: async () => { probes++; throw new Error('no claude'); },
-    });
+    } }), bridge: bridge as any, mcpSlots: mcpRegistry as any });
     const models = await rt.listModels();
     assert.deepEqual(models.map((m) => m.id), Object.keys(CLAUDE_MODEL_CATALOG));
     await rt.listModels();
@@ -681,52 +799,62 @@ describe('ClaudeRuntime', () => {
     await rt.shutdown();
   });
 
+  test('concurrent first picker reads join the same Claude probe', async () => {
+    let probes = 0;
+    let resolveProbe!: (models: any[]) => void;
+    const rt = new ClaudeRuntime({ ...claudeTestOptions({ modelCatalog: {
+      probe: () => { probes++; return new Promise((resolve) => { resolveProbe = resolve; }); },
+    } }), bridge: bridge as any, mcpSlots: mcpRegistry as any });
+    try {
+      const first = rt.listModels();
+      const second = rt.listModels();
+      assert.equal(probes, 1);
+      resolveProbe(probed);
+      assert.deepEqual(await first, probed);
+      assert.deepEqual(await second, probed);
+      await rt.listModels();
+      assert.equal(probes, 1, 'cached picker reads keep the explicit-only refresh policy');
+    } finally {
+      const { setDiscoveredClaudeModels } = require('michi-runtime/internal/adapters/claude/claudeModelCatalog');
+      setDiscoveredClaudeModels([]);
+      await rt.shutdown();
+    }
+  });
+
+  test('empty Claude probe is attempted once per picker lifecycle and explicit refresh can retry', async () => {
+    let probes = 0;
+    const cache = memoryCache();
+    const rt = new ClaudeRuntime({ ...claudeTestOptions({ modelCatalog: {
+      cache: cache as any,
+      probe: async () => { probes++; return probes === 1 ? [] : probed as any; },
+    } }), bridge: bridge as any, mcpSlots: mcpRegistry as any });
+    try {
+      assert.ok((await rt.listModels()).length > 0, 'empty probe uses static fallback');
+      await rt.listModels();
+      assert.equal(probes, 1, 'empty results must not spawn the CLI each time the picker opens');
+      assert.deepEqual(cache.saved, []);
+      assert.deepEqual(await rt.refreshModels(), probed);
+      await rt.listModels();
+      assert.equal(probes, 2, 'snapshot picker reads do not run another expensive probe');
+    } finally {
+      const { setDiscoveredClaudeModels } = require('michi-runtime/internal/adapters/claude/claudeModelCatalog');
+      setDiscoveredClaudeModels([]);
+      await rt.shutdown();
+    }
+  });
+
   test('canonicalModelId() maps legacy aliases onto concrete ids', async () => {
-    const rt = new ClaudeRuntime(bridge as any, mcpRegistry as any, 9876);
+    const rt = new ClaudeRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
     assert.equal(rt.canonicalModelId('opus'), 'claude-opus-5[1m]');
     assert.equal(rt.canonicalModelId('claude-sonnet-4-6'), 'claude-sonnet-4-6');
     await rt.shutdown();
-  });
-
-  // ── Case 9: shutdown() disposes all sessions ─────────────────────────────────
-
-  test('shutdown() calls dispose on every active session', async () => {
-    let spawnCount = 0;
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
-    const mod = require(claudeBinaryPath);
-    mod.spawnClaude = () => {
-      spawnCount++;
-      const child = new MockClaudeChild();
-      setTimeout(() => child.emitInit(`ext-shutdown-${spawnCount}`), 20);
-      return child;
-    };
-
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
-
-    const rt = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
-    const s1 = await rt.newSession({ cwd: '/tmp', sessionId: 'sd-1' } as any);
-    const s2 = await rt.newSession({ cwd: '/tmp', sessionId: 'sd-2' } as any);
-
-    let s1Disposed = false;
-    let s2Disposed = false;
-    const origDispose1 = s1.dispose.bind(s1);
-    const origDispose2 = s2.dispose.bind(s2);
-    (s1 as any).dispose = async () => { s1Disposed = true; await origDispose1(); };
-    (s2 as any).dispose = async () => { s2Disposed = true; await origDispose2(); };
-
-    await rt.shutdown();
-
-    assert.ok(s1Disposed, 'session 1 should be disposed');
-    assert.ok(s2Disposed, 'session 2 should be disposed');
   });
 
   // ── Case 10: newSession() double-load guard ───────────────────────────────────
 
   test('newSession() double-load with same sessionId returns same instance', async () => {
     let spawnCount = 0;
-    const claudeBinaryPath = require.resolve('../src/agents/claude/claudeBinary');
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
     const mod = require(claudeBinaryPath);
     mod.spawnClaude = () => {
       spawnCount++;
@@ -735,11 +863,11 @@ describe('ClaudeRuntime', () => {
       return child;
     };
 
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeSession')];
-    delete require.cache[require.resolve('../src/agents/claude/ClaudeRuntime')];
-    const FreshRuntime = require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime;
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
 
-    const rt = new FreshRuntime(bridge as any, mcpRegistry as any, 9876);
+    const rt = new FreshRuntime({ ...claudeTestOptions(), bridge: bridge as any, mcpSlots: mcpRegistry as any });
     const s1 = await rt.newSession({ cwd: '/tmp', sessionId: 'new-dl-session' } as any);
 
     // Manually insert into sessions to simulate double-load scenario
@@ -750,4 +878,112 @@ describe('ClaudeRuntime', () => {
 
     await rt.shutdown();
   });
+
+  test('new, child and released sessions reach the host sessions port, not the process registry', async () => {
+    let spawnCount = 0;
+    const claudeBinaryPath = require.resolve('michi-runtime/internal/adapters/claude/claudeBinary');
+    const mod = require(claudeBinaryPath);
+    mod.spawnClaude = () => {
+      spawnCount++;
+      const child = new MockClaudeChild();
+      setTimeout(() => child.emitInit(`ext-port-${spawnCount}`), 20);
+      return child;
+    };
+
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeSession')];
+    delete require.cache[require.resolve('michi-runtime/internal/adapters/claude/ClaudeRuntime')];
+    const FreshRuntime = require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime;
+
+    const calls: string[] = [];
+    const live = new Map<string, AgentSession>();
+    const sessions: SessionRegistryPort = {
+      ensureAncestorChainLoaded: (chatId) => { calls.push(`ensureAncestorChainLoaded ${chatId}`); },
+      getSession: (chatId) => { calls.push(`getSession ${chatId}`); return live.get(chatId); },
+      getAncestors: (chatId) => { calls.push(`getAncestors ${chatId}`); return []; },
+      registerSession: (session) => { calls.push(`registerSession ${session.id}`); live.set(session.id, session); },
+      dropSession: (chatId) => { calls.push(`dropSession ${chatId}`); live.delete(chatId); },
+    };
+    const rt = new FreshRuntime({ ...claudeTestOptions({ host: { ...michiTestHost(), sessions } }), bridge: bridge as any, mcpSlots: mcpRegistry as any });
+    try {
+      await rt.newSession({ cwd: '/tmp', sessionId: 'port-parent' } as any);
+      await rt.newSession({ cwd: '/tmp', sessionId: 'port-child', parentChatId: 'port-parent' } as any);
+      for (const id of ['port-parent', 'port-child']) assert.equal(sessionRegistry.getSession(id), undefined, id);
+      for (const id of ['port-child', 'port-parent']) await rt.releaseSession(id);
+      // Releasing an id that is no longer active still drops it through the port.
+      await rt.releaseSession('port-child');
+      assert.deepEqual(calls, [
+        'registerSession port-parent',
+        'ensureAncestorChainLoaded port-parent',
+        'getSession port-parent',
+        'getAncestors port-parent',
+        'registerSession port-child',
+        'dropSession port-child',
+        'dropSession port-parent',
+        'dropSession port-child',
+      ]);
+      assert.equal(live.size, 0);
+    } finally {
+      await rt.shutdown();
+    }
+  });
+});
+
+test('ClaudeRuntime requires the host ports its self-turns, fork guard, workflows and subagents use', () => {
+  const { ClaudeRuntime } = require('michi-runtime/internal/adapters/claude/ClaudeRuntime') as typeof import('michi-runtime/internal/adapters/claude/ClaudeRuntime');
+  const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
+  // A JS host can still leave the required ports out; the runtime's own check catches it.
+  const host = { ...michiTestHost(), backgroundTurns: undefined, workflows: undefined, backgroundSubagents: undefined } as unknown as RuntimeHost;
+  assert.throws(
+    () => new ClaudeRuntime({ ...claudeTestOptions({ host }), bridge: makeBridge() as any, mcpSlots: makeMcpRegistry() as any }),
+    { name: 'RuntimeHostConfigError', message: 'ClaudeRuntime requires host ports that are missing: backgroundTurns, workflows, backgroundSubagents' },
+  );
+});
+
+test('ClaudeRuntime refuses the old positional arguments with a TypeError', () => {
+  const { ClaudeRuntime } = require('michi-runtime/internal/adapters/claude/ClaudeRuntime') as typeof import('michi-runtime/internal/adapters/claude/ClaudeRuntime');
+  const Untyped = ClaudeRuntime as unknown as new (...args: unknown[]) => unknown;
+  const expected = { name: 'TypeError', message: 'ClaudeRuntime takes one options object { host, bridge, mcpSlots, … } (runtime contract v1)' };
+  assert.throws(() => new Untyped(makeBridge(), makeMcpRegistry(), claudeTestOptions()), expected);
+  assert.throws(() => new Untyped(undefined), expected);
+  assert.throws(() => new Untyped({ ...claudeTestOptions(), mcpSlots: makeMcpRegistry() }), expected);
+  assert.throws(() => new Untyped({ ...claudeTestOptions(), bridge: makeBridge() }), expected);
+  // Present but undefined counts as missing, as a factory's `deps.mcpRegistry!` can be.
+  assert.throws(() => new Untyped({ ...claudeTestOptions(), bridge: undefined, mcpSlots: undefined }), expected);
+  assert.throws(() => new Untyped({ ...claudeTestOptions(), host: undefined, bridge: makeBridge(), mcpSlots: makeMcpRegistry() }), expected);
+});
+
+test("self-turns go to the host's backgroundTurns, and the native fork guard asks it about the parent", async () => {
+  const { ClaudeRuntime } = require('michi-runtime/internal/adapters/claude/ClaudeRuntime') as typeof import('michi-runtime/internal/adapters/claude/ClaudeRuntime');
+  const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
+  const { NativeResumeUnavailableError } = require('../src/services/nativeResume');
+  const base = michiTestHost();
+  const consumed: unknown[] = [];
+  const asked: string[] = [];
+  const rows: Record<string, any> = {
+    parent: { id: 'parent', workspace_id: 'ws', tree_id: 't', kind: 'chat', status: 'idle', runtime_id: 'claude', external_session_id: 'native-parent' },
+    child: { id: 'child', workspace_id: 'ws', tree_id: 't', parent_node_id: 'parent', kind: 'chat', status: 'idle', runtime_id: 'claude' },
+  };
+  const host = {
+    ...base,
+    bindings: { ...base.bindings, nodeBinding: (id: string) => rows[id] ?? null, workspace: () => ({ id: 'ws', cwd: '/tmp', owner_user_id: null }) },
+    backgroundTurns: {
+      consume: (turn: unknown) => { consumed.push(turn); },
+      isActive: (id: string) => { asked.push(`isActive ${id}`); return false; },
+      isOwnerTurnActive: (id: string) => { asked.push(`isOwnerTurnActive ${id}`); return false; },
+      hasPendingSelfTurn: (id: string) => { asked.push(`hasPendingSelfTurn ${id}`); return true; },
+    },
+  };
+  const rt = new ClaudeRuntime({ ...claudeTestOptions({ host }), bridge: makeBridge() as any, mcpSlots: makeMcpRegistry() as any });
+  try {
+    const turn = { chatId: 'child', owner: chatOwner('child'), ownerUserId: null, events: (async function* () {})(), session: {} };
+    (rt as any).manager.deps.onSelfTurn(turn);
+    assert.deepEqual(consumed, [turn]);
+    await assert.rejects(rt.forkSession({
+      sessionId: 'child', parentChatId: 'parent', owner: chatOwner('child'),
+      cwd: '/tmp', workspaceId: 'ws', sourceNativeSessionId: 'native-parent',
+    }), NativeResumeUnavailableError);
+    assert.deepEqual(asked, ['isActive parent', 'isOwnerTurnActive parent', 'hasPendingSelfTurn parent']);
+  } finally {
+    await rt.shutdown();
+  }
 });

@@ -1,16 +1,14 @@
 /**
- * Persists user UI preferences in ~/.michi/config.json under the "prefs" key.
+ * Persists user UI preferences in the selected config.json under the "prefs" key.
  *
  * Only Settings-visible fields are persisted here. Transient UI state
  * (sidebarExpanded, workspaceOrder, terminalSidebarWidth, etc.) stays in
  * frontend localStorage.
  */
-import fs from "fs";
-import path from "path";
-import os from "os";
+import { readJsonConfig, updateJsonConfig } from "./jsonConfigStore";
+import { getMichiConfigPaths } from './configPaths';
 
-const CONFIG_DIR = process.env.MICHI_CONFIG_DIR || path.join(os.homedir(), ".michi");
-const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+const { configPath: CONFIG_PATH } = getMichiConfigPaths();
 
 /**
  * The subset of prefs that are user-facing in Settings and should survive
@@ -39,11 +37,7 @@ const PERSISTED_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 function readDiskFile(): Record<string, any> | null {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-  } catch {
-    return null;
-  }
+  return readJsonConfig(CONFIG_PATH);
 }
 
 /**
@@ -70,15 +64,11 @@ export function writePrefs(incoming: Record<string, unknown>): void {
     }
   }
 
-  try {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    const existing = readDiskFile() ?? {};
-    const merged = { ...((existing.prefs as Record<string, unknown>) ?? {}), ...filtered };
-    const next = { ...existing, prefs: merged };
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), { mode: 0o600 });
-  } catch (err) {
-    console.error("[prefsConfig] writePrefs failed:", err);
-  }
+  updateJsonConfig(CONFIG_PATH, (existing) => {
+    const prefs = existing.prefs && typeof existing.prefs === 'object' && !Array.isArray(existing.prefs)
+      ? existing.prefs : {};
+    return { ...existing, prefs: { ...prefs, ...filtered } };
+  });
 }
 
 /**

@@ -114,6 +114,7 @@ export const trees = sqliteTable('trees', {
 // ---------------------------------------------------------------------------
 export const nodes = sqliteTable('nodes', {
   id:                 text('id').primaryKey(),
+  maintenanceJobId:   text('maintenance_job_id'),
   workspaceId:        text('workspace_id').notNull().references(() => workspaces.id),
   treeId:             text('tree_id').references(() => trees.id),
   parentNodeId:       text('parent_node_id'),  // self-ref; drizzle doesn't support inline self-ref
@@ -206,9 +207,11 @@ export const turns = sqliteTable('turns', {
   startedAt:          integer('started_at').notNull(),
   checkpointAt:       integer('checkpoint_at'),
   completedAt:        integer('completed_at'),
+  completionSeq:      integer('completion_seq'),
   updatedAt:          integer('updated_at').notNull(),
 }, (t) => ({
   nodeIdx: index('idx_turns_node').on(t.nodeId),
+  nodeCompletionIdx: index('idx_turns_node_completion').on(t.nodeId, t.completionSeq).where(sql`${t.completionSeq} IS NOT NULL`),
   assistantMessageUq: uniqueIndex('idx_turns_assistant_message').on(t.assistantMessageId),
 }));
 
@@ -282,6 +285,7 @@ export const userAgentConfigs = sqliteTable('user_agent_configs', {
   reasoningByRuntime:  text('reasoning_by_runtime').notNull().default('{}'),
   nativeResumeByRuntime: text('native_resume_by_runtime').notNull().default('{}'),
   nativeForkByRuntime: text('native_fork_by_runtime').notNull().default('{}'),
+  workflowsByRuntime: text('workflows_by_runtime').notNull().default('{}'),
   updatedAt:           integer('updated_at').notNull(),
 });
 
@@ -493,4 +497,24 @@ export const agentRunWatchMembers = sqliteTable('agent_run_watch_members', {
 }, (t) => ({
   pk:     primaryKey({ columns: [t.watchId, t.runId] }),
   runIdx: index('idx_agent_run_watch_members_run').on(t.runId),
+}));
+
+// ---------------------------------------------------------------------------
+// Workflow runs (Claude Code Workflows, Kiro CLI workflows) — 0030.
+// run_json holds the latest WorkflowRunDtoV1 snapshot.
+// ---------------------------------------------------------------------------
+export const workflowRuns = sqliteTable('workflow_runs', {
+  id:          text('id').primaryKey(),
+  ownerUserId: text('owner_user_id').notNull(),
+  workspaceId: text('workspace_id').notNull().references(() => workspaces.id, { onDelete: 'cascade' }),
+  nodeId:      text('node_id').references(() => nodes.id, { onDelete: 'set null' }),
+  runtime:     text('runtime').notNull(),
+  nativeId:    text('native_id').notNull(),
+  status:      text('status').notNull(),
+  runJson:     text('run_json').notNull(),
+  startedAt:   integer('started_at').notNull(),
+  updatedAt:   integer('updated_at').notNull(),
+}, (t) => ({
+  nativeUnique: uniqueIndex('workflow_runs_owner_runtime_native').on(t.ownerUserId, t.runtime, t.nativeId),
+  workspaceIdx: index('idx_workflow_runs_workspace').on(t.ownerUserId, t.workspaceId, t.updatedAt),
 }));

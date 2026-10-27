@@ -7,8 +7,9 @@ import path from 'node:path';
 import type { ChatStreamEvent } from 'michi-shared';
 import { ChatHub } from '../src/agents/chatHub';
 import type { AgentSession } from '../src/agents/types';
+import { chatReplayUnavailable } from '../src/routes/chatReplay';
 import type { NormalizedEvent } from '../src/services/chatEvents';
-import { closeDb, initDb } from '../src/services/db';
+import { closeDb, getDb, initDb } from '../src/services/db';
 import { getNode, listMessages, saveNode, saveTree, saveWorkspace } from '../src/services/dbRepository';
 
 function iterator(events: NormalizedEvent[]): AsyncIterableIterator<NormalizedEvent> {
@@ -39,7 +40,9 @@ describe('ChatHub authoritative persistence integration', () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Let deferred checkpoints finish before closing this test's database.
+    await new Promise<void>(resolve => setImmediate(resolve));
     closeDb();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -57,7 +60,7 @@ describe('ChatHub authoritative persistence integration', () => {
           { kind: 'plan', entries: [{ content: 'persist', priority: 'high', status: 'completed' }] },
           { kind: 'tool_call_update', toolCallId: 'tool-1', title: '', status: 'completed', output: 'ok' },
           { kind: 'title', title: 'Durable title' },
-          { kind: 'follow_ups', followUps: ['Next?'] },
+          { kind: 'host_event', type: 'follow_ups', payload: { followUps: ['Next?'] } },
           { kind: 'turn_end', stopReason: 'end_turn' },
         ]);
       },
@@ -112,7 +115,7 @@ describe('ChatHub authoritative persistence integration', () => {
         send: () => iterator([
           { kind: 'chunk', text: `answer-${index}` },
           { kind: 'title', title: `Title ${index}` },
-          { kind: 'follow_ups', followUps: [`Next ${index}?`] },
+          { kind: 'host_event', type: 'follow_ups', payload: { followUps: [`Next ${index}?`] } },
           { kind: 'turn_end', stopReason: 'end_turn' },
         ]),
         cancel: () => {},
@@ -133,4 +136,49 @@ describe('ChatHub authoritative persistence integration', () => {
       assert.deepEqual(JSON.parse(row?.follow_ups ?? '[]'), [`Next ${index}?`]);
     }
   });
+  for (const outcome of ['shutdown', 'crash', 'cancel', 'completed'] as const) {
+    test(`runtime teardown preserves partial output and the ${outcome} outcome`, async () => {
+      let release!: () => void;
+      let ready!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const waiting = new Promise<void>(resolve => { ready = resolve; });
+      const session: AgentSession = {
+        id: 'chat-1', runtimeId: 'kiro', getHistory: () => [], getPendingAssistant: () => undefined,
+        send: async function* () {
+          yield { kind: 'chunk', text: 'saved partial answer' } as NormalizedEvent;
+          ready();
+          await gate;
+          if (outcome === 'completed') yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
+          else throw new Error('ACP process exited mid-prompt');
+        },
+        cancel: () => {},
+      };
+      const hub = new ChatHub({ retentionMs: 10, titleGenerator: null });
+      const events: ChatStreamEvent[] = [];
+      hub.subscribe('chat-1', { send: event => events.push(event), close: () => {} });
+      const started = await hub.startTurn({ chatId: 'chat-1', nodeId: 'node-1', text: 'test', session, turnId: 'turn-1' });
+      await waiting;
+      if (outcome === 'cancel') hub.cancel('chat-1', 'turn-1');
+      if (outcome !== 'crash' && outcome !== 'completed') hub.prepareForShutdown();
+      release();
+      await started.done;
+      // Beginning shutdown must never rewrite an already completed receipt.
+      hub.prepareForShutdown();
+      const row = getDb().prepare('SELECT status, error FROM turns WHERE turn_id = ?').get('turn-1') as { status: string; error: string | null };
+      assert.equal(listMessages('node-1')[1].content, 'saved partial answer');
+      if (outcome === 'shutdown' || outcome === 'crash') {
+        assert.equal(row.status, 'error');
+        assert.equal(row.error, outcome === 'shutdown' ? 'backend_restarted' : 'ACP process exited mid-prompt');
+        const errorEvent = events.find(event => event.event === 'error');
+        assert.ok(errorEvent);
+        assert.equal(errorEvent.data.code, outcome === 'shutdown' ? 'backend_restarted' : undefined);
+        assert.equal(chatReplayUnavailable('node-1', 'turn-1').error, errorEvent.data.message);
+      } else {
+        assert.equal(row.status, outcome === 'cancel' ? 'cancelled' : 'completed');
+        assert.equal(row.error, null);
+        assert.equal(events.some(event => event.event === 'error'), false);
+      }
+    });
+  }
+
 });

@@ -19,7 +19,7 @@ const renderShell = () => render(
 const gate = vi.hoisted(() => ({ hydrated: false }));
 const mutations = vi.hoisted(() => ({ createProject: vi.fn(), createBlankChild: vi.fn(), restoreLastDeletion: vi.fn(), closePane: vi.fn() }));
 
-vi.mock('./pages/Settings', () => ({ default: ({ workspaceReady }: { workspaceReady: boolean }) => <div>Appearance settings: {String(workspaceReady)}</div> }));
+vi.mock('./pages/settings/AppearancePane', () => ({ AppearancePane: () => <div>Appearance pane</div> }));
 
 const projectsValue = () => ({
   activeProject: null,
@@ -37,7 +37,6 @@ const projectsValue = () => ({
   treeSelection: new Set<string>(),
   searchHighlightTerm: null,
 });
-
 vi.mock('../../state/chatStore', async () => {
   const actual = await vi.importActual<any>('../../state/chatStore');
   return {
@@ -72,7 +71,7 @@ describe('TerminalShell hydration gate', () => {
     expect(screen.getByText(/loading workspaces/i)).toBeTruthy();
     expect(document.querySelector('.terminal-topbar')).not.toBeNull();
     expect(document.querySelector('.terminal-sidebar')).not.toBeNull();
-    expect(screen.getByText('Settings')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Search' }).hasAttribute('disabled')).toBe(true);
     expect(screen.queryByText(/new workspace/i)).toBeNull();
     expect(screen.queryByText('No project chats')).toBeNull();
@@ -82,8 +81,12 @@ describe('TerminalShell hydration gate', () => {
 
   it('allows settings to open before workspace hydration', async () => {
     renderShell();
-    fireEvent.click(screen.getByText('Settings'));
-    expect(await screen.findByText('Appearance settings: false')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByText('Appearance pane')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
+    expect(screen.getByRole('status', { name: 'Loading workspaces' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Runtime (global)' }));
+    expect(await screen.findByText('Loading workspaces…')).toBeTruthy();
   });
 
   it('blocks workspace commands and dialogs while hydration is pending', () => {
@@ -93,6 +96,7 @@ describe('TerminalShell hydration gate', () => {
     }
     fireEvent(window, new CustomEvent('michi:open-new-workspace'));
     fireEvent(window, new CustomEvent('michi:toggle-artifacts'));
+    fireEvent(window, new CustomEvent('michi:open-background-work', { detail: { nodeId: 'n1' } }));
     expect(screen.queryByRole('dialog')).toBeNull();
     for (const mutation of Object.values(mutations)) expect(mutation).not.toHaveBeenCalled();
   });

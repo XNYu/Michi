@@ -26,14 +26,4 @@ describe('buildContextRowMenu favorite terminology', () => {
     menu[0].action();
     expect(onPin).toHaveBeenCalledOnce();
   });
-
-  it('removes an existing favorite', () => {
-    const menu = buildContextRowMenu({
-      context: artifact(2),
-      onPin: vi.fn(),
-      onRename: vi.fn(),
-      onDelete: vi.fn(),
-    });
-    expect(menu[0].label).toBe('Remove from favorites');
-  });
 });

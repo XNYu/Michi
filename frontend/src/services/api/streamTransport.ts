@@ -5,6 +5,9 @@ import {
   type StreamTransportRequest,
   type StreamTransportResponse,
 } from 'michi-shared';
+import { backendRequestUrl, connectionIdFromApiUrl } from '../../config/backendIdentity';
+import { backendFetch, backendRequestOptions, backendStreamResponse } from './backendRequest';
+import { backendConnectionGeneration, backendConnectionUnavailable, markBackendConnectionUnavailable } from '../../config/backendConnectionState';
 
 const HEADER_TIMEOUT_MS = 30_000;
 const MAX_BUFFER_BYTES = 8 * 1024 * 1024;
@@ -192,22 +195,52 @@ export class StreamTransport {
   }
 }
 
-let gateway: { base: string; available: Promise<boolean>; transport: StreamTransport } | undefined;
+interface Gateway {
+  base: string;
+  available?: Promise<boolean>;
+  probe?: () => Promise<boolean>;
+  transport: StreamTransport;
+}
+let gateway: Gateway | undefined;
+
+function trackAvailability(current: Gateway, available: Promise<boolean>): Promise<boolean> {
+  current.available = available;
+  // A failed probe means the backend is unavailable, not that it is an old
+  // gateway. Let subscribers retry negotiation instead of filling Chromium's
+  // HTTP connection pool with native SSE feeds during a service handover.
+  void available.catch(() => {
+    if (current.available === available && current.probe) current.available = undefined;
+  });
+  return available;
+}
 
 /** Install the existing boot capability probe as a barrier before opening feeds. */
-export function configureStreamTransport(base: string, available: Promise<boolean>): void {
+export function configureStreamTransport(base: string, available: Promise<boolean>, probe?: () => Promise<boolean>): void {
   // A new hydration can follow an account change. Acquire fresh credentials
   // instead of retaining the previous session's authenticated socket.
   gateway?.transport.close();
-  gateway = { base, available: available.catch(() => false), transport: new StreamTransport(base) };
+  gateway = { base, probe, transport: new StreamTransport(base) };
+  trackAvailability(gateway, available);
 }
 
 export async function fetchStream(url: string, options: RequestInit = {}): Promise<Response> {
+  const connectionId = connectionIdFromApiUrl(url);
+  const generation = backendConnectionGeneration(connectionId);
+  if (backendConnectionUnavailable(connectionId)) throw new Error('Remote connection is unavailable');
+  options = backendRequestOptions(url, options);
+  url = backendRequestUrl(url);
   const current = gateway;
   if (current && typeof WebSocket !== 'undefined' && url.startsWith(`${current.base}/`)
-    && await current.available) {
-    return current.transport.fetch(url, options);
+    && await (current.available ?? trackAvailability(current, current.probe!()))) {
+    let response: Response;
+    try { response = await current.transport.fetch(url, options); }
+    catch (error) {
+      if (!options.signal?.aborted) markBackendConnectionUnavailable(connectionId);
+      throw error;
+    }
+    if ([502, 503, 504].includes(response.status)) markBackendConnectionUnavailable(connectionId);
+    return backendStreamResponse(response, connectionId, generation, options.signal);
   }
   // Older gateways and isolated SSE mocks retain the original HTTP transport.
-  return fetch(url, options);
+  return backendStreamResponse(await backendFetch(url, options), connectionId, generation, options.signal);
 }

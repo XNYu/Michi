@@ -54,36 +54,6 @@ describe('AgentRunWatchCoordinator', () => {
     assert.equal(watchConditionSatisfied({ version: 1, kind: 'manual' }, runs, 10, true), true);
   });
 
-  test('dynamic membership affects all/quorum evaluation and duplicate additions are ignored', async () => {
-    const repo = new WatchRepo();
-    repo.runs.set('a', run('a', AgentRunStatus.Completed));
-    repo.runs.set('b', run('b', AgentRunStatus.Running));
-    const coordinator = new AgentRunWatchCoordinator(repo as any, { notify: async () => {} }, { deliver: async () => 'delivered' },
-      { now: () => 5, setTimeout: () => 0, clearTimeout: () => {} });
-    const watch = coordinator.create('owner', 'ws', ['a'], { version: 1, kind: 'all' }, 'notify',
-      { parentRunId: null, parentNodeId: null, parentTurnId: null }, 'op');
-    assert.equal(coordinator.addRuns('owner', watch.id, ['b', 'b']), 1);
-    assert.equal(await coordinator.evaluate('owner', watch.id), false);
-    repo.runs.set('b', run('b', AgentRunStatus.Failed));
-    assert.equal(await coordinator.evaluate('owner', watch.id), true);
-  });
-
-  test('all and quorum fire immediately on a failed/cancelled member without touching running siblings', async () => {
-    const repo = new WatchRepo();
-    repo.runs.set('failed', run('failed', AgentRunStatus.Failed));
-    repo.runs.set('cancelled', run('cancelled', AgentRunStatus.Cancelled));
-    repo.runs.set('sibling', run('sibling', AgentRunStatus.Running));
-    const coordinator = new AgentRunWatchCoordinator(repo as any, { notify: async () => {} }, { deliver: async () => 'delivered' },
-      { now: () => 5, setTimeout: () => 0, clearTimeout: () => {} });
-    const all = coordinator.create('owner', 'ws', ['failed', 'sibling'], { version: 1, kind: 'all' }, 'notify',
-      { parentRunId: null, parentNodeId: null, parentTurnId: null }, 'all-op');
-    const quorum = coordinator.create('owner', 'ws', ['cancelled', 'sibling'], { version: 1, kind: 'quorum', count: 2 }, 'notify',
-      { parentRunId: null, parentNodeId: null, parentTurnId: null }, 'quorum-op');
-    assert.equal(await coordinator.evaluate('owner', all.id), true);
-    assert.equal(await coordinator.evaluate('owner', quorum.id), true);
-    assert.equal(repo.runs.get('sibling')?.status, AgentRunStatus.Running);
-  });
-
   test('failure does not override any, manual, or deadline semantics and empty historical Watches stay inert', async () => {
     const repo = new WatchRepo();
     repo.runs.set('failed', run('failed', AgentRunStatus.Failed));

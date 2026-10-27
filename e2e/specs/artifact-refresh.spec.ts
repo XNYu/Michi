@@ -1,5 +1,6 @@
 import { test, expect, type Route } from '@playwright/test';
 import { installMockApi, bootWithWorkspace } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 // Artifact-pane live refresh (hermetic — mockApi intercepts all /api/**):
 //   1. Open a file as an artifact pane via an internal markdown link.
@@ -73,7 +74,7 @@ test.describe('artifact-pane live refresh', () => {
     await bootWithWorkspace(page);
 
     // Turn 1: send a message; assistant reply contains the link.
-    const composer = page.locator('[contenteditable="true"]').first();
+    const composer = page.locator(COMPOSER_EDITOR).first();
     await composer.fill('show me the notes');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
 

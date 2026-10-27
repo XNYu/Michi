@@ -37,7 +37,9 @@ vi.mock('../services/api', () => ({
   subscribeBackground: vi.fn(() => () => {}),
   cancelChat: () => Promise.resolve(),
   cancelChatAndObserve: vi.fn(() => () => {}),
+  postArtifactWatchPaths: async () => ({ ok: true }),
   fetchAllWorkspacesMeta: vi.fn(async () => []),
+  fetchWorkspace: vi.fn(),
   fetchTreeMessages: vi.fn(async () => []),
   listBackendConnections: async () => [],
   // Spied: implementation set in beforeEach.
@@ -48,6 +50,10 @@ vi.mock('../services/api', () => ({
 }));
 
 vi.mock('../services/notifications', () => ({ notify: vi.fn() }));
+vi.mock('../services/api/sessions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../services/api/sessions')>(),
+  executeChatCommand: vi.fn(),
+}));
 vi.mock('../services/digestApi', () => ({
   streamDigest: vi.fn(async () => '# Decisions\n\nKeep the source thread context.'),
 }));
@@ -58,6 +64,7 @@ import { ChatProvider, useChatStore, useChatNode, useChatNodesSnapshot } from '.
 import { PrefsProvider } from './prefs';
 import type { ChatNodeState } from './chatTypes';
 import { dispatchChatStreamEvent } from '../services/chatStreamEvents';
+import { executeChatCommand } from '../services/api/sessions';
 
 function useStoreAndNodes() {
   const store = useChatStore();
@@ -110,13 +117,88 @@ describe('auto-branch behavior (real provider)', () => {
     vi.mocked(api.subscribeChat).mockReset().mockImplementation(() => () => {});
     vi.mocked(api.subscribeBackground).mockReset().mockImplementation(() => () => {});
     vi.mocked(api.fetchAllWorkspacesMeta).mockReset().mockResolvedValue([]);
+    vi.mocked(api.fetchWorkspace).mockReset();
     vi.mocked(api.fetchTreeMessages).mockReset().mockResolvedValue([]);
     vi.mocked(api.bindPendingPrimaryAgent).mockReset();
+    vi.mocked(executeChatCommand).mockReset().mockResolvedValue({ success: true, message: 'Claude is connected.' });
     mockEnsureSession.mockImplementation(() => Promise.resolve({ chatId: 'fake-chat', currentModeId: null, resumeStrategy: 'fresh' }));
     // Real streamMessage returns a cancel fn AND starts an async stream. For
     // our guard test we only need it to be callable and return a no-op cancel.
     mockStreamMessage.mockImplementation(() => () => {});
     localStorage.clear();
+  });
+
+  it('validates captured file feedback before mutation and captures only same-tree file origins', async () => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('feedback'); });
+    let rootId = '';
+    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
+    const project = result.current.store.activeProject!;
+    const context = { backendConnectionId: project.backendConnectionId ?? 'local', projectId: project.id, treeId: project.activeTreeId!, nodeId: rootId };
+    const source = { type: 'artifact' as const, filePath: 'a.md', snapshot: { hashKind: 'sha256-text-utf8' as const, contentHash: 'abc', backendConnectionId: context.backendConnectionId, projectId: project.id, resolvedFilePath: '/a.md' } };
+    act(() => {
+      expect(result.current.store.addPendingComment(rootId, 'old', 'edit', source, { ...context, backendConnectionId: 'changed-backend' })).toBe(false);
+      expect(result.current.store.addPendingComment(rootId, 'old', 'edit', source, { ...context, treeId: 'missing-tree' })).toBe(false);
+      expect(result.current.store.addPendingComment('missing', 'old', 'edit', source, context)).toBe(false);
+      expect(result.current.store.addPendingComment(rootId, 'old', 'edit', { ...source, snapshot: { ...source.snapshot, projectId: 'other-workspace' } }, context)).toBe(false);
+    });
+    expect(result.current.nodes[rootId].pendingComments).toBeUndefined();
+    act(() => { expect(result.current.store.addPendingComment(rootId, 'old', 'edit', source, context)).toBe(true); });
+    expect(result.current.nodes[rootId].pendingComments?.[0].source).toEqual(source);
+    act(() => { result.current.store.focusPane(rootId); });
+    let paneId = '';
+    act(() => { paneId = result.current.store.openFilePane('a.md'); });
+    expect(result.current.store.paneItems[paneId]).toMatchObject({ originChatNodeId: rootId });
+    act(() => { result.current.store.archiveTree(context.treeId); });
+    const before = result.current.nodes[rootId].pendingComments;
+    act(() => { expect(result.current.store.addPendingComment(rootId, 'old', 'later', source, context)).toBe(false); });
+    expect(result.current.nodes[rootId].pendingComments).toBe(before);
+  });
+
+  it.each([false, true])('retains distinct queued file snapshots through flush and retry (success=%s)', async (success) => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('queue feedback'); });
+    let nodeId = '';
+    await act(async () => { nodeId = result.current.store.createThread()!; });
+    await act(async () => { result.current.store.sendMessage(nodeId, 'first'); });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    const source = (hash: string) => ({ type: 'artifact' as const, filePath: 'a.md', snapshot: { hashKind: 'sha256-text-utf8' as const, contentHash: hash, backendConnectionId: 'local', projectId: result.current.store.activeProject!.id, resolvedFilePath: '/a.md' } });
+    const comment = { id: 'c', quotedText: 'old', body: 'fix', createdAt: 1, source: source('comment-hash') };
+    act(() => {
+      result.current.store.queueMessage(nodeId, { id: 'q1', value: 'one', mentions: [], attachments: [], quotedText: 'version one', quoteSource: source('first-hash'), commentBlock: 'comment-hash context', comments: [comment], queuedAt: 1 });
+      result.current.store.queueMessage(nodeId, { id: 'q2', value: 'two', mentions: [], attachments: [], quotedText: 'version two', quoteSource: source('second-hash'), queuedAt: 2 });
+      mockStreamMessage.mock.calls[0][2].onDone?.();
+    });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(2));
+    const [, prompt, handlers, options] = mockStreamMessage.mock.calls[1];
+    expect(prompt).toContain('first-hash');
+    expect(prompt).toContain('second-hash');
+    expect(options.userMetadata.comments).toEqual([comment]);
+    expect(options.userMetadata.quotedText).toBeUndefined();
+    const savedUser = result.current.nodes[nodeId].messages.filter(message => message.role === 'user').at(-1)!;
+    expect(savedUser.text).toContain('first-hash');
+    expect(savedUser.text).toContain('second-hash');
+    expect(savedUser.quotedText).toBeUndefined();
+    expect(savedUser.quoteSource).toBeUndefined();
+    if (success) {
+      act(() => { handlers.onDone?.(); });
+      await act(async () => { result.current.store.retryLastTurn(nodeId); });
+      await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(3));
+      const [, retryPrompt, retryHandlers, retryOptions] = mockStreamMessage.mock.calls[2];
+      expect(retryPrompt).toContain('first-hash');
+      expect(retryPrompt).toContain('second-hash');
+      expect(retryPrompt).toContain('comment-hash');
+      expect(retryOptions.userMetadata.quotedText).toBeUndefined();
+      expect(retryOptions.userMetadata.comments).toEqual([comment]);
+      act(() => { retryHandlers.onDone?.(); });
+      return;
+    }
+    act(() => { handlers.onError('busy', undefined, undefined, 'turn_active'); });
+    const draft = result.current.nodes[nodeId].composerDraft!;
+    expect(draft.value).toContain('first-hash');
+    expect(draft.value).toContain('second-hash');
+    expect(draft.value).toContain('comment-hash context');
+    expect(draft.quotedText).toBeUndefined();
   });
 
   it.each([true, false])('keeps a steer request out of queue auto-send and records only accepted input (%s)', async (accepted) => {
@@ -446,13 +528,159 @@ describe('auto-branch behavior (real provider)', () => {
         { id: 'old-a', node_id: 'cancel-node', role: 'assistant', content: 'partial', seq: 1 },
       ],
     }]);
-    return renderHook(() => ({ store: useChatStore(), node: useChatNode('cancel-node') }), { wrapper });
+    return renderHook(() => ({ store: useChatStore(), node: useChatNode('cancel-node'), nodes: useChatNodesSnapshot() }), { wrapper });
   }
 
   function backgroundForCancellationNode() {
     const handlersForChat = vi.mocked(api.subscribeBackground).mock.calls.at(-1)![0];
     return handlersForChat('cancel-node', 'cancel-node');
   }
+
+  function scheduledSnapshot(nodeId: string, status: 'idle' | 'streaming', text: string, seq: number, model = 'sonnet') {
+    return {
+      workspace: { id: 'cancel-ws', name: 'Cancellation', created_at: 1, active_tree_id: 'cancel-tree' },
+      trees: [{ id: 'cancel-tree', root_node_id: 'cancel-node', created_at: 1, last_active_at: 1 },
+        ...(nodeId === 'cancel-node' ? [] : [{ id: 'scheduled-tree', root_node_id: nodeId, created_at: 2, last_active_at: 2 }])],
+      nodes: [{ id: nodeId, tree_id: nodeId === 'cancel-node' ? 'cancel-tree' : 'scheduled-tree', status,
+        acp_session_id: 'native-scheduled', runtime_id: 'claude', model_id: model,
+        last_applied_turn_id: 'scheduled-turn', last_applied_seq: seq }],
+      messages: [{ id: 'scheduled-user', node_id: nodeId, role: 'user', content: 'scheduled prompt', seq: 0 },
+        { id: 'scheduled-answer', node_id: nodeId, role: 'assistant', content: text, seq: 1 }],
+    };
+  }
+
+  function scheduledEvent(nodeId: string, phase: 'started' | 'finished') {
+    const options = vi.mocked(api.subscribeBackground).mock.calls.at(-1)![1]!;
+    options.onScheduledJobRun?.({ phase, runId: 'scheduled-run', jobId: 'scheduled-job', jobName: 'Scheduled job',
+      workspaceId: 'cancel-ws', nodeId, treeId: 'scheduled-tree', status: phase === 'started' ? 'running' : 'succeeded',
+      summary: null, error: null, notify: false, at: 1 });
+  }
+
+  it('keeps the finished scheduled snapshot when its earlier start fetch completes last', async () => {
+    const { result } = hydratedCancellationNode('idle');
+    await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+    let finishStart!: (value: unknown) => void;
+    let finishFinal!: (value: unknown) => void;
+    vi.mocked(api.fetchWorkspace)
+      .mockImplementationOnce(() => new Promise(resolve => { finishStart = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishFinal = resolve; }));
+    act(() => { scheduledEvent('scheduled-node', 'started'); });
+    expect(api.fetchWorkspace).toHaveBeenCalledTimes(1);
+    act(() => { scheduledEvent('scheduled-node', 'finished'); });
+    expect(api.fetchWorkspace).toHaveBeenCalledTimes(2);
+    let opened!: Promise<boolean>;
+    const focus = vi.spyOn(window, 'focus').mockImplementation(() => {});
+    try {
+      act(() => { opened = result.current.store.revealBackendNode('cancel-ws', 'scheduled-node'); });
+      await act(async () => {
+        finishFinal(scheduledSnapshot('scheduled-node', 'idle', 'final answer', 8));
+        expect(await opened).toBe(true);
+      });
+    } finally { focus.mockRestore(); }
+    await act(async () => { finishStart(scheduledSnapshot('scheduled-node', 'streaming', 'partial', 2)); });
+    const scheduled = result.current.nodes['scheduled-node'];
+    expect(scheduled.status).toBe('idle');
+    expect(assistantAnswerRaw(scheduled)).toBe('final answer');
+    expect(scheduled.lastAppliedBackgroundSeq).toBe(8);
+  });
+
+  it('preserves a cold command and its SDK state while a scheduled refresh converges', async () => {
+    const { result } = hydratedCancellationNode('idle');
+    await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+    let finishSnapshot!: (value: unknown) => void;
+    let finishCommand!: (value: Awaited<ReturnType<typeof executeChatCommand>>) => void;
+    vi.mocked(api.fetchWorkspace)
+      .mockImplementationOnce(() => new Promise(resolve => { finishSnapshot = resolve; }))
+      .mockResolvedValue(scheduledSnapshot('cancel-node', 'idle', 'final answer', 8, 'opus'));
+    vi.mocked(executeChatCommand).mockImplementationOnce(() => new Promise(resolve => { finishCommand = resolve; }));
+    mockEnsureSession.mockResolvedValueOnce({ chatId: 'cancel-node', currentModeId: null, resumeStrategy: 'exact',
+      runtimeId: 'claude', modelId: 'opus', sessionState: { runtimeId: 'claude', nativeEngine: 'agent-sdk', modelId: 'opus' } });
+    act(() => { scheduledEvent('cancel-node', 'finished'); });
+    await act(async () => { result.current.store.sendMessage('cancel-node', '/model opus'); });
+    expect(result.current.node?.commandResult?.status).toBe('running');
+    await act(async () => { finishSnapshot(scheduledSnapshot('cancel-node', 'idle', 'older answer', 2)); });
+    expect(result.current.node?.commandResult?.status).toBe('running');
+    expect(result.current.node?.sessionState?.nativeEngine).toBe('agent-sdk');
+    await act(async () => { finishCommand({ success: true, message: 'Model changed.',
+      sessionState: { runtimeId: 'claude', nativeEngine: 'agent-sdk', modelId: 'opus' } }); });
+    await waitFor(() => expect(assistantAnswerRaw(result.current.node)).toBe('final answer'));
+    expect(result.current.node?.commandResult).toMatchObject({ status: 'completed', message: 'Model changed.' });
+    expect(result.current.node?.sessionState).toMatchObject({ nativeEngine: 'agent-sdk', modelId: 'opus' });
+    expect(result.current.node?.modelId).toBe('opus');
+  });
+
+  it('refetches a scheduled snapshot when background output advances during its fetch', async () => {
+    const { result } = hydratedCancellationNode('idle');
+    await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+    let finishSnapshot!: (value: unknown) => void;
+    vi.mocked(api.fetchWorkspace)
+      .mockImplementationOnce(() => new Promise(resolve => { finishSnapshot = resolve; }))
+      .mockResolvedValue(scheduledSnapshot('cancel-node', 'idle', 'final background answer', 8));
+    act(() => { scheduledEvent('cancel-node', 'finished'); });
+    const handlers = backgroundForCancellationNode();
+    act(() => {
+      dispatchChatStreamEvent({ event: 'turn_start', data: {
+        nodeId: 'cancel-node', turnId: 'scheduled-turn', assistantId: 'scheduled-answer', seq: 0, userText: '', selfInitiated: true,
+      } }, handlers);
+      dispatchChatStreamEvent({ event: 'chunk', data: {
+        turnId: 'scheduled-turn', assistantId: 'scheduled-answer', seq: 3, text: 'new background output',
+      } }, handlers);
+      dispatchChatStreamEvent({ event: 'done', data: {
+        turnId: 'scheduled-turn', assistantId: 'scheduled-answer', seq: 8, persisted: true,
+      } }, handlers);
+    });
+    await act(async () => { finishSnapshot(scheduledSnapshot('cancel-node', 'streaming', 'stale partial', 2)); });
+    await waitFor(() => expect(api.fetchWorkspace).toHaveBeenCalledTimes(2));
+    expect(result.current.node?.status).toBe('idle');
+    expect(result.current.node?.lastAppliedBackgroundSeq).toBe(8);
+    expect(assistantAnswerRaw(result.current.node)).toBe('final background answer');
+  });
+
+  it('restores a cold Claude session before a host command without adding transcript messages', async () => {
+    const { result } = hydratedCancellationNode('idle');
+    await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+    let finish!: (value: api.EnsureSessionResult) => void;
+    mockEnsureSession.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    act(() => { result.current.store.sendMessage('cancel-node', '/status'); });
+    expect(mockEnsureSession).toHaveBeenCalledWith(expect.objectContaining({
+      nodeId: 'cancel-node', runtimeId: 'claude', workspaceId: 'cancel-ws',
+      priorMessages: [{ role: 'user', text: 'earlier prompt' }, { role: 'assistant', text: 'partial' }],
+    }));
+    expect(executeChatCommand).not.toHaveBeenCalled();
+    await act(async () => { finish({ chatId: 'cancel-node', currentModeId: null, resumeStrategy: 'exact', runtimeId: 'claude' }); });
+    await waitFor(() => expect(executeChatCommand).toHaveBeenCalledWith('cancel-node', 'status', undefined));
+    await waitFor(() => expect(result.current.node?.commandResult?.status).toBe('completed'));
+    expect(result.current.node?.messages).toHaveLength(2);
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
+
+  it('initializes a never-sent anchored child through the durable graph before a Claude command', async () => {
+    const { result } = hydratedCancellationNode('idle');
+    await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+    let childId = '';
+    await act(async () => { childId = await result.current.store.createBlankChild('cancel-node', { anchorMessageId: 'old-a' }); });
+    await act(async () => { result.current.store.sendMessage(childId, '/model claude-sonnet-4-6', { runtimeId: 'claude' }); });
+    await waitFor(() => expect(executeChatCommand).toHaveBeenCalledWith(childId, 'model', { value: 'claude-sonnet-4-6' }));
+    expect(mockEnsureSession).toHaveBeenCalledWith(expect.objectContaining({
+      nodeId: childId, parentChatId: 'cancel-node', priorMessages: [],
+      graphPrerequisite: expect.objectContaining({
+        node: expect.objectContaining({ id: childId, parentNodeId: 'cancel-node' }),
+        edges: expect.arrayContaining([expect.objectContaining({ sourceNodeId: 'cancel-node', targetNodeId: childId, anchorMessageId: 'old-a' })]),
+      }),
+    }));
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not execute a Claude command after its session restore fails', async () => {
+    const { result } = hydratedCancellationNode('idle');
+    await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+    mockEnsureSession.mockRejectedValueOnce(new Error('Native restore failed'));
+    await act(async () => { result.current.store.sendMessage('cancel-node', '/status'); });
+    await waitFor(() => expect(result.current.node?.commandResult).toMatchObject({ status: 'error', message: 'Native restore failed' }));
+    expect(executeChatCommand).not.toHaveBeenCalled();
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+    expect(result.current.node?.messages).toHaveLength(2);
+  });
 
   it('fallback Stop targets the active background turn after a completed foreground turn', async () => {
     const { result } = hydratedCancellationNode('idle');
@@ -899,18 +1127,59 @@ describe('auto-branch behavior (real provider)', () => {
     }
   });
 
-  it('updates the absolute folder bound to an existing workspace', async () => {
+  it('uses the first added folder for fresh sessions and protects it when removing folders', async () => {
+    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
+    await act(async () => { await result.current.store.createProject('test'); });
+    const projectId = result.current.store.activeProject!.id;
+    act(() => {
+      result.current.store.addFolder(projectId, '/tmp/primary');
+      result.current.store.addFolder(projectId, '/tmp/reference');
+    });
+    expect(result.current.store.activeProject?.cwd).toBe('/tmp/primary');
+    const [primary, reference] = result.current.store.activeProject!.folders!;
+    act(() => {
+      result.current.store.removeFolder(projectId, primary.id);
+      result.current.store.removeFolder(projectId, reference.id);
+    });
+    expect(result.current.store.activeProject?.folders).toEqual([primary]);
+    expect(result.current.store.activeProject?.cwd).toBe(primary.path);
+
+    let nodeId = '';
+    await act(async () => { nodeId = result.current.store.createThread()!; });
+    await act(async () => { result.current.store.sendMessage(nodeId, 'Read the workspace'); });
+    await waitFor(() => expect(mockEnsureSession).toHaveBeenCalledTimes(1));
+    expect(mockEnsureSession.mock.calls[0][0]).toMatchObject({ cwd: primary.path, workspaceId: projectId });
+  });
+
+  it('updates the default folder without changing an already bound session', async () => {
     const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
 
     await act(async () => {
       await result.current.store.createProject('test', '/tmp/original');
     });
     await waitFor(() => expect(result.current.store.activeProject?.cwd).toBe('/tmp/original'));
+    const projectId = result.current.store.activeProject!.id;
+    act(() => { result.current.store.addFolder(projectId, '/tmp/reference', 'Reference'); });
+    let nodeId = '';
+    await act(async () => { nodeId = result.current.store.createThread()!; });
+    await act(async () => { result.current.store.sendMessage(nodeId, 'Keep this native session'); });
+    await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+    const boundChatId = result.current.nodes[nodeId].chatId;
+    expect(boundChatId).toBeTruthy();
 
     act(() => {
-      result.current.store.setProjectCwd(result.current.store.activeProject!.id, '/tmp/relinked');
+      result.current.store.setProjectCwd(projectId, '/tmp/relinked');
     });
 
     expect(result.current.store.activeProject?.cwd).toBe('/tmp/relinked');
+    expect(result.current.store.activeProject?.folders?.map((folder) => folder.path)).toEqual(['/tmp/relinked', '/tmp/reference']);
+    expect(result.current.nodes[nodeId].chatId).toBe(boundChatId);
+    expect(mockEnsureSession).toHaveBeenCalledTimes(1);
+
+    act(() => { result.current.store.setProjectCwd(projectId, '/tmp/reference'); });
+    expect(result.current.store.activeProject?.cwd).toBe('/tmp/reference');
+    expect(result.current.store.activeProject?.folders?.map((folder) => folder.path)).toEqual(['/tmp/reference', '/tmp/relinked']);
+    expect(result.current.store.activeProject?.folders?.[0].label).toBe('Reference');
+    expect(result.current.nodes[nodeId].chatId).toBe(boundChatId);
   });
 });

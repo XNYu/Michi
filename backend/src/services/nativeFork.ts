@@ -1,11 +1,14 @@
 import type { AgentRuntime, AgentSession, NewAgentSessionOptions } from '../agents/types';
 import { chatHub } from '../agents/chatHub';
 import { getSessionForOwner } from '../agents/sessionRegistry';
+import { chatOwner, isRunOwner } from '../agents/ownerMapping';
 import { getNode, getWorkspace, listMessages } from './dbRepository';
 import { LOCAL_AGENT_OWNER_ID, workspaceOwnerMatches } from './agentOwner';
-import { nativeResumeId, NativeResumeUnavailableError } from './nativeResume';
+import { nativeResumeIdFor, NativeResumeUnavailableError } from './nativeResume';
 import { normalizeWorkspaceCwd } from '../agents/tools/pathSandbox';
 import { isNativeForkEnabled } from './agentConfig';
+import { isAssistantWorkspace } from '../assistant/identity';
+import { isAssistantProfile } from '../assistant/policy';
 
 /** Only new, ordinary chat children may inherit a native parent. Persisted graph
  * ownership, not a client-supplied native token, determines the fork source. */
@@ -14,8 +17,12 @@ export async function tryForkChatSession(
   opts: NewAgentSessionOptions,
 ): Promise<AgentSession | null> {
   if (!runtime.forkSession || !isNativeForkEnabled(runtime.id, opts.ownerUserId)
-    || !opts.sessionId || opts.owner?.kind === 'agent_run'
+    || !opts.sessionId || isRunOwner(opts.owner)
     || opts.profileHash || opts.replayHistory?.length) return null;
+  // The assistant never inherits native history (nor lends it): its sessions
+  // run under their own tool lockdown, which a native fork must not carry
+  // into, or out of, an ordinary chat. Its branches use the text path.
+  if (isAssistantProfile(opts.toolProfile) || isAssistantWorkspace(opts.workspaceId)) return null;
   const child = getNode(opts.sessionId);
   if (!child?.parent_node_id || child.acp_session_id || child.external_session_id
     || child.deleted_at || child.purged_at || child.kind !== 'chat'
@@ -34,9 +41,10 @@ export async function tryForkChatSession(
   if (!workspace || workspace.deleted_at || workspace.archived_at
     || !workspaceOwnerMatches(workspace.owner_user_id ?? null, opts.ownerUserId ?? LOCAL_AGENT_OWNER_ID)
     || normalizeWorkspaceCwd(workspace.cwd ?? process.cwd()) !== normalizeWorkspaceCwd(opts.cwd)) return null;
-  const nativeId = nativeResumeId(runtime.id, parent);
-  if (!nativeId || nativeId === parent.id || parent.status === 'streaming' || chatHub.isActive(parent.id)) return null;
-  const live = getSessionForOwner(parent.id, { kind: 'chat_node', nodeId: parent.id }, opts.ownerUserId ?? null);
+  const nativeId = nativeResumeIdFor(runtime, parent);
+  if (!nativeId || nativeId === parent.id || parent.status === 'streaming' || chatHub.isActive(parent.id)
+    || chatHub.isOwnerTurnActive(parent.id) || chatHub.hasPendingSelfTurn(parent.id)) return null;
+  const live = getSessionForOwner(parent.id, chatOwner(parent.id), opts.ownerUserId ?? null);
   if (live?.getPendingAssistant() !== undefined) return null;
   // A never-sent session has no stored history for the runtime to fork.
   const parentMessages = listMessages(parent.id);

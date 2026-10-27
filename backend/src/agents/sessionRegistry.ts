@@ -1,57 +1,80 @@
-import { trackSessionState, untrackSessionState, clearSessionStates } from './sessionStateFeed';
+import { trackSessionState, untrackSessionState, clearSessionStates, subscribeSessionStates } from './sessionStateFeed';
 import type { AgentSession, ChatMessage, RuntimeSessionOwner } from "./types";
 import type { NormalizedEvent } from "../services/chatEvents";
 import { getRuntimeDeps } from "./runtimeDeps";
+import {
+    HISTORY_STUB_MAX_ENTRIES as STUB_MAX_ENTRIES,
+    HISTORY_STUB_TTL_MS as STUB_TTL_MS,
+    createSessionDirectory,
+} from "michi-runtime/internal/core/sessionDirectory";
+import { createRuntimeManager, type RuntimeManager } from "michi-runtime/internal/core/runtimeManager";
+import type { RuntimeHost } from "michi-runtime/internal/contract/host";
+import { interactiveOwner } from "michi-runtime/internal/contract/types";
 
-type Entry = {
-    session: AgentSession;
-    ownerUserId: string | null;
-    owner: RuntimeSessionOwner;
-    kind: "live" | "stub";
-    lastAccessedAt: number;
-};
+export const HISTORY_STUB_TTL_MS = STUB_TTL_MS;
+export const HISTORY_STUB_MAX_ENTRIES = STUB_MAX_ENTRIES;
 
-const sessions = new Map<string, Entry>();
-export const HISTORY_STUB_TTL_MS = 30 * 60 * 1000;
-export const HISTORY_STUB_MAX_ENTRIES = 256;
+let manager: RuntimeManager | undefined;
 
-function touch(entry: Entry): void {
-    if (entry.kind === "stub") entry.lastAccessedAt = Date.now();
-    else entry.session.touch?.();
+// Michi's process-wide session directory lives in its runtime manager. The
+// exports below are thin accessors over it, so their callers and test stubs
+// keep working unchanged.
+function createMichiRuntimeManager(enforceUserOwnership: () => boolean, host?: RuntimeHost): RuntimeManager {
+    const sessions = createSessionDirectory({
+        enforceUserOwnership,
+        // Through ./sessionStateFeed, which owns the persistence and log hooks.
+        stateFeed: {
+            track: (session, ownerUserId) => trackSessionState(session, ownerUserId),
+            untrack: (sessionId) => untrackSessionState(sessionId),
+            clear: () => clearSessionStates(),
+            subscribe: (receive, ownerUserId) => subscribeSessionStates(receive, ownerUserId),
+        },
+    });
+    return createRuntimeManager({ sessions, host });
 }
+
+/**
+ * Builds Michi's runtime manager over the server's runtime host: session
+ * ownership is then read from host.principal on every lookup. server.ts calls
+ * it once, after configureRuntimeDeps and before the first runtime is
+ * registered. A manager already in use is never replaced, since that would
+ * drop its runtimes and sessions.
+ */
+export function configureRuntimeManager(host: RuntimeHost): RuntimeManager {
+    if (manager) {
+        throw new Error(
+            "configureRuntimeManager: the runtime manager is already in use. Call it once, in server.ts "
+            + "before anything reads agents/registry or agents/sessionRegistry, and do not call it again.",
+        );
+    }
+    manager = createMichiRuntimeManager(() => host.principal.enforceUserOwnership(), host);
+    return manager;
+}
+
+/**
+ * @internal Michi's single runtime manager. Read it through ./registry and the
+ * accessors below. Without configureRuntimeManager (tests, scripts), the first
+ * use builds one that reads MICHI_CLOUD on every lookup, as Michi's host does;
+ * not once, since tests switch MICHI_CLOUD at runtime.
+ */
+export function getRuntimeManager(): RuntimeManager {
+    return manager ??= createMichiRuntimeManager(() => process.env.MICHI_CLOUD === '1');
+}
+
+/** Test helper: drops the manager and its sessions; the next use or configureRuntimeManager builds a new one. */
+export function __resetRuntimeManager(): void {
+    manager?.sessions.clear();
+    manager = undefined;
+}
+
+const sessions = () => getRuntimeManager().sessions;
 
 export function evictHistoryStubs(opts: {
     now?: number;
     maxEntries?: number;
     protectedIds?: ReadonlySet<string>;
 } = {}): number {
-    const now = opts.now ?? Date.now();
-    const maxEntries = Math.max(0, Math.floor(opts.maxEntries ?? HISTORY_STUB_MAX_ENTRIES));
-    const protectedIds = opts.protectedIds ?? new Set<string>();
-    let removed = 0;
-
-    for (const [id, entry] of sessions) {
-        if (
-            entry.kind === "stub"
-            && !protectedIds.has(id)
-            && now - entry.lastAccessedAt > HISTORY_STUB_TTL_MS
-        ) {
-            sessions.delete(id);
-            removed += 1;
-        }
-    }
-
-    const protectedStubCount = [...protectedIds]
-        .filter((id) => sessions.get(id)?.kind === "stub")
-        .length;
-    const unprotectedLimit = Math.max(0, maxEntries - protectedStubCount);
-    const remaining = [...sessions.entries()]
-        .filter(([id, entry]) => entry.kind === "stub" && !protectedIds.has(id))
-        .sort((a, b) => a[1].lastAccessedAt - b[1].lastAccessedAt);
-    for (let index = 0; index < remaining.length - unprotectedLimit; index += 1) {
-        if (sessions.delete(remaining[index][0])) removed += 1;
-    }
-    return removed;
+    return sessions().evictStubs(opts);
 }
 
 /**
@@ -93,10 +116,9 @@ export function ensureAncestorChainLoaded(chatId: string): void {
     let cursor: string | undefined = chatId;
     while (cursor && !visited.has(cursor)) {
         visited.add(cursor);
-        const existing = sessions.get(cursor);
+        const existing = sessions().get(cursor);
         if (existing) {
-            touch(existing);
-            cursor = existing.session.parentChatId;
+            cursor = existing.parentChatId;
             continue;
         }
         try {
@@ -112,14 +134,7 @@ export function ensureAncestorChainLoaded(chatId: string): void {
                 history.push({ role: row.role, content: text });
             }
             const parentChatId = node.parent_node_id ?? undefined;
-            const stub = new HistoryStubSession(cursor, history, parentChatId);
-            sessions.set(cursor, {
-                session: stub,
-                ownerUserId: null,
-                owner: { kind: "chat_node", nodeId: cursor },
-                kind: "stub",
-                lastAccessedAt: Date.now(),
-            });
+            sessions().insertStub(new HistoryStubSession(cursor, history, parentChatId), interactiveOwner(cursor));
             cursor = parentChatId;
         } catch (err) {
             console.warn(`[sessionRegistry] ensureAncestorChainLoaded: failed loading ${cursor}:`, err);
@@ -133,34 +148,13 @@ export function ensureAncestorChainLoaded(chatId: string): void {
     evictHistoryStubs({ protectedIds: visited });
 }
 
+/** Without an owner the directory uses the session's own, else the interactive owner of its id. */
 export function registerSession(
     session: AgentSession,
     ownerUserId?: string | null,
-    owner: RuntimeSessionOwner = session.owner ?? { kind: "chat_node", nodeId: session.id },
+    owner?: RuntimeSessionOwner,
 ): void {
-    sessions.set(session.id, {
-        session,
-        ownerUserId: ownerUserId ?? null,
-        owner,
-        kind: "live",
-        lastAccessedAt: Date.now(),
-    });
-    if (owner.kind === 'chat_node') trackSessionState(session, ownerUserId ?? null);
-    else untrackSessionState(session.id);
-    try {
-        getRuntimeDeps().onSessionOwnerBound?.(session.id, owner);
-    } catch {
-        // Registry is also used by isolated adapter tests before runtime deps
-        // are assembled; the audit hook is optional and must not change that.
-    }
-}
-
-function sameOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boolean {
-    if (left.kind !== right.kind) return false;
-    return left.kind === "chat_node"
-        ? left.nodeId === (right as Extract<RuntimeSessionOwner, { kind: "chat_node" }>).nodeId
-        : left.runId === (right as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).runId
-            && left.attemptId === (right as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).attemptId;
+    sessions().register(session, ownerUserId, owner);
 }
 
 /**
@@ -168,10 +162,7 @@ function sameOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boole
  * digest generation, etc.). Does NOT enforce ownership — callers are trusted.
  */
 export function getSession(chatId: string): AgentSession | undefined {
-    const entry = sessions.get(chatId);
-    if (!entry) return undefined;
-    touch(entry);
-    return entry.session;
+    return sessions().get(chatId);
 }
 
 /**
@@ -185,13 +176,7 @@ export function getSession(chatId: string): AgentSession | undefined {
  *   - Returns the session regardless of ownerUserId (single-user process).
  */
 export function getSessionForUser(chatId: string, userId: string | null): AgentSession | null {
-    const e = sessions.get(chatId);
-    if (!e) return null;
-    if (process.env.MICHI_CLOUD === '1') {
-        if (e.ownerUserId !== userId) return null;  // null owner also rejected
-    }
-    touch(e);
-    return e.session;
+    return sessions().getForUser(chatId, userId);
 }
 
 /** Owner-aware lookup used by Run coordinators. It prevents a delayed action
@@ -201,27 +186,19 @@ export function getSessionForOwner(
     owner: RuntimeSessionOwner,
     userId: string | null,
 ): AgentSession | null {
-    const entry = sessions.get(sessionId);
-    if (!entry || !sameOwner(entry.owner, owner)) return null;
-    if (process.env.MICHI_CLOUD === "1" && entry.ownerUserId !== userId) return null;
-    touch(entry);
-    return entry.session;
+    return sessions().getForOwner(sessionId, owner, userId);
 }
 
 export function sessionMatchesOwner(sessionId: string, owner: RuntimeSessionOwner): boolean {
-    const entry = sessions.get(sessionId);
-    return !!entry && sameOwner(entry.owner, owner);
+    return sessions().matchesOwner(sessionId, owner);
 }
 
 export function dropSession(chatId: string): void {
-    untrackSessionState(chatId);
-    sessions.delete(chatId);
+    sessions().drop(chatId);
 }
 
 export function dropSessionForOwner(sessionId: string, owner: RuntimeSessionOwner): boolean {
-    if (!sessionMatchesOwner(sessionId, owner)) return false;
-    untrackSessionState(sessionId);
-    return sessions.delete(sessionId);
+    return sessions().dropForOwner(sessionId, owner);
 }
 
 /**
@@ -232,16 +209,13 @@ export function dropSessionForOwner(sessionId: string, owner: RuntimeSessionOwne
 export function getAncestors(chatId: string): AgentSession[] {
     const out: AgentSession[] = [];
     const visited = new Set<string>();
-    const initial = sessions.get(chatId);
-    if (initial) touch(initial);
-    let cursor: string | undefined = initial?.session.parentChatId;
+    let cursor: string | undefined = sessions().get(chatId)?.parentChatId;
     while (cursor && !visited.has(cursor)) {
         visited.add(cursor);
-        const e = sessions.get(cursor);
-        if (!e) break;
-        touch(e);
-        out.unshift(e.session);
-        cursor = e.session.parentChatId;
+        const session = sessions().get(cursor);
+        if (!session) break;
+        out.unshift(session);
+        cursor = session.parentChatId;
     }
     // `out` owns references to the complete chain now, so enforcing the hard
     // resident-stub cap cannot truncate the caller's current transcript.
@@ -250,6 +224,5 @@ export function getAncestors(chatId: string): AgentSession[] {
 }
 
 export function clearAllSessions(): void {
-    clearSessionStates();
-    sessions.clear();
+    sessions().clear();
 }

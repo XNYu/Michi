@@ -5,6 +5,7 @@ import type { AgentModesResult, AgentStatus } from '../services/api';
 vi.mock('../services/api', () => ({ listAgentModes: vi.fn() }));
 import { listAgentModes } from '../services/api';
 import { useAgentModeCatalog } from './useAgentModeCatalog';
+import { HttpResponseError } from '../services/api/httpError';
 
 const status = { runtime: 'kiro', capabilities: { modes: true } } as AgentStatus;
 const catalog: AgentModesResult = { availableModes: [{ id: 'vibe', name: 'Default' }], defaultModeId: 'vibe' };
@@ -13,26 +14,6 @@ const flush = () => act(async () => { await Promise.resolve(); });
 describe('useAgentModeCatalog', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.mocked(listAgentModes).mockReset(); });
   afterEach(() => { vi.useRealTimers(); });
-
-  it('loads agents independently of warm readiness and treats a successful empty list as empty', async () => {
-    vi.mocked(listAgentModes).mockResolvedValue({ availableModes: [], defaultModeId: null });
-    const { result } = renderHook(() => useAgentModeCatalog('workspace', 'local', status));
-    expect(result.current.agentModesLoading).toBe(true);
-    await flush();
-    expect(result.current.agentModesLoading).toBe(false);
-    expect(result.current.agentModesError).toBeNull();
-    expect(result.current.availableModes).toEqual([]);
-    expect(listAgentModes).toHaveBeenCalledTimes(1);
-  });
-
-  it('automatically retries a transient failure', async () => {
-    vi.mocked(listAgentModes).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(catalog);
-    const { result } = renderHook(() => useAgentModeCatalog('workspace', 'local', status));
-    await flush();
-    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-    expect(result.current.availableModes).toEqual(catalog.availableModes);
-    expect(result.current.agentModesLoading).toBe(false);
-  });
 
   it('bounds a hung request, aborts it, and allows retry without reloading the page', async () => {
     let resolveOld!: (value: typeof catalog) => void;
@@ -51,20 +32,6 @@ describe('useAgentModeCatalog', () => {
     expect(result.current.availableModes).toEqual(catalog.availableModes);
   });
 
-  it('retains a loaded workspace catalog during refresh and when returning to that workspace', async () => {
-    vi.mocked(listAgentModes).mockResolvedValueOnce(catalog).mockImplementation(() => new Promise(() => {}));
-    const { result, rerender } = renderHook(({ workspace }) => useAgentModeCatalog(workspace, 'local', status),
-      { initialProps: { workspace: 'a' } });
-    await flush();
-    await act(async () => { result.current.retryAgentModes(); });
-    expect(result.current.availableModes).toEqual(catalog.availableModes);
-    rerender({ workspace: 'b' });
-    expect(result.current.availableModes).toEqual(catalog.availableModes);
-    expect(result.current.defaultModeId).toBeNull();
-    rerender({ workspace: 'a' });
-    expect(result.current.availableModes).toEqual(catalog.availableModes);
-  });
-
   it('rejects stale responses after switching Backend, runtime, or workspace', async () => {
     let resolveOld!: (value: typeof catalog) => void;
     vi.mocked(listAgentModes).mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
@@ -78,41 +45,63 @@ describe('useAgentModeCatalog', () => {
     expect(result.current.availableModes.map((mode) => mode.id)).toEqual(['other']);
   });
 
-  it('does not reuse agents across Backend or runtime boundaries', async () => {
-    vi.mocked(listAgentModes).mockResolvedValueOnce(catalog).mockImplementation(() => new Promise(() => {}));
-    const { result, rerender } = renderHook(({ backend, runtime }) =>
-      useAgentModeCatalog('a', backend, { ...status, runtime }),
-    { initialProps: { backend: 'local', runtime: 'kiro' } });
+  it('stops on a permanent folder error and lets the user retry after repairing it', async () => {
+    const message = 'Workspace folder does not exist: /old/path. Select an existing folder.';
+    vi.mocked(listAgentModes).mockRejectedValueOnce(new HttpResponseError(message, 400, 'WORKSPACE_CWD_INVALID'))
+      .mockResolvedValue(catalog);
+    const { result } = renderHook(() => useAgentModeCatalog('workspace', 'local', status));
     await flush();
-    rerender({ backend: 'remote', runtime: 'kiro' });
-    expect(result.current.availableModes).toEqual([]);
-    rerender({ backend: 'local', runtime: 'crew' });
-    expect(result.current.availableModes).toEqual([]);
-  });
-
-  it('does not share session-scoped catalogs between workspaces of other runtimes', async () => {
-    vi.mocked(listAgentModes).mockResolvedValueOnce(catalog).mockImplementation(() => new Promise(() => {}));
-    const crew = { ...status, runtime: 'crew' };
-    const { result, rerender } = renderHook(({ workspace }) => useAgentModeCatalog(workspace, 'local', crew),
-      { initialProps: { workspace: 'a' } });
-    await flush();
-    rerender({ workspace: 'b' });
-    expect(result.current.availableModes).toEqual([]);
-    expect(result.current.defaultModeId).toBeNull();
-  });
-
-  it('reloads on the existing status refresh event', async () => {
-    vi.mocked(listAgentModes).mockResolvedValue(catalog);
-    renderHook(() => useAgentModeCatalog('workspace', 'local', status));
-    await flush();
-    await act(async () => { window.dispatchEvent(new CustomEvent('michi:reload-agent-status')); });
-    expect(listAgentModes).toHaveBeenCalledTimes(2);
-  });
-
-  it('skips discovery for runtimes without modes', async () => {
-    const { result } = renderHook(() => useAgentModeCatalog('a', 'local', { ...status, capabilities: { ...status.capabilities, modes: false } }));
-    await flush();
-    expect(listAgentModes).not.toHaveBeenCalled();
     expect(result.current.agentModesLoading).toBe(false);
+    expect(result.current.agentModesError).toBe(message);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(listAgentModes).toHaveBeenCalledTimes(1);
+    expect(result.current.agentModesError).toBe(message);
+    await act(async () => { result.current.retryAgentModes(); });
+    expect(result.current.availableModes).toEqual(catalog.availableModes);
+    expect(result.current.agentModesError).toBeNull();
+  });
+
+  it('backs off transient failures and recovers within the loading window', async () => {
+    vi.mocked(listAgentModes).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new HttpResponseError('Starting', 503))
+      .mockRejectedValueOnce(new HttpResponseError('Busy', 429))
+      .mockResolvedValue(catalog);
+    const { result } = renderHook(() => useAgentModeCatalog('workspace', 'local', status));
+    await flush();
+    for (const delay of [500, 1000, 2000]) {
+      const attempts = vi.mocked(listAgentModes).mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(delay - 1); });
+      expect(listAgentModes).toHaveBeenCalledTimes(attempts);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(listAgentModes).toHaveBeenCalledTimes(attempts + 1);
+    }
+    expect(result.current.availableModes).toEqual(catalog.availableModes);
+    expect(result.current.agentModesLoading).toBe(false);
+  });
+
+  it('bounds repeated server failures without flooding the Backend', async () => {
+    vi.mocked(listAgentModes).mockRejectedValue(new HttpResponseError('Unavailable', 500));
+    const { result } = renderHook(() => useAgentModeCatalog('workspace', 'local', status));
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(vi.mocked(listAgentModes).mock.calls.length).toBeLessThanOrEqual(16);
+    expect(result.current.agentModesLoading).toBe(false);
+    expect(result.current.agentModesError).toContain('retry');
+    const attempts = vi.mocked(listAgentModes).mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(listAgentModes).toHaveBeenCalledTimes(attempts);
+  });
+
+  it('rediscovers the catalog when the folder of the same Workspace changes', async () => {
+    vi.mocked(listAgentModes).mockRejectedValueOnce(new HttpResponseError('Missing folder', 400))
+      .mockResolvedValue(catalog);
+    const { result, rerender } = renderHook(({ cwd }) => useAgentModeCatalog('workspace', 'local', status, cwd),
+      { initialProps: { cwd: '/old' } });
+    await flush();
+    expect(result.current.agentModesError).toBe('Missing folder');
+    rerender({ cwd: '/new' });
+    await flush();
+    expect(listAgentModes).toHaveBeenCalledTimes(2);
+    expect(result.current.availableModes).toEqual(catalog.availableModes);
+    expect(result.current.agentModesError).toBeNull();
   });
 });

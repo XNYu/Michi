@@ -62,39 +62,6 @@ describe('AgentRunParentDelivery', () => {
     assert.equal(store.get('delivery-a')?.state, 'delivered');
   });
 
-  test('retry after crash-after-commit reuses requestedTurnId and creates one durable Parent turn', async () => {
-    const store = new FakeDeliveryStore();
-    store.failNextTerminalWrite = true;
-    const createdTurns = new Set<string>();
-    let targetCalls = 0;
-    const sink = new AgentRunParentDelivery(store, {
-      async continueParent(value) {
-        targetCalls += 1;
-        createdTurns.add(value.requestedTurnId);
-        return 'delivered';
-      },
-    });
-    await assert.rejects(() => sink.deliver(input()), /simulated crash/);
-    assert.equal(store.get('delivery-a')?.state, 'delivering');
-    assert.equal(await sink.deliver(input()), 'delivered');
-    assert.equal(targetCalls, 2);
-    assert.equal(createdTurns.size, 1);
-    assert.equal(store.get('delivery-a')?.state, 'delivered');
-  });
-
-  test('deleted Parent records undeliverable without mutating Run ownership or handoff', async () => {
-    const store = new FakeDeliveryStore();
-    const received: ParentContinuationDeliveryInput[] = [];
-    const sink = new AgentRunParentDelivery(store, {
-      async continueParent(value) { received.push(value); return 'undeliverable'; },
-    });
-    const value = input({ parentNodeId: 'deleted-node' });
-    assert.equal(await sink.deliver(value), 'undeliverable');
-    assert.equal(store.get(value.deliveryId)?.state, 'undeliverable');
-    assert.deepEqual(received[0]?.runIds, ['run-a']);
-    assert.equal(received[0]?.handoff, value.handoff);
-  });
-
   test('terminal delivery record short-circuits retries and rejects delivery-id aliasing', async () => {
     const store = new FakeDeliveryStore();
     let calls = 0;

@@ -11,14 +11,23 @@
 import { buildTopology } from "./topologyBuilder";
 import { keywordSearch } from "../routes/search";
 import { getDb } from "./db";
-import { getAiGlobalContext } from "./dbRepository";
-import { parseBranchOverviewEntries } from "michi-shared";
+import { getAiGlobalContext, getWorkspace } from "./dbRepository";
+import { isSystemWorkspaceSettings, parseBranchOverviewEntries } from "michi-shared";
 
 export const DISABLED_MESSAGE =
     'AI workspace tools are disabled for this workspace. Ask the user to enable "Let AI navigate this workspace" in Settings if you need to inspect the broader workspace.';
 
 export const NO_WORKSPACE_MESSAGE =
     "No active workspace bound to this session yet.";
+
+/**
+ * A system workspace (the Michi assistant's) is navigation material only for
+ * sessions inside it: other agents can neither list nor read its threads, and
+ * search_messages across workspaces leaves it out (routes/search.ts).
+ */
+function hiddenFrom(sessionWorkspaceId: string, targetWorkspaceId: string): boolean {
+    return targetWorkspaceId !== sessionWorkspaceId && isSystemWorkspaceSettings(getWorkspace(targetWorkspaceId)?.settings);
+}
 
 export interface ListThreadsResult {
     status: "ok" | "disabled" | "no_workspace";
@@ -74,6 +83,9 @@ export function listThreads(
         if (!owned) {
             return { status: "no_workspace", text: NO_WORKSPACE_MESSAGE };
         }
+    }
+    if (hiddenFrom(sessionWorkspaceId, wsId)) {
+        return { status: "no_workspace", text: NO_WORKSPACE_MESSAGE };
     }
     const out = buildTopology(getDb(), wsId, currentNodeId);
     return { status: "ok", text: out.topology };
@@ -139,6 +151,8 @@ export interface ReadNodeOpts {
     from?: "head" | "tail";
     offset?: number;
     limit?: number;
+    /** Label each message with its id ("assistant [message a-1]: …"), so a reader can cite that message. */
+    messageIds?: boolean;
 }
 
 type NodeInfoRow = { id: string; workspace_id: string; title: string | null; kind: string; branch_overview?: string | null };
@@ -181,18 +195,18 @@ function validateNodeAccess(
     }
     const db = getDb();
     const nodeRow = lookupNode(db, trimmedId, ownerUserId);
-    if (!nodeRow) {
+    if (!nodeRow || hiddenFrom(sessionWorkspaceId, nodeRow.workspace_id)) {
         return { error: { status: "not_found", text: `node not found: ${trimmedId}` } };
     }
     return { trimmedId, db, nodeRow };
 }
 
 /** Apply a byte-size cap to a message array (forward walk). */
-function applySizeCap(
-    messages: Array<{ role: string; content: string }>,
+function applySizeCap<T extends { content: string }>(
+    messages: T[],
     cap: number,
-): { kept: Array<{ role: string; content: string }>; truncated: boolean } {
-    const result: Array<{ role: string; content: string }> = [];
+): { kept: T[]; truncated: boolean } {
+    const result: T[] = [];
     let total = 0;
     for (const m of messages) {
         if (total + m.content.length > cap) return { kept: result, truncated: true };
@@ -255,6 +269,30 @@ export function readNode(
     const offset = Math.max(1, opts?.offset ?? 1);
     const requestedLimit = opts?.limit;
     const hasPagination = !!(opts?.role || opts?.from || opts?.offset || opts?.limit);
+    const line = (m: { id: string; role: string; content: string }, cited?: ReadonlySet<string>) =>
+        opts?.messageIds || cited?.has(m.id) ? `${m.role} [message ${m.id}]: ${m.content}` : `${m.role}: ${m.content}`;
+    // Only messages actually included below can be cited. The node has already passed ownership and visibility checks.
+    const withPageSources = (visible: Array<{ id: string; role: string }>, render: (cited?: ReadonlySet<string>) => string): string => {
+        const text = render();
+        const ids = visible.filter(message => message.role === 'assistant').slice(-20).map(message => message.id);
+        if (!ids.length) return text;
+        const sources = db.prepare(`SELECT t.node_id AS nodeId,t.turn_id AS turnId,t.assistant_message_id AS assistantId
+          FROM turns t JOIN messages m ON m.id=t.assistant_message_id AND m.node_id=t.node_id
+          JOIN nodes n ON n.id=t.node_id
+          WHERE n.id=? AND n.workspace_id=? AND n.deleted_at IS NULL AND n.purged_at IS NULL
+          AND m.role='assistant' AND t.assistant_message_id IN (${ids.map(() => '?').join(',')})
+          ORDER BY t.started_at DESC LIMIT 20`).all(trimmedId, nodeRow.workspace_id, ...ids) as unknown as Array<{ nodeId: string; turnId: string; assistantId: string }>;
+        const budget = Math.min(2_048, READ_NODE_SIZE_CAP - text.length);
+        if (budget <= 0) return text;
+        const shown: typeof sources = [];
+        for (const source of sources) {
+            const candidate = [...shown, source];
+            const labels = new Set(candidate.map(entry => entry.assistantId));
+            if (JSON.stringify(candidate).length + 100 > budget || render(labels).length + JSON.stringify(candidate).length + 100 > READ_NODE_SIZE_CAP) break;
+            shown.push(source);
+        }
+        return shown.length ? `${render(new Set(shown.map(source => source.assistantId)))}\n\nPage source references (exact assistant messages shown above): ${JSON.stringify(shown)}` : text;
+    };
 
     // SQL query with optional role filter.
     const roleFilter = role ? " AND role = ?" : "";
@@ -262,18 +300,18 @@ export function readNode(
     if (role) params.push(role);
     const messages = db
         .prepare(
-            `SELECT role, content FROM messages WHERE node_id = ?` +
+            `SELECT id, role, content FROM messages WHERE node_id = ?` +
             ` AND role IN ('user', 'assistant')${roleFilter}` +
             ` ORDER BY seq ASC`,
         )
-        .all(...params) as unknown as Array<{ role: string; content: string }>;
+        .all(...params) as unknown as Array<{ id: string; role: string; content: string }>;
 
     const totalCount = messages.length;
 
     // No pagination options: preserve exact legacy tail-bias 12KB behavior.
     if (!hasPagination) {
         const reversed = [...messages].reverse();
-        const kept: Array<{ role: string; content: string }> = [];
+        const kept: Array<{ id: string; role: string; content: string }> = [];
         let total = 0;
         let truncated = false;
         for (const m of reversed) {
@@ -284,14 +322,16 @@ export function readNode(
             total += m.content.length;
             kept.unshift(m);
         }
-        const lines = kept.map((m) => `${m.role}: ${m.content}`);
-        if (truncated) lines.unshift("[earlier messages omitted]");
         const header = `# ${nodeRow.title ?? "(untitled)"} (${trimmedId})`;
-        return { status: "ok", text: `${header}\n\n${lines.join("\n\n")}` };
+        return { status: "ok", text: withPageSources(kept, cited => {
+            const lines = kept.map(message => line(message, cited));
+            if (truncated) lines.unshift("[earlier messages omitted]");
+            return `${header}\n\n${lines.join("\n\n")}`;
+        }) };
     }
 
     // Paginated mode: window determined by from + offset + limit.
-    let sliced: Array<{ role: string; content: string }>;
+    let sliced: Array<{ id: string; role: string; content: string }>;
 
     if (from === "head") {
         // offset 1 = first message
@@ -308,13 +348,14 @@ export function readNode(
 
     // Still apply size cap to prevent accidentally blowing context.
     const { kept, truncated } = applySizeCap(sliced, READ_NODE_SIZE_CAP);
-    const lines = kept.map((m) => `${m.role}: ${m.content}`);
-    if (truncated) lines.push("[remaining messages truncated by size cap]");
-
     const roleDesc = role ? ` (${role} only)` : "";
     const rangeDesc = from === "head"
         ? `from head, offset ${offset}, showing ${kept.length}/${totalCount}`
         : `from tail, offset ${offset}, showing ${kept.length}/${totalCount}`;
     const header = `# ${nodeRow.title ?? "(untitled)"} (${trimmedId}) — ${totalCount} messages${roleDesc}, ${rangeDesc}`;
-    return { status: "ok", text: `${header}\n\n${lines.join("\n\n")}` };
+    return { status: "ok", text: withPageSources(kept, cited => {
+        const lines = kept.map(message => line(message, cited));
+        if (truncated) lines.push("[remaining messages truncated by size cap]");
+        return `${header}\n\n${lines.join("\n\n")}`;
+    }) };
 }

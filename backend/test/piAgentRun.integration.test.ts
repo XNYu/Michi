@@ -6,6 +6,8 @@ import { RuntimeRunExecutor } from '../src/agents/runs/runtimeRunExecutor';
 import { PiRunAdapter } from '../src/agents/runs/piRunAdapter';
 import type { AgentRunSpec } from '../src/agents/runs/ports';
 import type { RunWorkerToolProfile } from '../src/agents/runs/runWorkerTools';
+import { runOwner } from './helpers/owners';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 function definition(): EffectiveAgentDefinitionV1 {
   return { version: 1, name: 'Pi worker', description: 'integration fake', instructions: 'Use Pi instructions',
@@ -22,7 +24,7 @@ function runSpec(): AgentRunSpec {
 }
 
 class PiTransportSession implements AgentSession {
-  id = 'pi-attempt'; runtimeId = 'pi'; owner: RuntimeSessionOwner = { kind: 'agent_run', runId: 'pi-run', attemptId: 'pi-attempt' };
+  id = 'pi-attempt'; runtimeId = 'pi'; owner: RuntimeSessionOwner = runOwner('pi-run', 'pi-attempt');
   runtimeProfileHash: string | null = null;
   getHistory() { return []; } getPendingAssistant() { return undefined; } cancel() {}
   async *send() { yield { kind: 'chunk' as const, text: 'unstructured fallback must lose' }; yield { kind: 'turn_end' as const }; }
@@ -31,6 +33,7 @@ class PiTransportSession implements AgentSession {
 test('fake Pi transport receives a node-free Run profile and structured submission wins', async () => {
   const session = new PiTransportSession(); let options: NewAgentSessionOptions | null = null; let loads = 0;
   const runtime: AgentRuntime = {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id: 'pi', label: 'Pi fake', capabilities: { modes: false, permissions: true, models: true, providerModels: true, reasoning: true, supportedReasoningLevels: ['high'], apiKeys: true, warmSessions: false, saveContext: true, spawnBranches: false, nativeResume: false },
     async warm() {},
     async newSession(opts) {

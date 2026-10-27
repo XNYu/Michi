@@ -7,7 +7,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { createCodexTranslator } from '../src/agents/codex/codexEventTranslator';
+import { createCodexTranslator } from 'michi-runtime/internal/adapters/codex/codexEventTranslator';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -30,67 +30,53 @@ function makeTranslator(): {
 type AnyEv = Record<string, unknown>;
 
 describe('codexEventTranslator', () => {
-  // ── Text deltas ─────────────────────────────────────────────────────────────
+  // ── Text deltas: agent messages and paragraph breaks ────────────────────
 
-  test('item/agentMessage/delta with delta string emits chunk', () => {
+  test('deltas of one agent message stream as they come, with nothing added', () => {
     const { emitted, feed } = makeTranslator();
 
-    feed('item/agentMessage/delta', { delta: 'Hello world' });
-
-    assert.equal(emitted.length, 1);
-    assert.deepEqual(emitted[0], { kind: 'chunk', text: 'Hello world' });
-  });
-
-  test('item/agentMessage/delta with empty delta emits nothing', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/agentMessage/delta', { delta: '' });
-
-    assert.equal(emitted.length, 0);
-  });
-
-  // ── Reasoning deltas ────────────────────────────────────────────────────────
-
-  test('item/reasoning/textDelta emits thought', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/reasoning/textDelta', { delta: 'I am thinking...' });
-
-    assert.equal(emitted.length, 1);
-    assert.deepEqual(emitted[0], { kind: 'thought', text: 'I am thinking...' });
-  });
-
-  test('item/reasoning/summaryTextDelta emits thought', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 0,
-      delta: 'Summary reasoning',
-    });
-
-    assert.equal(emitted.length, 1);
-    assert.deepEqual(emitted[0], { kind: 'thought', text: 'Summary reasoning' });
-  });
-
-  test('keeps deltas from the same reasoning summary part together', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 0,
-      delta: 'Filtering tools ',
-    });
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 0,
-      delta: 'by criteria',
-    });
+    feed('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Hello' });
+    feed('item/agentMessage/delta', { itemId: 'msg-1', delta: ' world.' });
 
     assert.deepEqual(emitted, [
-      { kind: 'thought', text: 'Filtering tools ' },
-      { kind: 'thought', text: 'by criteria' },
+      { kind: 'chunk', text: 'Hello' },
+      { kind: 'chunk', text: ' world.' },
     ]);
+  });
+
+  test('a second agent message in the turn starts a new paragraph', () => {
+    const { emitted, feed } = makeTranslator();
+
+    // Codex sends a commentary message, then the answer, as separate items.
+    feed('item/agentMessage/delta', { itemId: 'msg-1', delta: 'I’ll check whether a shell tool is available.' });
+    feed('item/agentMessage/delta', { itemId: 'msg-2', delta: 'I can’t run' });
+    feed('item/agentMessage/delta', { itemId: 'msg-2', delta: ' `ls ~`.' });
+
+    const text = emitted.map((ev) => (ev.kind === 'chunk' ? ev.text : '')).join('');
+    assert.equal(text, 'I’ll check whether a shell tool is available.\n\nI can’t run `ls ~`.');
+  });
+
+  test('a tool call between agent messages still separates their text', () => {
+    const { emitted, feed } = makeTranslator();
+
+    feed('item/agentMessage/delta', { itemId: 'msg-1', delta: 'I’ll look it up.' });
+    feed('item/started', { item: { id: 'tool-1', type: 'mcpToolCall', server: 'michi', tool: 'read_node' } });
+    feed('item/completed', { item: { id: 'tool-1', type: 'mcpToolCall', server: 'michi', tool: 'read_node', status: 'completed' } });
+    feed('item/agentMessage/delta', { itemId: 'msg-2', delta: '- Project: michi-app' });
+
+    const text = emitted.map((ev) => (ev.kind === 'chunk' ? ev.text : '')).join('');
+    assert.equal(text, 'I’ll look it up.\n\n- Project: michi-app');
+  });
+
+  test('a new turn does not start with a paragraph break', () => {
+    const { emitted, feed, startTurn } = makeTranslator();
+
+    feed('item/agentMessage/delta', { itemId: 'msg-1', delta: 'First turn.' });
+    startTurn();
+    emitted.length = 0;
+    feed('item/agentMessage/delta', { itemId: 'msg-2', delta: 'Second turn.' });
+
+    assert.deepEqual(emitted, [{ kind: 'chunk', text: 'Second turn.' }]);
   });
 
   test('separates summary parts when a new reasoning item resets summaryIndex', () => {
@@ -122,78 +108,6 @@ describe('codexEventTranslator', () => {
     ]);
   });
 
-  test('separates multiple summary parts within one reasoning item', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 0,
-      delta: 'Inspecting the page',
-    });
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 1,
-      delta: 'Checking the response',
-    });
-
-    assert.deepEqual(emitted, [
-      { kind: 'thought', text: 'Inspecting the page' },
-      { kind: 'thought', text: '\n' },
-      { kind: 'thought', text: 'Checking the response' },
-    ]);
-  });
-
-  test('resets reasoning summary boundaries at the start of a new turn', () => {
-    const { emitted, feed, startTurn } = makeTranslator();
-
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-1',
-      summaryIndex: 0,
-      delta: 'First turn',
-    });
-    startTurn();
-    feed('item/reasoning/summaryTextDelta', {
-      itemId: 'reasoning-2',
-      summaryIndex: 0,
-      delta: 'Second turn',
-    });
-
-    assert.deepEqual(emitted, [
-      { kind: 'thought', text: 'First turn' },
-      { kind: 'thought', text: 'Second turn' },
-    ]);
-  });
-
-  // ── Tool items: item/started ────────────────────────────────────────────────
-
-  test('item/started with commandExecution type emits tool_call', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/started', {
-      item: {
-        id: 'item-001',
-        type: 'commandExecution',
-        command: 'head -n 5 package.json',
-        commandActions: [
-          {
-            type: 'read',
-            command: 'head -n 5 package.json',
-            name: 'package.json',
-            path: '/repo/package.json',
-          },
-        ],
-      },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'tool_call');
-    assert.equal(ev['toolCallId'], 'item-001');
-    assert.equal(ev['title'], 'Read package.json');
-    assert.equal(ev['status'], 'in_progress');
-    assert.equal(ev['kindType'], 'read');
-  });
-
   test('item/started with SKILL.md commandExecution title uses skill directory', () => {
     const { emitted, feed } = makeTranslator();
 
@@ -219,19 +133,6 @@ describe('codexEventTranslator', () => {
     assert.equal(ev['kindType'], 'read');
   });
 
-  test('item/started with unknown commandExecution falls back to shell title', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/started', {
-      item: { id: 'item-shell', type: 'commandExecution', command: 'npm test' },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['title'], 'Shell');
-    assert.equal(ev['kindType'], 'bash');
-  });
-
   test('item/started with fileChange type emits tool_call', () => {
     const { emitted, feed } = makeTranslator();
 
@@ -245,27 +146,6 @@ describe('codexEventTranslator', () => {
     assert.equal(ev['toolCallId'], 'item-002');
     assert.equal(ev['title'], 'Edit files');
     assert.equal(ev['kindType'], 'edit');
-  });
-
-  test('item/started with mcpToolCall type emits tool_call', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/started', {
-      item: {
-        id: 'item-003',
-        type: 'mcpToolCall',
-        server: '__michi_internal__',
-        tool: 'save_artifact',
-        arguments: { key: 'value' },
-      },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'tool_call');
-    assert.equal(ev['toolCallId'], 'item-003');
-    assert.equal(ev['title'], 'save_artifact');
-    assert.ok(typeof ev['detail'] === 'string' && (ev['detail'] as string).includes('value'));
   });
 
   test('item/started with dynamicToolCall type emits real tool name', () => {
@@ -302,57 +182,6 @@ describe('codexEventTranslator', () => {
     assert.equal(ev['toolCallId'], 'item-004');
     assert.equal(ev['title'], 'Search typescript docs');
     assert.ok(typeof ev['detail'] === 'string' && (ev['detail'] as string).includes('typescript'));
-  });
-
-  test('item/started with agentMessage type (streamed) emits nothing', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/started', {
-      item: { id: 'item-005', type: 'agentMessage' },
-    });
-
-    assert.equal(emitted.length, 0, 'agentMessage is streamed via deltas — item/started must be skipped');
-  });
-
-  test('item/started with reasoning type (streamed) emits nothing', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/started', {
-      item: { id: 'item-006', type: 'reasoning' },
-    });
-
-    assert.equal(emitted.length, 0, 'reasoning is streamed via deltas — item/started must be skipped');
-  });
-
-  // ── Tool items: item/completed ──────────────────────────────────────────────
-
-  test('item/completed for commandExecution emits tool_call_update with completed status', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/completed', {
-      item: { id: 'item-001', type: 'commandExecution', status: 'completed' },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'tool_call_update');
-    assert.equal(ev['toolCallId'], 'item-001');
-    assert.equal(ev['status'], 'completed');
-    assert.equal(ev['kindType'], 'bash');
-  });
-
-  test('item/completed with status failed emits tool_call_update with failed status', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/completed', {
-      item: { id: 'item-002', type: 'commandExecution', status: 'failed' },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'tool_call_update');
-    assert.equal(ev['toolCallId'], 'item-002');
-    assert.equal(ev['status'], 'failed', 'failed item status must map to failed');
   });
 
   test('item/completed for agentMessage (streamed) emits nothing', () => {
@@ -396,58 +225,6 @@ describe('codexEventTranslator', () => {
     assert.ok(typeof ev['detail'] === 'string' && (ev['detail'] as string).includes('stdout'));
   });
 
-  test('item/fileChange/outputDelta emits tool_call_update in_progress', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('item/fileChange/outputDelta', { itemId: 'item-002', delta: '+++ added line' });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'tool_call_update');
-    assert.equal(ev['toolCallId'], 'item-002');
-    assert.equal(ev['status'], 'in_progress');
-  });
-
-  // ── Token usage ─────────────────────────────────────────────────────────────
-
-  test('thread/tokenUsage/updated normalizes legacy flat usage against the effective context window', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('thread/tokenUsage/updated', {
-      total: { totalTokens: 59_000 },
-      modelContextWindow: 200_000,
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'context_usage');
-    // (59_000 - 12_000) / (200_000 - 12_000) * 100 = 25
-    assert.ok(
-      Math.abs((ev['contextUsagePercentage'] as number) - 25) < 1e-9,
-      `contextUsagePercentage: expected 25, got ${ev['contextUsagePercentage']}`,
-    );
-  });
-
-  test('thread/tokenUsage/updated uses active last usage instead of cumulative thread total', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('thread/tokenUsage/updated', {
-      tokenUsage: {
-        total: { totalTokens: 318_400 },
-        last: { totalTokens: 59_000 },
-        modelContextWindow: 200_000,
-      },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal(ev['kind'], 'context_usage');
-    assert.ok(
-      Math.abs((ev['contextUsagePercentage'] as number) - 25) < 1e-9,
-      `contextUsagePercentage: expected 25, got ${ev['contextUsagePercentage']}`,
-    );
-  });
-
   test('thread/tokenUsage/updated clamps active usage to 100 percent', () => {
     const { emitted, feed } = makeTranslator();
 
@@ -462,130 +239,11 @@ describe('codexEventTranslator', () => {
     assert.deepEqual(emitted, [{ kind: 'context_usage', contextUsagePercentage: 100 }]);
   });
 
-  test('turn/completed carries the last native Codex token breakdown into usage_summary', () => {
-    const { emitted, feed, startTurn } = makeTranslator();
-
-    startTurn();
-    feed('thread/tokenUsage/updated', {
-      tokenUsage: {
-        total: {
-          totalTokens: 50_000,
-          inputTokens: 42_000,
-          cachedInputTokens: 30_000,
-          outputTokens: 8_000,
-          reasoningOutputTokens: 2_000,
-        },
-        last: {
-          totalTokens: 1_534,
-          inputTokens: 1_234,
-          cachedInputTokens: 800,
-          outputTokens: 300,
-          reasoningOutputTokens: 120,
-        },
-        modelContextWindow: 200_000,
-      },
-    });
-    feed('turn/completed', { turn: { status: 'completed' } });
-
-    const summary = emitted.find((event) => event.kind === 'usage_summary');
-    assert.deepEqual(summary && {
-      kind: summary.kind,
-      source: summary.source,
-      contextUsagePercentage: summary.contextUsagePercentage,
-      totalTokens: summary.totalTokens,
-      inputTokens: summary.inputTokens,
-      cachedInputTokens: summary.cachedInputTokens,
-      outputTokens: summary.outputTokens,
-      reasoningOutputTokens: summary.reasoningOutputTokens,
-    }, {
-      kind: 'usage_summary',
-      source: 'native',
-      contextUsagePercentage: 0,
-      totalTokens: 1534,
-      inputTokens: 1234,
-      cachedInputTokens: 800,
-      outputTokens: 300,
-      reasoningOutputTokens: 120,
-    });
-  });
-
-  test('thread/tokenUsage/updated with zero modelContextWindow emits nothing', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('thread/tokenUsage/updated', {
-      total: { totalTokens: 10_000 },
-      modelContextWindow: 0,
-    });
-
-    assert.equal(emitted.length, 0, 'zero context window must not emit to avoid division by zero');
-  });
-
   test('thread/tokenUsage/updated without modelContextWindow emits nothing', () => {
     const { emitted, feed } = makeTranslator();
 
     feed('thread/tokenUsage/updated', {
       total: { totalTokens: 10_000 },
-    });
-
-    assert.equal(emitted.length, 0);
-  });
-
-  // ── Turn lifecycle ──────────────────────────────────────────────────────────
-
-  test('turn/completed emits usage_summary then turn_end with turn status', () => {
-    const { emitted, feed, startTurn } = makeTranslator();
-
-    startTurn();
-    feed('turn/completed', {
-      turn: { status: 'completed' },
-    });
-
-    assert.equal(emitted.length, 2, 'turn/completed must emit usage_summary + turn_end');
-
-    const summary = emitted[0] as unknown as AnyEv;
-    assert.equal(summary['kind'], 'usage_summary');
-    assert.equal(summary['contextUsagePercentage'], 0);
-    assert.equal(summary['totalCredits'], 0);
-    assert.ok(
-      typeof summary['turnDurationMs'] === 'number' && (summary['turnDurationMs'] as number) >= 0,
-      'turnDurationMs must be a non-negative number',
-    );
-
-    const turnEnd = emitted[1] as unknown as AnyEv;
-    assert.equal(turnEnd['kind'], 'turn_end');
-    assert.equal(turnEnd['stopReason'], 'completed');
-  });
-
-  test('turn/completed with failed turn status emits a runtime error', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('turn/completed', {
-      turn: { status: 'failed' },
-    });
-
-    assert.equal(emitted.length, 3);
-    const runtimeError = emitted[1] as unknown as AnyEv;
-    assert.equal(runtimeError['kind'], 'runtime_error');
-    assert.equal(runtimeError['error'], 'Codex turn failed');
-    assert.deepEqual(emitted[2], { kind: 'turn_end', stopReason: 'error' });
-  });
-
-  test('turn/started resets turn timer without emitting', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('turn/started', {});
-
-    assert.equal(emitted.length, 0, 'turn/started must not emit any NormalizedEvent');
-  });
-
-  // ── Error notifications ─────────────────────────────────────────────────────
-
-  test('error notification is held until the turn outcome is known', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('error', {
-      error: { message: 'process exited unexpectedly', additionalDetails: null },
-      willRetry: false,
     });
 
     assert.equal(emitted.length, 0);
@@ -612,16 +270,6 @@ describe('codexEventTranslator', () => {
     assert.deepEqual(emitted[2], { kind: 'turn_end', stopReason: 'error' });
   });
 
-  test('unknown method emits nothing (forward-compat)', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('some/future/notification', { data: 42 });
-    feed('turn/plan/updated', { plan: [] });
-    feed('item/plan/delta', { delta: 'x' });
-
-    assert.equal(emitted.length, 0, 'unrecognised methods must be silently ignored');
-  });
-
   // ── MCP startup failure ─────────────────────────────────────────────────────
 
   test('mcpServer/startupStatus/updated with status failed emits mcp_server_error', () => {
@@ -638,17 +286,6 @@ describe('codexEventTranslator', () => {
     assert.equal(ev['kind'], 'mcp_server_error');
     assert.equal(ev['serverName'], 'my-mcp-server');
     assert.equal(ev['error'], 'connection refused');
-  });
-
-  test('mcpServer/startupStatus/updated with status started emits nothing', () => {
-    const { emitted, feed } = makeTranslator();
-
-    feed('mcpServer/startupStatus/updated', {
-      status: 'started',
-      name: 'my-mcp-server',
-    });
-
-    assert.equal(emitted.length, 0, 'successful MCP startup must not emit mcp_server_error');
   });
 
   // ── Robustness: missing/undefined fields ────────────────────────────────────
@@ -689,35 +326,6 @@ describe('codexEventTranslator', () => {
     const ev = emitted[1] as unknown as AnyEv;
     assert.equal(ev['kind'], 'runtime_error');
     assert.equal(ev['error'], 'Codex runtime error');
-  });
-
-  // ── Detail cap at 200 graphemes ─────────────────────────────────────────────
-
-  test('output delta longer than 200 chars is capped to 200 graphemes', () => {
-    const { emitted, feed } = makeTranslator();
-
-    const longDelta = 'x'.repeat(500);
-    feed('item/commandExecution/outputDelta', { itemId: 'x', delta: longDelta });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.equal((ev['detail'] as string).length, 200, 'detail must be capped at 200 chars');
-  });
-
-  test('mcpToolCall item detail from args is capped to 200 graphemes', () => {
-    const { emitted, feed } = makeTranslator();
-
-    const largeArgs = { data: 'y'.repeat(500) };
-    feed('item/started', {
-      item: { id: 'x', type: 'mcpToolCall', tool: 'large_tool', arguments: largeArgs },
-    });
-
-    assert.equal(emitted.length, 1);
-    const ev = emitted[0] as unknown as AnyEv;
-    assert.ok(
-      (ev['detail'] as string).length <= 200,
-      `detail length ${(ev['detail'] as string).length} exceeds 200`,
-    );
   });
 
   test('compaction item and interrupted status stay honest', () => {

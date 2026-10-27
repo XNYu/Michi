@@ -1,3 +1,4 @@
+import { serverEntityId } from '../../config/backendIdentity';
 import React, { useState } from 'react';
 import type { AssistantBlock } from '../../state/chatTypes';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
@@ -17,7 +18,7 @@ export function ImageBlockView({ blocks }: { blocks: readonly AssistantBlock[] }
         // Build off API_BASE_URL (absolute http://host:3000/api in dev, '/api'
         // in the packaged app) — NOT a hardcoded relative '/api/...', which in
         // dev resolves to the vite origin (:3001) instead of the backend.
-        const src = `${workspaceBackendApiBase(b.workspaceId)}/files/${encodeURIComponent(b.workspaceId)}/${b.path.split('/').map(encodeURIComponent).join('/')}`;
+        const src = `${workspaceBackendApiBase(b.workspaceId)}/files/${encodeURIComponent(serverEntityId(b.workspaceId))}/${b.path.split('/').map(encodeURIComponent).join('/')}`;
         if (broken.has(src)) {
           return (
             <figure key={b.id} style={{ margin: 0 }}>

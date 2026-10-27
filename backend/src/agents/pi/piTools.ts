@@ -1,4 +1,8 @@
+import { hostOwner } from '../ownerMapping';
 import { openUrlTool } from '../openUrlTool';
+import { readConversationUpdatesTool } from '../conversationUpdatesTool';
+import { chatNodeOf, isRunOwner, runIdOfOwner } from '../ownerMapping';
+import { reportConversationNoChange } from '../../services/scheduledJobs/conversationBatch';
 import { michiDocsTool } from '../../services/michiDocs';
 import type { AgentToolBridge } from "../toolBridge";
 import {
@@ -8,6 +12,8 @@ import {
 } from "../runToolBridge";
 import {
     listEnabledBuiltinTools,
+    AGENT_RUN_TOOL_DEFINITIONS,
+    SUBMIT_AGENT_RESULT_DEFINITION,
     type ParamField,
     type ParamObjectShape,
     type ParamSpec,
@@ -27,19 +33,38 @@ import { executeFind } from "../tools/find";
 import { executeWrite } from "../tools/write";
 import { executeEdit } from "../tools/edit";
 import { executeBash } from "../tools/bash";
-import { resolveShowImage } from "../claude/showImage";
+import { resolveShowImage } from "michi-runtime/internal/core/showImage";
 import {
     sendToThreadTool,
     type ThreadMessageApprovalRequest,
     type ThreadMessageApprovalResult,
 } from "../threadMessageTool";
+import {
+    scheduledJobTool,
+    type ScheduledJobApprovalRequest,
+    type ScheduledJobApprovalResult,
+    type ScheduledJobToolName,
+} from "../scheduledJobTools";
 import { formatWebSearchForAgent, isWebSearchEnabled, searchWeb } from "../../services/webSearch";
+
+const SCHEDULED_JOB_TOOL_LABELS: Record<ScheduledJobToolName, string> = {
+    list_scheduled_jobs: "List scheduled jobs",
+    create_scheduled_job: "Create scheduled job",
+    update_scheduled_job: "Change scheduled job",
+    run_scheduled_job: "Run scheduled job",
+    delete_scheduled_job: "Delete scheduled job",
+};
 import type { NormalizedEvent } from "../../services/chatEvents";
 import type { RuntimeSessionOwner, RuntimeToolProfile } from "../types";
 import {
     SUBMIT_AGENT_RESULT_TOOL,
     type RunWorkerToolProfile,
 } from "../runs/runWorkerTools";
+import { ASSISTANT_TOOLS, runAssistantTool } from "../../assistant/tools";
+import { isAssistantWorkspace } from "../../assistant/identity";
+import { PAGE_TOOL_NAMES, type ActivePageTurnAttributionGetter, type PageToolName } from '../pageToolNames';
+import { runPageTool } from '../pageTools';
+import { isMaintenanceProfile } from '../maintenancePolicy';
 
 /**
  * Build the AgentTool[] array fed to pi-agent-core.
@@ -84,17 +109,27 @@ export interface BuildPiToolsOpts {
      */
     emitImage?: (ev: NormalizedEvent) => void;
     /**
-     * Single-use user approval for one send_to_thread message, shown in this
-     * chat. Absent → send_to_thread fails closed without sending.
+     * Optional single-use approval when send_to_thread requests it. Absent
+     * means only explicitly approval-requesting messages fail closed.
      */
     requestThreadMessageApproval?: (
         request: ThreadMessageApprovalRequest,
         signal?: AbortSignal,
     ) => Promise<ThreadMessageApprovalResult>;
+    /**
+     * Single-use user approval for one scheduled job change, shown in this
+     * chat. Absent → the change fails closed.
+     */
+    requestScheduledJobApproval?: (
+        request: ScheduledJobApprovalRequest,
+        signal?: AbortSignal,
+    ) => Promise<ScheduledJobApprovalResult>;
     /** Session-bound generic Agent tools resolved by PiSession. */
     agentRunTools?: AgentRunToolInvoker | null;
     owner?: RuntimeSessionOwner;
     toolProfile?: RuntimeToolProfile;
+    /** Canonical attribution for this session's currently owning send. */
+    getActivePageTurnAttribution?: ActivePageTurnAttributionGetter;
 }
 
 /**
@@ -121,11 +156,12 @@ export function piToolResultErrorOverride(context: {
 function paramToTypebox(spec: ParamSpec, Type: any): any {
     if (spec === "string") return Type.String();
     if (spec === "number") return Type.Number();
+    if (spec === "integer") return Type.Integer();
     if (spec === "boolean") return Type.Boolean();
-    if ("array" in spec) return Type.Array(paramToTypebox(spec.array, Type));
+    if ("array" in spec) return Type.Array(spec.array === "string" && spec.itemMinLength !== undefined ? Type.String({ minLength: spec.itemMinLength }) : paramToTypebox(spec.array, Type));
     const shape: Record<string, any> = {};
     for (const [k, v] of Object.entries(spec.object)) shape[k] = fieldToTypebox(v, Type);
-    return Type.Object(shape);
+    return Type.Object(shape, spec.additionalProperties === undefined ? {} : { additionalProperties: spec.additionalProperties });
 }
 
 /**
@@ -155,14 +191,56 @@ function fieldToTypebox(field: ParamField, Type: any): any {
     } else {
         schema = paramToTypebox(field.type, Type);
     }
+    if (field.const !== undefined) schema = Type.Literal(field.const);
+    for (const key of ['minimum', 'maximum', 'minLength', 'minItems'] as const) {
+        if (field[key] !== undefined) schema = { ...schema, [key]: field[key] };
+    }
     if (field.description) schema = { ...schema, description: field.description };
     return field.optional ? Type.Optional(schema) : schema;
 }
 
+/**
+ * The Michi assistant's Pi tools: its own catalog (assistant/tools.ts) and
+ * nothing else, so no native read/write/edit/bash tool exists in the session.
+ */
+function buildPiAssistantTools(opts: BuildPiToolsOpts): any[] {
+    const owner = opts.owner;
+    const nodeId = chatNodeOf(owner) ?? null;
+    const requestApproval = opts.requestThreadMessageApproval;
+    // No Desk tools while Agent Desk is off.
+    return ASSISTANT_TOOLS.map((tool) => ({
+        name: tool.name,
+        label: tool.label,
+        description: tool.description,
+        parameters: withPurposeField(tool.parameters, opts.Type),
+        ...(tool.sequential ? { executionMode: "sequential" as const } : {}),
+        execute: async (_id: string, args: any, signal?: AbortSignal) => {
+            const { __tool_use_purpose: _purpose, ...input } = (args ?? {}) as Record<string, unknown>;
+            const result = await runAssistantTool(tool, {
+                ownerUserId: opts.ownerUserId ?? null,
+                workspaceId: opts.workspaceId,
+                nodeId,
+                approveThreadMessage: requestApproval
+                    ? (request) => requestApproval(request, signal)
+                    : async () => ({ approved: false, reason: "unavailable" }),
+                getActivePageTurnAttribution: opts.getActivePageTurnAttribution,
+            }, input);
+            return { ...result, details: result };
+        },
+    }));
+}
+
 export function buildPiTools(opts: BuildPiToolsOpts): any[] {
+    // The assistant's catalog needs the profile and a chat in the assistant's
+    // workspace; a profile session anywhere else gets no tools at all.
+    if (opts.toolProfile?.restricted) {
+        const home = chatNodeOf(opts.owner) !== undefined && isAssistantWorkspace(opts.workspaceId);
+        return home ? buildPiAssistantTools(opts) : [];
+    }
     const { bridge, cwd, parentChatId, workspaceId, enableFollowUps, imageQuota, seenPaths, Type, ownerUserId, emitImage } = opts;
 
     const builtinTools = listEnabledBuiltinTools().map((t): any => {
+        if (PAGE_TOOL_NAMES.includes(t.name as PageToolName) && ((!opts.owner || hostOwner(opts.owner).kind !== 'chat_node') || isMaintenanceProfile(opts.toolProfile))) return null;
         // Search is opt-in. Omitting the tool entirely keeps an unconfigured
         // provider from causing the model to attempt a network request.
         if (t.name === "web_search" && !isWebSearchEnabled(ownerUserId ?? undefined)) return null;
@@ -172,11 +250,48 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
             case "michi_docs":
                 return { name: t.name, label: "Michi docs", description: t.description, parameters,
                     execute: async (_id: string, args: any) => michiDocsTool(args) };
+            case 'read_home':
+            case 'edit_home':
+            case 'list_pages':
+            case 'read_page':
+            case 'edit_page':
+            case 'create_page':
+            case 'read_database':
+            case 'edit_database':
+            case 'list_page_components':
+            case 'read_page_component':
+            case 'save_page_component':
+            case 'configure_database_view':
+            case 'open_task_database':
+            case 'list_tasks': {
+                if (!PAGE_TOOL_NAMES.includes(t.name as PageToolName)) throw new Error(`unknown page tool: ${t.name}`);
+                const name = t.name as PageToolName;
+                return {
+                    name,
+                    label: name.replaceAll('_', ' '),
+                    description: t.description,
+                    parameters,
+                    ...(['edit_home', 'edit_page', 'create_page', 'edit_database', 'save_page_component', 'configure_database_view', 'open_task_database'].includes(name) ? { executionMode: 'sequential' as const } : {}),
+                    execute: async (_id: string, args: any) => {
+                        const { __tool_use_purpose: _purpose, ...input } = (args ?? {}) as Record<string, unknown>;
+                        const result = runPageTool(name, {
+                            ownerUserId: ownerUserId ?? null,
+                            workspaceId: opts.workspaceId,
+                            nodeId: (opts.owner && hostOwner(opts.owner).kind === 'chat_node') ? opts.owner.key : null,
+                            ownerKind: opts.owner ? hostOwner(opts.owner).kind : null,
+                            getActivePageTurnAttribution: opts.getActivePageTurnAttribution,
+                        }, input);
+                        return { ...result, details: result.details };
+                    },
+                };
+            }
             case "open_url":
                 return { name: t.name, label: "Open URL", description: t.description, parameters,
                     execute: async (_id: string, args: any) => openUrlTool({ workspaceId, ownerUserId,
-                        nodeId: opts.owner?.kind === 'chat_node' ? opts.owner.nodeId : null }, args.url) };
+                        nodeId: chatNodeOf(opts.owner) ?? null }, args.url) };
+            // A business effect the bridge lacks offers no tool.
             case "spawn_branches":
+                if (!bridge.spawnBranches) return null;
                 return {
                     name: t.name,
                     label: "Spawn branches",
@@ -185,7 +300,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     executionMode: "sequential" as const,
                     execute: async (_id: string, args: any) => {
                         const topics = Array.isArray(args?.topics) ? args.topics : [];
-                        const created = await bridge.spawnBranches({
+                        const created = await bridge.spawnBranches!({
                             parentChatId,
                             cwd,
                             enableFollowUps,
@@ -202,13 +317,14 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 };
 
             case "save_artifact":
+                if (!bridge.saveContext) return null;
                 return {
                     name: t.name,
                     label: "Save artifact",
                     description: t.description,
                     parameters,
                     execute: async (_id: string, args: any) => {
-                        const result = bridge.saveContext({
+                        const result = bridge.saveContext!({
                             cwd,
                             chatId: parentChatId,
                             ownerUserId: opts.ownerUserId,
@@ -228,13 +344,14 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 };
 
             case "update_artifact":
+                if (!bridge.updateContext) return null;
                 return {
                     name: t.name,
                     label: "Update artifact",
                     description: t.description,
                     parameters,
                     execute: async (_id: string, args: any) => {
-                        const result = bridge.updateContext({
+                        const result = bridge.updateContext!({
                             cwd,
                             chatId: parentChatId,
                             ownerUserId: opts.ownerUserId,
@@ -270,11 +387,14 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                         }
                         const caption = typeof args?.caption === "string" ? args.caption : undefined;
                         emitImage?.({
-                            kind: "image",
-                            path: r.relPath,
-                            caption,
-                            mimeType: r.mimeType,
-                            size: r.size,
+                            kind: "host_event",
+                            type: "image",
+                            payload: {
+                                path: r.relPath,
+                                caption,
+                                mimeType: r.mimeType,
+                                size: r.size,
+                            },
                         });
                         return {
                             content: [{ type: "text", text: `Displayed image to the user: ${r.relPath}` }],
@@ -372,6 +492,23 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 };
             }
 
+            case "report_conversation_no_change": {
+                const nodeId = chatNodeOf(opts.owner) ?? null;
+                if (!nodeId) return null;
+                return { name: t.name, label: "Report no conversation change", description: t.description, parameters,
+                    execute: async (_id: string, args: unknown) => reportConversationNoChange({ nodeId, workspaceId }, args) };
+            }
+
+            case "read_conversation_updates": {
+                return {
+                    name: t.name, label: "Read conversation updates", description: t.description, parameters,
+                    execute: async (_id: string, args: unknown) => readConversationUpdatesTool({
+                        ownerUserId: ownerUserId ?? null, workspaceId, backendConnectionId: 'local',
+                        runOwnerRunId: runIdOfOwner(opts.owner),
+                    }, args),
+                };
+            }
+
             case "read_node_overview": {
                 const gc = getRuntimeDeps().globalContext;
                 if (!gc) return null;
@@ -391,7 +528,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 const binding: PaneInspectionToolBinding = {
                     ownerUserId: ownerUserId ?? null,
                     workspaceId,
-                    runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
+                    runOwnerRunId: runIdOfOwner(opts.owner),
                     backendConnectionId: 'local',
                 };
                 return {
@@ -415,7 +552,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 const binding: PaneInspectionToolBinding = {
                     ownerUserId: ownerUserId ?? null,
                     workspaceId,
-                    runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
+                    runOwnerRunId: runIdOfOwner(opts.owner),
                     backendConnectionId: 'local',
                 };
                 return {
@@ -443,7 +580,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 const binding: PaneInspectionToolBinding = {
                     ownerUserId: ownerUserId ?? null,
                     workspaceId,
-                    runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
+                    runOwnerRunId: runIdOfOwner(opts.owner),
                     backendConnectionId: 'local',
                 };
                 return {
@@ -470,7 +607,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 const binding: PaneInspectionToolBinding = {
                     ownerUserId: ownerUserId ?? null,
                     workspaceId,
-                    runOwnerRunId: opts.owner?.kind === "agent_run" ? opts.owner.runId : null,
+                    runOwnerRunId: runIdOfOwner(opts.owner),
                     backendConnectionId: 'local',
                 };
                 return {
@@ -496,8 +633,8 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
             case "send_to_thread": {
                 // Chat-only: an Agent Run (or an unowned session) has no
                 // calling thread to attribute the message to.
-                const owner = opts.owner;
-                if (owner?.kind !== "chat_node") return null;
+                const nodeId = chatNodeOf(opts.owner);
+                if (nodeId === undefined) return null;
                 const requestApproval = opts.requestThreadMessageApproval;
                 return {
                     name: t.name,
@@ -507,8 +644,38 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     executionMode: "sequential" as const,
                     execute: async (_id: string, args: any, signal?: AbortSignal) => {
                         const result = await sendToThreadTool(
-                            { ownerUserId: ownerUserId ?? null, workspaceId, nodeId: owner.nodeId, isAgentRun: false },
-                            { nodeId: args?.nodeId, text: args?.text },
+                            { ownerUserId: ownerUserId ?? null, workspaceId, nodeId, isAgentRun: false },
+                            { nodeId: args?.nodeId, text: args?.text, requestApproval: args?.requestApproval },
+                            requestApproval
+                                ? (request) => requestApproval(request, signal)
+                                : async () => ({ approved: false, reason: "unavailable" }),
+                        );
+                        return { ...result, details: result };
+                    },
+                };
+            }
+
+            case "list_scheduled_jobs":
+            case "create_scheduled_job":
+            case "update_scheduled_job":
+            case "run_scheduled_job":
+            case "delete_scheduled_job": {
+                // Chat-only, like send_to_thread: approvals need a watching user.
+                const nodeId = chatNodeOf(opts.owner);
+                if (nodeId === undefined) return null;
+                const toolName = t.name;
+                const requestApproval = opts.requestScheduledJobApproval;
+                return {
+                    name: toolName,
+                    label: SCHEDULED_JOB_TOOL_LABELS[toolName],
+                    description: t.description,
+                    parameters,
+                    executionMode: "sequential" as const,
+                    execute: async (_id: string, args: any, signal?: AbortSignal) => {
+                        const result = await scheduledJobTool(
+                            toolName,
+                            { ownerUserId: ownerUserId ?? null, workspaceId, nodeId, isAgentRun: false },
+                            args,
                             requestApproval
                                 ? (request) => requestApproval(request, signal)
                                 : async () => ({ approved: false, reason: "unavailable" }),
@@ -656,7 +823,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
 
 function runWorkerProfile(owner: RuntimeSessionOwner | undefined,
     profile: RuntimeToolProfile | undefined): RunWorkerToolProfile | null {
-    if (owner?.kind !== 'agent_run' || !profile || !('runWorkerTools' in profile)) return null;
+    if (!isRunOwner(owner) || !profile || !('runWorkerTools' in profile)) return null;
     if (!profile.allowedToolNames?.includes(SUBMIT_AGENT_RESULT_TOOL)) return null;
     const candidate = profile as RunWorkerToolProfile;
     return typeof candidate.runWorkerTools?.submitAgentResult === 'function' ? candidate : null;
@@ -666,8 +833,8 @@ function buildSubmitAgentResultTool(owner: RuntimeSessionOwner, profile: RunWork
     return {
         name: SUBMIT_AGENT_RESULT_TOOL,
         label: 'Submit Agent result',
-        description: 'Submit the final structured Result Bundle for this exact Agent Run Attempt before finishing.',
-        parameters: Type.Object({}, { additionalProperties: true }),
+        description: SUBMIT_AGENT_RESULT_DEFINITION.description,
+        parameters: paramToTypebox(SUBMIT_AGENT_RESULT_DEFINITION.parameters, Type),
         executionMode: 'sequential' as const,
         execute: async (_id: string, payload: unknown) => {
             profile.runWorkerTools.submitAgentResult(owner, payload);
@@ -677,52 +844,11 @@ function buildSubmitAgentResultTool(owner: RuntimeSessionOwner, profile: RunWork
 }
 
 function buildPiAgentRunTools(invoker: AgentRunToolInvoker, Type: any): any[] {
-    const anyObject = () => Type.Object({}, { additionalProperties: true });
-    const optionalString = () => Type.Optional(Type.String());
-    const schemas: Record<AgentRunToolName, any> = {
-        list_agents: Type.Object({}),
-        spawn_agent: Type.Object({
-            agentId: optionalString(),
-            ephemeralDefinition: Type.Optional(anyObject()),
-            task: Type.String(),
-            contextManifest: Type.Optional(anyObject()),
-            permissionRestriction: Type.Optional(anyObject()),
-            environment: Type.Optional(anyObject()),
-            expectedResult: Type.Optional(anyObject()),
-            completionMode: Type.Optional(Type.Union(['wait', 'notify', 'wake', 'detach'].map((v) => Type.Literal(v)))),
-            runTtlMs: Type.Optional(Type.Number()),
-        }),
-        check_agent: Type.Object({ runId: Type.String() }),
-        wait_agent: Type.Object({ runId: optionalString(), watchId: optionalString(), timeoutMs: Type.Optional(Type.Number()) }),
-        send_agent_input: Type.Object({
-            runId: Type.String(), text: Type.String(),
-            mode: Type.Optional(Type.Union([Type.Literal('queued'), Type.Literal('immediate')])),
-            expectedAttemptId: optionalString(),
-        }),
-        cancel_agent: Type.Object({ runId: Type.String(), reason: optionalString(), expectedAttemptId: optionalString() }),
-        watch_agent_runs: Type.Object({
-            runIds: Type.Array(Type.String()), condition: anyObject(),
-            completionMode: Type.Optional(Type.Union([Type.Literal('notify'), Type.Literal('wake')])),
-        }),
-        update_agent_watch: Type.Object({
-            watchId: Type.String(), addRunIds: Type.Optional(Type.Array(Type.String())), condition: Type.Optional(anyObject()),
-        }),
-    };
-    const descriptions: Record<AgentRunToolName, string> = {
-        list_agents: 'List enabled Agents available to this Workspace.',
-        spawn_agent: 'Start one durable Agent Run. Returns immediately with a Run ID; does not create a branch.',
-        check_agent: 'Read the latest durable status and compact handoff for one Agent Run.',
-        wait_agent: 'Wait once, event-driven and for a bounded duration, for a Run or Watch. Timeout never cancels work.',
-        send_agent_input: 'Queue input for an Agent Run, or explicitly redirect the active Attempt in immediate mode.',
-        cancel_agent: 'Cancel the currently expected Agent Run Attempt.',
-        watch_agent_runs: 'Create a durable Watch for long-running Agent Runs. Use wake/notify instead of polling.',
-        update_agent_watch: 'Add Runs or update the condition of an active Watch.',
-    };
     return AGENT_RUN_TOOL_NAMES.map((name) => ({
         name,
         label: name.replace(/_/g, ' '),
-        description: descriptions[name],
-        parameters: schemas[name],
+        description: AGENT_RUN_TOOL_DEFINITIONS[name].description,
+        parameters: paramToTypebox(AGENT_RUN_TOOL_DEFINITIONS[name].parameters, Type),
         executionMode: 'sequential' as const,
         execute: async (id: string, args: Record<string, unknown>) => {
             const result = await invoker.invoke(name, args ?? {}, { runtimeToolCallId: id || null });

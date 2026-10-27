@@ -1,15 +1,42 @@
+import { formatQuotedSelectionContext } from '../lib/quoteFormat';
 import type { ChatAction, ChatNodeState, ComposerDraft, ArtifactEntry, Project, ProjectAction, Tree } from './chatTypes';
 import { applyTreeMessages, mapMessageRow } from './chatHydration';
 import { deriveTitleFromUserText } from './assistantParsing';
 import {
   appendToolBlock,
-  appendUserInputBlock,
   assistantMetadata,
   finalizeAssistantBlocks,
   projectAssistantStreamEvent,
   nextToolBlockPlacement,
 } from './assistantBlocks';
-import { appendBranchOverviewEntry, CHAT_STREAM_EVENTS, steeredUserMessage } from 'michi-shared';
+import {
+  appendBranchOverviewEntry,
+  applySubagentActivity,
+  CHAT_STREAM_EVENTS,
+  endBackgroundSubagents,
+  finalizeSubagentRoster,
+  mergeSubagentRoster,
+  steeredUserMessage,
+} from 'michi-shared';
+
+/** The assistant message a roster event belongs to: the stamped id when the
+ *  stream provides one, else the streaming tail (legacy frames). */
+function subagentTargetMessageId(n: ChatNodeState, assistantId: string | undefined): string | undefined {
+  if (assistantId && n.messages.some((m) => m.id === assistantId && m.role === 'assistant')) return assistantId;
+  const tail = n.messages.at(-1);
+  return tail?.role === 'assistant' && tail.streaming ? tail.id : undefined;
+}
+
+/** The node roster is live chrome for the latest turn only. A late event
+ *  from an older turn (still draining after the next send) updates its own
+ *  message but must not repopulate the new turn's roster. */
+function isLatestAssistant(n: ChatNodeState, messageId: string | undefined): boolean {
+  if (!messageId) return false;
+  for (let index = n.messages.length - 1; index >= 0; index -= 1) {
+    if (n.messages[index].role === 'assistant') return n.messages[index].id === messageId;
+  }
+  return false;
+}
 
 /**
  * Replace raw transient database errors with a user-friendly message.
@@ -232,13 +259,14 @@ function normalizeComposerDraft(draft: ComposerDraft | null): ComposerDraft | nu
   const mentions = Array.isArray(draft.mentions) ? draft.mentions : [];
   const quotedText = draft.quotedText?.trim() ? draft.quotedText : undefined;
   if (!value && mentions.length === 0 && !quotedText) return null;
-  return { value, mentions, quotedText };
+  return { value, mentions, quotedText, ...(quotedText && draft.quoteSource ? { quoteSource: draft.quoteSource } : {}) };
 }
 
 function composerDraftEqual(a: ComposerDraft | undefined, b: ComposerDraft | null): boolean {
   if (!a && !b) return true;
   if (!a || !b) return false;
   if (a.value !== b.value || (a.quotedText ?? '') !== (b.quotedText ?? '')) return false;
+  if (JSON.stringify(a.quoteSource) !== JSON.stringify(b.quoteSource)) return false;
   if (a.mentions.length !== b.mentions.length) return false;
   return a.mentions.every((m, i) => {
     const n = b.mentions[i];
@@ -311,17 +339,23 @@ export function reduceNodes(
     case 'user-send': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
+      // A composer send consumes the draft; one that isn't the composer's
+      // (keepDraft) leaves whatever the user is typing alone.
       const { composerDraft: _composerDraft, ...draftless } = n;
       return {
         ...nodes,
         [action.nodeId]: {
-          ...draftless,
+          ...(action.keepDraft ? n : draftless),
           status: 'streaming',
           activeTurnId: undefined,
           runtimeActivity: undefined,
           streamingStartedAt: Date.now(),
           error: undefined,
           errorKind: undefined,
+          errorTurnId: undefined,
+          errorRecovery: undefined,
+          errorRecoverable: undefined,
+          errorCompletedAt: undefined,
           followUps: [],
           followUpsGenerating: false,
           visibleResponseComplete: false,
@@ -337,6 +371,7 @@ export function reduceNodes(
               toolCalls: [],
               createdAt: Date.now(),
               quotedText: action.quotedText,
+              ...(action.quotedText && action.quoteSource ? { quoteSource: action.quoteSource } : {}),
               attachments: action.attachments,
               comments: action.comments,
               mentions: action.mentions,
@@ -384,6 +419,10 @@ export function reduceNodes(
             streamingStartedAt: n.streamingStartedAt ?? Date.now(),
             error: undefined,
             errorKind: undefined,
+          errorTurnId: undefined,
+          errorRecovery: undefined,
+          errorRecoverable: undefined,
+          errorCompletedAt: undefined,
             visibleResponseComplete: false,
             ...cursor,
           },
@@ -441,6 +480,10 @@ export function reduceNodes(
           runtimeActivity: undefined,
           error: undefined,
           errorKind: undefined,
+          errorTurnId: undefined,
+          errorRecovery: undefined,
+          errorRecoverable: undefined,
+          errorCompletedAt: undefined,
           followUps: [],
           followUpsGenerating: false,
           visibleResponseComplete: false,
@@ -513,7 +556,7 @@ export function reduceNodes(
       if (!n) return nodes;
       const msgs = n.messages.map((m) =>
         m.id === action.assistantId
-          ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.chunk, data: { text: action.text } })
+          ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.chunk, data: { text: action.text, observedAt: action.observedAt } })
           : m,
       );
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs, streamingIdleMs: undefined } };
@@ -531,7 +574,7 @@ export function reduceNodes(
       if (!n) return nodes;
       const msgs = n.messages.map((m) =>
         m.id === action.assistantId
-          ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.thought, data: { text: action.text } })
+          ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.thought, data: { text: action.text, observedAt: action.observedAt } })
           : m,
       );
       return { ...nodes, [action.nodeId]: { ...n, messages: msgs, streamingIdleMs: undefined } };
@@ -555,6 +598,7 @@ export function reduceNodes(
           event: CHAT_STREAM_EVENTS.toolCall,
           data: {
             toolCallId: action.tool.id,
+            observedAt: action.observedAt,
             title: action.tool.title,
             status: action.tool.status,
             kind: action.tool.kind,
@@ -593,6 +637,7 @@ export function reduceNodes(
           event: CHAT_STREAM_EVENTS.toolCallUpdate,
           data: {
             toolCallId: action.tool.id,
+            observedAt: action.observedAt,
             title: action.tool.title,
             status: action.tool.status,
             kind: action.tool.kind,
@@ -622,7 +667,7 @@ export function reduceNodes(
         extractedFollowUps = meta.followUps;
         return projectAssistantStreamEvent(m, n.projectId, {
           event: CHAT_STREAM_EVENTS.done,
-          data: { stopReason: action.aborted ? 'cancelled' : 'end_turn', persisted: true },
+          data: { stopReason: action.aborted ? 'cancelled' : 'end_turn', persisted: true, completedAt: action.completedAt },
         });
       });
       // A new user turn may start while the previous turn drains its hidden
@@ -677,10 +722,14 @@ export function reduceNodes(
               : n.backgroundTurnAssistantId,
           streamingStartedAt: undefined,
           error: undefined,
+          errorKind: undefined,
+          errorTurnId: undefined,
+          errorRecovery: undefined,
           streamingIdleMs: undefined,
           mcpServerError: undefined,
           pendingPermission: null,
           pendingUserInput: n.pendingUserInput?.resolved ? n.pendingUserInput : null,
+          subagents: finalizeSubagentRoster(n.subagents, !!action.aborted),
           messages: msgs,
           lastAssistantAt: action.completedAt ?? Date.now(),
           followUps: extractedFollowUps.length > 0 ? extractedFollowUps : n.followUps,
@@ -710,6 +759,21 @@ export function reduceNodes(
         },
       };
     }
+    case 'recover-original-result': {
+      const n = nodes[action.nodeId];
+      if (!n || n.status !== 'error' || n.errorTurnId !== action.turnId) return nodes;
+      return { ...nodes, [action.nodeId]: {
+        ...n,
+        ...(action.cursor === 'background'
+          ? { lastAppliedBackgroundTurnId: action.turnId, lastAppliedBackgroundSeq: action.lastSeq }
+          : { lastAppliedTurnId: action.turnId, lastAppliedSeq: action.lastSeq }),
+        messages: n.messages.map((message) => message.id === action.assistantId ? action.assistant : message),
+      } };
+    }
+    case 'error-recovery': {
+      const n = nodes[action.nodeId];
+      return n ? { ...nodes, [action.nodeId]: { ...n, errorRecovery: action.state } } : nodes;
+    }
     case 'error': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
@@ -727,7 +791,7 @@ export function reduceNodes(
                   }
                 : {
                     event: CHAT_STREAM_EVENTS.error,
-                    data: { message: action.message },
+                    data: { message: action.message, code: action.errorKind, recoverable: action.recoverable, completedAt: action.completedAt },
                   },
             )
           : m,
@@ -766,6 +830,10 @@ export function reduceNodes(
           streamingStartedAt: undefined,
           error: humanizeDbError(action.message),
           errorKind: action.errorKind,
+          errorTurnId: action.turnId ?? n.activeTurnId,
+          errorRecovery: undefined,
+          errorRecoverable: action.recoverable,
+          errorCompletedAt: action.completedAt,
           messages: msgs,
           streamingIdleMs: undefined,
           pendingPermission: null,
@@ -829,6 +897,9 @@ export function reduceNodes(
           visibleResponseComplete: false,
           streamingStartedAt: undefined,
           error: undefined,
+          errorKind: undefined,
+          errorTurnId: undefined,
+          errorRecovery: undefined,
           streamingIdleMs: undefined,
           messages: msgs,
           followUpsSourceMessageId: nextFollowUpsSrc,
@@ -859,31 +930,27 @@ export function reduceNodes(
     case 'user-input-request': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
-      // Append a user-input block to the current streaming message so it
-      // appears inline at the correct position in the weave pipeline.
       const msgs = [...n.messages];
-      const lastIdx = msgs.length - 1;
+      const lastIdx = action.assistantId ? msgs.findIndex(m => m.id === action.assistantId) : msgs.length - 1;
       if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
-        msgs[lastIdx] = appendUserInputBlock(msgs[lastIdx], action.userInput.requestId);
+        msgs[lastIdx] = projectAssistantStreamEvent(msgs[lastIdx], n.projectId, { event: CHAT_STREAM_EVENTS.userInputRequest, data: { ...action.userInput, turnId: n.activeTurnId } });
       }
-      return { ...nodes, [action.nodeId]: { ...n, messages: msgs, pendingUserInput: action.userInput } };
+      return { ...nodes, [action.nodeId]: { ...n, messages: msgs, pendingUserInput: lastIdx === msgs.length - 1 ? action.userInput : n.pendingUserInput } };
     }
     case 'user-input-resolved': {
       const n = nodes[action.nodeId];
-      if (!n || !n.pendingUserInput) return nodes;
-      // If already resolved with answers (user submitted locally), don't let the
-      // SSE server-side confirmation (which has no answers) clobber them.
-      if (n.pendingUserInput.resolved && n.pendingUserInput.answers?.length && !action.answers?.length) {
-        return nodes;
-      }
+      if (!n) return nodes;
+      const requestId = action.requestId ?? n.pendingUserInput?.requestId;
+      if (requestId === undefined) return nodes;
+      const interactionId = action.interactionId ?? (n.pendingUserInput?.requestId === requestId ? n.pendingUserInput.interactionId : undefined);
       const answers = action.answers ?? [];
-      return {
-        ...nodes,
-        [action.nodeId]: {
-          ...n,
-          pendingUserInput: { ...n.pendingUserInput, resolved: true, answers },
-        },
-      };
+      const msgs = n.messages.map(message => message.role !== 'assistant' ? message : projectAssistantStreamEvent(message, n.projectId,
+        { event: CHAT_STREAM_EVENTS.userInputResolved, data: { requestId, interactionId, answers, outcome: action.outcome, turnId: n.activeTurnId } }));
+      const pending = n.pendingUserInput;
+      const matches = pending?.requestId === requestId && (!interactionId || !pending.interactionId || pending.interactionId === interactionId);
+      const preserveAnswers = pending?.resolved && pending.answers.length > 0 && !answers.length;
+      return { ...nodes, [action.nodeId]: { ...n, messages: msgs,
+        pendingUserInput: matches && !preserveAnswers ? { ...pending, resolved: true, answers } : pending } };
     }
     case 'set-minimized': {
       const n = nodes[action.nodeId];
@@ -1464,18 +1531,57 @@ export function reduceNodes(
     }
     case 'subagent-list-update': {
       const n = nodes[action.nodeId];
-      if (!n) return nodes;
-      return { ...nodes, [action.nodeId]: { ...n, subagents: action.subagents } };
+      if (!n || action.subagents.length === 0) return nodes;
+      // The node roster drives live chrome (activity indicator, relayed-tool
+      // filter); the message roster is the durable record. Both use the same
+      // shared patch fold so replay and hydration converge.
+      const targetId = subagentTargetMessageId(n, action.assistantId);
+      const subagents = isLatestAssistant(n, targetId) ? mergeSubagentRoster(n.subagents, action.subagents) : n.subagents;
+      const messages = targetId
+        ? n.messages.map((m) => m.id === targetId
+            ? projectAssistantStreamEvent(m, n.projectId, {
+                event: CHAT_STREAM_EVENTS.subagentListUpdate,
+                data: { subagents: action.subagents },
+              })
+            : m)
+        : n.messages;
+      return { ...nodes, [action.nodeId]: { ...n, subagents, messages } };
     }
     case 'subagent-tool-activity': {
       const n = nodes[action.nodeId];
-      if (!n || !n.subagents) return nodes;
-      const subagents = n.subagents.map(s =>
-        s.sessionId === action.subagentSessionId
-          ? { ...s, currentTool: action.title || s.currentTool }
-          : s
-      );
-      return { ...nodes, [action.nodeId]: { ...n, subagents } };
+      if (!n) return nodes;
+      const { type: _type, nodeId: _nodeId, assistantId, ...payload } = action;
+      const targetId = subagentTargetMessageId(n, assistantId);
+      const subagents = isLatestAssistant(n, targetId) ? applySubagentActivity(n.subagents, payload) : n.subagents;
+      const target = targetId ? n.messages.find((m) => m.id === targetId) : undefined;
+      const projected = target?.subagents?.some((entry) => entry.sessionId === payload.subagentSessionId)
+        ? projectAssistantStreamEvent(target, n.projectId, {
+            event: CHAT_STREAM_EVENTS.subagentToolActivity,
+            data: payload,
+          })
+        : target;
+      const messages = projected && projected !== target && projected.subagents !== target?.subagents
+        ? n.messages.map((m) => (m === target ? projected : m))
+        : n.messages;
+      if (subagents === n.subagents && messages === n.messages) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, subagents, messages } };
+    }
+    case 'background-subagents-ended': {
+      const n = nodes[action.nodeId];
+      // Only the node of the workspace whose feed said so; not a turn, so
+      // status, focus and activity are left alone.
+      if (!n || n.projectId !== action.workspaceId || action.subagents.length === 0) return nodes;
+      let changed = false;
+      const messages = n.messages.map((m) => {
+        if (m.role !== 'assistant' || !m.subagents?.length) return m;
+        const subagents = endBackgroundSubagents(m.subagents, action.subagents);
+        if (subagents === m.subagents) return m;
+        changed = true;
+        return { ...m, subagents };
+      });
+      const subagents = n.subagents?.length ? endBackgroundSubagents(n.subagents, action.subagents) : n.subagents;
+      if (!changed && subagents === n.subagents) return nodes;
+      return { ...nodes, [action.nodeId]: { ...n, messages: changed ? messages : n.messages, subagents } };
     }
     case 'context-usage': {
       const n = nodes[action.nodeId];
@@ -1485,10 +1591,14 @@ export function reduceNodes(
     case 'usage-summary': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
+      const lastAssistantId = [...n.messages].reverse().find(m => m.role === 'assistant')?.id;
+      const { type: _type, nodeId: _nodeId, assistantId: _assistantId, ...usage } = action;
       return { ...nodes, [action.nodeId]: { ...n,
-        contextUsagePercentage: action.contextUsagePercentage ?? n.contextUsagePercentage,
-        usageSummary: {
+        messages: n.messages.map(m => m.id === (action.assistantId ?? lastAssistantId) ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.usageSummary, data: usage }) : m),
+        contextUsagePercentage: !action.assistantId || action.assistantId === lastAssistantId ? action.contextUsagePercentage ?? n.contextUsagePercentage : n.contextUsagePercentage,
+        usageSummary: action.assistantId && action.assistantId !== lastAssistantId ? n.usageSummary : {
           totalCredits: action.totalCredits,
+          charge: action.charge,
           turnDurationMs: action.turnDurationMs,
           source: action.source,
           totalTokens: action.totalTokens,
@@ -1552,6 +1662,13 @@ export function reduceNodes(
         runtimeActivity: action.state === 'pending' ? action.detail : undefined,
       } };
     }
+    case 'warning': {
+      const n = nodes[action.nodeId];
+      if (!n) return nodes;
+      const lastAssistantId = [...n.messages].reverse().find(m => m.role === 'assistant')?.id;
+      return { ...nodes, [action.nodeId]: { ...n, warning: !action.assistantId || action.assistantId === lastAssistantId ? action.warning : n.warning,
+        messages: n.messages.map(m => m.id === (action.assistantId ?? lastAssistantId) ? projectAssistantStreamEvent(m, n.projectId, { event: CHAT_STREAM_EVENTS.warning, data: action.warning }) : m) } };
+    }
     case 'mcp-server-error': {
       const n = nodes[action.nodeId];
       if (!n) return nodes;
@@ -1565,12 +1682,26 @@ export function reduceNodes(
       let draft = normalizeComposerDraft(action.draft);
       if (action.preserveExisting && draft && n.composerDraft) {
         const current = n.composerDraft;
-        const separator = draft.value && current.value ? '\n\n' : '';
-        const offset = draft.value.length + separator.length;
+        // A single quoteSource cannot describe two different file versions.
+        // Frame the incoming quote in restored text while retaining the current chip.
+        const distinctSources = draft.quotedText && current.quotedText
+          && JSON.stringify(draft.quoteSource) !== JSON.stringify(current.quoteSource);
+        const prefix = distinctSources ? `${formatQuotedSelectionContext(draft.quotedText!, draft.quoteSource)}\n\n` : '';
+        const incomingValue = prefix + draft.value;
+        const separator = incomingValue && current.value ? '\n\n' : '';
+        const offset = incomingValue.length + separator.length;
+        const quotedText = distinctSources ? current.quotedText
+          : [draft.quotedText, current.quotedText].filter(Boolean).join('\n\n') || undefined;
+        const quoteSource = distinctSources ? current.quoteSource
+          : draft.quotedText ? draft.quoteSource : current.quoteSource;
         draft = {
-          value: draft.value + separator + current.value,
-          mentions: [...draft.mentions, ...current.mentions.map((mention) => ({ ...mention, start: mention.start + offset, end: mention.end + offset }))],
-          quotedText: [draft.quotedText, current.quotedText].filter(Boolean).join('\n\n') || undefined,
+          value: incomingValue + separator + current.value,
+          mentions: [
+            ...draft.mentions.map(mention => ({ ...mention, start: mention.start + prefix.length, end: mention.end + prefix.length })),
+            ...current.mentions.map(mention => ({ ...mention, start: mention.start + offset, end: mention.end + offset })),
+          ],
+          quotedText,
+          ...(quotedText && quoteSource ? { quoteSource } : {}),
         };
       }
       if (composerDraftEqual(n.composerDraft, draft)) return nodes;

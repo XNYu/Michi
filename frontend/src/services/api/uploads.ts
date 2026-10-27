@@ -1,3 +1,6 @@
+import { backendFetch, backendRequestOptions } from './backendRequest';
+import { backendRequestUrl, connectionIdFromApiUrl, mapBackendPayload } from '../../config/backendIdentity';
+import { backendConnectionGeneration, backendConnectionUnavailable, markBackendConnectionUnavailable } from '../../config/backendConnectionState';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
 
 export type UploadPhase = 'preparing' | 'uploading' | 'copying';
@@ -81,9 +84,13 @@ function postJsonWithUploadProgress<T>(
   payload: unknown,
   options?: UploadProgressOptions,
 ): Promise<T> {
-  const body = JSON.stringify(payload);
+  const url = `${workspaceBackendApiBase(workspaceId)}${path}`;
+  const connectionId = connectionIdFromApiUrl(url);
+  const generation = backendConnectionGeneration(connectionId);
+  if (backendConnectionUnavailable(connectionId)) return Promise.reject(new Error('Remote connection is unavailable'));
+  const body = backendRequestOptions(url, { body: JSON.stringify(payload) }).body as string;
   if (!options?.onProgress) {
-    return fetch(`${workspaceBackendApiBase(workspaceId)}${path}`, {
+    return backendFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body,
@@ -98,7 +105,7 @@ function postJsonWithUploadProgress<T>(
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${workspaceBackendApiBase(workspaceId)}${path}`);
+    xhr.open('POST', backendRequestUrl(url));
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.upload.onprogress = (event) => {
       const total = event.lengthComputable ? event.total : null;
@@ -109,9 +116,14 @@ function postJsonWithUploadProgress<T>(
         percent: total ? clampPercent((event.loaded / total) * 100) : null,
       });
     };
-    xhr.onerror = () => reject(new Error('upload failed'));
+    xhr.onerror = () => { markBackendConnectionUnavailable(connectionId); reject(new Error('upload failed')); };
     xhr.onabort = () => reject(new Error('upload cancelled'));
     xhr.onload = () => {
+      if ([502, 503, 504].includes(xhr.status)) markBackendConnectionUnavailable(connectionId);
+      if (generation !== backendConnectionGeneration(connectionId)) {
+        reject(new DOMException('Remote connection changed while uploading', 'AbortError'));
+        return;
+      }
       const raw = xhr.responseText || '{}';
       let json: any;
       try {
@@ -129,7 +141,7 @@ function postJsonWithUploadProgress<T>(
         total: body.length,
         percent: 100,
       });
-      resolve(json as T);
+      resolve(mapBackendPayload(json, connectionId, 'renderer') as T);
     };
     options.onProgress?.({
       phase: 'uploading',
@@ -145,7 +157,7 @@ const webCwdCache = new Map<string, string>();
 export async function getWebUploadCwd(workspaceId: string): Promise<string> {
   const cached = webCwdCache.get(workspaceId);
   if (cached) return cached;
-  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/uploads/web-cwd`, {
+  const res = await backendFetch(`${workspaceBackendApiBase(workspaceId)}/uploads/web-cwd`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workspaceId }),
@@ -276,7 +288,7 @@ export async function copyWorkspaceFile(
   sourcePath: string,
   options?: { subdir?: string },
 ): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
-  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/copy-file`, {
+  const res = await backendFetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/copy-file`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workspaceId, cwd, sourcePath, subdir: options?.subdir }),
@@ -300,7 +312,7 @@ export async function linkWorkspaceFile(
   cwd: string,
   sourcePath: string,
 ): Promise<{ name: string; displayName?: string; filePath: string; size: number }> {
-  const res = await fetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/link-file`, {
+  const res = await backendFetch(`${workspaceBackendApiBase(workspaceId)}/workspaces/link-file`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workspaceId, cwd, sourcePath }),

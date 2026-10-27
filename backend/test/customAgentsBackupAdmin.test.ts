@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import express from 'express';
@@ -121,13 +122,13 @@ async function request(method: string, route: string, body?: unknown, owner = 'o
   return { response, body: await response.json() as any };
 }
 
-function startApp(lifecycle?: AgentRunAdministrativeLifecycle): void {
+async function startApp(lifecycle?: AgentRunAdministrativeLifecycle): Promise<void> {
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => { req.user = { id: req.header('x-test-user') ?? 'owner-a', email: 'admin@example.com' }; next(); });
+  app.use((req: any, _res, next) => { req.user = { id: req.header('x-test-user') ?? 'owner-a', email: 'admin@example.com', emailVerified: true }; next(); });
   app.use('/api', setupBackupRoutes());
   app.use('/api/admin', setupAdminRoutes({ agentRunLifecycle: lifecycle }));
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
@@ -136,6 +137,8 @@ describe('Custom Agent backup and administration routes', () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-agent-backup-admin-'));
     process.env.MICHI_DATA_DIR = dataDir;
     process.env.MICHI_CLOUD = '1';
+    process.env.MICHI_REQUIRE_AUTH = 'true';
+    process.env.MICHI_ADMIN_EMAILS = 'admin@example.com';
     closeDb(); closeAuditDb(); initDb();
   });
 
@@ -144,12 +147,14 @@ describe('Custom Agent backup and administration routes', () => {
     closeDb(); closeAuditDb();
     delete process.env.MICHI_DATA_DIR;
     delete process.env.MICHI_CLOUD;
+    delete process.env.MICHI_REQUIRE_AUTH;
+    delete process.env.MICHI_ADMIN_EMAILS;
     fs.rmSync(dataDir, { recursive: true, force: true });
   });
 
   test('exports v2 owner/workspace Agent fragments and accepts legacy v1 imports', async () => {
     seedOwner();
-    startApp();
+    await startApp();
     const full = await request('GET', '/api/backup/export');
     assert.equal(full.response.status, 200);
     assert.equal(full.body.version, 2);
@@ -227,7 +232,7 @@ describe('Custom Agent backup and administration routes', () => {
     getDb().prepare(`INSERT INTO nodes
       (id,workspace_id,kind,status,minimized,spawned_by_agent,created_at)
       VALUES ('victim-node','victim-ws','chat','idle',0,0,1)`).run();
-    startApp();
+    await startApp();
     const payload: BackupPayload = {
       version: 1,
       exportedAt: 1,
@@ -299,7 +304,7 @@ describe('Custom Agent backup and administration routes', () => {
     getDb().prepare(`INSERT INTO agent_owner_deletions
       (owner_user_id, deletion_token, lease_owner, started_at, expires_at)
       VALUES ('owner-a','deletion-token','admin-instance',?,?)`).run(Date.now(), Date.now() + 60_000);
-    startApp();
+    await startApp();
     const payload: BackupPayload = { version: 1, exportedAt: 1, app: 'michi', workspaces: [] };
     const imported = await request('POST', '/api/backup/import', payload);
     assert.equal(imported.response.status, 409);
@@ -307,7 +312,7 @@ describe('Custom Agent backup and administration routes', () => {
   });
 
   test('backup import rejects graph references that cross Workspace boundaries', async () => {
-    startApp();
+    await startApp();
     const payload: BackupPayload = {
       version: 1,
       exportedAt: 1,
@@ -343,7 +348,7 @@ describe('Custom Agent backup and administration routes', () => {
         throw new Error('worktree busy');
       },
     });
-    startApp(lifecycle);
+    await startApp(lifecycle);
 
     const exported = await request('POST', '/api/admin/users/owner-a/export');
     assert.equal(exported.response.status, 200);
@@ -372,7 +377,7 @@ describe('Custom Agent backup and administration routes', () => {
   test('admin deletion refuses Agent rows without an injected lifecycle', async () => {
     createAuthUser('owner-a');
     seedOwner();
-    startApp();
+    await startApp();
     const deleted = await request('DELETE', '/api/admin/users/owner-a');
     assert.equal(deleted.response.status, 503);
     assert.equal(deleted.body.error, 'agent_run_lifecycle_required');

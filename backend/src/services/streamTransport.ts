@@ -4,12 +4,13 @@ import { StringDecoder } from 'node:string_decoder';
 import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { STREAM_TRANSPORT_PATH, STREAM_MAX_BODY_BYTES, STREAM_MAX_FRAME_BYTES, type StreamTransportResponse } from 'michi-shared';
+import { isAllowedLocalOrigin } from './localOrigins';
 
 const ENDPOINT = `/api${STREAM_TRANSPORT_PATH}`;
 const TICKET_TTL_MS = 30_000;
 const MAX_CHANNELS = 256;
 const MAX_BUFFER_BYTES = 8 * 1024 * 1024;
-const STREAM_PATH = /^\/api\/(?:backend-connections\/[a-zA-Z0-9_-]+\/proxy\/)?(chats\/background\/subscribe|chats\/[a-zA-Z0-9_-]+\/(message|stream)|workspaces\/[a-zA-Z0-9_-]+\/watch\/stream|agent-runs\/subscribe|digests\/stream|panes\/subscribe|panes\/presence\/keepalive)$/;
+const STREAM_PATH = /^\/api\/(?:backend-connections\/[a-zA-Z0-9_-]+\/proxy\/)?(chats\/background\/subscribe|chats\/[a-zA-Z0-9_-]+\/(message|stream)|workspaces\/[a-zA-Z0-9_-]+\/watch\/stream|agent-runs\/subscribe|workflow-runs\/subscribe|digests\/stream|panes\/subscribe|panes\/presence\/keepalive)$/;
 
 interface Ticket {
   expires: number;
@@ -26,16 +27,10 @@ export function createStreamTransport() {
   let server: Server;
 
   router.post(STREAM_TRANSPORT_PATH, (req, res) => {
-    const origin = req.headers.origin;
-    const configuredOrigins = (process.env.MICHI_CORS_ORIGINS ?? '').split(',').map((value) => value.trim());
-    if (origin && origin !== 'null') {
-      let allowed = configuredOrigins.includes(origin);
-      try {
-        const parsed = new URL(origin);
-        allowed ||= ['http:', 'https:'].includes(parsed.protocol)
-          && (parsed.host === req.headers.host || ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname));
-      } catch { /* reject malformed Origin */ }
-      if (!allowed) return res.status(403).json({ error: 'Stream origin is not allowed' });
+    // The same rule as the API's CORS without auth; a `null` origin is
+    // refused here too (any site can produce one).
+    if (!isAllowedLocalOrigin(req.headers.origin, req.headers.host)) {
+      return res.status(403).json({ error: 'Stream origin is not allowed' });
     }
     const now = Date.now();
     for (const [key, ticket] of tickets) if (ticket.expires <= now) tickets.delete(key);

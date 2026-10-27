@@ -1,9 +1,25 @@
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ChatHub, type SidecarTitleRequest } from '../src/agents/chatHub';
-import type { AgentSession } from '../src/agents/types';
+import type { AgentRuntime, AgentSession } from '../src/agents/types';
+import type { AgentToolBridge } from '../src/agents/toolBridge';
+import { registerRuntime } from '../src/agents/registry';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { RUNTIME_FACTORIES } from '../src/agents/runtimeFactories';
+import { michiTestHost } from './helpers/michiTestHost';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import type { ChatStreamEvent, DurableTurnSnapshot } from 'michi-shared';
+import { runOwner } from './helpers/owners';
+
+// Real Kiro and Crew instances: the hub reads whether a runtime's host
+// titles need the user's opt-in from its descriptor.
+const bridge: AgentToolBridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
+const registered: AgentRuntime[] = [
+  new KiroRuntime({ bridge, defaultCwd: '/tmp/michi-title-gate', host: michiTestHost(), sidecarTitles: false }),
+  RUNTIME_FACTORIES.find((factory) => factory.id === 'crew')!.create({ bridge, defaultCwd: '/tmp/michi-title-gate', host: michiTestHost() }),
+];
+for (const runtime of registered) registerRuntime(runtime);
+after(() => Promise.all(registered.map((runtime) => runtime.shutdown())));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -153,10 +169,24 @@ describe('ChatHub sidecar title generation', () => {
     assert.equal(calls, 0);
   });
 
+  it('generates without the Kiro opt-in for Crew, Claude and Pi chats', async () => {
+    for (const runtimeId of ['crew', 'claude', 'pi']) {
+      let calls = 0;
+      const hub = makeHub({ titleGenerator: async () => { calls += 1; return null; } });
+      const { session, finish } = holdingSession(runtimeId);
+      const { done } = await hub.startTurn({
+        chatId: `chat-${runtimeId}`, nodeId: `node-${runtimeId}`, text: 'hello', session, enableKiroSidecarTitle: false,
+      });
+      finish();
+      await done;
+      assert.equal(calls, 1, runtimeId);
+    }
+  });
+
   it('skips generation for non-chat owners such as agent runs', async () => {
     let calls = 0;
     const hub = makeHub({ titleGenerator: async () => { calls += 1; return 'unused'; } });
-    const { session, finish } = holdingSession('kiro', { kind: 'agent_run', attemptId: 'attempt-1' } as AgentSession['owner']);
+    const { session, finish } = holdingSession('kiro', runOwner('run-1', 'attempt-1'));
     const { done } = await hub.startTurn({ chatId: 'chat-3', nodeId: 'node-3', text: 'hello', session, enableKiroSidecarTitle: true });
     finish();
     await done;

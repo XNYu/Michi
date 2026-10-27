@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { closeDb, initDb } from '../src/services/db';
 import { saveNode, saveWorkspace, getNode } from '../src/services/dbRepository';
-import { defaultCrewMemory, saveDefaultCrewMemory, pinCrewMemory } from '../src/agents/crew/crewMemory';
+import { defaultCrewMemory, saveDefaultCrewMemory, pinCrewMemory } from '../src/services/crewMemory';
 import { crewRoutes } from '../src/routes/crew';
 
 const saved = { MICHI_DATA_DIR: process.env.MICHI_DATA_DIR, MICHI_CLOUD: process.env.MICHI_CLOUD, MICHI_CREW_MEMORY_MODE: process.env.MICHI_CREW_MEMORY_MODE };
@@ -38,7 +39,7 @@ test('memory API isolates cloud defaults, validates input and hides foreign node
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => { if (req.headers['x-test-user']) (req as any).user = { id: req.headers['x-test-user'] }; next(); });
   app.use('/api', crewRoutes());
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/crew/memory`;
   process.env.MICHI_CLOUD = '1';
   const call = (user?: string, mode?: string, node?: string) => fetch(base + (node ? `?nodeId=${node}` : ''), {

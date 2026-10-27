@@ -1,0 +1,48 @@
+/* Timeline bars (spec §3.3), shared by the timeline view and the gantt component: names on the left and the axis on top stay put while the chart scrolls.
+   Greys and the one accent; an actual that runs past its plan turns 停住's amber from the plan's end. */
+.desk-bars{position:relative;overflow:auto;max-height:min(70vh,760px);overscroll-behavior:contain;border-top:1px solid var(--desk-edge,#efeff1);font-size:12.5px;color:var(--desk-name,#27272a)}
+.desk-db[data-compact] .desk-bars{max-height:420px}
+.desk-bars-inner{position:relative;min-width:100%}
+.desk-bars-head{position:sticky;top:0;z-index:3;display:flex;background:var(--desk-paper,#fff);border-bottom:1px solid var(--desk-edge,#efeff1)}
+.desk-bars-corner{position:sticky;left:0;z-index:1;flex:none;width:200px;background:var(--desk-paper,#fff);border-right:1px solid var(--desk-edge,#efeff1)}
+.desk-bars-scale{position:relative;flex:none}
+.desk-bars-ticks{position:relative;height:22px}
+.desk-bars-ticks[data-row=major]{border-bottom:1px solid var(--desk-edge,#efeff1)}
+.desk-bars-tick{position:absolute;top:0;height:100%;padding:0 6px;border-left:1px solid var(--desk-edge,#efeff1);line-height:22px;color:var(--desk-meta,#5f5f69);white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums}
+.desk-bars-ticks[data-row=major] .desk-bars-tick{color:var(--desk-ink,#18181b);font-weight:500}
+.desk-bars[data-zoom=day] .desk-bars-ticks[data-row=minor] .desk-bars-tick{padding:0;text-align:center}
+.desk-bars-tick[data-weekend]{color:var(--desk-meta-soft,#6b6b74);background:var(--desk-hover,#f0f0f2)}
+.desk-bars-body{position:relative}
+.desk-bars-grid{position:absolute;top:0;bottom:0;pointer-events:none}
+.desk-bars-grid>span{position:absolute;top:0;bottom:0;width:1px;background:var(--desk-edge,#efeff1)}
+.desk-bars-today{position:absolute;top:0;bottom:0;z-index:2;width:2px;margin-left:-1px;background:var(--accent,#2563eb);opacity:.55}
+.desk-bars-row,.desk-bars-group{position:relative;display:flex;height:36px;border-bottom:1px solid var(--desk-edge,#efeff1)}
+.desk-bars-group{height:32px}
+.desk-bars-label{position:sticky;left:0;z-index:3;display:flex;align-items:center;gap:6px;flex:none;width:200px;min-width:0;padding:0 10px;background:var(--desk-paper,#fff);border-right:1px solid var(--desk-edge,#efeff1);overflow:hidden;white-space:nowrap}
+.desk-bars-group .desk-bars-label{font-weight:500;color:var(--desk-ink,#18181b)}
+.desk-bars-lane{position:relative;flex:none}
+.desk-bar{position:absolute;top:10px;height:16px;min-width:6px;border-radius:5px;background:var(--accent,#2563eb);overflow:hidden}
+.desk-bars[data-plan] .desk-bar{top:7px;height:13px}
+.desk-bar-plan{position:absolute;top:24px;height:6px;min-width:6px;border-radius:3px;background:color-mix(in srgb,var(--accent,#2563eb) 24%,transparent)}
+.desk-bar-over{position:absolute;top:0;bottom:0;background:var(--desk-stalled,#d97706)}
+/* A bar with progress (the gantt component): pale, with the finished share filled in. */
+.desk-bar[data-done]{background:color-mix(in srgb,var(--accent,#2563eb) 22%,transparent)}
+.desk-bar-done{position:absolute;top:0;bottom:0;left:0;background:var(--accent,#2563eb)}
+.desk-bar[data-done=all] .desk-bar-done{background:var(--desk-done,#16a34a)}
+
+/* Dragged bars (the timeline view): the body moves the whole range, the edges move one end. */
+.desk-bar[data-live]{overflow:visible}
+.desk-bar[data-live] .desk-bar-over{border-radius:0 5px 5px 0}
+.desk-bar[data-dragging]{z-index:2;box-shadow:0 0 0 2px var(--desk-paper,#fff),0 0 0 3px var(--accent,#2563eb)}
+.desk-bar-body{position:absolute;inset:0;width:100%;padding:0;border:0;border-radius:inherit;background:transparent;cursor:grab;touch-action:none}
+.desk-bar[data-dragging] .desk-bar-body{cursor:grabbing}
+.desk-bar-edge{position:absolute;top:-3px;bottom:-3px;z-index:1;width:10px;cursor:ew-resize;touch-action:none}
+.desk-bar-edge[data-edge=start]{left:-5px}
+.desk-bar-edge[data-edge=end]{right:-5px}
+.desk-bar-edge::after{content:'';position:absolute;top:4px;bottom:4px;left:4px;width:2px;border-radius:1px;background:var(--desk-paper,#fff);opacity:0}
+.desk-bar[data-live]:hover .desk-bar-edge::after,.desk-bar-edge:focus-visible::after,.desk-bar-edge[aria-pressed=true]::after{opacity:.9}
+.desk-bar-body:focus-visible,.desk-bar-edge:focus-visible{outline:2px solid var(--accent,#2563eb);outline-offset:2px}
+.desk-bars-open{min-width:0;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.desk-bars-open:hover{color:var(--desk-ink,#18181b);text-decoration:underline;text-decoration-color:var(--line,#e4e4e7);text-underline-offset:3px}
+.desk-bars-count{font-size:12px;font-weight:400;color:var(--desk-meta,#5f5f69);font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){.desk-bar{transition:none}}

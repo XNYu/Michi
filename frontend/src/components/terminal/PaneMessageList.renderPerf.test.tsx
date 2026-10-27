@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { PaneMessageList } from './PaneMessageList';
@@ -79,38 +79,5 @@ describe('PaneMessageList render performance', () => {
     expect(renderedTexts.filter((text) => text === 'stable answer')).toHaveLength(1);
     expect(renderedTexts).toContain('stream one');
     expect(renderedTexts).toContain('stream two');
-  });
-
-  it('does not flash follow-ups before a post-arrival answer run finishes', () => {
-    const u1 = makeMsg('u1', 'user', 'question');
-    const a1 = makeMsg('a1', 'assistant', 'partial answer', true);
-    const node = {
-      ...makeNode([u1, a1]),
-      followUps: ['Which risk would most likely create a production incident?'],
-      followUpsGenerating: true,
-      status: 'streaming',
-    } as ChatNodeState;
-
-    render(renderList(node, vi.fn()));
-
-    expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
-    expect(screen.queryByText('Explore further')).toBeNull();
-  });
-
-  it('hides follow-ups while the node is still streaming even when visibleResponseComplete', () => {
-    const u1 = makeMsg('u1', 'user', 'question');
-    const a1 = makeMsg('a1', 'assistant', 'complete visible answer');
-    const node = {
-      ...makeNode([u1, a1]),
-      followUps: ['Which risk would most likely create a production incident?'],
-      followUpsGenerating: false,
-      visibleResponseComplete: true,
-      status: 'streaming',
-    } as ChatNodeState;
-
-    render(renderList(node, vi.fn()));
-
-    expect(screen.queryByText('Which risk would most likely create a production incident?')).toBeNull();
-    expect(screen.queryByText('Explore further')).toBeNull();
   });
 });

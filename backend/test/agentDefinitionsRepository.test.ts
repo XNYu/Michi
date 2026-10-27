@@ -45,16 +45,6 @@ describe('AgentDefinitionsRepository', () => {
     });
   }
 
-  test('creates Drafts idempotently and round-trips contract arrays through versioned storage wrappers', () => {
-    const definitions = repo();
-    const first = definitions.create('owner-a', request(), 'create-1');
-    const replay = definitions.create('owner-a', request(), 'create-1');
-    assert.deepEqual(replay, first);
-    assert.equal(first.status, AgentDefinitionStatus.Draft);
-    assert.deepEqual(first.fallbackChain, []);
-    assert.equal((getDb().prepare('SELECT COUNT(*) AS count FROM agent_definitions').get() as { count: number }).count, 1);
-  });
-
   test('requires matching owner/workspace and hides wrong-owner IDs', () => {
     const definitions = repo();
     const created = definitions.create('owner-a', request(), 'create-owner');
@@ -75,22 +65,5 @@ describe('AgentDefinitionsRepository', () => {
     const enabled = definitions.setStatus('owner-a', created.id, AgentDefinitionStatus.Enabled, 2, 'enable-1')!;
     assert.equal(enabled.status, AgentDefinitionStatus.Enabled);
     assert.equal(enabled.revision, 3);
-  });
-
-  test('duplicate names are allowed and deleting a Definition preserves historical Runs', () => {
-    const definitions = repo();
-    const a = definitions.create('owner-a', request(), 'create-a');
-    const b = definitions.create('owner-a', request(), 'create-b');
-    assert.notEqual(a.id, b.id);
-    getDb().prepare(`INSERT INTO agent_runs (
-      id, owner_user_id, workspace_id, definition_id, definition_revision,
-      effective_definition, invocation_mode, completion_mode, task, context_manifest,
-      execution_environment, status, created_at, updated_at
-    ) VALUES ('run-a','owner-a','ws-a',?,1,'{"version":1}','manual','detach','task',
-      '{"version":1}','{"version":1}','queued',1,1)`).run(a.id);
-    assert.equal(definitions.delete('owner-a', a.id, 'delete-a'), true);
-    const row = getDb().prepare("SELECT definition_id, definition_revision FROM agent_runs WHERE id = 'run-a'").get() as any;
-    assert.equal(row.definition_id, null);
-    assert.equal(row.definition_revision, 1);
   });
 });

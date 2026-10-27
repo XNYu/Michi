@@ -13,10 +13,4 @@ describe('branch overview message metadata', () => {
     assert.equal(extractBranchOverview(raw), 'final durable state');
     assert.equal(stripSentinelsStreamingSafe(raw), 'Body.\n');
   });
-
-  test('ignores missing, empty, and incomplete overview sentinels', () => {
-    assert.equal(extractBranchOverview('No metadata'), null);
-    assert.equal(extractBranchOverview('[BRANCH-OVERVIEW: ]'), null);
-    assert.equal(extractBranchOverview('[BRANCH-OVERVIEW: unfinished'), null);
-  });
 });

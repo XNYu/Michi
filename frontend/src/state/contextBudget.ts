@@ -1,5 +1,14 @@
+import { backendConnectionIdForNode } from '../config/backendConnections';
+import { remoteEntityIdentity, serverEntityId } from '../config/backendIdentity';
 import type { ChatNodeState, ArtifactEntry } from './chatTypes';
 import { visibleMessageText } from './assistantBlocks';
+import { readNodeMentionTokens, replaceNodeMentionTokens } from '../lib/nodeMentionTokens';
+
+export interface NodeMentionScope { workspaceId: string; backendConnectionId: string }
+
+function nodeInScope(node: ChatNodeState, scope: NodeMentionScope): boolean {
+    return node.projectId === scope.workspaceId && backendConnectionIdForNode(node.nodeId) === scope.backendConnectionId;
+}
 
 /**
  * Extract @mentions from text and resolve them against project artifacts.
@@ -32,15 +41,14 @@ export function resolveAtMentions(
 export function resolveAtNodeMentions(
     text: string,
     nodes: Record<string, ChatNodeState>,
+    scope?: NodeMentionScope,
 ): ChatNodeState[] {
-    const re = /(?:^|\s)@node:([\w-]+)/g;
     const seen = new Set<string>();
     const result: ChatNodeState[] = [];
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(text)) !== null) {
-        const nodeId = m[1];
+    for (const { nodeId, start } of readNodeMentionTokens(text)) {
+        if (start > 0 && !/\s/.test(text[start - 1])) continue;
         const node = nodes[nodeId];
-        if (node && !seen.has(nodeId)) {
+        if (node && (!scope || nodeInScope(node, scope)) && !seen.has(nodeId)) {
             seen.add(nodeId);
             result.push(node);
         }
@@ -66,9 +74,11 @@ const INLINE_TRANSCRIPT_THRESHOLD = 2048;
  * are summarised from the branch-overview journal (or the first user message
  * as fallback) with a hint to call `read_node` / `read_node_overview`.
  */
-export function buildNodeTranscriptBlock(node: ChatNodeState): string {
+export function buildNodeTranscriptBlock(node: ChatNodeState, scope?: NodeMentionScope): string {
+    if (scope && !nodeInScope(node, scope)) return 'Referenced node is unavailable in this workspace.';
     const title = node.title || node.messages.find(m => m.role === 'user')?.text.slice(0, 80) || 'thread';
-    const nodeId = node.nodeId;
+    const canReadWithTools = scope !== undefined || remoteEntityIdentity(node.nodeId) === null;
+    const nodeId = scope ? serverEntityId(node.nodeId, scope.backendConnectionId) : node.nodeId;
 
     // Build the full transcript — we need it to measure length anyway.
     const transcript = node.messages
@@ -77,7 +87,7 @@ export function buildNodeTranscriptBlock(node: ChatNodeState): string {
     const fullBlock = `=== Referenced node: ${title} ===\n${transcript}`;
 
     // Short conversation — inline everything.
-    if (fullBlock.length <= INLINE_TRANSCRIPT_THRESHOLD) {
+    if (fullBlock.length <= INLINE_TRANSCRIPT_THRESHOLD || !canReadWithTools) {
         return fullBlock;
     }
 
@@ -92,7 +102,7 @@ export function buildNodeTranscriptBlock(node: ChatNodeState): string {
     return [
         `=== Referenced node: ${title} (${nodeId}, ${msgCount} messages) ===`,
         `Summary: ${summary}`,
-        `To read the full conversation, use: read_node_overview("${nodeId}") for the journal, or read_node("${nodeId}") for the transcript.`,
+        `To read the full conversation, use: read_node_overview(${JSON.stringify(nodeId)}) for the journal, or read_node(${JSON.stringify(nodeId)}) for the transcript.`,
     ].join('\n');
 }
 
@@ -101,7 +111,7 @@ export function buildNodeTranscriptBlock(node: ChatNodeState): string {
  * in the displayed message or get sent verbatim to kiro.
  */
 export function stripNodeMentionTokens(text: string): string {
-    return text.replace(/@node:[\w-]+[ \t]*/g, '');
+    return replaceNodeMentionTokens(text, () => '');
 }
 
 /**
@@ -112,7 +122,7 @@ export function rewriteNodeMentionsForDisplay(
     text: string,
     nodes: Record<string, ChatNodeState>,
 ): string {
-    return text.replace(/@node:([\w-]+)([ \t]*)/g, (_match, id: string, trailing: string) => {
+    return replaceNodeMentionTokens(text, (id, trailing) => {
         const node = nodes[id];
         if (!node) return '';
         const title = node.title || node.messages.find(m => m.role === 'user')?.text.slice(0, 40) || 'thread';

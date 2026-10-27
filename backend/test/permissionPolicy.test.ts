@@ -1,76 +1,30 @@
 /**
- * Tests for resolvePolicy — the permission categorizer shared by the Pi and
- * Claude runtimes.
- *
- * Passing workspaceId=null skips the workspace-grant DB lookup, so these are
- * pure unit tests of categorization + Claude PascalCase normalization with no
- * database dependency.
- *
- * Run: cd backend && npm test -- --test-name-pattern permissionPolicy
+ * Tests for michiGrantKey — the key chat always-allow grants are stored
+ * under, which Michi's permission port gives adapters as grantKey. Chat policy itself is
+ * covered by chatPermissionRuntimes and chatApprovalState; the names each
+ * adapter sends by permissionToolNames.
  */
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { canonicalPermissionToolName, resolvePolicy } from '../src/agents/permissionPolicy';
+import { michiGrantKey } from '../src/agents/permissionPolicy';
+import { michiPermissionPolicy } from '../src/agents/chatApprovalState';
 
-describe('resolvePolicy', () => {
-    // ── Read-only / intentional tools default to allow ────────────────────────
-
-    for (const tool of ['read', 'ls', 'grep', 'find', 'list_threads', 'search_messages', 'read_node', 'spawn_branches', 'save_artifact', 'update_artifact']) {
-        test(`allows read-only/intentional tool "${tool}"`, () => {
-            assert.equal(resolvePolicy(null, tool, {}), 'allow');
+for (const [label, grantKey] of [['michiGrantKey', michiGrantKey], ['michiPermissionPolicy.grantKey', michiPermissionPolicy.grantKey!]] as const) {
+    describe(label, () => {
+        // Regression guard: a grant for Claude's PascalCase write/exec tools must
+        // share the key of the canonical tool, or "Trust this tool" never matches.
+        test('Claude PascalCase write/exec tools share the canonical grant key', () => {
+            const expected: Record<string, string> = { Bash: 'bash', Edit: 'edit', Write: 'write', MultiEdit: 'edit', NotebookEdit: 'edit' };
+            for (const [tool, key] of Object.entries(expected)) assert.equal(grantKey(tool), key, tool);
         });
-    }
 
-    // ── Pi runtime lowercase write/exec default to ask ────────────────────────
-
-    for (const tool of ['write', 'edit', 'bash']) {
-        test(`asks for Pi write/exec tool "${tool}"`, () => {
-            assert.equal(resolvePolicy(null, tool, {}), 'ask');
+        test('every other name is its own key, including read-only Claude tools', () => {
+            for (const tool of ['bash', 'edit', 'write', 'read', 'Read', 'Glob', 'Grep', 'fs_write', 'execute_bash',
+                'mcp__probe__echo_tool', 'mcp____michi_internal____read_node', '@michi/send_to_thread']) {
+                assert.equal(grantKey(tool), tool, tool);
+            }
         });
-    }
-
-    // ── Claude runtime PascalCase write/exec normalize to ask ─────────────────
-    // Regression guard: an exact-match set would classify these as "allow",
-    // silently disabling the gate for every Claude write/exec call.
-
-    for (const tool of ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
-        test(`asks for Claude write/exec tool "${tool}" (casing normalized)`, () => {
-            assert.equal(resolvePolicy(null, tool, {}), 'ask');
-        });
-    }
-
-    test('canonicalizes Claude write/exec aliases for persisted grants', () => {
-        assert.equal(canonicalPermissionToolName('Bash'), 'bash');
-        assert.equal(canonicalPermissionToolName('Edit'), 'edit');
-        assert.equal(canonicalPermissionToolName('Write'), 'write');
-        assert.equal(canonicalPermissionToolName('MultiEdit'), 'edit');
-        assert.equal(canonicalPermissionToolName('NotebookEdit'), 'edit');
-        assert.equal(canonicalPermissionToolName('read'), 'read');
     });
-
-    // ── Unknown / MCP tools fall through to allow ─────────────────────────────
-
-    test('allows unknown tool names', () => {
-        assert.equal(resolvePolicy(null, 'mcp__probe__echo_tool', {}), 'allow');
-        assert.equal(resolvePolicy(null, 'Read', {}), 'allow');
-    });
-
-    test("a workspace grant flips ask→allow via the injected store", () => {
-        const { configureRuntimeDeps, __resetRuntimeDeps } = require("../src/agents/runtimeDeps");
-        configureRuntimeDeps({
-            historyStore: {
-                getNode: () => null, listMessages: () => [], getWorkspace: () => null,
-                getWorkspaceInstructions: () => null,
-                hasGrant: (ws: string, tool: string) => ws === "ws1" && tool === "bash",
-                grantPermission: () => {},
-            },
-            agentConfig: { getAgentConfig: () => ({ runtime: "pi", provider: "x", modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => "", resolveReasoning: () => undefined },
-            dataDir: "/tmp/agent-runtime-test",
-        });
-        assert.equal(resolvePolicy("ws1", "bash", {}), "allow");
-        assert.equal(resolvePolicy("ws2", "bash", {}), "ask");
-        __resetRuntimeDeps();
-    });
-});
+}

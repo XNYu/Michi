@@ -1,7 +1,7 @@
 import { Readable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
-import { isRemoteCredentialWarning } from 'michi-shared';
+import { isRemoteCredentialWarning, type RemoteUpdateJob } from 'michi-shared';
 import {
   type BackendConnectionInput,
   deleteBackendConnection,
@@ -56,10 +56,68 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   const tunnelManager = options.tunnelManager ?? sshTunnelManager;
   const remoteSetup = options.remoteSetup ?? new RemoteDesktopSetup({ tunnelManager });
   const recovery = new RemoteServiceRecovery(remoteSetup);
+  // Latest update attempt per saved machine. A running attempt is also the
+  // machine's update lock. Views reopened mid-update follow it from here.
+  const updates = new Map<string, RemoteUpdateJob>();
+  const isUpdating = (id: string) => updates.get(id)?.phase === 'running';
 
   // These routes can replay a stored remote credential. Apply the same strict
   // local-control boundary used by the Custom Agents backend toggle.
   router.use('/backend-connections', requireLocalControlRequest);
+
+  router.get('/backend-connections/:id/version', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const controller = new AbortController();
+    res.on('close', () => controller.abort());
+    try { res.json(await remoteSetup.checkVersion(req.params.id, controller.signal)); }
+    catch (error) { if (!res.destroyed) res.status(502).json({ error: (error as Error).message }); }
+  });
+
+  router.get('/backend-connections/:id/update', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ update: updates.get(req.params.id) ?? null });
+  });
+
+  router.post('/backend-connections/:id/update', async (req, res) => {
+    const connection = getBackendConnection(req.params.id);
+    if (!connection || connection.transport !== 'ssh') return res.status(400).json({ error: 'Select a saved SSH connection before updating Michi.' });
+    if (isUpdating(connection.id)) return res.status(409).json({ error: 'This machine is already updating.' });
+    const diagnostic = new RemoteDiagnosticLog(connection.sshHost!);
+    const job: RemoteUpdateJob = {
+      connectionId: connection.id, attemptId: diagnostic.report.id, phase: 'running',
+      stage: 'request', message: 'Preparing remote update…', startedAt: diagnostic.report.startedAt,
+    };
+    updates.set(connection.id, job);
+    recovery.stop(connection.id);
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-store');
+    res.flushHeaders();
+    const emit = (value: unknown) => { if (!res.destroyed && !res.writableEnded) res.write(JSON.stringify(value) + '\n'); };
+    emit({ type: 'attempt', id: diagnostic.report.id });
+    try {
+      // Closing a dialog detaches its progress stream. Once accepted, the
+      // update must finish switching/recovering the service independently.
+      const result = await remoteSetup.update(connection.id, (stage, message) => {
+        diagnostic.stage(stage, message); emit({ type: 'progress', stage, message });
+        job.stage = stage; job.message = diagnostic.report.message ?? message;
+      }, undefined, diagnostic);
+      diagnostic.stage('complete', 'Remote Michi is up to date.');
+      Object.assign(job, { phase: 'succeeded', stage: 'complete', message: 'Remote Michi is up to date.', result });
+      emit({ type: 'result', result });
+    } catch (error) {
+      diagnostic.fail(error, error instanceof RemoteDesktopError ? error.code : 'update_failed');
+      if (error instanceof RemoteDesktopError && error.code === 'ssh_auth') diagnostic.report.authentication = {
+        scope: 'local', host: connection.sshHost!, user: connection.sshUser, port: connection.sshPort,
+      };
+      Object.assign(job, { phase: 'failed', stage: diagnostic.report.stage, message: diagnostic.report.message ?? 'Remote update failed.', diagnostic: diagnostic.report });
+      emit({ type: 'error', message: diagnostic.report.message, diagnostic: diagnostic.report });
+    } finally {
+      // Always release the machine, even if reporting the outcome failed.
+      if (job.phase === 'running') Object.assign(job, { phase: 'failed', message: 'Remote update failed.', diagnostic: diagnostic.report });
+      job.finishedAt = new Date().toISOString();
+      diagnostic.finish(); res.end();
+    }
+  });
 
   router.post('/backend-connections/connect-ssh', async (req, res) => {
     if (typeof req.body?.host !== 'string') return res.status(400).json({ error: 'SSH host is required' });
@@ -111,6 +169,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   });
 
   router.post('/backend-connections/:id/recover', (req, res) => {
+    if (isUpdating(req.params.id)) return res.status(409).json({ error: 'This machine is updating.' });
     const status = recovery.start(req.params.id, true);
     res.status(status ? 202 : 404).json(status ?? { error: 'Saved SSH connection not found.' });
   });
@@ -167,10 +226,13 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   });
 
   router.post('/backend-connections', (req, res) => {
+    if (typeof req.body?.id === 'string' && isUpdating(req.body.id)) return res.status(409).json({ error: 'This machine is updating.' });
     try {
       const connection = saveBackendConnection({
         ...connectionInput(req.body, ''),
       });
+      // An earlier outcome describes the previous connection settings.
+      updates.delete(connection.id);
       recovery.stop(connection.id);
       tunnelManager.stop(connection.id);
       res.json({ connection });
@@ -181,6 +243,8 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   });
 
   router.delete('/backend-connections/:id', (req, res) => {
+    if (isUpdating(req.params.id)) return res.status(409).json({ error: 'This machine is updating.' });
+    updates.delete(req.params.id);
     recovery.stop(req.params.id);
     const deleted = deleteBackendConnection(req.params.id);
     if (deleted) tunnelManager.stop(req.params.id);
@@ -208,6 +272,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
 
     const controller = new AbortController();
     res.on('close', () => controller.abort());
+    const priorFailure = recovery.currentFailure(connection.id);
     try {
       const apiUrl = await tunnelManager.apiUrl(connection);
       if (controller.signal.aborted) return;
@@ -219,6 +284,8 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
         redirect: 'manual',
         signal: controller.signal,
       });
+      // The connection can recover without a recovery job, e.g. a reconnected tunnel.
+      if (upstream.ok) recovery.markReachable(connection.id, priorFailure);
       res.status(upstream.status);
       upstream.headers.forEach((value, name) => {
         if (!SKIPPED_RESPONSE_HEADERS.has(name.toLowerCase())) res.setHeader(name, value);
@@ -230,7 +297,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       // not as a turn cancellation, so the remote agent keeps running.
       res.on('close', () => upstreamStream.destroy());
       upstreamStream.on('error', () => {
-        if (!controller.signal.aborted) recovery.start(connection.id);
+        if (!controller.signal.aborted && !isUpdating(connection.id)) recovery.start(connection.id);
         if (!res.writableEnded && !res.destroyed) res.end();
       });
       upstreamStream.pipe(res);
@@ -239,7 +306,7 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
       if (!res.headersSent) {
         // Recover the service independently of this renderer's request. Never
         // replay a request: a failed write may already have reached the server.
-        const status = recovery.start(connection.id);
+        const status = isUpdating(connection.id) ? undefined : recovery.start(connection.id);
         res.status(502).json({ error: status && status.phase !== 'ready' ? status.message : `Remote backend unavailable: ${(err as Error).message}`,
           ...(status ? { recovery: status, code: status.phase === 'starting' ? 'remote_starting' : status.diagnostic?.code } : {}),
         });

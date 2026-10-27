@@ -1,4 +1,5 @@
 import React from 'react';
+import { HoverTip } from '../ui/Popover';
 
 /** Small filled circle; animates with the pulse keyframe when `pulse` is set. */
 export function Dot({ color, size = 6, pulse = false, extraStyle }: { color: string; size?: number; pulse?: boolean; extraStyle?: React.CSSProperties }) {
@@ -111,7 +112,6 @@ export function RowKebab({
   return (
     <span
       className={cls}
-      aria-hidden={!open || undefined}
       style={{
         position: 'absolute',
         right: 0,
@@ -127,12 +127,12 @@ export function RowKebab({
           'linear-gradient(to right, transparent 0%, var(--term-alt) 28px)',
       }}
     >
+      <HoverTip label={title}>
       <button
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="menu"
         aria-expanded={open || undefined}
-        title={title}
         onMouseDown={(e) => {
           // Block the row's onMouseDown/onClick.
           e.stopPropagation();
@@ -167,6 +167,7 @@ export function RowKebab({
           <circle cx="8" cy="12.5" r="1.25" fill="currentColor" />
         </svg>
       </button>
+      </HoverTip>
     </span>
   );
 }

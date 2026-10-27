@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DARK_PALETTES, PALETTES, resolveAccent } from './tokens';
+import { DARK_PALETTES, PALETTES, cssVarsFor, dangerTextFor } from './tokens';
 
 function relativeLuminance(hex: string): number {
   const channels = hex.match(/[0-9a-f]{2}/gi)?.map((channel) => parseInt(channel, 16) / 255);
@@ -23,15 +23,6 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe('cssVarsFor — accent resolution', () => {
-  it('resolveAccent falls back to the palette default when no override exists', () => {
-    expect(resolveAccent({}, 'monokai')).toBe(PALETTES.monokai.accent);
-    expect(resolveAccent({ bone: '#abcdef' }, 'monokai')).toBe(PALETTES.monokai.accent);
-  });
-
-  it('resolveAccent returns the override when one is set for the palette', () => {
-    expect(resolveAccent({ monokai: '#abcdef' }, 'monokai')).toBe('#abcdef');
-  });
-
   it('DARK_PALETTES contains exactly the dark palettes', () => {
     expect(DARK_PALETTES.has('monokai')).toBe(true);
     expect(DARK_PALETTES.has('gruvbox')).toBe(true);
@@ -87,5 +78,34 @@ describe.each(Object.entries(PALETTES))('%s palette readability', (_name, p) => 
   it('reads accent text on its pale accent fill', () => {
     // Floor is 4.0, not AA's 4.5: Bone's rust on its chip fill sits at 4.1:1.
     expect(contrastRatio(p.accent, p.accentF)).toBeGreaterThanOrEqual(4.0);
+  });
+});
+
+/** `color-mix(in srgb, a w%, b)`: a straight per-channel blend of the encoded sRGB values. */
+function mixSrgb(a: string, b: string, weightOfA: number): string {
+  const rgb = (hex: string) => [0, 2, 4].map((i) => parseInt(hex.replace('#', '').slice(i, i + 2), 16));
+  const [x, y] = [rgb(a), rgb(b)];
+  return `#${x.map((c, i) => Math.round(c * weightOfA + y[i] * (1 - weightOfA)).toString(16).padStart(2, '0')).join('')}`;
+}
+
+describe('--term-danger-text', () => {
+  it('mixes danger toward fg on the dark palettes and is plain danger on the light ones', () => {
+    expect(dangerTextFor('monokai')).toBe(`color-mix(in srgb, ${PALETTES.monokai.danger} 55%, ${PALETTES.monokai.fg})`);
+    expect(dangerTextFor('gruvbox')).toBe(`color-mix(in srgb, ${PALETTES.gruvbox.danger} 55%, ${PALETTES.gruvbox.fg})`);
+    expect(dangerTextFor('bone')).toBe(PALETTES.bone.danger);
+    expect(dangerTextFor('slate')).toBe(PALETTES.slate.danger);
+  });
+
+  it('is emitted with the rest of the palette', () => {
+    for (const palette of ['monokai', 'gruvbox', 'bone', 'slate'] as const) {
+      expect(cssVarsFor(palette, PALETTES[palette].accent)['--term-danger-text']).toBe(dangerTextFor(palette));
+    }
+  });
+
+  it.each(Object.entries(PALETTES))('reads as text on every %s ground', (name, p) => {
+    const text = DARK_PALETTES.has(name as keyof typeof PALETTES) ? mixSrgb(p.danger, p.fg, 0.55) : p.danger;
+    for (const g of [p.bg, p.surface, p.alt]) {
+      expect(contrastRatio(text, g)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

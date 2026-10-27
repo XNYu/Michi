@@ -5,6 +5,8 @@ import type { AgentRuntime, AgentSession, LoadAgentSessionOptions, RuntimeSessio
 import { RuntimeRunExecutor } from '../src/agents/runs/runtimeRunExecutor';
 import { ClaudeRunAdapter } from '../src/agents/runs/claudeRunAdapter';
 import type { AgentRunSpec } from '../src/agents/runs/ports';
+import { runOwner } from './helpers/owners';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 function definition(): EffectiveAgentDefinitionV1 {
   return { version: 1, name: 'Claude worker', description: 'integration fake', instructions: 'Use Claude instructions',
@@ -22,7 +24,7 @@ function runSpec(): AgentRunSpec {
 }
 
 class ClaudeTransportSession implements AgentSession {
-  id = 'claude-attempt'; runtimeId = 'claude'; owner: RuntimeSessionOwner = { kind: 'agent_run', runId: 'claude-run', attemptId: 'claude-attempt' };
+  id = 'claude-attempt'; runtimeId = 'claude'; owner: RuntimeSessionOwner = runOwner('claude-run', 'claude-attempt');
   runtimeProfileHash: string | null = null; nativeSessionId = 'claude-native-session';
   getHistory() { return []; } getPendingAssistant() { return undefined; } cancel() {}
   async *send() { yield { kind: 'chunk' as const, text: 'Claude completed' }; yield { kind: 'turn_end' as const }; }
@@ -31,6 +33,7 @@ class ClaudeTransportSession implements AgentSession {
 test('fake Claude transport uses native resume token and emits a private checkpoint', async () => {
   const session = new ClaudeTransportSession(); let loadOptions: LoadAgentSessionOptions | null = null; let newSessions = 0;
   const runtime: AgentRuntime = {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id: 'claude', label: 'Claude fake', capabilities: { modes: false, permissions: true, models: true, providerModels: false, reasoning: true, supportedReasoningLevels: ['xhigh'], apiKeys: false, warmSessions: true, saveContext: true, spawnBranches: false, nativeResume: true },
     async warm() {}, async newSession() { newSessions += 1; return session; },
     async loadSession(opts) { loadOptions = opts; session.runtimeProfileHash = opts.profileHash ?? null; return session; },

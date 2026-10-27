@@ -66,10 +66,31 @@ export function DigestIcon({ size = 14, className }: IconProps) {
   );
 }
 
+export function ClockIcon({ size = 14, className }: IconProps) {
+  // Scheduled jobs.
+  return (
+    <svg {...base(size)} className={className}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 5.2V8l1.9 1.3" />
+    </svg>
+  );
+}
+
 export function WorkspacesIcon({ size = 14, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>
       <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+    </svg>
+  );
+}
+
+export function AllThreadsIcon({ size = 14, className }: IconProps) {
+  // WorkspacesIcon's frame ruled into a header and a column: every thread,
+  // laid out as one library.
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+      <path d="M2.5 6.2h11M6.5 6.2V13" />
     </svg>
   );
 }
@@ -348,6 +369,16 @@ export function ShieldOffIcon({ size = 14, className }: IconProps) {
     <svg {...base(size)} className={className}>
       <path d="M8 1.8l5 2v4.1c0 3-2.1 5.1-5 6.3-2.9-1.2-5-3.3-5-6.3V3.8z" />
       <path d="M2 2l12 12" />
+    </svg>
+  );
+}
+
+export function EyeOffIcon({ size = 14, className }: IconProps) {
+  // Ignore: an open eye, struck through — stop watching this.
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M2 8s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z" />
+      <path d="M3 13L13 3" />
     </svg>
   );
 }

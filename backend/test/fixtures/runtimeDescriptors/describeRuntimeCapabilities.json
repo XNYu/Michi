@@ -1,0 +1,464 @@
+{
+  "kiro": {
+    "steer": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "_session/steer; queued for the next agent boundary"
+    },
+    "followUp": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "interruptAck": {
+      "availability": "inferred",
+      "confidence": "unknown",
+      "notes": "session/cancel notify — dispatch, not an agent ack"
+    },
+    "compact": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "_kiro.dev/commands/execute compact"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sessionFork": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "Kiro rewind for compatible idle conversation parents"
+    },
+    "nativeResume": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "loadSession"
+    },
+    "permissions": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "acp_permission"
+    },
+    "sandbox": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "subagents": {
+      "availability": "experimental",
+      "confidence": "unknown",
+      "notes": "_session/terminate / subagent list"
+    },
+    "usage": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    }
+  },
+  "crew": {
+    "steer": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Official Crew Gateway excludes App callers from same-turn steer"
+    },
+    "followUp": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "interruptAck": {
+      "availability": "inferred",
+      "confidence": "unknown",
+      "notes": "session/cancel notify — dispatch, not an agent ack"
+    },
+    "compact": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Kiro Crew adapter does not support Kiro compaction"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sessionFork": {
+      "availability": "native",
+      "confidence": "projected",
+      "notes": "Gateway transcript fork with inherited memory identity and context replay; not a kiro-cli checkpoint"
+    },
+    "nativeResume": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "loadSession"
+    },
+    "permissions": {
+      "availability": "native",
+      "confidence": "projected",
+      "notes": "Official sessionApproval grant required; pending tool requests forwarded to Michi Ask/Trust"
+    },
+    "sandbox": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "subagents": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Kiro Crew adapter does not stream subagent updates"
+    },
+    "usage": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    }
+  },
+  "pi": {
+    "steer": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "Agent.steer — injected after the current assistant turn"
+    },
+    "followUp": {
+      "availability": "native_unwired",
+      "confidence": "unknown",
+      "notes": "Agent.followUp exists; no Michi caller or route"
+    },
+    "interruptAck": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "Agent.abort()"
+    },
+    "compact": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "pi-agent-core exposes no compaction API"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Retry events exist on the unimplemented SDK session layer only"
+    },
+    "sessionFork": {
+      "availability": "michi_simulated",
+      "confidence": "projected",
+      "notes": "Michi node tree is authoritative; Pi JSONL is resume detail"
+    },
+    "nativeResume": {
+      "availability": "inferred",
+      "confidence": "projected",
+      "notes": "SQLite text replay, not native session file"
+    },
+    "permissions": {
+      "availability": "michi_simulated",
+      "confidence": "projected",
+      "notes": "michi_policy via beforeToolCall"
+    },
+    "sandbox": {
+      "availability": "michi_simulated",
+      "confidence": "projected",
+      "notes": "cwd path sandbox only"
+    },
+    "subagents": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "usage": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "pi-agent-core usage fields"
+    }
+  },
+  "claude": {
+    "steer": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "SDK accepts input, but Michi does not yet multiplex active-turn steering results"
+    },
+    "followUp": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Michi pendingQueued is next-turn flush, not Claude steer"
+    },
+    "interruptAck": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "SDK interrupt plus terminal result; process retirement fallback is inferred"
+    },
+    "compact": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sessionFork": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "SDK forkSession for compatible, idle conversation parents; saved message anchors select historical boundaries"
+    },
+    "nativeResume": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "--resume"
+    },
+    "permissions": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "claude_prompt_tool"
+    },
+    "sandbox": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "CLI isolation is unverifiable from Michi"
+    },
+    "subagents": {
+      "availability": "inferred",
+      "confidence": "projected",
+      "notes": "Task tool roster only"
+    },
+    "usage": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Do not fabricate token/cost"
+    }
+  },
+  "codex": {
+    "steer": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "turn/steer"
+    },
+    "followUp": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Codex exposes steer, not a separate followUp queue"
+    },
+    "interruptAck": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "turn/interrupt → interrupted"
+    },
+    "compact": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "thread/compact/start"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sessionFork": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "thread/fork for compatible, idle conversation parents"
+    },
+    "nativeResume": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "thread/resume"
+    },
+    "permissions": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "codex_approval"
+    },
+    "sandbox": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "OS sandbox + approval policy"
+    },
+    "subagents": {
+      "availability": "native",
+      "confidence": "projected",
+      "notes": "thread/started child discovery + per-thread item/* forwarding"
+    },
+    "usage": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "thread/tokenUsage/updated"
+    }
+  },
+  "cursor": {
+    "steer": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Kiro private steering extensions are not generic ACP"
+    },
+    "followUp": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "interruptAck": {
+      "availability": "inferred",
+      "confidence": "unknown",
+      "notes": "session/cancel notify — dispatch, not an agent ack"
+    },
+    "compact": {
+      "availability": "invisible",
+      "confidence": "unverifiable",
+      "notes": "Cursor ACP does not advertise Kiro compaction extensions"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sessionFork": {
+      "availability": "michi_simulated",
+      "confidence": "projected"
+    },
+    "nativeResume": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "loadSession"
+    },
+    "permissions": {
+      "availability": "native",
+      "confidence": "native",
+      "notes": "acp_permission"
+    },
+    "sandbox": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "subagents": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "usage": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    }
+  },
+  "constructor": {
+    "steer": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "followUp": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "interruptAck": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "compact": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sessionFork": {
+      "availability": "michi_simulated",
+      "confidence": "projected"
+    },
+    "nativeResume": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "permissions": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sandbox": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "subagents": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "usage": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    }
+  },
+  "__proto__": {
+    "steer": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "followUp": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "interruptAck": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "compact": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sessionFork": {
+      "availability": "michi_simulated",
+      "confidence": "projected"
+    },
+    "nativeResume": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "permissions": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sandbox": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "subagents": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "usage": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    }
+  },
+  "": {
+    "steer": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "followUp": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "interruptAck": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "compact": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "retry": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sessionFork": {
+      "availability": "michi_simulated",
+      "confidence": "projected"
+    },
+    "nativeResume": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "permissions": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "sandbox": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "subagents": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    },
+    "usage": {
+      "availability": "invisible",
+      "confidence": "unverifiable"
+    }
+  }
+}

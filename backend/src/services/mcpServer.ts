@@ -1,18 +1,48 @@
 import { openUrlTool } from '../agents/openUrlTool';
+import { readConversationUpdatesTool } from '../agents/conversationUpdatesTool';
+import { isRunOwner, chatNodeOf, hostOwner, runIdOfOwner } from '../agents/ownerMapping';
+import { reportConversationNoChange } from './scheduledJobs/conversationBatch';
 import { michiDocsTool } from './michiDocs';
+import { PAGE_TOOL_NAMES, type ActivePageTurnAttributionGetter, type PageToolName } from '../agents/pageToolNames';
+import { runPageTool } from '../agents/pageTools';
 import express, { Request, Response } from "express";
-import { randomBytes } from "crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import {
+    getParseErrorMessage,
+    normalizeObjectSchema,
+    objectFromShape,
+    safeParseAsync,
+    type AnySchema,
+    type ZodRawShapeCompat,
+} from "@modelcontextprotocol/sdk/server/zod-compat.js";
+import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
+import {
+    createMcpHost,
+    createMcpSlotProvider,
+    type HostToolDef,
+    type JsonSchemaObject,
+    type McpHost,
+    type McpHostHandler,
+    type SessionToolSink,
+    type ToolAnnotations,
+    type ToolResult,
+} from "michi-runtime/internal/mcp-host/index";
+import { mcpSlotProviderInternals } from "michi-runtime/internal/mcp-host/slotProviderInternals";
 import { z } from "zod";
 import { listThreads, searchMessages, readNode, readNodeOverview } from "./globalContext";
 import { getNodeSessionBinding } from "./dbRepository";
 import {
     listEnabledBuiltinTools,
+    AGENT_RUN_TOOL_DEFINITIONS,
+    SUBMIT_AGENT_RESULT_DEFINITION,
     type BuiltinTool,
     type ParamField,
+    type ParamObjectShape,
     type ParamSpec,
 } from "../agents/builtinTools";
+import { isAssistantWorkspace } from "../assistant/identity";
+import { ASSISTANT_TOOLS, runAssistantTool } from "../assistant/tools";
 import {
     inspectPaneTool,
     readPaneOutputTool,
@@ -25,26 +55,43 @@ import {
     askUserThreadMessageApprover,
     sendToThreadTool,
 } from "../agents/threadMessageTool";
-import type { BridgeContextResult } from "../agents/toolBridge";
+import {
+    askUserScheduledJobApprover,
+    isScheduledJobToolName,
+    scheduledJobTool,
+} from "../agents/scheduledJobTools";
 import {
     AGENT_RUN_TOOL_NAMES,
+    SUBMIT_AGENT_RESULT_TOOL,
     type AgentRunToolName,
     type AgentRunToolInvoker,
-} from "../agents/runToolBridge";
-import type { RuntimeSessionOwner } from "../agents/types";
+    type BridgeContextResult,
+} from "michi-runtime/internal/contract/tools";
+import type {
+    McpHttpEndpoint,
+    McpSlot as RuntimeMcpSlot,
+    McpSlotCallbacks as RuntimeMcpSlotCallbacks,
+    McpSlotProvider,
+    McpSlotRebindPatch,
+} from "michi-runtime/internal/contract/mcp";
+import type { MichiHostEvent } from "../agents/hostEvents";
+import type { RuntimeSessionOwner, MaintenanceExecutionContext } from "../agents/types";
+import { createMaintenanceTools } from './pages/maintenanceTools';
+import { META_AGENT_MAINTENANCE_TOOL_NAMES } from '../agents/maintenancePolicy';
 import { log } from "./logger";
+import { JSON_BODY_LIMIT_BYTES } from "./requestBodyLimit";
 import { isLoopbackAddress } from "./remoteAccess";
-import type { ResultBundleV1 } from "michi-shared";
 import { fullNodeSummaryExperimentEnabled, FULL_NODE_SUMMARY_INSTRUCTION } from "../agents/nodeSummaryExperiment";
 
 function paramToZod(spec: ParamSpec): z.ZodTypeAny {
     if (spec === "string") return z.string();
     if (spec === "number") return z.number();
+    if (spec === "integer") return z.number().int();
     if (spec === "boolean") return z.boolean();
-    if ("array" in spec) return z.array(paramToZod(spec.array));
+    if ("array" in spec) return z.array(spec.array === "string" && spec.itemMinLength !== undefined ? z.string().min(spec.itemMinLength) : paramToZod(spec.array));
     const shape: Record<string, z.ZodTypeAny> = {};
     for (const [k, v] of Object.entries(spec.object)) shape[k] = fieldToZod(v);
-    return z.object(shape);
+    return spec.additionalProperties ? z.object(shape).passthrough() : z.object(shape);
 }
 
 function fieldToZod(field: ParamField): z.ZodTypeAny {
@@ -57,185 +104,149 @@ function fieldToZod(field: ParamField): z.ZodTypeAny {
     } else {
         schema = paramToZod(field.type);
     }
+    if (field.const !== undefined) schema = z.literal(field.const);
+    if (schema instanceof z.ZodNumber) {
+        if (field.minimum !== undefined) schema = schema.min(field.minimum);
+        if (field.maximum !== undefined) schema = (schema as z.ZodNumber).max(field.maximum);
+    }
+    if (schema instanceof z.ZodString && field.minLength !== undefined) schema = schema.min(field.minLength);
+    if (schema instanceof z.ZodArray && field.minItems !== undefined) schema = schema.min(field.minItems);
     if (field.description) schema = schema.describe(field.description);
     return field.optional ? schema.optional() : schema;
 }
 
-function builtinToZodShape(tool: BuiltinTool): Record<string, z.ZodTypeAny> {
+function paramObjectToZodShape(parameters: ParamObjectShape): Record<string, z.ZodTypeAny> {
     const shape: Record<string, z.ZodTypeAny> = {};
-    for (const [k, v] of Object.entries(tool.parameters.object)) shape[k] = fieldToZod(v);
+    for (const [k, v] of Object.entries(parameters.object)) shape[k] = fieldToZod(v);
     return shape;
 }
 
-/**
- * A "slot" is a per-ACP-session binding that the MCP tool handler uses to
- * correlate incoming tool calls back to the owning parent session. The
- * client (our backend) hands kiro a URL like /mcp/<slotId> when creating
- * the ACP session, and whatever tool kiro calls on that URL knows which
- * parent session it belongs to.
- */
-export interface McpSlot {
-    slotId: string;
-    /**
-     * Product owner identity for this MCP slot. Chat sessions use
-     * `{ kind: "chat_node", nodeId }`, Agent Runs use
-     * `{ kind: "agent_run", runId, attemptId }`. When absent (legacy
-     * callers), the slot is treated as a chat slot with implicit Node
-     * ownership — existing callers remain backward compatible.
-     */
-    owner?: RuntimeSessionOwner;
-    /**
-     * Michi node id for the owning chat. This is the durable identity used to
-     * derive workspace_id from SQLite. Warm slots start null and are rebound
-     * when handed off to a real node.
-     */
-    nodeId: string | null;
-    /**
-     * Runtime session id used for callbacks into the owning agent session.
-     * Historical name: this is not always a Michi "parent" node id.
-     */
-    parentChatId: string;
-    cwd: string;
-    /**
-     * Cached workspace id for compatibility and cold-start races. Tool calls
-     * resolve the workspace from nodeId first, then runtime session ids, and
-     * only use this cache as a final fallback.
-     *
-     * For `agent_run` owners this is the authoritative Workspace binding
-     * supplied at slot creation — no Node lookup is performed.
-     */
-    workspaceId: string | null;
-    /**
-     * Better-Auth user id of the chat owner. Used by globalContext tools
-     * (list_threads / search_messages / read_node) to scope DB reads so an
-     * attacker who gains Kiro chat access cannot read another user's data.
-     * Null on desktop (single-user, no auth).
-     */
-    ownerUserId: string | null;
-    /**
-     * Explicit tool allow-list for this slot. When present, only tools whose
-     * name appears in this set are registered on the MCP server. When absent,
-     * all tools with matching callbacks are registered (legacy behavior).
-     *
-     * This is the product-level gate — independent of whether a callback
-     * exists. A tool must appear here AND have a callback to be registered.
-     */
-    exposedToolNames?: ReadonlySet<string>;
-    onSpawnBranches: (
-        topics: Array<{ title: string; prompt: string }>,
-    ) => Promise<Array<{ title: string; prompt: string; chatId: string }>>;
-    onSaveArtifact: (name: string, body: string) => BridgeContextResult | null;
-    onUpdateArtifact: (name: string, body: string) => BridgeContextResult | null;
-    onShowImage: (inputPath: string, caption?: string) => { relPath: string; mimeType: string; size: number } | { error: string };
-    /** Structured turn metadata callbacks. Optional so runtimes expose only
-     * the metadata tools they can route back into their own event stream. */
-    onSetFollowUps?: (followUps: string[]) => void;
-    onSetBranchOverview?: (overview: string) => void;
-    /** Runtime end-of-turn marker emitted after set_branch_overview so an
-     * ACP turn can finish with a non-empty model response. Described to the
-     * model as a protocol marker (not a directive) to avoid triggering
-     * prompt-injection defenses. The owning runtime strips it before
-     * exposing assistant text. */
-    metadataDoneSentinel?: string;
-    onValidateFollowUps?: () => Record<string, unknown>;
-    onApprove?: (params: {
-        toolName: string;
-        input: unknown;
-        toolUseId: string;
-    }) => Promise<
-        | { behavior: "allow"; updatedInput?: unknown }
-        | { behavior: "deny"; message: string }
-    >;
-    onAskUser?: (questions: Array<{
-        question: string;
-        header?: string;
-        options: Array<{ label: string; description?: string }>;
-        multiSelect: boolean;
-    }>) => Promise<Record<string, string> | null>;
-    /** Optional T13 generic Agent Run bridge. T16 supplies the production
-     * active-turn binding; leaving it absent preserves existing MCP behavior. */
-    agentRuns?: AgentRunToolInvoker;
-    agentRunToolNames?: readonly AgentRunToolName[];
-    onSubmitAgentResult?: (payload: unknown) => ResultBundleV1;
-    /** Best-effort UI backfill of the real MCP result onto the in-flight ACP tool card. */
+function builtinToZodShape(tool: BuiltinTool): Record<string, z.ZodTypeAny> {
+    return paramObjectToZodShape(tool.parameters);
+}
+
+// The slot binding and its callbacks are the runtime package's MCP slot
+// contract (runtime/src/contract/mcp.ts); re-exported so existing imports keep working.
+export interface McpSlot extends RuntimeMcpSlot {
+    /** Public ACP adapters backfill tool cards when a CLI omits the actual output. */
     onMcpToolResult?: (toolName: string, result: unknown) => void;
 }
-
-export interface McpSlotCallbacks {
-    /** Product owner identity. See McpSlot.owner. */
-    owner?: RuntimeSessionOwner;
-    /** Explicit tool allow-list. See McpSlot.exposedToolNames. */
-    exposedToolNames?: ReadonlySet<string>;
-    onSpawnBranches: McpSlot["onSpawnBranches"];
-    onSaveArtifact: McpSlot["onSaveArtifact"];
-    onUpdateArtifact: McpSlot["onUpdateArtifact"];
-    onShowImage: McpSlot["onShowImage"];
-    onSetFollowUps?: McpSlot["onSetFollowUps"];
-    onSetBranchOverview?: McpSlot["onSetBranchOverview"];
-    metadataDoneSentinel?: McpSlot["metadataDoneSentinel"];
-    onValidateFollowUps?: McpSlot["onValidateFollowUps"];
-    onApprove?: (params: {
-        toolName: string;
-        input: unknown;
-        toolUseId: string;
-    }) => Promise<
-        | { behavior: "allow"; updatedInput?: unknown }
-        | { behavior: "deny"; message: string }
-    >;
-    onAskUser?: McpSlot["onAskUser"];
-    agentRuns?: AgentRunToolInvoker;
-    agentRunToolNames?: readonly AgentRunToolName[];
-    onSubmitAgentResult?: McpSlot["onSubmitAgentResult"];
-    onMcpToolResult?: McpSlot["onMcpToolResult"];
+export interface McpSlotCallbacks extends RuntimeMcpSlotCallbacks {
+    onMcpToolResult?: McpSlot['onMcpToolResult'];
 }
 
-export class McpSlotRegistry {
-    private slots = new Map<string, McpSlot>();
-    private sessionGroups = new Map<string, {
-        catalog: McpSlot;
-        sessions: Map<string, { slotId: string; turn?: symbol }>;
-    }>();
+function notifyMcpToolResult(slot: McpSlot, toolName: string, result: unknown): void {
+    if (!slot.onMcpToolResult) return;
+    setImmediate(() => {
+        try {
+            slot.onMcpToolResult?.(toolName, result);
+        } catch {
+            // UI backfill is best-effort; never change the MCP response.
+        }
+    });
+}
+
+const MCP_SERVER_NAME = "michi-tools";
+const MCP_SERVER_VERSION = "1.0.0";
+/** Description of the session group's routing argument; Kiro's per-turn context names the current SessionID. */
+const SESSION_ANCHOR_DESCRIPTION = "Current ACP SessionID from the latest Michi session context.";
+const CODEX_STOP_HOOK = "stop";
+/** Where a tool's reports go when its call has no session sink (buildMcpServerForSlot): dropped. */
+const NO_HOST_EVENTS: SessionToolSink = { emit: () => {} };
+/** The backend's port when none is given, as in server.ts (PORT || 3000) and the runtime factories. */
+const DEFAULT_MCP_PORT = 3000;
+
+/**
+ * Michi's MCP slots: the runtime package's slot provider
+ * (createMcpSlotProvider) on its MCP host, which serves Michi's tool catalog
+ * and the Codex Stop hook. Slot ids, session-group routing and turn windows
+ * live in the host; the provider keeps the slots and groups.
+ */
+export class McpSlotRegistry implements McpSlotProvider {
+    private readonly host: McpHost<McpSlot>;
+    private readonly mcpPort: () => number;
+    private readonly provider: McpSlotProvider;
+
+    /**
+     * `mcpPort` is the backend's HTTP port, where mountMcp's routes are
+     * served; the runtime factories receive the same number as
+     * RuntimeFactoryDeps.mcpPort. Default 3000. A function is read each time
+     * a URL is built, so a caller can create the registry before its server
+     * has bound a port (tests listening on port 0) and still keep one source
+     * for the port.
+     */
+    constructor(options: { mcpPort?: number | (() => number) } = {}) {
+        const mcpPort = options.mcpPort ?? DEFAULT_MCP_PORT;
+        this.mcpPort = typeof mcpPort === "function" ? mcpPort : () => mcpPort;
+        this.host = createMcpHost<McpSlot>({
+            basePath: "/mcp",
+            publicBaseUrl: () => this.baseUrl,
+            serverName: MCP_SERVER_NAME,
+            serverVersion: MCP_SERVER_VERSION,
+            maxBodyBytes: JSON_BODY_LIMIT_BYTES,
+            log: (level, msg, data) => log[level]("mcp", msg, data),
+        });
+        this.host.registerToolSource((view) => michiToolCatalog(view.binding).map(hostToolDef));
+        this.host.registerHook(CODEX_STOP_HOOK, async (view, body) => {
+            const result = codexStopHookResult(view.binding, body);
+            log.debug("mcp", "codex follow-ups hook poc validator request", {
+                nodeId: view.binding.nodeId ?? null,
+                decision: typeof result.decision === "string" ? result.decision : "allow",
+                stopHookActive: !!body && typeof body === "object"
+                    ? (body as Record<string, unknown>).stop_hook_active === true
+                    : false,
+            });
+            return result;
+        });
+        this.provider = createMcpSlotProvider(this.host, {
+            sessionAnchorDescription: SESSION_ANCHOR_DESCRIPTION,
+            // mountMcp's Express route `/api/codex-hooks/<slotId>/stop`, not the
+            // host's `/mcp-hooks` route: it answers an unknown slot with `{}`.
+            hookEndpoint: (slotId, hook) => {
+                if (hook !== CODEX_STOP_HOOK) throw new Error(`Unknown MCP slot hook: ${String(hook)}`);
+                return `${this.baseUrl}/codex-hooks/${slotId}/${CODEX_STOP_HOOK}`;
+            },
+        });
+    }
+
+    /** `http://127.0.0.1:<port>/api`: server.ts mounts mountMcp's routes under /api. */
+    private get baseUrl(): string {
+        return `http://127.0.0.1:${this.mcpPort()}/api`;
+    }
+
+    /** Request handler for mountMcp's routes. */
+    httpHandler(): McpHostHandler {
+        return this.host.handler();
+    }
 
     /** Chat-only gateway: a stable catalog/URL, explicit native
      * ACP session IDs on calls. Warm sessions are never added to its routing map. */
     createSessionGroup(catalog: McpSlot): string {
-        const id = randomBytes(16).toString('hex');
-        this.sessionGroups.set(id, { catalog: { ...catalog }, sessions: new Map() });
-        return id;
+        return this.provider.createSessionGroup(catalog);
     }
 
     getSessionGroupCatalog(groupId: string): McpSlot | undefined {
-        return this.sessionGroups.get(groupId)?.catalog;
+        return mcpSlotProviderInternals(this.provider).sessionGroupCatalog(groupId)?.binding;
     }
 
     bindSession(groupId: string, sessionId: string, slotId: string): void {
-        const group = this.sessionGroups.get(groupId);
-        const slot = this.slots.get(slotId);
-        if (!group || !slot || slot.parentChatId !== sessionId || !slot.nodeId
-            || slot.owner?.kind === 'agent_run') throw new Error('Invalid MCP chat session binding');
-        group.sessions.set(sessionId, { slotId });
+        this.provider.bindSession(groupId, sessionId, slotId);
     }
 
-    beginSessionTurn(groupId: string, sessionId: string): () => void {
-        const binding = this.sessionGroups.get(groupId)?.sessions.get(sessionId);
-        if (!binding) throw new Error('MCP session is not bound');
-        const turn = Symbol('mcp-turn');
-        binding.turn = turn;
-        return () => { if (binding.turn === turn) binding.turn = undefined; };
+    beginSessionTurn(groupId: string, sessionId: string, getActivePageTurnAttribution?: ActivePageTurnAttributionGetter): () => void {
+        return this.provider.beginSessionTurn(groupId, sessionId, getActivePageTurnAttribution);
     }
 
     endSessionTurn(groupId: string, sessionId: string): void {
-        const binding = this.sessionGroups.get(groupId)?.sessions.get(sessionId);
-        if (binding) binding.turn = undefined;
+        this.provider.endSessionTurn(groupId, sessionId);
     }
 
     resolveSessionSlot(groupId: string, sessionId: string): McpSlot | undefined {
-        const binding = this.sessionGroups.get(groupId)?.sessions.get(sessionId);
-        return binding?.turn ? this.slots.get(binding.slotId) : undefined;
+        return mcpSlotProviderInternals(this.provider).resolveSessionSlot(groupId, sessionId);
     }
 
     disposeSessionGroup(groupId: string): void {
-        this.sessionGroups.delete(groupId);
+        this.provider.disposeSessionGroup(groupId);
     }
 
     create(
@@ -245,36 +256,48 @@ export class McpSlotRegistry {
         cbs: McpSlotCallbacks,
         opts?: { nodeId?: string | null; workspaceId?: string | null },
     ): McpSlot {
-        const slotId = randomBytes(16).toString("hex");
-        const slot: McpSlot = {
-            slotId,
-            owner: cbs.owner,
-            nodeId: opts?.nodeId ?? null,
-            parentChatId,
-            cwd,
-            workspaceId: opts?.workspaceId ?? null,
-            ownerUserId,
-            exposedToolNames: cbs.exposedToolNames,
-            ...cbs,
-        };
-        this.slots.set(slotId, slot);
-        return slot;
+        return this.provider.create(parentChatId, cwd, ownerUserId, cbs, opts);
     }
 
     get(slotId: string): McpSlot | undefined {
-        return this.slots.get(slotId);
+        return this.provider.get(slotId);
     }
 
-    async dispose(slotId: string): Promise<void> {
-        // Transports are created per-request and torn down on response close
-        // (see mountMcp), so there is nothing transport-level to dispose here —
-        // we just drop the slot binding.
-        this.slots.delete(slotId);
-        for (const group of this.sessionGroups.values()) {
-            for (const [sid, binding] of group.sessions) {
-                if (binding.slotId === slotId) group.sessions.delete(sid);
-            }
-        }
+    dispose(slotId: string): Promise<void> {
+        return this.provider.dispose(slotId);
+    }
+
+    /**
+     * `http://127.0.0.1:<port>/api/mcp/<slotId>`, byte for byte the URL the
+     * Kiro, Codex and Claude adapters build and the only shape Crew's relay
+     * accepts. Built from the id alone, so a disposed slot's URL answers 404.
+     */
+    endpoint(slotId: string): McpHttpEndpoint {
+        return this.provider.endpoint(slotId);
+    }
+
+    /** `http://127.0.0.1:<port>/api/mcp-session/<groupId>`, as Kiro's michiSessionMcpServer builds it. */
+    sessionEndpoint(groupId: string): McpHttpEndpoint {
+        return this.provider.sessionEndpoint(groupId);
+    }
+
+    /**
+     * mountMcp's Express route `/api/codex-hooks/<slotId>/stop`, not the
+     * host's `/mcp-hooks` route: it answers an unknown slot with `{}`.
+     */
+    hookEndpoint(slotId: string, hook: "stop"): string {
+        return this.provider.hookEndpoint(slotId, hook);
+    }
+
+    /**
+     * Assigns the patch on the slot's binding itself: the host reads that
+     * same object on every call, so the next tool call sees the new values.
+     * A new parentChatId also becomes the host slot's sessionKey, and a
+     * present exposedToolNames its allow-list. An unknown or disposed slot is
+     * left alone, as get() answers undefined for it.
+     */
+    rebind(slotId: string, patch: McpSlotRebindPatch): void {
+        this.provider.rebind(slotId, patch);
     }
 }
 
@@ -283,7 +306,7 @@ function resolveSlotBinding(slot: McpSlot): { workspaceId: string | null; nodeId
     // creation time. They MUST NOT perform a Node lookup — Runs have no
     // backing node row, and querying one would be both incorrect and a
     // contract violation (§2.5 of the implementation plan).
-    if (slot.owner?.kind === "agent_run") {
+    if (isRunOwner(slot.owner)) {
         return { workspaceId: slot.workspaceId, nodeId: null };
     }
 
@@ -323,67 +346,254 @@ function isToolExposed(slot: McpSlot, toolName: string): boolean {
     return slot.exposedToolNames.has(toolName);
 }
 
+/**
+ * Which catalog a slot gets. The assistant's needs both markers: the slot is
+ * bound to a chat in the Michi assistant's workspace (the database, read on
+ * every request) and was created by a session running the assistant profile
+ * (`slot.restricted`). With only one of the two the session was not set up as
+ * the assistant, or is outside its home, so the slot gets neither catalog.
+ */
+function slotCatalog(slot: McpSlot): "assistant" | "maintenance" | "fenced" | "chat" {
+    if (slot.maintenance === true) {
+        return !!chatNodeOf(slot.owner) && slot.getActiveMaintenanceExecutionContext ? 'maintenance' : 'fenced';
+    }
+    const home = !isRunOwner(slot.owner) && isAssistantWorkspace(resolveSlotBinding(slot).workspaceId);
+    const profile = slot.restricted === true;
+    if (home && profile) return "assistant";
+    return home || profile ? "fenced" : "chat";
+}
+
+function maintenanceJsonSchemaToZod(schema: Record<string, unknown>): z.ZodTypeAny {
+    const converted = maintenanceJsonSchemaShape(schema);
+    // Descriptions are how an agent learns a field's format and a block's rules; keep them in the listed schema.
+    return typeof schema.description === 'string' && schema.description ? converted.describe(schema.description) : converted;
+}
+
+function maintenanceJsonSchemaShape(schema: Record<string, unknown>): z.ZodTypeAny {
+    const branches = Array.isArray(schema.oneOf) ? schema.oneOf
+        : Array.isArray(schema.anyOf) ? schema.anyOf : null;
+    if (branches) {
+        const schemas = branches.filter((branch): branch is Record<string, unknown> => Boolean(branch) && typeof branch === 'object')
+            .map((branch) => maintenanceJsonSchemaToZod(branch));
+        if (schemas.length === 1) return schemas[0];
+        if (schemas.length > 1) return z.union(schemas as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+        return z.unknown();
+    }
+    if (Object.prototype.hasOwnProperty.call(schema, 'const')) return z.literal(schema.const as string | number | boolean | null);
+    if (schema.enum && Array.isArray(schema.enum) && schema.enum.length > 0) {
+        const values = schema.enum;
+        if (values.every((value): value is string => typeof value === 'string')) {
+            return z.enum(values as [string, ...string[]]);
+        }
+        const literals = values.map((value) => z.literal(value as string | number | boolean | null));
+        return literals.length === 1 ? literals[0] : z.union(literals as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+    }
+    if (Array.isArray(schema.type)) {
+        const schemas = schema.type.map((type) => maintenanceJsonSchemaToZod({ ...schema, type }));
+        return schemas.length === 1 ? schemas[0] : z.union(schemas as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]);
+    }
+    switch (schema.type) {
+        case 'string': {
+            let value = z.string();
+            if (typeof schema.minLength === 'number') value = value.min(schema.minLength);
+            if (typeof schema.maxLength === 'number') value = value.max(schema.maxLength);
+            return value;
+        }
+        case 'number': {
+            let value = z.number();
+            if (typeof schema.minimum === 'number') value = value.min(schema.minimum);
+            if (typeof schema.maximum === 'number') value = value.max(schema.maximum);
+            if (typeof schema.exclusiveMinimum === 'number') value = value.gt(schema.exclusiveMinimum);
+            if (typeof schema.exclusiveMaximum === 'number') value = value.lt(schema.exclusiveMaximum);
+            return value;
+        }
+        case 'integer': {
+            let value = z.number().int();
+            if (typeof schema.minimum === 'number') value = value.min(schema.minimum);
+            if (typeof schema.maximum === 'number') value = value.max(schema.maximum);
+            if (typeof schema.exclusiveMinimum === 'number') value = value.gt(schema.exclusiveMinimum);
+            if (typeof schema.exclusiveMaximum === 'number') value = value.lt(schema.exclusiveMaximum);
+            return value;
+        }
+        case 'boolean': return z.boolean();
+        case 'null': return z.null();
+        case 'array': {
+            let value = z.array(schema.items && typeof schema.items === 'object'
+                ? maintenanceJsonSchemaToZod(schema.items as Record<string, unknown>) : z.unknown());
+            if (typeof schema.minItems === 'number') value = value.min(schema.minItems);
+            if (typeof schema.maxItems === 'number') value = value.max(schema.maxItems);
+            return value;
+        }
+        case 'object': {
+            const properties = schema.properties && typeof schema.properties === 'object'
+                ? schema.properties as Record<string, unknown> : {};
+            const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+            const shape: Record<string, z.ZodTypeAny> = {};
+            for (const [key, value] of Object.entries(properties)) {
+                if (!value || typeof value !== 'object') continue;
+                const field = maintenanceJsonSchemaToZod(value as Record<string, unknown>);
+                shape[key] = required.has(key) ? field : field.optional();
+            }
+            const object = z.object(shape);
+            if (schema.additionalProperties === false) return object.strict();
+            if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+                return object.catchall(maintenanceJsonSchemaToZod(schema.additionalProperties as Record<string, unknown>));
+            }
+            return object.passthrough();
+        }
+        default:
+            // JSON Schema allows object schemas to omit `type` when they are
+            // expressed through properties/required/additionalProperties.
+            if (schema.properties || schema.required || schema.additionalProperties !== undefined) {
+                return maintenanceJsonSchemaToZod({ ...schema, type: 'object' });
+            }
+            return z.unknown();
+    }
+}
+
+function registerMaintenanceTools(registerTool: AddTool, slot: McpSlot): void {
+    if (!slot.getActiveMaintenanceExecutionContext) return;
+    const tools = createMaintenanceTools(() => slot.getActiveMaintenanceExecutionContext?.() ?? null, {});
+    for (const tool of tools) {
+        if (!META_AGENT_MAINTENANCE_TOOL_NAMES.includes(tool.name) || !isToolExposed(slot, tool.name)) continue;
+        const properties = Object.fromEntries(Object.entries(tool.parameters.properties).map(([key, schema]) =>
+            [key, maintenanceJsonSchemaToZod(schema as Record<string, unknown>)]));
+        const required = new Set(tool.parameters.required);
+        const inputSchema: Record<string, z.ZodTypeAny> = Object.fromEntries(Object.entries(properties).map(([key, field]) =>
+            [key, required.has(key) ? field : field.optional()]));
+        registerTool(tool.name, { description: tool.description, inputSchema }, async (args) => {
+            const result = tool.execute(args);
+            return { content: result.content, ...(result.isError ? { isError: true } : {}) };
+        });
+    }
+}
+
+/**
+ * The assistant's whole catalog (assistant/tools.ts, the Meta agent's chat
+ * window) in place of the ordinary chat tools: cross-workspace reads, Pages in
+ * every workspace, starting a conversation with its approval through this
+ * slot's ask_user channel, and the native Page tools. Nothing that writes files or
+ * sends into an existing conversation is offered.
+ */
+function registerAssistantTools(registerTool: AddTool, slot: McpSlot): void {
+    // No Desk tools while Agent Desk is off, whatever the slot's allow-list says.
+    for (const tool of ASSISTANT_TOOLS) {
+        if (!isToolExposed(slot, tool.name)) continue;
+        registerTool(tool.name, { description: tool.description, inputSchema: paramObjectToZodShape(tool.parameters) }, async (args) => {
+            const binding = resolveSlotBinding(slot);
+            return runAssistantTool(tool, {
+                ownerUserId: slot.ownerUserId,
+                workspaceId: binding.workspaceId,
+                nodeId: binding.nodeId,
+                approveThreadMessage: askUserThreadMessageApprover(slot.onAskUser),
+                getActivePageTurnAttribution: slot.getActivePageTurnAttribution,
+            }, args);
+        });
+    }
+}
+
+/** The artifact_saved / artifact_updated payload for a context the bridge saved or updated. */
+function artifactPayload(result: BridgeContextResult): Extract<MichiHostEvent, { type: "artifact_saved" }>["payload"] {
+    return { contextId: result.id, name: result.name, filePath: result.filePath, size: result.size };
+}
+
 function allowedAgentRunToolNames(slot: McpSlot): AgentRunToolName[] {
     const configured = slot.agentRunToolNames
         ?? (slot.exposedToolNames
             ? AGENT_RUN_TOOL_NAMES
-            : slot.owner?.kind === 'agent_run' ? [] : AGENT_RUN_TOOL_NAMES);
+            : isRunOwner(slot.owner) ? [] : AGENT_RUN_TOOL_NAMES);
     return configured.filter((name) => isToolExposed(slot, name));
 }
 
-function notifyMcpToolResult(slot: McpSlot, toolName: string, result: unknown): void {
-    if (!slot.onMcpToolResult) return;
-    setImmediate(() => {
-        try {
-            slot.onMcpToolResult?.(toolName, result);
-        } catch {
-            // Backfill is best-effort; never fail the MCP response.
-        }
-    });
+/** What a tool's handler gets besides its arguments. */
+interface ToolCallExtra {
+    signal?: AbortSignal;
+    /** The slot's session sink (see hostToolDef); absent through buildMcpServerForSlot. */
+    sink?: SessionToolSink;
 }
-
-function attachMcpToolResultNotify(server: McpServer, slot: McpSlot): void {
-    const proto = server as unknown as { registerTool: (...args: any[]) => unknown };
-    const original = proto.registerTool.bind(server);
-    proto.registerTool = (name: string, config: unknown, handler: (...args: any[]) => unknown) =>
-        original(name, config, async (...args: any[]) => {
-            const result = await handler(...args);
-            notifyMcpToolResult(slot, name, result);
-            return result;
-        });
+/** Gets the arguments as the tool's zod schema parsed them (see hostToolDef). */
+type ToolHandler = (args: any, extra?: ToolCallExtra) => unknown;
+type ToolInputSchema = Record<string, z.ZodTypeAny> | z.ZodTypeAny;
+interface ToolConfig {
+    description: string;
+    inputSchema: ToolInputSchema;
+    annotations?: ToolAnnotations;
 }
+/** One tool of a slot's catalog, in the shape McpServer.registerTool takes. */
+interface MichiTool {
+    name: string;
+    config: ToolConfig;
+    handler: ToolHandler;
+}
+type AddTool = (name: string, config: ToolConfig, handler: ToolHandler) => void;
 
 /**
- * Build an MCP server bound to a slot. Side-effect tools delegate to the
- * slot's callbacks, which own ACP session creation and context file writes.
- * A new McpServer + transport pair is built per-slot on demand so the
- * tool handler has a closure over the specific slot.
+ * The tools a slot serves right now, in wire order. Side-effect tools
+ * delegate to the slot's callbacks, which own ACP session creation and
+ * context file writes. Evaluated on every tools/list and tools/call (the
+ * host's tool source), so catalog gates read the slot as it is then.
  */
-export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): McpServer {
-    const server = new McpServer(
-        { name: "michi-tools", version: "1.0.0" },
-        { capabilities: { tools: {} } },
-    );
-    attachMcpToolResultNotify(server, slot);
-
-    // Keep the legacy slot schemas untouched. The shared endpoint adds one
-    // required field to every tool, checks it, then passes the original payload
-    // to the existing handler. tools/list is identical for every chat.
-    const registerTool: McpServer['registerTool'] = (name, config, handler) => {
-        if (sessionAnchor === undefined) return server.registerTool(name, config, handler);
-        const anchor = z.string().min(1).describe('Current ACP SessionID from the latest Michi session context.');
-        const inputSchema = config.inputSchema instanceof z.ZodType
-            ? config.inputSchema.and(z.object({ session_id: anchor }))
-            : { ...config.inputSchema, session_id: anchor };
-        return server.registerTool(name, { ...config, inputSchema }, async (args: any, extra: any) => {
-            if (args.session_id !== sessionAnchor) throw new Error('MCP session_id does not match the routed session');
-            const { session_id: _anchor, ...payload } = args;
-            return (handler as (args: any, extra: any) => any)(payload, extra);
+function michiToolCatalog(slot: McpSlot): MichiTool[] {
+    const tools: MichiTool[] = [];
+    // A slot that is not serving (McpSlot.isServing) refuses every call.
+    const registerTool: AddTool = (name, config, handler) => {
+        const isServing = slot.isServing;
+        tools.push({
+            name,
+            config,
+            handler: async (...args: [any, ToolCallExtra?]) => {
+                if (isServing && !isServing()) {
+                    return { content: [{ type: "text" as const, text: "This session cannot run tools now: it has not passed its safety check, or it was stopped." }], isError: true };
+                }
+                const result = await handler(...args);
+                notifyMcpToolResult(slot, name, result);
+                return result;
+            },
         });
     };
 
+    // The Michi assistant gets its own catalog instead of the ordinary chat
+    // tools; only the user channel (ask_user) and the runtime's
+    // turn-metadata tools below are shared with every chat.
+    const catalog = slotCatalog(slot);
+    if (catalog === 'maintenance') {
+        registerMaintenanceTools(registerTool, slot);
+        return tools;
+    }
+    if (catalog === "assistant") registerAssistantTools(registerTool, slot);
+    const ordinary = catalog === "chat";
+    const exposes = (name: string) => ordinary && isToolExposed(slot, name);
+
+    const builtinRegistration = (name: string) => {
+        const tool = listEnabledBuiltinTools().find(candidate => candidate.name === name);
+        if (!tool) throw new Error(`Missing builtin tool definition: ${name}`);
+        return { description: tool.description, inputSchema: builtinToZodShape(tool) };
+    };
+    for (const name of PAGE_TOOL_NAMES) {
+        const tool = listEnabledBuiltinTools().find((candidate) => candidate.name === name);
+        if (!tool || !exposes(name)) continue;
+        registerTool(name, {
+            description: tool.description,
+            inputSchema: builtinToZodShape(tool),
+            annotations: {
+                readOnlyHint: name === 'read_home' || name === 'list_pages' || name === 'read_page' || name === 'read_database' || name === 'list_page_components' || name === 'read_page_component' || name === 'list_tasks',
+                destructiveHint: name === 'edit_home' || name === 'edit_page' || name === 'edit_database' || name === 'create_page' || name === 'save_page_component' || name === 'configure_database_view',
+                openWorldHint: false,
+            },
+        }, async (args) => {
+            const binding = resolveSlotBinding(slot);
+            return runPageTool(name as PageToolName, {
+                ownerUserId: slot.ownerUserId,
+                workspaceId: binding.workspaceId,
+                nodeId: binding.nodeId,
+                ownerKind: slot.owner ? hostOwner(slot.owner).kind : null,
+                getActivePageTurnAttribution: slot.getActivePageTurnAttribution,
+            }, args);
+        });
+    }
+
     const docsTool = listEnabledBuiltinTools().find(tool => tool.name === 'michi_docs');
-    if (docsTool && isToolExposed(slot, docsTool.name)) registerTool(docsTool.name, {
+    if (docsTool && exposes(docsTool.name)) registerTool(docsTool.name, {
         description: docsTool.description,
         inputSchema: builtinToZodShape(docsTool),
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -395,17 +605,26 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
     // callback indirection.
     const SIDE_EFFECT_TOOL_NAMES = new Set(["open_url", "spawn_branches", "save_artifact", "update_artifact", "show_image"]);
     for (const tool of listEnabledBuiltinTools()) {
-        if (!SIDE_EFFECT_TOOL_NAMES.has(tool.name) || !isToolExposed(slot, tool.name)) continue;
+        if (!SIDE_EFFECT_TOOL_NAMES.has(tool.name) || !exposes(tool.name)) continue;
+        // A tool whose slot callback the host left out is not offered.
+        if (tool.name === "show_image" && !slot.onShowImage) continue;
+        if (tool.name === "spawn_branches" && !slot.onSpawnBranches) continue;
+        if (tool.name === "save_artifact" && !slot.onSaveArtifact) continue;
+        if (tool.name === "update_artifact" && !slot.onUpdateArtifact) continue;
         registerTool(
             tool.name,
             { description: tool.description, inputSchema: builtinToZodShape(tool) },
-            async (args) => {
+            async (args, extra) => {
+                // The tool's effect on the session, reported once its callback has succeeded.
+                const report = (event: MichiHostEvent) => (extra?.sink ?? NO_HOST_EVENTS).emit(event);
                 switch (tool.name) {
                     case "open_url": return openUrlTool({ ...resolveSlotBinding(slot), ownerUserId: slot.ownerUserId }, args.url);
                     case "spawn_branches": {
                         const topics = Array.isArray(args?.topics) ? args.topics : [];
                         const trimmed = topics.slice(0, 5);
+                        if (!slot.onSpawnBranches) throw new Error("spawn_branches is unavailable");
                         const result = await slot.onSpawnBranches(trimmed);
+                        report({ type: "spawn_branches", payload: { topics: result } });
                         const summary = result.map((r) => `- ${r.title} (chatId: ${r.chatId})`).join("\n");
                         return {
                             content: [{
@@ -419,8 +638,10 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
                         if (!name || typeof args?.body !== "string") {
                             throw new Error("save_artifact requires name and body");
                         }
+                        if (!slot.onSaveArtifact) throw new Error("save_artifact is unavailable");
                         const result = slot.onSaveArtifact(name, args.body);
                         if (!result) throw new Error(`Could not save artifact: @${name}`);
+                        report({ type: "artifact_saved", payload: artifactPayload(result) });
                         return { content: [{ type: "text", text: `Saved artifact: @${result.name}` }] };
                     }
                     case "update_artifact": {
@@ -428,15 +649,19 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
                         if (!name || typeof args?.body !== "string") {
                             throw new Error("update_artifact requires name and body");
                         }
+                        if (!slot.onUpdateArtifact) throw new Error("update_artifact is unavailable");
                         const result = slot.onUpdateArtifact(name, args.body);
                         if (!result) throw new Error(`Artifact does not exist or could not be updated: @${name}`);
+                        report({ type: "artifact_updated", payload: artifactPayload(result) });
                         return { content: [{ type: "text", text: `Updated artifact: @${result.name}` }] };
                     }
                     case "show_image": {
                         const p = typeof args?.path === "string" ? args.path : "";
                         const caption = typeof args?.caption === "string" ? args.caption : undefined;
-                        const result = slot.onShowImage(p, caption);
+                        const result = slot.onShowImage?.(p, caption);
+                        if (!result) throw new Error("show_image is unavailable");
                         if ("error" in result) throw new Error(`show_image failed: ${result.error}`);
+                        report({ type: "image", payload: { path: result.relPath, caption, mimeType: result.mimeType, size: result.size } });
                         return { content: [{ type: "text", text: `Displayed ${result.relPath} to the user.` }] };
                     }
                 }
@@ -445,7 +670,7 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
         );
     }
 
-    if (slot.agentRuns) {
+    if (slot.agentRuns && ordinary) {
         const allowedNames = allowedAgentRunToolNames(slot);
         if (allowedNames.length > 0) registerAgentRunTools(registerTool, slot.agentRuns, allowedNames);
     }
@@ -454,15 +679,15 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
     // Attempt collector callback AND when the tool passes the exposed-tool
     // gate. Chat slots must never discover or invoke this tool.
     if (
-        slot.owner?.kind === "agent_run"
+        isRunOwner(slot.owner)
         && slot.onSubmitAgentResult
-        && isToolExposed(slot, "submit_agent_result")
+        && isToolExposed(slot, SUBMIT_AGENT_RESULT_TOOL)
     ) {
         registerTool(
-            "submit_agent_result",
+            SUBMIT_AGENT_RESULT_TOOL,
             {
-                description: "Submit the final structured Result Bundle for this exact Agent Run Attempt before finishing.",
-                inputSchema: z.record(z.string(), z.unknown()),
+                description: SUBMIT_AGENT_RESULT_DEFINITION.description,
+                inputSchema: z.object(paramObjectToZodShape(SUBMIT_AGENT_RESULT_DEFINITION.parameters)).passthrough(),
             },
             async (args) => {
                 if (!slot.onSubmitAgentResult) {
@@ -553,15 +778,9 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
         );
     }
 
-    if (isToolExposed(slot, "list_threads")) registerTool(
+    if (exposes("list_threads")) registerTool(
         "list_threads",
-        {
-            description:
-                "List threads (trees) and their nodes in this workspace as JSON. Use when user references prior work outside this thread. Not speculatively. Each thread has its own id (\"t-...\") and a nodes[] array; only node ids (\"n-...\") are valid input to read_node.",
-            inputSchema: {
-                workspaceId: z.string().optional().describe("Defaults to current."),
-            },
-        },
+        builtinRegistration("list_threads"),
         async (args) => {
             const binding = resolveSlotBinding(slot);
             const result = listThreads(
@@ -574,17 +793,9 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
         },
     );
 
-    if (isToolExposed(slot, "search_messages")) registerTool(
+    if (exposes("search_messages")) registerTool(
         "search_messages",
-        {
-            description:
-                "Keyword search across workspace messages. Scope defaults to current workspace; pass 'all' only when user asked or current is empty.",
-            inputSchema: {
-                query: z.string().min(1).describe("Case-insensitive substring."),
-                scope: z.enum(["current", "all"]).optional(),
-                limit: z.number().int().min(1).max(50).optional().describe("Default 10."),
-            },
-        },
+        builtinRegistration("search_messages"),
         async (args) => {
             const binding = resolveSlotBinding(slot);
             const result = searchMessages(
@@ -598,21 +809,9 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
         },
     );
 
-    if (isToolExposed(slot, "read_node")) registerTool(
+    if (exposes("read_node")) registerTool(
         "read_node",
-        {
-            description:
-                "Read a node's transcript. Supports pagination via from/offset/limit and role filtering. " +
-                "Without options, returns the most recent messages within a 12KB cap (tail-biased). " +
-                "Use AFTER list_threads/search_messages identified a relevant nodeId.",
-            inputSchema: {
-                nodeId: z.string().min(1),
-                role: z.enum(["user", "assistant"]).optional().describe("Filter to only user or assistant messages."),
-                from: z.enum(["head", "tail"]).optional().describe("Read direction. 'head' from oldest, 'tail' (default) from newest."),
-                offset: z.number().int().min(1).optional().describe("1-based offset from the 'from' direction. Default 1."),
-                limit: z.number().int().min(1).optional().describe("Max messages to return. Default: 12KB size cap."),
-            },
-        },
+        builtinRegistration("read_node"),
         async (args) => {
             const binding = resolveSlotBinding(slot);
             const opts: { role?: "user" | "assistant"; from?: "head" | "tail"; offset?: number; limit?: number } = {};
@@ -626,17 +825,25 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
         },
     );
 
-    if (isToolExposed(slot, "read_node_overview")) registerTool(
-        "read_node_overview",
-        {
-            description:
-                "Read a node's branch overview journal — a chronological summary of each turn, plus message count. " +
-                "Much lighter than read_node; use to decide whether and what to read in detail. " +
-                "Use AFTER list_threads identified a relevant nodeId.",
-            inputSchema: {
-                nodeId: z.string().min(1),
-            },
+    if (exposes("report_conversation_no_change")) registerTool(
+        "report_conversation_no_change",
+        builtinRegistration("report_conversation_no_change"),
+        async (args) => reportConversationNoChange(resolveSlotBinding(slot), args),
+    );
+
+    if (exposes("read_conversation_updates")) registerTool(
+        "read_conversation_updates",
+        builtinRegistration("read_conversation_updates"),
+        async (args) => {
+            const binding = resolveSlotBinding(slot);
+            return readConversationUpdatesTool({ ownerUserId: slot.ownerUserId, workspaceId: binding.workspaceId,
+                runOwnerRunId: runIdOfOwner(slot.owner), backendConnectionId: 'local' }, args);
         },
+    );
+
+    if (exposes("read_node_overview")) registerTool(
+        "read_node_overview",
+        builtinRegistration("read_node_overview"),
         async (args) => {
             const binding = resolveSlotBinding(slot);
             const result = readNodeOverview(binding.workspaceId, slot.ownerUserId, String(args?.nodeId ?? ""));
@@ -650,158 +857,80 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
     // and Codex — all three are MCP clients of this same server/slot (see report). The caller
     // binding is built from resolveSlotBinding(slot) + slot.ownerUserId + slot.owner (never from
     // args) so a model cannot forge ownerUserId/workspaceId/runOwner via a tool argument.
-    const executionRefSchema = z.object({
-        kind: z.enum(["chat_turn", "agent_run"]),
-        nodeId: z.string().optional().describe("The chat node id. May be omitted when nodeId or paneId is given at the top level."),
-        turnId: z.string().optional().describe("Required when kind is chat_turn."),
-        runId: z.string().optional().describe("The Agent Run id. May be omitted when runId or paneId is given at the top level."),
-    });
-
     function paneInspectionBinding(): PaneInspectionToolBinding {
         const resolved = resolveSlotBinding(slot);
         return {
             ownerUserId: slot.ownerUserId,
             workspaceId: resolved.workspaceId,
-            runOwnerRunId: slot.owner?.kind === "agent_run" ? slot.owner.runId : null,
+            runOwnerRunId: runIdOfOwner(slot.owner),
             backendConnectionId: 'local',
         };
     }
 
-    if (isToolExposed(slot, "inspect_pane")) registerTool(
+    if (exposes("inspect_pane")) registerTool(
         "inspect_pane",
-        {
-            description:
-                "Inspect one pane (a chat thread, digest, artifact, or Agent Run) by its paneId/nodeId/runId — " +
-                "exactly one of those three locates it. Returns identity, current activity, message/turn counts, " +
-                "lineage, runtime binding, and a short latest-output preview. Read-only; does not load full " +
-                "conversation history — use read_pane_output for that. Optionally pass executionRef to inspect a " +
-                "specific historical turn/run instead of the most recent one; an executionRef names its own pane, " +
-                "so paneId/nodeId/runId may then be omitted.",
-            inputSchema: {
-                paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
-                nodeId: z.string().optional().describe("A chat/digest/artifact node id (mutually exclusive with paneId/runId). Not needed when executionRef is given."),
-                runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
-                executionRef: executionRefSchema.optional().describe("Inspect this specific historical execution instead of the latest one."),
-            },
-        },
+        builtinRegistration("inspect_pane"),
         async (args) => {
             if (!isToolExposed(slot, "inspect_pane")) throw new Error("Tool is not exposed: inspect_pane");
             const binding = paneInspectionBinding();
             return inspectPaneTool(binding, {
-                paneId: args?.paneId,
-                nodeId: args?.nodeId,
-                runId: args?.runId,
+                paneId: typeof args?.paneId === "string" ? args.paneId : undefined,
+                nodeId: typeof args?.nodeId === "string" ? args.nodeId : undefined,
+                runId: typeof args?.runId === "string" ? args.runId : undefined,
                 executionRef: args?.executionRef,
             });
         },
     );
 
-    if (isToolExposed(slot, "read_pane_output")) registerTool(
+    if (exposes("read_pane_output")) registerTool(
         "read_pane_output",
-        {
-            description:
-                "Read the (possibly paginated) output text of one pane's chat turn or Agent Run — the content " +
-                "behind inspect_pane's short preview. selection picks 'latest' (default, may be partial/streaming), " +
-                "'last_completed' (only a successfully committed execution), or 'execution' (a specific historical " +
-                "execution named by executionRef; paneId/nodeId/runId may then be omitted). Use pageCursor from a " +
-                "prior call's nextPageCursor to continue reading; a changed nextPageCursor means the underlying " +
-                "output moved on and must be re-read fresh.",
-            inputSchema: {
-                paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
-                nodeId: z.string().optional().describe("A chat node id (mutually exclusive with paneId/runId). Not needed when executionRef is given."),
-                runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
-                selection: z.enum(["latest", "last_completed", "execution"]).optional().describe("Default 'latest'."),
-                executionRef: executionRefSchema.optional().describe("Required when selection is 'execution'."),
-                outputId: z.string().optional().describe("Re-request this specific prior output identity."),
-                pageCursor: z.string().optional().describe("Continue a prior paginated read."),
-                limitBytes: z.number().int().min(1).optional().describe("Max UTF-8 bytes per page. Default 16384, max 65536."),
-            },
-        },
+        builtinRegistration("read_pane_output"),
         async (args) => {
             if (!isToolExposed(slot, "read_pane_output")) throw new Error("Tool is not exposed: read_pane_output");
             const binding = paneInspectionBinding();
             return readPaneOutputTool(binding, {
-                paneId: args?.paneId,
-                nodeId: args?.nodeId,
-                runId: args?.runId,
+                paneId: typeof args?.paneId === "string" ? args.paneId : undefined,
+                nodeId: typeof args?.nodeId === "string" ? args.nodeId : undefined,
+                runId: typeof args?.runId === "string" ? args.runId : undefined,
                 selection: args?.selection,
                 executionRef: args?.executionRef,
-                outputId: args?.outputId,
-                pageCursor: args?.pageCursor,
+                outputId: typeof args?.outputId === "string" ? args.outputId : undefined,
+                pageCursor: typeof args?.pageCursor === "string" ? args.pageCursor : undefined,
                 limitBytes: args?.limitBytes,
             });
         },
     );
 
-    if (isToolExposed(slot, "list_panes")) registerTool(
+    if (exposes("list_panes")) registerTool(
         "list_panes",
-        {
-            description:
-                "List panes (chat threads, digests, artifacts, Agent Runs, and open UI surfaces) in the caller's " +
-                "own workspace — never another workspace or backend. scope='open' (default) lists only panes a " +
-                "renderer currently reports as open; scope='all' lists every permitted persistent object plus " +
-                "still-open surfaces. Returns compact summaries (title, activity, latest execution outcome, how " +
-                "many views have it open) — NOT output content; use inspect_pane/read_pane_output for that. " +
-                "includeArchived defaults false. Use cursor from a prior call's nextCursor to page through the rest.",
-            inputSchema: {
-                treeId: z.string().optional().describe("Only panes in this tree."),
-                kind: z.enum(["chat", "agent-run", "digest", "artifact", "launcher", "files", "review", "file", "diff", "terminal", "browser"])
-                    .optional().describe("Only panes of this kind."),
-                parentNodeId: z.string().optional().describe("Only chat panes whose parent node is this id."),
-                scope: z.enum(["open", "all"]).optional().describe("Default 'open'."),
-                includeArchived: z.boolean().optional().describe("Default false."),
-                limit: z.number().int().min(1).optional().describe("Page size. Default 20, max 100."),
-                cursor: z.string().optional().describe("Continue a prior paginated list."),
-            },
-        },
+        builtinRegistration("list_panes"),
         async (args) => {
             if (!isToolExposed(slot, "list_panes")) throw new Error("Tool is not exposed: list_panes");
             const binding = paneInspectionBinding();
             return listPanesTool(binding, {
-                treeId: args?.treeId,
+                treeId: typeof args?.treeId === "string" ? args.treeId : undefined,
                 kind: args?.kind,
-                parentNodeId: args?.parentNodeId,
+                parentNodeId: typeof args?.parentNodeId === "string" ? args.parentNodeId : undefined,
                 scope: args?.scope,
-                includeArchived: args?.includeArchived,
+                includeArchived: typeof args?.includeArchived === "boolean" ? args.includeArchived : undefined,
                 limit: args?.limit,
-                cursor: args?.cursor,
+                cursor: typeof args?.cursor === "string" ? args.cursor : undefined,
             });
         },
     );
 
-    if (isToolExposed(slot, "wait_pane")) registerTool(
+    if (exposes("wait_pane")) registerTool(
         "wait_pane",
-        {
-            description:
-                "Block, up to timeoutMs, until a pane changes or a specific execution reaches a terminal state — " +
-                "use instead of polling inspect_pane in a loop. until='changed' requires cursor (from a prior " +
-                "inspect_pane/list_panes/wait_pane result) and returns as soon as anything about the pane differs " +
-                "from that cursor's snapshot, immediately if it already has. until='terminal' requires " +
-                "executionRef naming a turn/run that has already started (a still-queued chat has no turnId yet " +
-                "and can only use 'changed') and returns once THAT execution completes/fails/is cancelled — a " +
-                "later execution starting on the same pane does not satisfy it; the executionRef also locates the " +
-                "pane, so paneId/nodeId/runId may be omitted. timeoutMs defaults to 20000ms, max 30000ms; on " +
-                "timeout, reason is 'timed_out' and nothing is cancelled — call again to keep waiting. At most 8 " +
-                "concurrent waits are allowed per caller.",
-            inputSchema: {
-                paneId: z.string().optional().describe("Opaque pane id from a prior inspect/list result."),
-                nodeId: z.string().optional().describe("A chat/digest/artifact node id (mutually exclusive with paneId/runId). Not needed when executionRef is given."),
-                runId: z.string().optional().describe("An Agent Run id (mutually exclusive with paneId/nodeId)."),
-                until: z.enum(["changed", "terminal"]).describe("Which condition ends the wait."),
-                cursor: z.string().optional().describe("Required when until is 'changed'."),
-                executionRef: executionRefSchema.optional().describe("Required when until is 'terminal'; names the execution to wait for."),
-                timeoutMs: z.number().int().min(1).optional().describe("Max wait, ms. Default 20000, max 30000."),
-            },
-        },
+        builtinRegistration("wait_pane"),
         async (args) => {
             if (!isToolExposed(slot, "wait_pane")) throw new Error("Tool is not exposed: wait_pane");
             const binding = paneInspectionBinding();
             return waitPaneTool(binding, {
-                paneId: args?.paneId,
-                nodeId: args?.nodeId,
-                runId: args?.runId,
+                paneId: typeof args?.paneId === "string" ? args.paneId : undefined,
+                nodeId: typeof args?.nodeId === "string" ? args.nodeId : undefined,
+                runId: typeof args?.runId === "string" ? args.runId : undefined,
                 until: args?.until,
-                cursor: args?.cursor,
+                cursor: typeof args?.cursor === "string" ? args.cursor : undefined,
                 executionRef: args?.executionRef,
                 timeoutMs: args?.timeoutMs,
             });
@@ -809,11 +938,10 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
     );
 
     // Cross-thread messaging. Chat slots only: the caller identity is the
-    // slot's bound node/workspace, and every message is approved by the user
-    // through this slot's own ask_user channel inside the tool itself, so a
-    // Trust/YOLO permission mode cannot skip it.
+    // slot's bound node/workspace. Optional approval uses this slot's own
+    // ask_user channel; ordinary coordination sends without a prompt.
     const sendToThreadSpec = listEnabledBuiltinTools().find((tool) => tool.name === SEND_TO_THREAD_TOOL);
-    if (sendToThreadSpec && slot.owner?.kind !== "agent_run" && isToolExposed(slot, SEND_TO_THREAD_TOOL)) registerTool(
+    if (sendToThreadSpec && !isRunOwner(slot.owner) && exposes(SEND_TO_THREAD_TOOL)) registerTool(
         SEND_TO_THREAD_TOOL,
         { description: sendToThreadSpec.description, inputSchema: builtinToZodShape(sendToThreadSpec) },
         async (args) => {
@@ -823,15 +951,44 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
                     ownerUserId: slot.ownerUserId,
                     workspaceId: binding.workspaceId,
                     nodeId: binding.nodeId,
-                    isAgentRun: slot.owner?.kind === "agent_run",
+                    isAgentRun: isRunOwner(slot.owner),
                 },
-                { nodeId: args?.nodeId, text: args?.text },
+                { nodeId: args?.nodeId, text: args?.text, requestApproval: args?.requestApproval },
                 askUserThreadMessageApprover(slot.onAskUser),
             );
         },
     );
 
-    if (isToolExposed(slot, "ask_user")) registerTool(
+    // Scheduled Job management: ordinary chat threads only (never the Michi
+    // assistant's catalog, nor a fenced slot), workspace from the slot
+    // binding, and every change except pausing approved by the user through
+    // ask_user (permission modes cannot skip it). See agents/scheduledJobTools.ts.
+    if (!isRunOwner(slot.owner)) {
+        for (const spec of listEnabledBuiltinTools()) {
+            if (!isScheduledJobToolName(spec.name) || !exposes(spec.name)) continue;
+            const toolName = spec.name;
+            registerTool(
+                toolName,
+                { description: spec.description, inputSchema: builtinToZodShape(spec) },
+                async (args) => {
+                    const binding = resolveSlotBinding(slot);
+                    return scheduledJobTool(
+                        toolName,
+                        {
+                            ownerUserId: slot.ownerUserId,
+                            workspaceId: binding.workspaceId,
+                            nodeId: binding.nodeId,
+                            isAgentRun: false,
+                        },
+                        args,
+                        askUserScheduledJobApprover(slot.onAskUser),
+                    );
+                },
+            );
+        }
+    }
+
+    if (slot.onAskUser && isToolExposed(slot, "ask_user")) registerTool(
         "ask_user",
         {
             description:
@@ -884,90 +1041,103 @@ export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): Mc
         },
     );
 
-    if (isToolExposed(slot, "approve")) registerTool(
-        "approve",
-        {
-            description:
-                "Internal permission gate — claude calls this automatically. Do not invoke directly.",
-            inputSchema: {
-                tool_name: z.string(),
-                input: z.unknown().optional(),
-                tool_use_id: z.string().optional(),
-            },
-        },
-        async (args) => {
-            if (!slot.onApprove) {
-                return {
-                    content: [{
-                        type: "text",
-                        text: JSON.stringify({ behavior: "deny", message: "approve callback not configured" }),
-                    }],
-                };
-            }
-            const verdict = await slot.onApprove({
-                toolName: String(args?.tool_name ?? ""),
-                input: args?.input,
-                toolUseId: typeof args?.tool_use_id === "string" ? args.tool_use_id : "",
-            });
-            return { content: [{ type: "text", text: JSON.stringify(verdict) }] };
-        },
-    );
-
-    return server;
+    return tools;
 }
 
-function registerAgentRunTools(registerTool: McpServer['registerTool'], invoker: AgentRunToolInvoker,
+function registerAgentRunTools(registerTool: AddTool, invoker: AgentRunToolInvoker,
     allowedNames?: readonly AgentRunToolName[]): void {
-    const genericObject = z.record(z.string(), z.unknown());
-    const schemas: Record<AgentRunToolName, Record<string, z.ZodTypeAny>> = {
-        list_agents: {},
-        spawn_agent: {
-            agentId: z.string().optional(),
-            ephemeralDefinition: genericObject.optional(),
-            task: z.string().min(1),
-            contextManifest: genericObject.optional(),
-            permissionRestriction: genericObject.optional(),
-            environment: genericObject.optional(),
-            expectedResult: genericObject.optional(),
-            completionMode: z.enum(['wait', 'notify', 'wake', 'detach']).optional(),
-            runTtlMs: z.number().int().nonnegative().optional(),
-        },
-        check_agent: { runId: z.string().min(1) },
-        wait_agent: {
-            runId: z.string().optional(), watchId: z.string().optional(),
-            timeoutMs: z.number().int().nonnegative().optional(),
-        },
-        send_agent_input: {
-            runId: z.string().min(1), text: z.string().min(1),
-            mode: z.enum(['queued', 'immediate']).optional(), expectedAttemptId: z.string().optional(),
-        },
-        cancel_agent: { runId: z.string().min(1), reason: z.string().optional(), expectedAttemptId: z.string().optional() },
-        watch_agent_runs: {
-            runIds: z.array(z.string().min(1)).min(1), condition: genericObject,
-            completionMode: z.enum(['notify', 'wake']).optional(),
-        },
-        update_agent_watch: {
-            watchId: z.string().min(1), addRunIds: z.array(z.string().min(1)).optional(), condition: genericObject.optional(),
-        },
-    };
-    const descriptions: Record<AgentRunToolName, string> = {
-        list_agents: 'List enabled Agents available to this Workspace.',
-        spawn_agent: 'Start one durable Agent Run and return its Run ID without creating a branch.',
-        check_agent: 'Read the latest durable Run status and compact handoff.',
-        wait_agent: 'Perform one bounded event-driven wait. Timeout leaves the Run active.',
-        send_agent_input: 'Queue Run input, or explicitly redirect the active Attempt in immediate mode.',
-        cancel_agent: 'Cancel the currently expected Agent Run Attempt.',
-        watch_agent_runs: 'Create a durable Watch for long work; use wake/notify instead of polling.',
-        update_agent_watch: 'Add Runs or update an active Watch condition.',
-    };
     const allowed = allowedNames ? new Set(allowedNames) : null;
     for (const name of AGENT_RUN_TOOL_NAMES) {
         if (allowed && !allowed.has(name)) continue;
-        registerTool(name, { description: descriptions[name], inputSchema: schemas[name] }, async (args) => {
+        registerTool(name, { description: AGENT_RUN_TOOL_DEFINITIONS[name].description, inputSchema: paramObjectToZodShape(AGENT_RUN_TOOL_DEFINITIONS[name].parameters) }, async (args) => {
             const result = await invoker.invoke(name, args ?? {});
             return { content: [{ type: 'text', text: JSON.stringify(result) }] };
         });
     }
+}
+
+const EMPTY_OBJECT_JSON_SCHEMA: JsonSchemaObject = { type: "object", properties: {} };
+
+/** The zod schema McpServer.registerTool keeps for a config's inputSchema. */
+function toolZodSchema(schema: ToolInputSchema): AnySchema {
+    return schema instanceof z.ZodType ? schema as AnySchema : objectFromShape(schema as ZodRawShapeCompat);
+}
+
+/** The JSON Schema McpServer's tools/list renders for that zod schema. */
+function wireInputSchema(schema: AnySchema): JsonSchemaObject {
+    const object = normalizeObjectSchema(schema);
+    return object
+        ? toJsonSchemaCompat(object, { strictUnions: true, pipeStrategy: "input" }) as JsonSchemaObject
+        : EMPTY_OBJECT_JSON_SCHEMA;
+}
+
+/**
+ * A catalog entry as a host tool: tools/list gets the JSON Schema McpServer
+ * would render, and tools/call validates arguments with the zod schema the
+ * way McpServer does (parsed values to the handler, the same error otherwise).
+ * The handler also gets the call's signal and the slot's session sink.
+ */
+function hostToolDef(tool: MichiTool): HostToolDef<McpSlot> {
+    const schema = toolZodSchema(tool.config.inputSchema);
+    return {
+        name: tool.name,
+        description: tool.config.description,
+        inputSchema: wireInputSchema(schema),
+        ...(tool.config.annotations ? { annotations: tool.config.annotations } : {}),
+        async handler(args, ctx) {
+            const parsed = await safeParseAsync(normalizeObjectSchema(schema) ?? schema, args);
+            if (!parsed.success) {
+                const reason = getParseErrorMessage("error" in parsed ? parsed.error : "Unknown error");
+                const error = new McpError(ErrorCode.InvalidParams, `Input validation error: Invalid arguments for tool ${tool.name}: ${reason}`);
+                return { content: [{ type: "text", text: error.message }], isError: true };
+            }
+            return await tool.handler(parsed.data, { signal: ctx.signal, sink: ctx.sink }) as ToolResult;
+        },
+    };
+}
+
+/**
+ * The slot's catalog (michiToolCatalog) as an SDK McpServer. Exists only for
+ * tests and compatibility, which read its `_registeredTools` or connect it to
+ * their own transport; Michi serves MCP through the runtime package host
+ * (McpSlotRegistry, mountMcp), built from the same catalog. With
+ * `sessionAnchor` every tool also requires session_id to equal it, as the
+ * session group's routing argument. There is no session sink here, so
+ * tools report nothing to a session.
+ */
+export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): McpServer {
+    const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION });
+    for (const tool of michiToolCatalog(slot)) {
+        const { config, handler } = sessionAnchor === undefined ? tool : anchoredTool(tool, sessionAnchor);
+        server.registerTool(tool.name, config as Parameters<McpServer["registerTool"]>[1], handler as never);
+    }
+    return server;
+}
+
+function anchoredTool(tool: MichiTool, sessionAnchor: string): Pick<MichiTool, "config" | "handler"> {
+    const anchor = z.string().min(1).describe(SESSION_ANCHOR_DESCRIPTION);
+    const { inputSchema } = tool.config;
+    return {
+        config: {
+            ...tool.config,
+            inputSchema: inputSchema instanceof z.ZodType
+                ? inputSchema.and(z.object({ session_id: anchor }))
+                : { ...inputSchema, session_id: anchor },
+        },
+        handler: async (args: any, extra?: ToolCallExtra) => {
+            if (args.session_id !== sessionAnchor) throw new Error("MCP session_id does not match the routed session");
+            const { session_id: _anchor, ...payload } = args;
+            return tool.handler(payload, extra);
+        },
+    };
+}
+
+function codexStopHookResult(slot: McpSlot, payload: unknown): Record<string, unknown> {
+    if (!slot.onValidateFollowUps) return {};
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+    const eventName = (payload as Record<string, unknown>).hook_event_name;
+    if (eventName !== "Stop") return {};
+    return slot.onValidateFollowUps();
 }
 
 /**
@@ -982,119 +1152,61 @@ export function validateCodexStopHookForSlot(
     payload: unknown,
 ): Record<string, unknown> {
     const slot = registry.get(slotId);
-    if (!slot?.onValidateFollowUps) return {};
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-    const eventName = (payload as Record<string, unknown>).hook_event_name;
-    if (eventName !== "Stop") return {};
-    return slot.onValidateFollowUps();
+    return slot ? codexStopHookResult(slot, payload) : {};
 }
 
 /**
- * Mount the MCP HTTP endpoint under /mcp/:slotId on the provided Express router.
+ * Mount Michi's MCP routes on the provided Express router: /mcp/:slotId,
+ * /mcp-session/:groupId and the Codex Stop Hook at /codex-hooks/:slotId/stop.
+ * The runtime package host serves them (its routes `/mcp/<slot>`,
+ * `/mcp-session/<group>`, `/mcp-hooks/<slot>/stop`), behind its gates:
+ * loopback peers only, no Origin or proxy forwarding headers, and the body
+ * limit. express.json has parsed the body already and is passed through.
  *
- * Stateless transport: a fresh McpServer + StreamableHTTPServerTransport is
- * built per POST and torn down when the response closes. Because nothing is
- * shared across requests there is:
- *   - no per-session standalone SSE stream → no 409 "Only one SSE stream is
- *     allowed per session" when a client reconnects its stream;
- *   - no session id to invalidate when the backend restarts (nodemon/redeploy);
- *   - no cached transport to race over on the first concurrent requests.
- * Every tool here is request/response, so the server→client SSE channel that
- * stateful mode provides is unnecessary.
+ * Stateless transport: a fresh server and transport per POST, torn down when
+ * the response closes, so there is no standalone SSE stream to collide on
+ * reconnect, no session id to invalidate when the backend restarts, and no
+ * cached transport to race over. GET and DELETE answer 405.
  */
 export function mountMcp(
     router: express.Router,
     registry: McpSlotRegistry,
 ): void {
+    const serve = registry.httpHandler();
+    // The host routes on req.url. Put the Express path back before any other
+    // 'finish' listener (server.ts's access log) reads req.path.
+    const forward = (req: Request, res: Response, path: string) => {
+        const original = req.url;
+        const restore = () => { req.url = original; };
+        res.prependOnceListener("finish", restore);
+        res.once("close", restore);
+        req.url = path;
+        void serve(req, res, req.body);
+    };
+
     router.post("/codex-hooks/:slotId/stop", (req: Request<{ slotId: string }>, res: Response) => {
         const slotId = req.params.slotId;
-        if (!isLoopbackAddress(req.socket.remoteAddress)) {
-            log.warn("mcp", "codex stop hook rejected non-loopback request", {
-                slotId,
-                remoteAddress: req.socket.remoteAddress,
-            });
-            res.status(403).json({});
-            return;
-        }
-
-        const slot = registry.get(slotId);
-        const result = validateCodexStopHookForSlot(registry, slotId, req.body);
-        log.debug("mcp", "codex follow-ups hook poc validator request", {
-            slotId,
-            nodeId: slot?.nodeId ?? null,
-            decision: typeof result.decision === "string" ? result.decision : "allow",
-            stopHookActive:
-                !!req.body && typeof req.body === "object"
-                    ? (req.body as Record<string, unknown>).stop_hook_active === true
-                    : false,
-        });
-        res.json(result);
-    });
-
-    const handlePost = async (req: Request<{ slotId?: string; groupId?: string }>, res: Response) => {
-        const groupId = req.params.groupId;
-        const slotId = req.params.slotId ?? groupId!;
-        if (!isLoopbackAddress(req.socket.remoteAddress)) {
-            log.warn("mcp", "mcp slot rejected non-loopback request", {
-                slotId,
-                remoteAddress: req.socket.remoteAddress,
-            });
-            res.status(403).json({ error: "internal mcp is loopback-only" });
-            return;
-        }
-        let slot = groupId ? registry.getSessionGroupCatalog(groupId) : registry.get(slotId);
-        let sessionAnchor: string | undefined = groupId ? '__catalog__' : undefined;
-        if (groupId && slot && req.body?.method === 'tools/call') {
-            const sid = req.body?.params?.arguments?.session_id;
-            slot = typeof sid === 'string' ? registry.resolveSessionSlot(groupId, sid) : undefined;
-            if (!slot) {
-                res.json({ jsonrpc: '2.0', id: req.body.id ?? null, error: {
-                    code: -32602,
-                    message: 'session_id must name a bound, active chat in this MCP group. Use the current Michi SessionID.',
-                } });
+        if (!registry.get(slotId)) {
+            // No such slot: the Stop Hook fails open with {}, as it always has.
+            if (!isLoopbackAddress(req.socket.remoteAddress)) {
+                log.warn("mcp", "codex stop hook rejected non-loopback request", { remoteAddress: req.socket.remoteAddress });
+                res.status(403).json({});
                 return;
             }
-            sessionAnchor = sid;
-        }
-        if (!slot) {
-            // Almost always an orphaned child from a previous backend instance
-            // (nodemon restart / redeploy) still POSTing to its old slotId.
-            // Surface it so "MCP not connected" stops being a silent mystery.
-            log.warn("mcp", "unknown mcp slot", { slotId, method: req.method });
-            res.status(404).json({ error: "unknown mcp slot" });
+            res.json({});
             return;
         }
-        const server = buildMcpServerForSlot(slot, sessionAnchor);
-        const transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: undefined, // stateless
-        });
-        res.on("close", () => {
-            void transport.close().catch(() => {});
-            void server.close().catch(() => {});
-        });
-        try {
-            await server.connect(transport);
-            await transport.handleRequest(req, res, req.body);
-        } catch (err) {
-            log.error("mcp", "request failed", { slotId, err: (err as Error).message });
-            if (!res.headersSent) res.status(500).end();
-        }
-    };
+        forward(req, res, `/mcp-hooks/${slotId}/${CODEX_STOP_HOOK}`);
+    });
 
-    // Stateless mode exposes no standalone server→client SSE stream and has no
-    // session to terminate, so GET (open stream) and DELETE (end session) are
-    // unsupported. Spec-compliant clients treat 405 here as "no server push".
-    const methodNotAllowed = (_req: Request, res: Response) => {
-        res
-            .status(405)
-            .set("Allow", "POST")
-            .json({ jsonrpc: "2.0", error: { code: -32000, message: "Method Not Allowed" }, id: null });
-    };
-
-    router.post("/mcp/:slotId", handlePost);
-    router.get("/mcp/:slotId", methodNotAllowed);
-    router.delete("/mcp/:slotId", methodNotAllowed);
-    router.post('/mcp-session/:groupId', handlePost);
-    router.get('/mcp-session/:groupId', methodNotAllowed);
-    router.delete('/mcp-session/:groupId', methodNotAllowed);
+    const slotRoute = (req: Request<{ slotId: string }>, res: Response) =>
+        forward(req, res, `/mcp/${encodeURIComponent(req.params.slotId)}`);
+    const groupRoute = (req: Request<{ groupId: string }>, res: Response) =>
+        forward(req, res, `/mcp-session/${encodeURIComponent(req.params.groupId)}`);
+    router.post("/mcp/:slotId", slotRoute);
+    router.get("/mcp/:slotId", slotRoute);
+    router.delete("/mcp/:slotId", slotRoute);
+    router.post("/mcp-session/:groupId", groupRoute);
+    router.get("/mcp-session/:groupId", groupRoute);
+    router.delete("/mcp-session/:groupId", groupRoute);
 }

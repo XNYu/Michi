@@ -1,0 +1,134 @@
+/* Tokens only, except two sizes with no token that reuse existing values:
+   10.5px (.area-settings__kicker) and 26px (.michi-doc-title). */
+
+.meta-sched__doc {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  font-family: var(--ui-font);
+  font-size: var(--fs-lg);
+  line-height: 1.45;
+  color: var(--term-fg);
+}
+
+.meta-sched__head { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.meta-sched__kicker { margin: 0; display: flex; align-items: center; gap: .4em; }
+.meta-sched__title { margin: 0; }
+.meta-sched__pause { position: absolute; top: -4px; right: 0; display: inline-flex; align-items: center; gap: 5px; }
+
+.meta-sched__tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--term-digest);
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-surface);
+  color: var(--term-digest);
+  font: 400 var(--fs-xs)/1 var(--font-mono);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.meta-sched__tag:is([data-state='paused'], [data-state='off']) { border-color: var(--term-line-s); color: var(--term-mid); }
+.meta-sched__tag[data-state='error'] { border-color: var(--term-danger); color: var(--term-danger); }
+
+.meta-sched__line { margin: 2px 0 0; font-size: var(--fs-2xl); line-height: 1.6; color: var(--term-fg); }
+.meta-sched__status { margin: 0; font-size: var(--fs-lg); color: var(--term-danger-text, var(--term-danger)); }
+.meta-sched__status:is([data-state='paused'], [data-state='off']) { color: var(--term-mid); }
+.meta-sched__status-detail { display: block; margin-top: 2px; font: 400 var(--fs-sm)/1.5 var(--font-mono); color: var(--term-muted); overflow-wrap: anywhere; }
+
+.meta-sched__src { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--fs-md); color: var(--term-muted); }
+.meta-sched__src > svg { flex: none; }
+
+.meta-sched__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--term-mid);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--term-line-s);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.meta-sched__link:hover { color: var(--term-fg); }
+.meta-sched__link:focus-visible { outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent); outline-offset: 1px; }
+
+.meta-sched__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 18px 28px; margin: 0; padding: 4px 0; }
+.meta-sched__metric dt, .meta-sched__metric dd { margin: 0; font-size: var(--fs-md); color: var(--term-muted); }
+.meta-sched__metric .meta-sched__value { font-size: 26px; font-weight: 650; letter-spacing: -.01em; line-height: 1.3; color: var(--term-fg); }
+
+.meta-sched__h2 { margin: 0 0 10px; font-size: var(--fs-xl); font-weight: 600; line-height: 1.55; }
+.meta-sched__note { margin: 6px 0 0; font-size: var(--fs-md); color: var(--term-muted); }
+
+.meta-sched__table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--fs-lg); line-height: 1.5; }
+/* Fixed column shares, so a long state label does not move the columns. */
+.meta-sched__table th:nth-child(1) { width: 33.5%; }
+.meta-sched__table th:nth-child(2) { width: 15.75%; }
+.meta-sched__table th:nth-child(3) { width: 11.6%; }
+.meta-sched__table th:nth-child(4) { width: 15.5%; }
+.meta-sched__table th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--term-line);
+  color: var(--term-muted);
+  font: 500 10.5px/1 var(--ui-font);
+  letter-spacing: .1em;
+  text-align: left;
+  text-transform: uppercase;
+}
+.meta-sched__table td { padding: 9px 10px; border-bottom: 1px solid var(--term-line); vertical-align: top; }
+.meta-sched__ws { display: flex; align-items: center; gap: 8px; font-weight: 500; }
+.meta-sched__dot { align-self: center; }
+.meta-sched__dot[data-tone='error'] { background: var(--term-danger); }
+.meta-sched__mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.meta-sched__runs { position: relative; display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0 0 0 26px; list-style: none; }
+.meta-sched__runs::before { content: ''; position: absolute; left: 7px; top: 8px; bottom: 8px; width: 1px; background: var(--term-line); }
+.meta-sched__run { position: relative; }
+.meta-sched__run::before {
+  content: '';
+  position: absolute;
+  left: -26px;
+  top: 3px;
+  width: 13px;
+  height: 13px;
+  box-sizing: border-box;
+  border: 2px solid var(--term-line-s);
+  border-radius: var(--ui-radius-pill);
+  background: var(--term-bg);
+}
+.meta-sched__run[data-tone='read']::before { border-color: var(--term-digest); }
+.meta-sched__run[data-tone='first']::before { border-color: var(--term-select); }
+.meta-sched__run[data-tone='summary']::before { border-color: var(--term-mauve); }
+.meta-sched__run[data-tone='attention']::before { border-color: var(--term-mauve); }
+.meta-sched__run[data-tone='running']::before { border-color: var(--term-accent); }
+.meta-sched__run[data-tone='error']::before { border-color: var(--term-danger); }
+.meta-sched__run-title { font-size: var(--fs-xl); font-weight: 600; line-height: 1.5; }
+.meta-sched__time { margin-left: 8px; font: 400 var(--fs-sm) var(--font-mono); color: var(--term-muted); }
+.meta-sched__run-text { margin-top: 2px; font-size: var(--fs-lg); line-height: 1.5; color: var(--term-mid); }
+.meta-sched__run-text code {
+  padding: 1px 4px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--term-alt);
+  font: 400 var(--fs-sm)/1.4 var(--font-mono);
+}
+
+/* A run with its own conversation opens it. The bleed (6px across, 4px down) is .sched-run's
+   side padding and .meta-sched__metrics' vertical padding, so the hover reads as a row. */
+.meta-sched__run-open {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-sizing: border-box;
+  width: calc(100% + 12px);
+  margin: -4px -6px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.meta-sched__run-main { flex: 1; min-width: 0; }
+.meta-sched__run-open:hover .sched-run-open { color: var(--term-accent); }

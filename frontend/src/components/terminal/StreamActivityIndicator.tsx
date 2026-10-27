@@ -19,8 +19,8 @@ import { isRunningStatus, isHiddenInternalTool } from './toolCallGrouping';
  * Deliberately returns null while visible answer text is streaming (the cursor
  * already shows that), while the turn is brand-new and empty (MessageBlock's
  * ThinkingIndicator owns that), while the tail thought block's header already
- * shows a live Thinking…/Working… status, and while Kiro subagents are working
- * (SubagentStatus renders richer per-agent detail).
+ * shows a live Thinking…/Working… status, and while subagents are working
+ * (their delegation cards and roster rows render richer per-agent detail).
  */
 
 export interface StreamActivity {
@@ -106,8 +106,8 @@ export function deriveStreamActivity(
   if (node.runtimeActivity) return { label: node.runtimeActivity };
   if (node.compacting) return { label: 'Compacting' };
 
-  // Kiro subagents get a dedicated, richer panel (SubagentStatus). Don't
-  // double up while any of them are working.
+  // Working subagents have their own live rows (delegation cards and the
+  // message roster). Don't double up while any of them are working.
   if (node.subagents?.some((s) => s.status === 'working')) return null;
 
   const last = node.messages[node.messages.length - 1];

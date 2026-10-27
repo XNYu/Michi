@@ -1,0 +1,1686 @@
+{
+  "chat-new": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1"
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Workspace instructions (these apply to every reply in this conversation — treat as if part of the system prompt):\n\nAnswer in one paragraph.\n\n\nWorkspace context files available (read with your filesystem tools when relevant; the user can also @-mention to inject contents directly):\n- spec — <cwd>/spec.md\n\n\nPrevious conversation chain leading to this branch (oldest first, for context only — do not repeat back):\n\n--- Parent thread ---\n\nUser: Parent question?\n\nAssistant: Parent answer.\n\nThe user is now drilling down from that chain.\n\nContext from previous explorations this user wants to synthesize:\n\nMerged thread text.\n\nThe user is now opening a new branch to synthesize across these threads.\n\n---\n\nFirst question"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>",
+        "origin": {
+          "kind": "human"
+        }
+      },
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Second question\n\n[Reminder: end with [FOLLOW-UP 1/3: ...], [FOLLOW-UP 2/3: ...], [FOLLOW-UP 3/3: ...] — three user-voice questions on separate lines, each ending with \"]\". Then, as the very last line, include one [BRANCH-OVERVIEW: ...] line — 1-3 sentences on what this turn did or concluded (it appends to the branch's journal; do not restate earlier turns).]"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "<uuid-1>",
+        "uuid": "<uuid-3>"
+      }
+    ],
+    "slots": [
+      {
+        "label": "after newSession",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [
+          "list_agents",
+          "spawn_agent",
+          "check_agent",
+          "wait_agent",
+          "send_agent_input",
+          "cancel_agent",
+          "watch_agent_runs",
+          "update_agent_watch"
+        ],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": "<undefined>",
+        "nodeId": "chat-1",
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-1"
+        },
+        "ownerUserId": "user-1",
+        "parentChatId": "chat-1",
+        "workspaceId": "ws-1",
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact"
+        ]
+      }
+    ],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "chat-1",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-1"
+        },
+        "ownerUserId": "user-1",
+        "workspaceId": "ws-1",
+        "nodeId": "chat-1"
+      }
+    ],
+    "forkAnchors": [
+      {
+        "nodeId": "chat-1",
+        "nativeSessionId": "<uuid-1>",
+        "assistantMessageId": "assistant-1",
+        "userMessageId": "user-msg-1",
+        "nativeMessageId": "native-message-1-1",
+        "nativeUserMessageId": "<uuid-2>"
+      },
+      {
+        "nodeId": "chat-1",
+        "nativeSessionId": "<uuid-1>",
+        "assistantMessageId": "assistant-2",
+        "userMessageId": "user-msg-2",
+        "nativeMessageId": "native-message-1-2",
+        "nativeUserMessageId": "<uuid-3>"
+      }
+    ],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"First question\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-1 <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "saveClaudeForkAnchor",
+      "event turn_end end_turn",
+      "turn \"Second question\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-1 <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.2\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "saveClaudeForkAnchor",
+      "event turn_end end_turn"
+    ]
+  },
+  "chat-branch-context": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1"
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "\nContext from previous explorations this user wants to synthesize:\n\n=== Inherited branch transcript: parent-2 ===\nThe following is the visible parent conversation up to the branch point. Messages after the branch point are not included. Treat it as prior conversation context and continue naturally; do not mention the branch mechanics unless the user asks.\n\nUser:\nBranch point question\n\n---\n\nAssistant:\nBranch point answer\n\nNote: The parent was still answering.\n\nThe user is now opening a new branch to synthesize across these threads.\n\n---\n\nBranch question"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>"
+      }
+    ],
+    "slots": [],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "chat-2",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-2"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-2",
+        "nodeId": "chat-2"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Branch question\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-2 <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "chat-follow-ups-off": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1"
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Quiet question"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>"
+      },
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Second quiet question"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "<uuid-1>",
+        "uuid": "<uuid-3>"
+      }
+    ],
+    "slots": [],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "chat-3",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-3"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-3",
+        "nodeId": "chat-3"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Quiet question\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-3 <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn",
+      "turn \"Second quiet question\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-3 <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.2\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "chat-resume": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": "<undefined>",
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1"
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "native-resume-4",
+        "sessionId": "<undefined>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Restored chat bootstrap.\n\n---\n\nQuestion after restore\n\n[Reminder: end with [FOLLOW-UP 1/3: ...], [FOLLOW-UP 2/3: ...], [FOLLOW-UP 3/3: ...] — three user-voice questions on separate lines, each ending with \"]\". Then, as the very last line, include one [BRANCH-OVERVIEW: ...] line — 1-3 sentences on what this turn did or concluded (it appends to the branch's journal; do not restate earlier turns).]"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "native-resume-4",
+        "uuid": "<uuid-1>"
+      }
+    ],
+    "slots": [
+      {
+        "label": "after loadSession",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [
+          "list_agents",
+          "spawn_agent",
+          "check_agent",
+          "wait_agent",
+          "send_agent_input",
+          "cancel_agent",
+          "watch_agent_runs",
+          "update_agent_watch"
+        ],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": "<undefined>",
+        "nodeId": "chat-4",
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-4"
+        },
+        "ownerUserId": null,
+        "parentChatId": "chat-4",
+        "workspaceId": "ws-4",
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact"
+        ]
+      }
+    ],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "chat-4",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-4"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-4",
+        "nodeId": "chat-4"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Question after restore\"",
+      "event retry_start \"Restoring original Claude session\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-4 native-resume-4",
+      "event retry_end",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "chat-native-fork": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": true,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1"
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<uuid-1>",
+        "sessionId": "<uuid-2>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Forked question"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "<uuid-2>",
+        "uuid": "<uuid-3>"
+      }
+    ],
+    "slots": [],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "chat-5",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-5"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-5",
+        "nodeId": "chat-5"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Forked question\"",
+      "event retry_start \"Restoring original Claude session\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-5 <uuid-2>",
+      "event retry_end",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "assistant": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "disallowedTools": [
+          "Bash",
+          "BashOutput",
+          "KillShell",
+          "PowerShell",
+          "REPL",
+          "Monitor",
+          "Sleep",
+          "Read",
+          "Glob",
+          "Grep",
+          "LS",
+          "LSP",
+          "NotebookRead",
+          "Edit",
+          "MultiEdit",
+          "Write",
+          "NotebookEdit",
+          "WebFetch",
+          "WebSearch",
+          "WebBrowser",
+          "RemoteTrigger",
+          "PushNotification",
+          "Task",
+          "Agent",
+          "TaskOutput",
+          "TaskStop",
+          "TaskCreate",
+          "TaskGet",
+          "TaskList",
+          "TaskUpdate",
+          "TodoWrite",
+          "ListAgents",
+          "SendMessage",
+          "SendUserMessage",
+          "TeamCreate",
+          "TeamDelete",
+          "Workflow",
+          "ReportFindings",
+          "Brief",
+          "StructuredOutput",
+          "CronCreate",
+          "CronDelete",
+          "CronList",
+          "ScheduleWakeup",
+          "AskUserQuestion",
+          "EnterPlanMode",
+          "ExitPlanMode",
+          "EnterWorktree",
+          "ExitWorktree",
+          "Config",
+          "Skill",
+          "SlashCommand",
+          "ToolSearch",
+          "ListMcpResourcesTool",
+          "ReadMcpResourceTool"
+        ],
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "isolateSettings": true,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1",
+              "alwaysLoad": true
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": true,
+        "restrictedMode": true,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "strictMcpConfig": true,
+        "systemPromptAppend": "You are Michi, the assistant for the user's Spaces.\nHelp the user understand their work and keep their pages useful. Ground answers in the page or conversations relevant to their request, and make only the page changes they asked for.\nReply directly in the user's language with concise, natural prose. Let the request determine the answer's shape; do not add routine closing questions or describe internal bookkeeping.\n\nCapabilities — your tools are the Michi assistant's own, described in this conversation's opening instructions.\nYou have no file, shell or web tools, and none for artifacts, branching, scheduling, images or Agent Runs: do not offer or attempt them.\n\nTool override — AskUserQuestion:\nDo NOT use the built-in AskUserQuestion tool. It does not work in this environment.\nInstead, use the MCP tool ____michi_internal____ask_user to ask the user structured\nquestions with selectable options. The schema is identical: questions[] with question,\nheader, options[{label, description}], and multiSelect. The tool blocks until the user\nresponds in the UI.",
+        "tools": [],
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Assistant bootstrap.\n\n---\n\nWhat are my threads doing?"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>",
+        "origin": {
+          "kind": "human"
+        }
+      }
+    ],
+    "slots": [
+      {
+        "label": "after newSession",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": [
+          "list_threads",
+          "read_node",
+          "send_to_thread"
+        ],
+        "nodeId": "assistant-1",
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "assistant-1"
+        },
+        "ownerUserId": null,
+        "parentChatId": "assistant-1",
+        "restricted": true,
+        "workspaceId": "ws-assistant",
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "isServing",
+          "onAskUser",
+          "onSaveArtifact",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact"
+        ]
+      }
+    ],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "assistant-1",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "assistant-1"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-assistant",
+        "nodeId": "assistant-1"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"What are my threads doing?\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId assistant-1 <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "agent-run": {
+    "spawns": [
+      {
+        "bare": true,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1",
+              "alwaysLoad": true
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": true,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "strictMcpConfig": true,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": [
+          "ToolSearch",
+          "Read",
+          "Bash",
+          "Edit",
+          "MultiEdit",
+          "NotebookEdit"
+        ],
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Run bootstrap: fix the failing test.\n\n---\n\nStart the run."
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>"
+      }
+    ],
+    "slots": [
+      {
+        "label": "after newSession",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [
+          "spawn_agent",
+          "check_agent"
+        ],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": [
+          "bash",
+          "check_agent",
+          "edit",
+          "read",
+          "spawn_agent",
+          "submit_agent_result"
+        ],
+        "nodeId": null,
+        "owner": {
+          "kind": "agent_run",
+          "runId": "run-1",
+          "attemptId": "attempt-1"
+        },
+        "ownerUserId": "user-run",
+        "parentChatId": "attempt-1",
+        "workspaceId": "ws-run",
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onShowImage",
+          "onSpawnBranches",
+          "onSubmitAgentResult",
+          "onUpdateArtifact"
+        ]
+      }
+    ],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "attempt-1",
+        "owner": {
+          "kind": "agent_run",
+          "runId": "run-1",
+          "attemptId": "attempt-1"
+        },
+        "ownerUserId": "user-run",
+        "workspaceId": "ws-run",
+        "nodeId": null
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [
+      {
+        "submitter": {
+          "kind": "agent_run",
+          "runId": "run-1",
+          "attemptId": "attempt-1"
+        },
+        "payload": {
+          "summary": "done"
+        }
+      }
+    ],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Start the run.\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "agent-run-resume": {
+    "spawns": [
+      {
+        "bare": true,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": "<undefined>",
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1",
+              "alwaysLoad": true
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": true,
+        "resumeSessionId": "native-run-token",
+        "sessionId": "<undefined>",
+        "strictMcpConfig": true,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": [
+          "ToolSearch",
+          "Read"
+        ],
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Resumed run bootstrap.\n\n---\n\nContinue the run."
+        },
+        "parent_tool_use_id": null,
+        "session_id": "native-run-token",
+        "uuid": "<uuid-1>"
+      }
+    ],
+    "slots": [
+      {
+        "label": "after loadSession",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": [
+          "read",
+          "submit_agent_result"
+        ],
+        "nodeId": null,
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "agent_run",
+          "runId": "run-2",
+          "attemptId": "attempt-2"
+        },
+        "ownerUserId": "user-run",
+        "parentChatId": "attempt-2",
+        "workspaceId": "ws-run",
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact"
+        ]
+      }
+    ],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "attempt-2",
+        "owner": {
+          "kind": "agent_run",
+          "runId": "run-2",
+          "attemptId": "attempt-2"
+        },
+        "ownerUserId": "user-run",
+        "workspaceId": "ws-run",
+        "nodeId": null
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Continue the run.\"",
+      "event retry_start \"Restoring original Claude session\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "event retry_end",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "hook-poc-sentinel": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": true,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1",
+              "alwaysLoad": true
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "settingsInline": {
+          "hooks": {
+            "Stop": [
+              {
+                "hooks": [
+                  {
+                    "type": "mcp_tool",
+                    "server": "__michi_internal__",
+                    "tool": "validate_turn_metadata",
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- Provide this turn's branch-journal entry (what this turn did — explored, decided, discovered)\n  through the runtime's structured metadata tool. Entries accumulate into a chronological journal;\n  do not restate earlier turns and do not duplicate the entry in the visible answer.\n- Do not emit [TITLE:] or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer. Never emit a [BRANCH-OVERVIEW:] sentinel; the\n  runtime supplies the overview through a hidden metadata tool.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.\n\n\nClaude Stop-hook POC — structured turn metadata:\n- Before ending every real user turn, call the MCP tool mcp____michi_internal____set_branch_overview exactly once.\n- Pass {\"overview\":\"...\"}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered — matching the user's language. Entries accumulate into the branch's journal; do not restate earlier turns.\n- Never emit a [BRANCH-OVERVIEW: ...] sentinel or put the overview in visible answer text.\n- Call set_branch_overview only after [FOLLOW-UP 3/3: ...] has been emitted and closed.\n- After the set_branch_overview tool result, emit no more visible text. The overview tail is background metadata work.\n- Do not call set_follow_ups. Follow-ups are delivered only through the three [FOLLOW-UP n/3: ...] sentinel lines.\n- A strict sentinel reminder is appended to every real user turn.\n- Emit all three follow-up sentinel lines before calling set_branch_overview.\n- Do not call validate_turn_metadata or validate_follow_ups yourself; Claude Code invokes validation automatically from the Stop hook.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Hook question one\n\n[Follow-up metadata reminder for this turn: do not call set_follow_ups. Near the end of the final answer, emit exactly these three standalone sentinel lines, numbered in order and each closed with \"]\":\n[FOLLOW-UP 1/3: a concise next question written in the user's voice and language]\n[FOLLOW-UP 2/3: a concise next question written in the user's voice and language]\n[FOLLOW-UP 3/3: a concise next question written in the user's voice and language]\nThe questions are what the user would ask you next, not questions you ask the user. Do not omit the closing brackets.]"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>"
+      },
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Hook question two\n\n[Follow-up metadata reminder for this turn: do not call set_follow_ups. Near the end of the final answer, emit exactly these three standalone sentinel lines, numbered in order and each closed with \"]\":\n[FOLLOW-UP 1/3: a concise next question written in the user's voice and language]\n[FOLLOW-UP 2/3: a concise next question written in the user's voice and language]\n[FOLLOW-UP 3/3: a concise next question written in the user's voice and language]\nThe questions are what the user would ask you next, not questions you ask the user. Do not omit the closing brackets.]"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "<uuid-1>",
+        "uuid": "<uuid-3>"
+      }
+    ],
+    "slots": [
+      {
+        "label": "after newSession",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [
+          "list_agents",
+          "spawn_agent",
+          "check_agent",
+          "wait_agent",
+          "send_agent_input",
+          "cancel_agent",
+          "watch_agent_runs",
+          "update_agent_watch"
+        ],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": "<undefined>",
+        "nodeId": "hook-sentinel",
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "hook-sentinel"
+        },
+        "ownerUserId": null,
+        "parentChatId": "hook-sentinel",
+        "workspaceId": "ws-hook",
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onSetBranchOverview",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact",
+          "onValidateFollowUps"
+        ]
+      }
+    ],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "hook-sentinel",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "hook-sentinel"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-hook",
+        "nodeId": "hook-sentinel"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Hook question one\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId hook-sentinel <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn",
+      "turn \"Hook question two\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId hook-sentinel <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.2\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "hook-poc-hook-tool": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": true,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1",
+              "alwaysLoad": true
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "settingsInline": {
+          "hooks": {
+            "Stop": [
+              {
+                "hooks": [
+                  {
+                    "type": "mcp_tool",
+                    "server": "__michi_internal__",
+                    "tool": "validate_turn_metadata",
+                    "input": {}
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Provide exactly three concise follow-up questions through the runtime's structured metadata tool.\n  Write them from the user's point of view and in the user's language. One question should drill deeper into the answer;\n  the other two should approach it from unexpected or devil's-advocate angles. Do not duplicate them in the visible answer.\n- Provide this turn's branch-journal entry (what this turn did — explored, decided, discovered)\n  through the runtime's structured metadata tool. Entries accumulate into a chronological journal;\n  do not restate earlier turns and do not duplicate the entry in the visible answer.\n- Do not emit title metadata in commentary, progress/status updates, tool plans,\n  or any message before you are ready to deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.\n\n\nClaude Stop-hook POC — structured turn metadata:\n- Before ending every real user turn, call the MCP tool mcp____michi_internal____set_branch_overview exactly once.\n- Pass {\"overview\":\"...\"}: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered — matching the user's language. Entries accumulate into the branch's journal; do not restate earlier turns.\n- The structured overview tool call is canonical. Do not duplicate the overview as textual fallback metadata.\n- Before ending every real user turn, call the MCP tool mcp____michi_internal____set_follow_ups exactly once.\n- Pass {\"follow_ups\":[\"...\",\"...\",\"...\"]}: exactly three concise questions written in the user's voice and language.\n- The structured tool call is canonical. Do not duplicate the follow-ups as textual fallback metadata.\n- Do not call validate_turn_metadata or validate_follow_ups yourself; Claude Code invokes validation automatically from the Stop hook.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Hook question one"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>"
+      },
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Hook question two"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "<uuid-1>",
+        "uuid": "<uuid-3>"
+      }
+    ],
+    "slots": [
+      {
+        "label": "after newSession",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [
+          "list_agents",
+          "spawn_agent",
+          "check_agent",
+          "wait_agent",
+          "send_agent_input",
+          "cancel_agent",
+          "watch_agent_runs",
+          "update_agent_watch"
+        ],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": "<undefined>",
+        "nodeId": "hook-hook-tool",
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "hook-hook-tool"
+        },
+        "ownerUserId": null,
+        "parentChatId": "hook-hook-tool",
+        "workspaceId": "ws-hook",
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onSetBranchOverview",
+          "onSetFollowUps",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact",
+          "onValidateFollowUps"
+        ]
+      }
+    ],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "hook-hook-tool",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "hook-hook-tool"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-hook",
+        "nodeId": "hook-hook-tool"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Hook question one\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId hook-hook-tool <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn",
+      "turn \"Hook question two\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId hook-hook-tool <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.2\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "follow-ups-hook-tool-without-poc": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1"
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Plain hook-tool question"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>"
+      }
+    ],
+    "slots": [],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "hook-tool-plain",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "hook-tool-plain"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-hook",
+        "nodeId": "hook-tool-plain"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Plain hook-tool question\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId hook-tool-plain <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "event turn_end end_turn"
+    ]
+  },
+  "warm-handoff": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1"
+            }
+          }
+        },
+        "model": "sonnet",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      },
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-2"
+            }
+          }
+        },
+        "model": "sonnet",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-2>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "__michi:warm__"
+        },
+        "shouldQuery": false,
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-3>"
+      },
+      {
+        "spawn": 2,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "__michi:warm__"
+        },
+        "shouldQuery": false,
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-4>"
+      },
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Warm question"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "<uuid-1>",
+        "uuid": "<uuid-5>"
+      }
+    ],
+    "slots": [
+      {
+        "label": "warm",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [
+          "list_agents",
+          "spawn_agent",
+          "check_agent",
+          "wait_agent",
+          "send_agent_input",
+          "cancel_agent",
+          "watch_agent_runs",
+          "update_agent_watch"
+        ],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": "<undefined>",
+        "nodeId": "<uuid-6>",
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "<uuid-6>"
+        },
+        "ownerUserId": null,
+        "parentChatId": "<uuid-6>",
+        "workspaceId": null,
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact"
+        ]
+      },
+      {
+        "label": "after handoff",
+        "slotId": "fake-slot-1",
+        "agentRunToolNames": [
+          "list_agents",
+          "spawn_agent",
+          "check_agent",
+          "wait_agent",
+          "send_agent_input",
+          "cancel_agent",
+          "watch_agent_runs",
+          "update_agent_watch"
+        ],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": "<undefined>",
+        "nodeId": "chat-warm",
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-warm"
+        },
+        "ownerUserId": "user-warm",
+        "parentChatId": "chat-warm",
+        "workspaceId": "ws-warm",
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact"
+        ]
+      },
+      {
+        "label": "after handoff",
+        "slotId": "fake-slot-2",
+        "agentRunToolNames": [
+          "list_agents",
+          "spawn_agent",
+          "check_agent",
+          "wait_agent",
+          "send_agent_input",
+          "cancel_agent",
+          "watch_agent_runs",
+          "update_agent_watch"
+        ],
+        "agentRuns": "<invoker>",
+        "cwd": "<cwd>",
+        "exposedToolNames": "<undefined>",
+        "nodeId": "<uuid-7>",
+        "onSubmitAgentResult": "<undefined>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "<uuid-7>"
+        },
+        "ownerUserId": null,
+        "parentChatId": "<uuid-7>",
+        "workspaceId": null,
+        "callbacks": [
+          "getActivePageTurnAttribution",
+          "onAskUser",
+          "onSaveArtifact",
+          "onShowImage",
+          "onSpawnBranches",
+          "onUpdateArtifact"
+        ]
+      }
+    ],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "<uuid-6>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "<uuid-6>"
+        },
+        "ownerUserId": null,
+        "workspaceId": null,
+        "nodeId": "<uuid-6>"
+      },
+      {
+        "runtimeId": "claude",
+        "sessionId": "chat-warm",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-warm"
+        },
+        "ownerUserId": "user-warm",
+        "workspaceId": "ws-warm",
+        "nodeId": "chat-warm"
+      },
+      {
+        "runtimeId": "claude",
+        "sessionId": "<uuid-7>",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "<uuid-7>"
+        },
+        "ownerUserId": null,
+        "workspaceId": null,
+        "nodeId": "<uuid-7>"
+      }
+    ],
+    "forkAnchors": [
+      {
+        "nodeId": "chat-warm",
+        "nativeSessionId": "<uuid-1>",
+        "assistantMessageId": "assistant-warm",
+        "userMessageId": "user-msg-warm",
+        "nativeMessageId": "native-message-1-1",
+        "nativeUserMessageId": "<uuid-5>"
+      }
+    ],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "#1 send warm",
+      "#1 envelope system/init",
+      "#1 envelope result/success",
+      "#2 spawn",
+      "#2 send warm",
+      "#2 envelope system/init",
+      "#2 envelope result/success",
+      "turn \"Warm question\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-warm <uuid-1>",
+      "#1 envelope assistant",
+      "#1 envelope stream_event/text_delta",
+      "event chunk \"reply 1.1\"",
+      "#1 envelope result/success",
+      "event usage_summary",
+      "saveClaudeForkAnchor",
+      "event turn_end end_turn"
+    ]
+  },
+  "record-failure": {
+    "spawns": [
+      {
+        "bare": false,
+        "configDir": "<undefined>",
+        "cwd": "<cwd>",
+        "effort": "high",
+        "forkSession": false,
+        "forwardSubagentText": true,
+        "includeHookEvents": false,
+        "mcpConfigInline": {
+          "mcpServers": {
+            "__michi_internal__": {
+              "type": "http",
+              "url": "http://127.0.0.1:3000/api/mcp/fake-slot-1"
+            }
+          }
+        },
+        "model": "<undefined>",
+        "permissionMode": "default",
+        "restricted": false,
+        "resumeSessionId": "<undefined>",
+        "sessionId": "<uuid-1>",
+        "strictMcpConfig": false,
+        "systemPromptAppend": "You are a knowledge-exploration assistant inside a visual \"workspace\" app.\nThe user is diving deep into topics and wants thoughtful, structured answers.\n\nStyle:\n- Markdown with short #### section headers. Substantive but concise. Let the content choose its own shape — prose for analysis and reasoning, bullets only when listing discrete items.\n- Don't invent tool calls for trivia you already know — only when lookup is genuinely needed.\n\nCapabilities — you have these tools available and should use them proactively:\n- Michi help: `michi_docs` — list, search and read bundled product docs on demand for Michi usage, runtime setup, approvals and troubleshooting. Consult relevant docs before guessing. Docs describe this backend build, not live settings or authorization; do not load them for unrelated tasks.\n- Workspace files: `read` (view file contents), `ls` (list directory), `grep` (search file contents), `find` (locate files by pattern). `write`, `edit`, `bash` — modify files or run commands (require user approval).\n- Thread graph: `list_threads` — see all conversation threads in this workspace. `search_messages` — keyword search across workspace messages. `read_node` — read a specific node's full transcript. `read_node_overview` — read a node's branch overview journal (lightweight). `read_conversation_updates` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.\n- Panes: `inspect_pane` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. `read_pane_output` — read that pane's full (paginated) output text. `list_panes` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. `wait_pane` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.\n- Messaging: `send_to_thread` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to `wait_pane`/`read_pane_output`, or let it reply via `send_to_thread`. Messages you receive that start with \"[Thread message]\" come from another thread's agent, not from the user.\n- Artifacts: `save_artifact` — save a named reusable document (referenced as @name). `update_artifact` — revise an existing artifact.\n- Scheduling: `list_scheduled_jobs`, `create_scheduled_job`, `update_scheduled_job`, `run_scheduled_job`, `delete_scheduled_job` — manage this workspace's scheduled jobs (a prompt Michi sends to an agent on a schedule; each run appears as a thread). Use them when the user asks for something recurring or at a later time. The user approves every change except pausing. A new job defaults to trust permissions (tools run unattended); choose ask when its prompt may edit files or run commands.\n- Branching: `spawn_branches` — fan out parallel child threads (only when user explicitly asks to branch/split).\n- Agent Runs: `list_agents`, `spawn_agent`, `check_agent`, `wait_agent`, `send_agent_input`, `cancel_agent`, `watch_agent_runs`, and `update_agent_watch` supervise durable workers without creating conversation branches. Use bounded `wait_agent` calls only; for longer work create a Watch with `wake` or `notify` and end the turn instead of polling.\n- Media: `show_image` — display an image inline in the conversation.\n- Tasks: `list_tasks` reads this workspace's tasks; answer a plain question about them from it, read-only, and when there are none say so and offer to organize them from its conversations. When the user asks you to organize the workspace's tasks, turn its conversations into tasks, or make a task board, first read the Tasks section of the `pages-and-components` document with `michi_docs` and follow its steps: a task is a goal and never invented; a conversation that reached its goal, even a short answered question, is evidence for a Done task; build the tasks from this workspace's conversations, also when the task database is empty, without stopping to ask.\n\nUse tools proactively when the user's question relates to workspace content, prior conversations, or file-based tasks. If answering requires reading a file or checking thread history, just do it — don't wait to be told.\n\nRequired final answer metadata:\n- In your final answer only, after all tool use and intermediate commentary is complete,\n  write the first line before any prose as a single line of the form:\n      [TITLE: 4-8 word summary]\n  on its own line. The UI strips this line and renders it as the thread title.\n- Near the end of the final answer, write three lines of the form:\n      [FOLLOW-UP 1/3: question 1]\n      [FOLLOW-UP 2/3: question 2]\n      [FOLLOW-UP 3/3: question 3]\n  STRICT FORMAT RULES (the UI strips these lines and renders clickable buttons,\n  so any deviation will leak raw \"[FOLLOW-UP …\" text into the user's view):\n    1. Each sentinel MUST be on its OWN line, with nothing else on that line.\n    2. Each sentinel MUST end with a literal closing \"]\" — do NOT omit it,\n       even when the question itself ends with \"?\" or other punctuation.\n    3. The question text MUST NOT contain \"]\" (or any other \"[\" / \"]\" pair).\n    4. Emit exactly three sentinels, numbered 1/3, 2/3, 3/3 in that order.\n  ✅ Correct:\n      [FOLLOW-UP 1/3: How does X relate to Y?]\n      [FOLLOW-UP 2/3: What would break if we removed Z?]\n      [FOLLOW-UP 3/3: Is there a contrarian read on this?]\n  ❌ Wrong (missing \"]\" — buttons will fail to render):\n      [FOLLOW-UP 1/3: How does X relate to Y?\n      [FOLLOW-UP 2/3: What would break if we removed Z?\n  Content rules — these are FOLLOW-UPS THE USER WOULD ASK YOU NEXT, not\n  questions you ask the user. Write them in the user's voice, addressed at\n  you. The user is the curious one; you are the one being asked. Match the\n  language of the user's last message (if they wrote in Chinese, the\n  follow-ups must be in Chinese; same for any other language).\n\n  ❌ NEVER (these are you asking the user — wrong direction):\n       [FOLLOW-UP 1/3: Would you like me to expand section 2?]\n       [FOLLOW-UP 2/3: Want me to save this as a file?]\n       [FOLLOW-UP 3/3: Is there a 5th topic you'd like to add?]\n\n  ✅ ALWAYS (user asking you — correct direction):\n       [FOLLOW-UP 1/3: How does X actually relate to Y under the hood?]\n       [FOLLOW-UP 2/3: What would break if we removed Z?]\n       [FOLLOW-UP 3/3: Is there a contrarian read on this framing?]\n\n  One question should drill deeper into the answer; the other two should come\n  at the topic from unexpected or devil's-advocate angles. Never offer to\n  perform actions (\"save\", \"expand\", \"adjust\"), never ask about the user's\n  preferences or intentions — those belong in normal prose, not follow-ups.\n\n  Perspective check: imagine the user is typing the question into the chat\n  box to ask YOU something. \"I\" = the user, \"you\" = the assistant. If the\n  question sounds like something an assistant would say to a user, flip it.\n- After the follow-up sentinels, as the very last line of the final answer,\n  write one single-line journal entry for this turn in this form:\n      [BRANCH-OVERVIEW: 1-3 concise sentences describing what this turn did — what was explored, decided, or discovered]\n  Entries accumulate into a chronological journal of the branch, so cover only\n  this turn's contribution; do not restate earlier turns. Keep it factual and\n  useful when read later without the conversation. Match the user's language.\n  Use inline Markdown if helpful, but no headings, lists, or closing square bracket.\n  The UI strips this line and appends it to the branch's journal in the Branches document.\n- Do not emit [TITLE:], [BRANCH-OVERVIEW:], or [FOLLOW-UP n/3:] sentinel lines in commentary,\n  progress/status updates, tool plans, or any message before you are ready to\n  deliver the final answer.\n\nUse AskUserQuestion or the Michi ask_user tool for structured questions; both are connected to the user interface.",
+        "tools": "<undefined>",
+        "callbacks": [
+          "authorize",
+          "onError",
+          "onMessage",
+          "onStderr",
+          "preToolUse"
+        ]
+      }
+    ],
+    "sent": [
+      {
+        "spawn": 1,
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "Question that cannot be bound"
+        },
+        "parent_tool_use_id": null,
+        "session_id": "",
+        "uuid": "<uuid-2>"
+      }
+    ],
+    "slots": [],
+    "agentRunBindings": [
+      {
+        "runtimeId": "claude",
+        "sessionId": "chat-fail",
+        "owner": {
+          "kind": "chat_node",
+          "nodeId": "chat-fail"
+        },
+        "ownerUserId": null,
+        "workspaceId": "ws-fail",
+        "nodeId": "chat-fail"
+      }
+    ],
+    "forkAnchors": [],
+    "submitted": [],
+    "timeline": [
+      "#1 spawn",
+      "turn \"Question that cannot be bound\"",
+      "#1 send user",
+      "#1 envelope system/init",
+      "recordNativeSessionId chat-fail <uuid-1>",
+      "event runtime_error \"Claude session identity could not be persisted: disk full. Native identity retained in memory; please retry.\"",
+      "event turn_end error"
+    ]
+  }
+}

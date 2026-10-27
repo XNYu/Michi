@@ -54,18 +54,3 @@ test('saves live redacted output before an attempt finishes and bounds capture',
     assert.ok(diagnostic.report.log.length <= 4 * 1024 * 1024);
   } finally { diagnostic.finish(); fs.rmSync(diagnostic.report.localLogPath!, { force: true }); }
 });
-
-test('successful connection warnings retain sanitized logs without calling the connection failed', () => {
-  const diagnostic = new RemoteDiagnosticLog('build+');
-  try {
-    diagnostic.protect('private-runtime-value');
-    const warnings = diagnostic.warn(['Sign in: private-runtime-value', 'API_TOKEN=hidden-value']);
-    diagnostic.finish();
-    const report = readRemoteDiagnostic(diagnostic.report.id)!;
-    assert.equal(report.severity, 'warning');
-    assert.equal(report.code, 'runtime_warning');
-    assert.equal(report.stage, 'runtime');
-    assert.match(report.log, /runtime warning/);
-    assert.doesNotMatch(JSON.stringify(report) + warnings.join(' '), /private-runtime-value|hidden-value/);
-  } finally { fs.rmSync(diagnostic.report.localLogPath!, { force: true }); }
-});

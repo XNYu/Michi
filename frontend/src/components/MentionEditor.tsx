@@ -27,6 +27,7 @@ import {
 import { PopoverSurface, MenuItem } from './ui/Popover';
 import { useMenuConfirm } from './ui/useMenuConfirm';
 import { docToDraft, draftToDoc } from './mentionDoc';
+import { markComposerEscape } from './composerEscape';
 import { ChatIcon, DocIcon, FileIcon, ImageIcon, LinkIcon } from './terminal/icons';
 
 /** Line glyph for a mention row: chat bubble for nodes, per-type icon for artifacts. */
@@ -60,6 +61,7 @@ export interface MentionEditorProps {
   onChange: (next: { value: string; mentions: MentionRecord[] }) => void;
   disabled?: boolean;
   className?: string;
+  placeholder?: string;
   'data-testid'?: string;
 
   /** @-mention suggestion data source (was AtMentionPopup's props). */
@@ -453,6 +455,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
                 return true;
               }
               if (sp.event.key === 'Escape') {
+                markComposerEscape(sp.event);
                 cancelConfirmation();
                 exitSuggestion(sp.view);
                 return true;
@@ -477,6 +480,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     content: draftToDoc(value, mentions),
     editable: !disabled,
     editorProps: {
+      attributes: { role: 'textbox', 'aria-label': 'Message', 'aria-multiline': 'true' },
       handleKeyDown: (view, event) => {
         // The @-mention suggestion owns navigation/accept keys while open.
         if (suggestionOpenRef.current) return false;
@@ -501,6 +505,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
             return true;
           }
           if (event.key === 'Escape') {
+            markComposerEscape(event);
             event.preventDefault();
             escapeSlashRef.current();
             return true;
@@ -555,7 +560,11 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     },
     onUpdate: ({ editor: ed }) => {
       const draft = docToDraft(ed.getJSON() as Parameters<typeof docToDraft>[0]);
-      lastSyncedRef.current = serialize(draft.value, draft.mentions);
+      const serialized = serialize(draft.value, draft.mentions);
+      // TipTap can emit an unchanged document during initialization. Echoing
+      // it can overwrite an external draft waiting for its next React render.
+      if (serialized === lastSyncedRef.current) return;
+      lastSyncedRef.current = serialized;
       onChange(draft);
       // hardBreak at the bottom of the scroll window doesn't auto-scroll; assert
       // it next frame. Guard isDestroyed: the editor may unmount between this
@@ -618,6 +627,43 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     };
   }, [editor, cancelConfirmation]);
 
+  // An Escape that ends an IME composition belongs to it. ProseMirror skips
+  // keys during a composition, so mark them in a capture listener on the
+  // editor's own element, ahead of its handlers and without changing them.
+  //
+  // The editor may have no view here: useEditor can hand over an instance
+  // its own scheduled destroy already took (a slow commit lets that 1ms
+  // timer win; the replacement arrives next render), and TipTap's `view`
+  // throws for `dom` until one is mounted. Listen whenever a view exists.
+  useEffect(() => {
+    if (!editor) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && (editor.view.composing || event.isComposing || event.keyCode === 229)) {
+        markComposerEscape(event);
+      }
+    };
+    let dom: HTMLElement | null = null;
+    const detach = () => {
+      dom?.removeEventListener('keydown', onKeyDown, true);
+      dom = null;
+    };
+    const attach = () => {
+      detach();
+      // isDestroyed is also true while no view is mounted.
+      if (editor.isDestroyed) return;
+      dom = editor.view.dom;
+      dom.addEventListener('keydown', onKeyDown, true);
+    };
+    attach();
+    editor.on('mount', attach);
+    editor.on('unmount', detach);
+    return () => {
+      editor.off('mount', attach);
+      editor.off('unmount', detach);
+      detach();
+    };
+  }, [editor]);
+
   // Bind slash actions once the editor exists.
   useEffect(() => {
     acceptSlashRef.current = (idx: number) => {
@@ -654,7 +700,8 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
   );
 
   return (
-    <div ref={hostRef} style={{ position: 'relative', flex: 1, minWidth: 0 }} className="mention-editor-host">
+    <div ref={hostRef} style={{ position: 'relative', flex: 1, minWidth: 0 }} className="mention-editor-host" data-empty={editor?.isEmpty ? 'true' : undefined}>
+      {props.placeholder && <span className="mention-editor-placeholder" aria-hidden="true">{props.placeholder}</span>}
       <EditorContent editor={editor} className={className} data-testid={props['data-testid']} />
       <SuggestionPopup state={popup} selected={selected} anchor={hostRef.current} onHover={setSelected}
         onPick={(i) => acceptMentionRef.current(i)} blinkingId={blinkingId} />

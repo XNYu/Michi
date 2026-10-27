@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, sseBody } from '../fixtures/mockApi';
 import { installComposerModels } from '../fixtures/composerModels';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 test('selects Google Gemini 4 Argon with its three effort levels and saves Home defaults', async ({ page }, testInfo) => {
   const { status, ensures } = await installComposerModels(page);
@@ -39,7 +40,7 @@ test('selects Google Gemini 4 Argon with its three effort levels and saves Home 
   await effort.press('ArrowLeft');
   await expect(trigger).toContainText('Medium');
   await page.keyboard.press('Escape');
-  await page.locator('[contenteditable="true"]').first().fill('Use Gemini Argon');
+  await page.locator(COMPOSER_EDITOR).first().fill('Use Gemini Argon');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
   await expect.poll(() => ensures.length).toBe(1);
   // Home sends with the saved backend defaults; explicit pane overrides are
@@ -74,7 +75,7 @@ test('shows the Claude catalog label before opening the picker in Home and a new
   await expect(trigger).toContainText('Opus (1M context)');
   await expect(page.getByRole('dialog', { name: 'Model settings' })).toHaveCount(0);
   await expect.poll(() => catalogRequests.length).toBeGreaterThan(0);
-  await page.locator('[contenteditable="true"]').first().fill('Check the Claude pane label');
+  await page.locator(COMPOSER_EDITOR).first().fill('Check the Claude pane label');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
   await expect(page.getByText('Claude reply.').first()).toBeVisible();
   await expect(trigger).toContainText('Opus (1M context)');
@@ -88,7 +89,7 @@ test('shows the Claude catalog label before opening the picker in Home and a new
   // The store separately fetches /models once at startup to sanitize saved IDs.
   // Home, the new pane and repeated picker opens share one runtime catalog request.
   expect(catalogRequests.filter((endpoint) => endpoint === 'runtime-catalog')).toEqual(['runtime-catalog']);
-  await page.locator('[contenteditable="true"]').first().fill('Continue with the same model');
+  await page.locator(COMPOSER_EDITOR).first().fill('Continue with the same model');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
   await expect.poll(() => ensures.length).toBe(2);
   expect(ensures[1]).toMatchObject({ runtimeId: 'claude', modelId: 'global.anthropic.claude-opus-5-5[1m]' });
@@ -100,7 +101,7 @@ test('saves model and effort as Home defaults and preserves the draft', async ({
   page.on('pageerror', (error) => errors.push(error.message));
   const { ensures, patches, status } = await installComposerModels(page);
   await bootWithWorkspace(page, 'Composer interaction checks');
-  const editor = page.locator('[contenteditable="true"]').first();
+  const editor = page.locator(COMPOSER_EDITOR).first();
   await editor.fill('Review the Composer interaction');
   const trigger = page.getByRole('button', { name: /^Model settings:/ });
   await trigger.click();
@@ -135,7 +136,7 @@ test('saves model and effort as Home defaults and preserves the draft', async ({
 test('changes a pane runtime without changing global defaults, then loads that runtime catalog', async ({ page }) => {
   const { ensures, patches, catalogRequests } = await installComposerModels(page, { catalogDelay: 100 });
   await bootWithWorkspace(page);
-  const editor = page.locator('[contenteditable="true"]').first();
+  const editor = page.locator(COMPOSER_EDITOR).first();
   await editor.fill('Start a conversation');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
   await expect(page.getByText('Hello from mock kiro.').first()).toBeVisible();
@@ -211,7 +212,7 @@ test('stays inside a narrow viewport and supports reduced motion', async ({ page
 test('adapts effort to model capabilities and sends a valid pane override', async ({ page }, testInfo) => {
   const { ensures } = await installComposerModels(page);
   await bootWithWorkspace(page, 'Adaptive effort');
-  const editor = page.locator('[contenteditable="true"]').first();
+  const editor = page.locator(COMPOSER_EDITOR).first();
   await editor.fill('Start the model capability check');
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
   await expect(page.getByText('Hello from mock kiro.').first()).toBeVisible();

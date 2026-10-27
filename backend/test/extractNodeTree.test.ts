@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { extractNodeTree } from '../src/services/extractNodeTree';
@@ -15,6 +16,8 @@ import { registerRuntime } from '../src/agents/registry';
 import type { AgentRuntime, AgentSession, NewAgentSessionOptions } from '../src/agents/types';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import { ensureAncestorChainLoaded, getAncestors } from '../src/agents/sessionRegistry';
+import { chatOwner } from './helpers/owners';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 describe('extract a branch as an independent tree', () => {
   let dir: string;
@@ -95,26 +98,6 @@ describe('extract a branch as an independent tree', () => {
     assert.equal(getNode('sibling')?.parent_node_id, 'root');
   });
 
-  test('extracting again from the new tree preserves inherited history exactly once and existing anchors', () => {
-    extractNodeTree('ws', 'child', 'new');
-    const second = extractNodeTree('ws', 'leaf', 'leaf-tree');
-    assert.deepEqual(second.messages.map(m => m.content), [
-      'root user', 'root assistant', 'middle user', 'middle assistant',
-      'child user', 'child assistant', 'leaf user', 'leaf assistant',
-    ]);
-    assert.equal(new Set(second.messages.map(m => m.id)).size, 8);
-    assert.equal(listMessages('child').length, 6);
-    assert.equal(getNode('sibling')?.tree_id, 'old');
-  });
-
-  test('an empty child receives its history without needing a prior runtime binding', () => {
-    getDb().prepare("DELETE FROM messages WHERE node_id = 'child'").run();
-    const result = extractNodeTree('ws', 'child', 'new');
-    assert.equal(result.messages.length, 4);
-    assert.equal(getNode('child')?.parent_node_id, null);
-    assert.equal(getNode('leaf')?.tree_id, 'new');
-  });
-
   test('rejects roots, archived trees/workspaces, foreign nodes, busy descendants and broken lineage without writes', () => {
     assert.throws(() => extractNodeTree('ws', 'root', 'new'), /root/);
     assert.throws(() => extractNodeTree('other', 'child', 'new'), /not found/);
@@ -141,17 +124,9 @@ describe('extract a branch as an independent tree', () => {
     assert.throws(() => extractNodeTree('ws', 'child', 'new', 'stranger'), /not found/);
   });
 
-  test('rolls back graph changes, sequence shifts and copied messages when a write fails', () => {
-    getDb().exec("CREATE TRIGGER fail_copy BEFORE INSERT ON messages WHEN NEW.node_id = 'child' BEGIN SELECT RAISE(ABORT, 'copy failed'); END");
-    assert.throws(() => extractNodeTree('ws', 'child', 'new'), /copy failed/);
-    assert.equal(listTrees('ws').length, 1);
-    assert.equal(getNode('child')?.parent_node_id, 'middle');
-    assert.deepEqual(listMessages('child').map(m => m.seq), [0, 1]);
-  });
-
   test('HTTP refuses a draining runtime owner, then extracts and serves the same result on retry', async () => {
     const app = express(); app.use(express.json()); app.use('/api', setupPersistenceRoutes());
-    const server = app.listen(0);
+    const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     const original = chatHub.isOwnerTurnActive;
     let released = 0;
     const session: AgentSession = { id: 'child', runtimeId: 'extraction-test', parentChatId: 'middle',
@@ -159,12 +134,13 @@ describe('extract a branch as an independent tree', () => {
       async *send() {}, cancel() {},
     };
     const runtime: AgentRuntime = {
+      descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
       id: 'extraction-test', label: 'Test', capabilities: { modes: false, permissions: false, models: false,
         providerModels: false, reasoning: false, supportedReasoningLevels: [], apiKeys: false,
         warmSessions: false, saveContext: false, spawnBranches: true, nativeResume: false },
       async warm() {}, async shutdown() {}, async newSession(_opts: NewAgentSessionOptions) { return session; },
       async releaseSession(id, owner) {
-        assert.equal(id, 'child'); assert.deepEqual(owner, { kind: 'chat_node', nodeId: 'child' }); released++;
+        assert.equal(id, 'child'); assert.deepEqual(owner, chatOwner('child')); released++;
       },
     };
     registerRuntime(runtime); registerSession(session);

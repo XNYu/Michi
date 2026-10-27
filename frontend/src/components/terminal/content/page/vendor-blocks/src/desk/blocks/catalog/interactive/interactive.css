@@ -1,0 +1,8 @@
+/* Interactive components (Task 28). Buttons, fields and choices are Mantine's; this is only how they sit in a block. */
+.desk-actions{display:flex;flex-wrap:wrap;gap:8px}
+
+.desk-form{display:flex;flex-direction:column;gap:14px;max-width:420px}
+.desk-form-foot,.desk-poll-foot{display:flex;align-items:center;margin-top:2px}
+
+.desk-poll-options{display:flex;flex-direction:column;gap:10px}
+.desk-poll-foot{margin-top:14px}

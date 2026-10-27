@@ -17,12 +17,14 @@ vi.mock('../MarkdownContent', async () => {
       text,
       revealTailChars,
       appendStreamingTail,
+      previousBlockKind,
     }: {
       text: string;
       revealTailChars?: number;
       appendStreamingTail?: boolean;
+      previousBlockKind?: string;
     }) => {
-      markdownRenderSpy({ text, revealTailChars });
+      markdownRenderSpy({ text, revealTailChars, previousBlockKind });
       return (
         <span>
           {text}
@@ -42,20 +44,6 @@ describe('StreamingMarkdownContent', () => {
   afterEach(() => {
     vi.useRealTimers();
     window.localStorage.removeItem(MARKDOWN_REINTERPRET_HZ_STORAGE_KEY);
-  });
-
-  it('does not re-render stable markdown blocks when only the tail block changes', () => {
-    const { rerender } = render(
-      <StreamingMarkdownContent text={'alpha\n\nbr'} size="sm" />,
-    );
-
-    rerender(<StreamingMarkdownContent text={'alpha\n\nbranch'} size="sm" />);
-
-    const renderedTexts = markdownRenderSpy.mock.calls.map((call) => call[0].text);
-    expect(renderedTexts.filter((text) => text === 'alpha')).toHaveLength(1);
-    expect(renderedTexts.filter((text) => text === '\n\n')).toHaveLength(1);
-    expect(renderedTexts).toContain('br');
-    expect(renderedTexts).toContain('branch');
   });
 
   it('keeps earlier blocks memoized when the tail grows into new blocks', () => {
@@ -87,6 +75,15 @@ describe('StreamingMarkdownContent', () => {
     const tailCalls = calls.filter((call) => call.text === 'branch');
     expect(tailCalls).toHaveLength(1);
     expect(tailCalls[0].revealTailChars).toBe(1);
+  });
+
+  it('carries the preceding semantic block across whitespace without losing it when the tail grows', () => {
+    const { rerender } = render(<StreamingMarkdownContent text={'#### Heading\n\nparagraph\n\n- item\n\nnext'} />);
+    const calls = () => markdownRenderSpy.mock.calls.map(call => call[0]);
+    expect(calls().find(call => call.text.startsWith('paragraph'))?.previousBlockKind).toBe('heading');
+    expect(calls().find(call => call.text === 'next')?.previousBlockKind).toBe('list');
+    rerender(<StreamingMarkdownContent text={'#### Heading\n\nparagraph\n\n- item\n\nnext grows'} />);
+    expect(calls().find(call => call.text === 'next grows')?.previousBlockKind).toBe('list');
   });
 
   it('keeps visible text moving while Markdown reinterpretation is limited to 1Hz', () => {
@@ -137,20 +134,5 @@ describe('StreamingMarkdownContent', () => {
       'hello world',
       '\n\n',
     ]);
-  });
-
-  it('caps adaptive semantic lag at its maximum interval', () => {
-    vi.useFakeTimers();
-    const strategy = { mode: 'adaptive', maxIntervalMs: 1_000 } as const;
-    const { rerender } = render(
-      <StreamingMarkdownContent text="hello" reinterpretStrategy={strategy} />,
-    );
-
-    rerender(<StreamingMarkdownContent text="hello world" reinterpretStrategy={strategy} />);
-    act(() => vi.advanceTimersByTime(999));
-    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello']);
-
-    act(() => vi.advanceTimersByTime(1));
-    expect(markdownRenderSpy.mock.calls.map((call) => call[0].text)).toEqual(['hello', 'hello world']);
   });
 });

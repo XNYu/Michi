@@ -6,6 +6,7 @@ import { workspaceAccent, initialOf } from '../workspaceAccent';
 import { isArchiveGroupId } from '../../../state/trashActions';
 import { confirmDialog } from '../../ui/ConfirmDialog';
 import { descendants } from '../../../state/tree';
+import { systemWorkspaceIds, withoutSystemWorkspaces } from '../../../state/assistant/systemWorkspace';
 
 /**
  * Unified archive surface — shows both archived threads (tree-level archive
@@ -70,7 +71,7 @@ function countTreeNodes(
 
 export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => void } = {}) {
   const {
-    projects,
+    projects: allProjects,
     restoreDeletion,
     purgeDeletionAsync,
     unarchiveTree,
@@ -79,6 +80,9 @@ export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => voi
     selectProject,
     activateTree,
   } = useChatStore();
+  // The assistant's system workspace keeps its own history out of this list.
+  const projects = useMemo(() => withoutSystemWorkspaces(allProjects), [allProjects]);
+  const hiddenProjectIds = useMemo(() => systemWorkspaceIds(allProjects), [allProjects]);
   const nodesSnapshot = useChatNodesSnapshot();
 
   // ── Node archive groups (existing logic) ──────────────────────────────
@@ -131,8 +135,8 @@ export default function TerminalArchived({ onNav }: { onNav?: (p: PageId) => voi
 
   // ── Merge + group by workspace ────────────────────────────────────────
   const allGroups = useMemo(
-    () => [...nodeGroups, ...threadGroups],
-    [nodeGroups, threadGroups],
+    () => [...nodeGroups, ...threadGroups].filter((g) => !hiddenProjectIds.has(g.projectId)),
+    [nodeGroups, threadGroups, hiddenProjectIds],
   );
 
   const sortedSections: WorkspaceSection[] = useMemo(() => {

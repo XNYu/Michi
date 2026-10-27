@@ -1,12 +1,10 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { EventEmitter, PassThrough } from 'node:stream';
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import {
-  CLAUDE_MODEL_PROBE_ARGV,
   parseClaudeInitializeModels,
   probeClaudeModels,
-} from '../src/agents/claude/claudeModelProbe';
+} from 'michi-runtime/internal/adapters/claude/claudeModelProbe';
+import { claudeTestOptions } from './helpers/claudeTestOptions';
 
 // Synthetic initialize payload: fictional model names exercise CLI catalog parsing.
 const INITIALIZE_RESPONSE = {
@@ -37,25 +35,6 @@ const INITIALIZE_RESPONSE = {
 };
 
 describe('parseClaudeInitializeModels', () => {
-  test('maps CLI entries onto concrete ids with reasoning levels', () => {
-    const models = parseClaudeInitializeModels(INITIALIZE_RESPONSE);
-    assert.deepEqual(models.map((m) => m.id), [
-      'sample-large-v1[1m]',
-      'sample-reasoner-v1',
-      'sample-fast-v1',
-      'provider.sample-large-v1[1m]',
-    ]);
-    const [def, reasoner, fast] = models;
-    assert.equal(def.isDefault, true);
-    assert.equal(def.label, 'Default');
-    assert.equal(reasoner.isDefault, undefined);
-    assert.equal(reasoner.label, 'Sample Reasoner');
-    assert.equal(reasoner.description, 'Sample Reasoner · Example model');
-    assert.equal(reasoner.supportsReasoning, true);
-    assert.deepEqual(fast.supportedReasoningLevels, ['low', 'medium', 'high', 'max']);
-    assert.equal(fast.defaultReasoning, 'high');
-  });
-
   test('falls back to value when resolvedModel is missing and drops invalid entries', () => {
     const models = parseClaudeInitializeModels({
       models: [
@@ -92,21 +71,7 @@ describe('parseClaudeInitializeModels', () => {
   });
 });
 
-class FakeChild extends EventEmitter {
-  stdin = new PassThrough();
-  stdout = new PassThrough();
-  stderr = new PassThrough();
-  pid = undefined;
-  exitCode = null;
-  signalCode = null;
-  received = '';
-  constructor() {
-    super();
-    this.stdin.on('data', (chunk) => { this.received += chunk.toString(); });
-  }
-}
-
-describe('probeClaudeModels', () => {
+describe('SDK model discovery', () => {
   const savedEnv = { bin: process.env.CLAUDE_CLI_BIN, key: process.env.ANTHROPIC_API_KEY };
   before(() => {
     process.env.CLAUDE_CLI_BIN = process.execPath;
@@ -116,66 +81,24 @@ describe('probeClaudeModels', () => {
     if (savedEnv.bin === undefined) delete process.env.CLAUDE_CLI_BIN; else process.env.CLAUDE_CLI_BIN = savedEnv.bin;
     if (savedEnv.key === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = savedEnv.key;
   });
-
-  function spawnWith(child: FakeChild, seen: { argv?: string[]; cwd?: string } = {}) {
-    return (_binary: string, argv: string[], cwd: string) => {
-      seen.argv = argv;
-      seen.cwd = cwd;
-      return child as unknown as ChildProcessWithoutNullStreams;
-    };
-  }
-
-  test('sends initialize and parses the matching control_response', async () => {
-    const child = new FakeChild();
-    const seen: { argv?: string[]; cwd?: string } = {};
-    const promise = probeClaudeModels({ spawn: spawnWith(child, seen), cwd: '/tmp/probe' });
-
-    await new Promise((r) => setImmediate(r));
-    const request = JSON.parse(child.received.trim());
-    assert.equal(request.type, 'control_request');
-    assert.equal(request.request.subtype, 'initialize');
-    assert.deepEqual(seen.argv, [...CLAUDE_MODEL_PROBE_ARGV]);
-    assert.equal(seen.cwd, '/tmp/probe');
-
-    // Unrelated output and a response for another request id are ignored;
-    // the real response arrives split across chunks.
-    child.stdout.write('not json\n');
-    child.stdout.write(`${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'other', response: { models: [] } } })}\n`);
-    const line = JSON.stringify({
-      type: 'control_response',
-      response: { subtype: 'success', request_id: request.request_id, response: INITIALIZE_RESPONSE },
-    });
-    child.stdout.write(line.slice(0, 50));
-    child.stdout.write(`${line.slice(50)}\n`);
-
-    const models = await promise;
-    assert.equal(models.length, 4);
-    assert.equal(models[1].id, 'sample-reasoner-v1');
+  test('uses no-persistence bare SDK initialization and always closes', async () => {
+    let closed = false;
+    const models = await probeClaudeModels(claudeTestOptions(), { cwd: '/tmp/probe', sdk: { query: ((args: any) => {
+      assert.equal(args.options.cwd, '/tmp/probe');
+      assert.equal(args.options.persistSession, false);
+      assert.deepEqual(args.options.extraArgs, { bare: null });
+      return { initializationResult: async () => INITIALIZE_RESPONSE, close: () => { closed = true; } };
+    }) as any } });
+    assert.equal(models.length, 4); assert.ok(closed);
   });
-
-  test('rejects on an error control_response', async () => {
-    const child = new FakeChild();
-    const promise = probeClaudeModels({ spawn: spawnWith(child) , cwd: '/tmp/probe' });
-    await new Promise((r) => setImmediate(r));
-    const request = JSON.parse(child.received.trim());
-    child.stdout.write(`${JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: request.request_id, error: 'nope' } })}\n`);
-    await assert.rejects(promise, /initialize failed: nope/);
+  test('propagates SDK failure and closes', async () => {
+    let closed = false;
+    await assert.rejects(probeClaudeModels(claudeTestOptions(), { sdk: { query: (() => ({ initializationResult: async () => { throw new Error('auth expired'); }, close: () => { closed = true; } })) as any } }), /auth expired/);
+    assert.ok(closed);
   });
-
-  test('rejects when the CLI exits before answering', async () => {
-    const child = new FakeChild();
-    const promise = probeClaudeModels({ spawn: spawnWith(child), cwd: '/tmp/probe' });
-    child.stderr.write('auth expired\n');
-    await new Promise((r) => setImmediate(r));
-    child.emit('close', 1);
-    await assert.rejects(promise, /exited \(code 1\).*auth expired/);
-  });
-
-  test('rejects on timeout', async () => {
-    const child = new FakeChild();
-    await assert.rejects(
-      probeClaudeModels({ spawn: spawnWith(child), cwd: '/tmp/probe', timeoutMs: 20 }),
-      /timed out after 20ms/,
-    );
+  test('bounds initialization and closes on timeout', async () => {
+    let closed = false;
+    await assert.rejects(probeClaudeModels(claudeTestOptions(), { timeoutMs: 20, sdk: { query: (() => ({ initializationResult: () => new Promise(() => {}), close: () => { closed = true; } })) as any } }), /timed out after 20ms/);
+    assert.ok(closed);
   });
 });

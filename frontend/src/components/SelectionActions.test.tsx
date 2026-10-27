@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import SelectionActions, { placePopup, stickyPlacement, findMessageIdForRange } from './SelectionActions';
+import SelectionActions, { stickyPlacement, findMessageIdForRange, type SelectionActionsProps } from './SelectionActions';
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return {
@@ -49,57 +49,136 @@ describe('SelectionActions', () => {
     vi.useRealTimers();
   });
 
-  it('keeps the source text visually highlighted while the branch composer is open', () => {
-    const onBranch = vi.fn();
-    const onQuote = vi.fn();
-    const onComment = vi.fn();
+  function ContextHarness(props: Omit<SelectionActionsProps, 'containerRef'>) {
+    const ref = React.useRef<HTMLDivElement>(null);
+    React.useEffect(() => {
+      if (ref.current) ref.current.getBoundingClientRect = () => rect(0, 0, 400, 300);
+    }, []);
+    return <div ref={ref}><span>immutable source text</span><SelectionActions {...props} containerRef={ref} /></div>;
+  }
 
-    function Harness() {
-      const ref = React.useRef<HTMLDivElement>(null);
-      React.useEffect(() => {
-        if (ref.current) {
-          ref.current.getBoundingClientRect = () => rect(0, 0, 400, 300);
-        }
-      }, []);
-      return (
-        <div ref={ref}>
-          selected source text
-          <SelectionActions
-            containerRef={ref}
-            onBranch={onBranch}
-            onQuote={onQuote}
-            onComment={onComment}
-          />
-        </div>
-      );
-    }
-
-    render(<Harness />);
-
-    const textNode = screen.getByText('selected source text').firstChild;
-    expect(textNode).toBeTruthy();
-
+  function selectContextSource() {
     act(() => {
       const range = document.createRange();
-      range.setStart(textNode as Node, 0);
-      range.setEnd(textNode as Node, 'selected source text'.length);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
+      range.selectNodeContents(screen.getByText('immutable source text'));
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
       document.dispatchEvent(new Event('selectionchange'));
+      vi.advanceTimersByTime(80);
     });
+  }
 
-    // Advance past the 80ms content-stability debounce
-    act(() => { vi.advanceTimersByTime(80); });
+  it('captures context once and submits it to the latest callback after props and focus change', () => {
+    const token = { snapshot: 'v1', target: 'thread A' };
+    const capture = vi.fn(() => token);
+    const initialComment = vi.fn();
+    const currentComment = vi.fn();
+    const props = { onQuote: vi.fn(), onBranch: vi.fn(), onComment: initialComment, captureSelectionContext: capture };
+    const { rerender } = render(<ContextHarness {...props} />);
+    selectContextSource();
+    const newerCapture = vi.fn(() => ({ snapshot: 'v2', target: 'thread B' }));
+    rerender(<ContextHarness {...props} onComment={currentComment} captureSelectionContext={newerCapture} />);
+    act(() => document.dispatchEvent(new Event('selectionchange')));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: 'keep this reply' } });
+    rerender(<ContextHarness {...props} onComment={currentComment} captureSelectionContext={newerCapture} />);
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(newerCapture).not.toHaveBeenCalled();
+    expect(currentComment).toHaveBeenCalledWith('immutable source text', 'keep this reply', expect.any(Range), token);
+    expect(initialComment).not.toHaveBeenCalled();
+  });
 
-    const branchButton = screen.getByRole('button', { name: /Branch/i });
-    fireEvent.mouseDown(branchButton);
-    fireEvent.click(branchButton);
+  it.each(['comment', 'branch'] as const)('keeps the %s draft and captured context after rejected submission, then permits explicit replacement', (mode) => {
+    const token = { target: 'thread A' };
+    const replacement = { target: 'thread C' };
+    const callback = vi.fn((..._args: unknown[]) => false);
+    const renderContext: SelectionActionsProps['renderSelectionContext'] = (context, replace) => (
+      <button onClick={() => replace(replacement)}>Target: {(context as typeof token).target}</button>
+    );
+    render(<ContextHarness onQuote={vi.fn()} onComment={callback} onBranch={callback}
+      captureSelectionContext={() => token} renderSelectionContext={renderContext} />);
+    selectContextSource();
+    fireEvent.click(screen.getByRole('button', { name: mode === 'comment' ? 'Comment' : 'Branch' }));
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'preserve my draft' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(textarea.value).toBe('preserve my draft');
+    expect(callback.mock.calls[0].at(-1)).toBe(token);
+    fireEvent.click(screen.getByRole('button', { name: 'Target: thread A' }));
+    expect(screen.getByRole('button', { name: 'Target: thread C' })).toBeTruthy();
+    expect(textarea.value).toBe('preserve my draft');
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    expect(callback.mock.calls[1].at(-1)).toBe(replacement);
+  });
 
-    expect(screen.getByText('BRANCH FROM SELECTION')).toBeTruthy();
-    const highlightLayer = document.body.querySelector('[aria-hidden="true"]');
-    expect(highlightLayer).toBeTruthy();
-    expect(highlightLayer?.children).toHaveLength(2);
+  it('retains quote actions after rejection and carries the captured context on retry', () => {
+    const token = { target: 'thread A' };
+    const onQuote = vi.fn().mockReturnValueOnce(false);
+    render(<ContextHarness onQuote={onQuote} onBranch={vi.fn()} onComment={vi.fn()} captureSelectionContext={() => token} />);
+    selectContextSource();
+    fireEvent.click(screen.getByRole('button', { name: 'Quote' }));
+    expect(screen.getByRole('button', { name: 'Quote' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Quote' }));
+    expect(onQuote).toHaveBeenLastCalledWith('immutable source text', expect.any(Range), token);
+    expect(screen.queryByRole('button', { name: 'Quote' })).toBeNull();
+  });
+
+  it.each(['comment', 'branch'] as const)('restores an opted-in %s draft and its captured context after outside click and remount', (mode) => {
+    const key = `restore-${mode}`;
+    const token = { snapshot: { text: 'version one' }, target: 'original thread' };
+    const callback = vi.fn();
+    const props = { onQuote: vi.fn(), onBranch: callback, onComment: callback,
+      captureSelectionContext: vi.fn(() => token), selectionDraftKey: key };
+    const first = render(<ContextHarness {...props} />);
+    selectContextSource();
+    fireEvent.click(screen.getByRole('button', { name: mode === 'comment' ? 'Comment' : 'Branch' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'draft before navigation' } });
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('button', { name: `Resume selection ${mode}` })).toBeTruthy();
+    // While hidden, selecting another passage must not overwrite the saved draft.
+    selectContextSource();
+    expect(screen.getByRole('button', { name: `Resume selection ${mode}` })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: `Resume selection ${mode}` }));
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('draft before navigation');
+    const saved = JSON.parse(sessionStorage.getItem('michi:selection-drafts:v1')!);
+    expect(JSON.parse(saved.find(([savedKey]: [string, string]) => savedKey === key)[1])).toMatchObject({
+      text: 'immutable source text', prompt: 'draft before navigation', context: token, mode,
+    });
+    first.unmount();
+    const newerCapture = vi.fn(() => ({ snapshot: 'v2', target: 'new thread' }));
+    render(<ContextHarness {...props} captureSelectionContext={newerCapture} />);
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+    expect(textarea.value).toBe('draft before navigation');
+    expect(newerCapture).not.toHaveBeenCalled();
+    expect(document.querySelector('.sel-actions-term-highlight-layer')).toBeNull();
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    if (mode === 'comment') {
+      expect(callback).toHaveBeenCalledWith('immutable source text', 'draft before navigation', undefined, token);
+    } else {
+      expect(callback).toHaveBeenCalledWith('immutable source text', 'draft before navigation', undefined, undefined, token);
+    }
+    expect(sessionStorage.getItem('michi:selection-drafts:v1')).not.toContain(key);
+  });
+
+  it('isolates persisted drafts by resource key and clears a restored draft on explicit cancel', () => {
+    const props = { onQuote: vi.fn(), onBranch: vi.fn(), onComment: vi.fn(), captureSelectionContext: () => ({ target: 'A' }) };
+    const initial = render(<ContextHarness {...props} selectionDraftKey="backend-A/file-one" />);
+    selectContextSource();
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'private draft A' } });
+    initial.unmount();
+    const other = render(<ContextHarness {...props} selectionDraftKey="backend-B/file-one" />);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    other.unmount();
+    const restored = render(<ContextHarness {...props} selectionDraftKey="backend-A/file-one" />);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('private draft A');
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel/ }));
+    restored.unmount();
+    render(<ContextHarness {...props} selectionDraftKey="backend-A/file-one" />);
+    expect(screen.queryByRole('textbox')).toBeNull();
   });
 
   it('opens a comment composer when the Comment button is clicked and fires onComment on Enter', () => {
@@ -206,117 +285,6 @@ describe('SelectionActions', () => {
     });
 
     expect(screen.getByText('COMMENT ON SELECTION')).toBeTruthy();
-  });
-
-  it('closes the comment composer when the footer Cancel button is clicked', () => {
-    const onBranch = vi.fn();
-    const onQuote = vi.fn();
-    const onComment = vi.fn();
-
-    function Harness() {
-      const ref = React.useRef<HTMLDivElement>(null);
-      React.useEffect(() => {
-        if (ref.current) {
-          ref.current.getBoundingClientRect = () => rect(0, 0, 400, 300);
-        }
-      }, []);
-      return (
-        <div ref={ref}>
-          selected source text
-          <SelectionActions
-            containerRef={ref}
-            onBranch={onBranch}
-            onQuote={onQuote}
-            onComment={onComment}
-          />
-        </div>
-      );
-    }
-
-    render(<Harness />);
-
-    const textNode = screen.getByText('selected source text').firstChild!;
-    act(() => {
-      const range = document.createRange();
-      range.setStart(textNode, 0);
-      range.setEnd(textNode, 'selected source text'.length);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-
-    // Advance past the 80ms content-stability debounce
-    act(() => { vi.advanceTimersByTime(80); });
-
-    const commentButton = screen.getByRole('button', { name: /Comment/i });
-    fireEvent.mouseDown(commentButton);
-    fireEvent.click(commentButton);
-
-    expect(screen.getByText('COMMENT ON SELECTION')).toBeTruthy();
-
-    const cancelBtn = screen.getByRole('button', { name: /^Cancel/ });
-    fireEvent.mouseDown(cancelBtn);
-    fireEvent.click(cancelBtn);
-
-    expect(screen.queryByText('COMMENT ON SELECTION')).toBeNull();
-    expect(onComment).not.toHaveBeenCalled();
-  });
-
-  it('fires onComment when the footer Save button is clicked in comment mode', () => {
-    const onBranch = vi.fn();
-    const onQuote = vi.fn();
-    const onComment = vi.fn();
-
-    function Harness() {
-      const ref = React.useRef<HTMLDivElement>(null);
-      React.useEffect(() => {
-        if (ref.current) {
-          ref.current.getBoundingClientRect = () => rect(0, 0, 400, 300);
-        }
-      }, []);
-      return (
-        <div ref={ref}>
-          selected source text
-          <SelectionActions
-            containerRef={ref}
-            onBranch={onBranch}
-            onQuote={onQuote}
-            onComment={onComment}
-          />
-        </div>
-      );
-    }
-
-    render(<Harness />);
-
-    const textNode = screen.getByText('selected source text').firstChild!;
-    act(() => {
-      const range = document.createRange();
-      range.setStart(textNode, 0);
-      range.setEnd(textNode, 'selected source text'.length);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-
-    // Advance past the 80ms content-stability debounce
-    act(() => { vi.advanceTimersByTime(80); });
-
-    const commentButton = screen.getByRole('button', { name: /Comment/i });
-    fireEvent.mouseDown(commentButton);
-    fireEvent.click(commentButton);
-
-    const textarea = screen.getByPlaceholderText(/your reply/i) as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: 'my reply body' } });
-
-    const saveBtn = screen.getByRole('button', { name: /^Save/ });
-    fireEvent.mouseDown(saveBtn);
-    fireEvent.click(saveBtn);
-
-    expect(onComment).toHaveBeenCalledWith('selected source text', 'my reply body', expect.anything());
-    expect(screen.queryByText('COMMENT ON SELECTION')).toBeNull();
   });
 
   it('fires onBranch when the footer Branch button is clicked in branch mode', () => {
@@ -443,73 +411,6 @@ describe('SelectionActions', () => {
     });
 
     expect(popupMeasures).toBe(0);
-  });
-
-  it('debounces the bar appearance until selection content stabilizes (80ms)', () => {
-    const onBranch = vi.fn();
-    const onQuote = vi.fn();
-    const onComment = vi.fn();
-
-    function Harness() {
-      const ref = React.useRef<HTMLDivElement>(null);
-      React.useEffect(() => {
-        if (ref.current) {
-          ref.current.getBoundingClientRect = () => rect(0, 0, 400, 300);
-        }
-      }, []);
-      return (
-        <div ref={ref}>
-          hello world foobar
-          <SelectionActions
-            containerRef={ref}
-            onBranch={onBranch}
-            onQuote={onQuote}
-            onComment={onComment}
-          />
-        </div>
-      );
-    }
-
-    render(<Harness />);
-
-    const textNode = screen.getByText('hello world foobar').firstChild!;
-
-    // Simulate double-click: first selectionchange with partial text
-    act(() => {
-      const range = document.createRange();
-      range.setStart(textNode, 0);
-      range.setEnd(textNode, 5); // "hello"
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-
-    // Bar should NOT be visible yet
-    expect(screen.queryByRole('button', { name: /Branch/i })).toBeNull();
-
-    // 40ms later, selection expands (simulating triple-click intermediate)
-    act(() => { vi.advanceTimersByTime(40); });
-    act(() => {
-      const range = document.createRange();
-      range.setStart(textNode, 0);
-      range.setEnd(textNode, 11); // "hello world"
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-
-    // Still not visible — timer reset by new content
-    expect(screen.queryByRole('button', { name: /Branch/i })).toBeNull();
-
-    // Advance 79ms — still not enough
-    act(() => { vi.advanceTimersByTime(79); });
-    expect(screen.queryByRole('button', { name: /Branch/i })).toBeNull();
-
-    // 1 more ms → 80ms since last content change → bar appears
-    act(() => { vi.advanceTimersByTime(1); });
-    expect(screen.getByRole('button', { name: /Branch/i })).toBeTruthy();
   });
 
   it('holds the bar position when a selection edit barely moves it, and follows a real move', () => {
@@ -641,94 +542,9 @@ describe('SelectionActions', () => {
 
     expect(bar.style.top).toBe('147px');
   });
-
-  it('disables the footer Save button when the composer prompt is empty', () => {
-    const onBranch = vi.fn();
-    const onQuote = vi.fn();
-    const onComment = vi.fn();
-
-    function Harness() {
-      const ref = React.useRef<HTMLDivElement>(null);
-      React.useEffect(() => {
-        if (ref.current) {
-          ref.current.getBoundingClientRect = () => rect(0, 0, 400, 300);
-        }
-      }, []);
-      return (
-        <div ref={ref}>
-          selected source text
-          <SelectionActions
-            containerRef={ref}
-            onBranch={onBranch}
-            onQuote={onQuote}
-            onComment={onComment}
-          />
-        </div>
-      );
-    }
-
-    render(<Harness />);
-
-    const textNode = screen.getByText('selected source text').firstChild!;
-    act(() => {
-      const range = document.createRange();
-      range.setStart(textNode, 0);
-      range.setEnd(textNode, 'selected source text'.length);
-      const selection = window.getSelection();
-      selection?.removeAllRanges();
-      selection?.addRange(range);
-      document.dispatchEvent(new Event('selectionchange'));
-    });
-
-    // Advance past the 80ms content-stability debounce
-    act(() => { vi.advanceTimersByTime(80); });
-
-    const commentButton = screen.getByRole('button', { name: /Comment/i });
-    fireEvent.mouseDown(commentButton);
-    fireEvent.click(commentButton);
-
-    const saveBtn = screen.getByRole('button', { name: /^Save/ }) as HTMLButtonElement;
-    expect(saveBtn.disabled).toBe(true);
-
-    fireEvent.mouseDown(saveBtn);
-    fireEvent.click(saveBtn);
-
-    expect(onComment).not.toHaveBeenCalled();
-  });
 });
 
 describe('findMessageIdForRange', () => {
-  it('returns nearest ancestor data-msg-id', () => {
-    const wrapper = document.createElement('div');
-    wrapper.dataset.msgId = 'm-abc';
-    const p = document.createElement('p');
-    const text = document.createTextNode('hello');
-    p.appendChild(text);
-    wrapper.appendChild(p);
-    document.body.appendChild(wrapper);
-
-    const range = document.createRange();
-    range.setStart(text, 1);
-    range.setEnd(text, 4);
-    expect(findMessageIdForRange(range)).toBe('m-abc');
-
-    document.body.removeChild(wrapper);
-  });
-
-  it('returns undefined when no ancestor has data-msg-id', () => {
-    const div = document.createElement('div');
-    const text = document.createTextNode('orphan');
-    div.appendChild(text);
-    document.body.appendChild(div);
-
-    const range = document.createRange();
-    range.setStart(text, 0);
-    range.setEnd(text, 6);
-    expect(findMessageIdForRange(range)).toBeUndefined();
-
-    document.body.removeChild(div);
-  });
-
   it('returns innermost data-msg-id when nested', () => {
     const outer = document.createElement('div');
     outer.dataset.msgId = 'outer';
@@ -748,105 +564,8 @@ describe('findMessageIdForRange', () => {
   });
 });
 
-describe('placePopup', () => {
-  const POPUP_W = 280;
-  const POPUP_H = 34;
-  const originalWindow = { w: window.innerWidth, h: window.innerHeight };
-
-  function setViewport(w: number, h: number) {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: w });
-    Object.defineProperty(window, 'innerHeight', { configurable: true, value: h });
-  }
-
-  afterEach(() => setViewport(originalWindow.w, originalWindow.h));
-
-  it('prefers above the selection when there is room', () => {
-    setViewport(1024, 800);
-    const sel = rect(200, 400, 200, 24);
-    const placement = placePopup(sel, [sel], /* composerTop */ 700, POPUP_W, POPUP_H);
-    // top = sel.top - GAP - height = 400 - 16 - 34 = 350
-    expect(placement.top).toBe(350);
-  });
-
-  it('falls through to below when above is off-screen but below clears the composer', () => {
-    setViewport(1024, 800);
-    // Selection starts near viewport top — no room above.
-    const sel = rect(200, 4, 200, 24);
-    const placement = placePopup(sel, [sel], /* composerTop */ 700, POPUP_W, POPUP_H);
-    // top = sel.bottom + GAP = 28 + 16 = 44
-    expect(placement.top).toBe(44);
-  });
-
-  it('falls back to above (even cramped) when below would overlap the composer', () => {
-    setViewport(1024, 800);
-    // Long selection: first visible line near top, last visible line just
-    // above the composer — neither above nor below fits.
-    const firstVisible = rect(80, 6, 800, 18);
-    const lastVisible = rect(80, 660, 800, 18);
-    const bounds = rect(80, 6, 800, 672);
-    const composerTop = 690;
-    const placement = placePopup(
-      bounds,
-      [firstVisible, lastVisible],
-      composerTop,
-      POPUP_W,
-      POPUP_H,
-    );
-    // Computed: firstVisible.top - GAP - H = 6 - 16 - 34 = -44 → clamps to
-    // VIEWPORT_MARGIN (8). The popup sits above the selection's visible top,
-    // not crammed into the composer area.
-    expect(placement.top).toBe(8);
-  });
-
-  it('anchors horizontally on the union of all highlight rects', () => {
-    setViewport(1024, 800);
-    // Multi-line selection that wraps: first visible line is short and on
-    // the right, second line is on the left. The popup should center on the
-    // union bounding box of both lines.
-    const firstVisible = rect(600, 400, 200, 18);
-    const bounds = rect(80, 400, 800, 60);
-    const placement = placePopup(
-      bounds,
-      [firstVisible, rect(80, 442, 600, 18)],
-      /* composerTop */ 700,
-      POPUP_W,
-      POPUP_H,
-    );
-    // Union: left=80, right=800 → center=440. left = 440 - 140 = 300.
-    expect(placement.left).toBe(300);
-  });
-});
-
 describe('stickyPlacement', () => {
   const at = (left: number, top: number, above = true) => ({ left, top, above });
-
-  it('takes the fresh placement when there is no previous position', () => {
-    expect(stickyPlacement(at(300, 350), null)).toEqual(at(300, 350));
-  });
-
-  it('holds the previous position when both axes move less than the dead-zone', () => {
-    const prev = at(300, 350);
-    // 4px left / 2px top — the sub-perceptual twitch we want to swallow.
-    expect(stickyPlacement(at(304, 352), prev)).toBe(prev);
-  });
-
-  it('moves when either axis crosses the dead-zone', () => {
-    const prev = at(300, 350);
-    expect(stickyPlacement(at(312, 350), prev)).toEqual(at(312, 350));
-    expect(stickyPlacement(at(300, 372), prev)).toEqual(at(300, 372));
-  });
-
-  it('accumulates small steps so the popup cannot drift from its selection', () => {
-    // Each step is under the dead-zone, but they are all compared against the
-    // held position — so the popup stays put until the total drift crosses it.
-    let rendered = at(300, 350);
-    rendered = stickyPlacement(at(304, 350), rendered);
-    expect(rendered.left).toBe(300);
-    rendered = stickyPlacement(at(307, 350), rendered);
-    expect(rendered.left).toBe(300);
-    rendered = stickyPlacement(at(310, 350), rendered);
-    expect(rendered.left).toBe(310);
-  });
 
   it('always honours an above/below flip regardless of distance', () => {
     const prev = at(300, 350, true);

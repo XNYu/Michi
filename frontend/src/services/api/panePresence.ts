@@ -1,3 +1,4 @@
+import { backendFetch } from './backendRequest';
 /** Pane Presence — frontend transport client (design §9; brief P1-10/W11).
  *
  * Thin request/response layer implementing `usePanePresenceReporter`'s `PanePresenceTransport`
@@ -157,7 +158,7 @@ async function submit(
   workspaceId: string,
   req: SubmitPresenceRequest,
 ): Promise<SubmitPresenceResult> {
-  const response = await fetch(`${backendApiBase(backendConnectionId)}/panes/presence`, {
+  const response = await backendFetch(`${backendApiBase(backendConnectionId)}/panes/presence`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...req, workspaceId }),
@@ -175,7 +176,7 @@ async function remove(
   workspaceId: string,
   req: RemovePresenceRequest,
 ): Promise<RemovePresenceResult> {
-  const response = await fetch(`${backendApiBase(backendConnectionId)}/panes/presence`, {
+  const response = await backendFetch(`${backendApiBase(backendConnectionId)}/panes/presence`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...req, workspaceId }),
@@ -220,7 +221,7 @@ export async function allocateSurfaceRegistration(
   workspaceId: string,
   kind: SurfacePaneKind,
 ): Promise<AllocateSurfaceRegistrationResult> {
-  const response = await fetch(`${backendApiBase(backendConnectionId)}/panes/presence/allocate`, {
+  const response = await backendFetch(`${backendApiBase(backendConnectionId)}/panes/presence/allocate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workspaceId, kind }),

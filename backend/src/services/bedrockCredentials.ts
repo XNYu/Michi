@@ -1,9 +1,7 @@
-import fs from "fs";
-import path from "path";
-import os from "os";
+import { readJsonConfig, updateJsonConfig } from "./jsonConfigStore";
+import { getMichiCredentialConfigPaths } from "./configPaths";
 
-const CONFIG_DIR = path.join(os.homedir(), ".michi");
-const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+const { configPath: CONFIG_PATH } = getMichiCredentialConfigPaths();
 
 // ---------------------------------------------------------------------------
 // Types
@@ -48,16 +46,7 @@ export interface BedrockConfigSanitized {
 // ---------------------------------------------------------------------------
 
 function readDiskFile(): Record<string, any> | null {
-    try {
-        return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-    } catch {
-        return null;
-    }
-}
-
-function writeDiskFile(data: Record<string, any>): void {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(data, null, 2), { mode: 0o600 });
+    return readJsonConfig(CONFIG_PATH);
 }
 
 function readBedrockConfigFromDisk(): BedrockConfig | null {
@@ -230,7 +219,6 @@ export function getBedrockConfigSanitized(): BedrockConfigSanitized {
  * Merges into the existing file — does not overwrite other fields.
  */
 export function saveBedrockConfig(cfg: BedrockConfig): void {
-    const disk = readDiskFile() ?? {};
     const bedrock: Record<string, unknown> = {};
 
     if (cfg.region) bedrock.region = cfg.region;
@@ -241,15 +229,13 @@ export function saveBedrockConfig(cfg: BedrockConfig): void {
     if (cfg.profile) bedrock.profile = cfg.profile;
     if (cfg.authRefreshCommand !== undefined) bedrock.authRefreshCommand = cfg.authRefreshCommand;
 
-    writeDiskFile({ ...disk, bedrock });
+    updateJsonConfig(CONFIG_PATH, (disk) => ({ ...disk, bedrock }));
 }
 
 /**
  * Clear Bedrock config from `~/.michi/config.json`.
  */
 export function clearBedrockConfig(): void {
-    const disk = readDiskFile();
-    if (!disk) return;
-    const { bedrock: _, ...rest } = disk;
-    writeDiskFile(rest);
+    if (!readDiskFile()) return;
+    updateJsonConfig(CONFIG_PATH, ({ bedrock: _, ...rest }) => rest);
 }

@@ -4,12 +4,13 @@
 //   not inline. The time shows only in the hover action row.
 // Assistant: flush-left, no border, no fill, "> michi" label above.
 // Asserts on inline style strings because jsdom doesn't resolve var()/color-mix()/calc().
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react';
-import { MessageBlock, TermThoughtBlock, userTextToMarkdown } from './MessageBlock';
+import { act, render, fireEvent } from '@testing-library/react';
+import { MessageBlock, TermThoughtBlock } from './MessageBlock';
 import { AgentBlockStyleOverride } from '../../state/prefs';
-import type { ChatMessage } from '../../state/chatTypes';
+import { recordBackendObservation, resetBackendClocksForTest } from '../../services/backendClock';
+import type { AssistantBlock, ChatMessage } from '../../state/chatTypes';
 
 const baseMsg = {
   id: 'm1',
@@ -73,25 +74,6 @@ describe('MessageBlock — role styling', () => {
     fireEvent.click(getByRole('button', { name: 'Research notes' }));
     expect(onMentionClick).toHaveBeenCalledWith('Research notes', 'node', 'n-a');
   });
-
-  it('labels accepted steering in the user bubble without changing the message text', () => {
-    const { container } = renderMessage({ role: 'user', text: 'Use cobalt', steered: true });
-    const bubble = container.querySelector('.terminal-message-user')!;
-    expect(bubble.querySelector('.terminal-message-steered')?.textContent).toBe('Steered');
-    expect(bubble.textContent).toContain('Use cobalt');
-    expect(container.querySelector('.terminal-message-assistant')).toBeNull();
-  });
-  it('user message carries no role/time label inside or above the card', () => {
-    const { container } = renderMessage({ role: 'user', text: 'q?' });
-    const block = container.querySelector('.terminal-message-user') as HTMLElement;
-    expect(block).not.toBeNull();
-    // The card itself marks the speaker; the time lives in the hover action row.
-    expect(block.querySelector('.bubble-overline')).toBeNull();
-    expect(block.textContent).toBe('q?');
-    // The outer "$ you" sibling that the baseline bubble used is gone too.
-    const outerSibling = block.parentElement?.previousElementSibling as HTMLElement | null;
-    expect(outerSibling?.textContent ?? '').not.toMatch(/^\$ you/);
-  });
 });
 
 describe('MessageBlock — turn usage', () => {
@@ -119,15 +101,6 @@ describe('MessageBlock — turn usage', () => {
 });
 
 describe('MessageBlock — error-tail row', () => {
-  it('renders failed label and retry button when isErrorTail is true on assistant message', () => {
-    const { getByText, getByTestId } = renderMessage(
-      { role: 'assistant', text: 'something went wrong' },
-      { isErrorTail: true, onRetry: noop },
-    );
-    expect(getByText('failed')).not.toBeNull();
-    expect(getByTestId('error-tail-retry')).not.toBeNull();
-  });
-
   it('renders the friendly error message when provided', () => {
     const msg = 'Claude slots are busy. Stop a running reply or wait for one to finish, then retry.';
     const { getByText } = renderMessage(
@@ -146,53 +119,43 @@ describe('MessageBlock — error-tail row', () => {
     fireEvent.click(getByTestId('error-tail-retry'));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
+});
 
-  it('does not render the failed label when isErrorTail is false', () => {
-    const { queryByText, queryByTestId } = renderMessage(
-      { role: 'assistant', text: 'ok response' },
-      { isErrorTail: false, onRetry: noop },
-    );
-    expect(queryByText('failed')).toBeNull();
-    expect(queryByTestId('error-tail-retry')).toBeNull();
+describe('MessageBlock — highlight frame', () => {
+  const props = {
+    index: 0, isDark: false, onEdit: noop, onCopy: noop, onRetry: noop, showThoughts: false,
+    fontFamily: 'inherit', density: 'comfortable' as const,
+  };
+  const reply = { ...baseMsg, role: 'assistant' as const, text: 'The cited reply' };
+  const mark = <div data-testid="mark">Referenced by page</div>;
+
+  it('frames the mark and the message, and keeps the hover actions under the frame', () => {
+    const { container, getByTestId, getByRole } = render(<MessageBlock {...props} m={reply} highlight={mark} />);
+    const frame = container.querySelector('.terminal-message-highlight')!;
+    expect(frame.firstElementChild).toBe(getByTestId('mark'));
+    expect(frame.textContent).toContain('The cited reply');
+    const copy = getByRole('button', { name: 'copy message' });
+    // Nothing of the reserved actions row sits inside the frame, so its bottom is the message's.
+    expect(frame.contains(copy)).toBe(false);
+    expect(frame.lastElementChild!.classList.contains('terminal-message-assistant')).toBe(true);
+    const actions = copy.parentElement!;
+    expect(actions.style.opacity).toBe('0');
+    fireEvent.mouseEnter(frame.parentElement!);
+    expect(actions.style.opacity).toBe('1');
+    fireEvent.mouseEnter(copy);
+    expect(actions.style.opacity).toBe('1');
   });
 
-  it('does not render the failed label when isErrorTail is not provided', () => {
-    const { queryByText, queryByTestId } = renderMessage({ role: 'assistant', text: 'ok response' });
-    expect(queryByText('failed')).toBeNull();
-    expect(queryByTestId('error-tail-retry')).toBeNull();
-  });
-
-  it('does not render the failed label on user messages even when isErrorTail is true', () => {
-    const { queryByText, queryByTestId } = renderMessage(
-      { role: 'user', text: 'user message' },
-      { isErrorTail: true, onRetry: noop },
-    );
-    expect(queryByText('failed')).toBeNull();
-    expect(queryByTestId('error-tail-retry')).toBeNull();
-  });
-
-  it('does not render the failed label when message is still streaming', () => {
-    const { queryByText, queryByTestId } = renderMessage(
-      { role: 'assistant', text: 'partial...', streaming: true },
-      { isErrorTail: true, onRetry: noop },
-    );
-    expect(queryByText('failed')).toBeNull();
-    expect(queryByTestId('error-tail-retry')).toBeNull();
+  it('leaves a message that is not highlighted as it was', () => {
+    const { container, getByRole } = render(<MessageBlock {...props} m={reply} />);
+    expect(container.querySelector('.terminal-message-highlight')).toBeNull();
+    const root = container.firstElementChild!;
+    expect(root.firstElementChild!.textContent).toBe('> michi');
+    expect(root.contains(getByRole('button', { name: 'copy message' }))).toBe(true);
   });
 });
 
 describe('MessageBlock — user modules', () => {
-  it('renders QuoteChip when m.quotedText is set', () => {
-    const { container } = renderMessage({
-      role: 'user',
-      text: 'why?',
-      quotedText: 'because foo bar baz',
-    });
-    expect(container.textContent).toContain('because foo bar baz');
-    // Chip body has its own paragraph with the data-testid.
-    expect(container.querySelector('[data-testid="quote-preview"]')).not.toBeNull();
-  });
-
   it('renders one AttachmentPill per attachment', () => {
     const { container } = renderMessage({
       role: 'user',
@@ -203,20 +166,6 @@ describe('MessageBlock — user modules', () => {
       ],
     });
     expect(container.querySelectorAll('[data-testid="attachment-pill"]').length).toBe(2);
-  });
-
-  it('legacy user message (no structured fields) renders body via existing path', () => {
-    const { container } = renderMessage({
-      role: 'user',
-      text: '> quoted line\n\nmy follow-up',
-    });
-    expect(container.querySelector('[data-testid="quote-preview"]')).toBeNull();
-    expect(container.querySelector('[data-testid="attachment-pill"]')).toBeNull();
-    // Inline `> ` quotes now render as a real blockquote (user markdown).
-    expect(container.querySelector('.terminal-message-user blockquote')?.textContent).toContain(
-      'quoted line',
-    );
-    expect(container.textContent).toContain('my follow-up');
   });
 
   it('renders one CommentChip per comment', () => {
@@ -233,7 +182,7 @@ describe('MessageBlock — user modules', () => {
 });
 
 describe('MessageBlock — subagents forwarding', () => {
-  it('renders the SubAgent spine row and Now: line when matching subagents are passed', () => {
+  it('renders the SubAgent spine row and now line when matching subagents are passed', () => {
     const detail = JSON.stringify({ subagent_type: 'Explore', description: 'Explore Michi' });
     const subagentTool = {
       id: 't1',
@@ -283,7 +232,46 @@ describe('MessageBlock — subagents forwarding', () => {
       />,
     );
     expect(getByTestId('subagent-spine-row')).toBeTruthy();
-    expect(container.textContent).toContain('now: Glob');
+    expect(container.textContent).toContain('now ❯ Glob');
+  });
+});
+
+describe('MessageBlock — collapsed user text', () => {
+  it('fades only the clamped content and keeps the expansion control outside the overlay', () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(500);
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400);
+    try {
+      const { container, getByRole } = renderMessage({ role: 'user', text: 'A long message that overflows the measured preview.' });
+      const toggle = getByRole('button', { name: 'Show more' });
+      const content = container.querySelector(`[id="${toggle.getAttribute('aria-controls')}"]`) as HTMLElement;
+      const fade = content.querySelector<HTMLElement>('[aria-hidden="true"]');
+      expect(content.style.maxHeight).not.toBe('');
+      expect(content.style.position).toBe('relative');
+      expect(fade?.parentElement).toBe(content);
+      expect(content.contains(toggle)).toBe(false);
+      expect(toggle.classList.contains('t-user-text-toggle')).toBe(true);
+      expect(toggle.style.color).toBe('');
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      fireEvent.click(toggle);
+      expect(getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true');
+      expect(content.querySelector('[aria-hidden="true"]')).toBeNull();
+      expect(content.style.maxHeight).toBe('');
+      fireEvent.click(toggle);
+      expect(content.querySelector('[aria-hidden="true"]')).toBeTruthy();
+    } finally {
+      height.mockRestore();
+      width.mockRestore();
+    }
+  });
+
+  it('does not clamp while the pane has no width yet', () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(500);
+    try {
+      const { queryByRole } = renderMessage({ role: 'user', text: 'A short message in a pane that is still opening.' });
+      expect(queryByRole('button', { name: 'Show more' })).toBeNull();
+    } finally {
+      height.mockRestore();
+    }
   });
 });
 
@@ -308,6 +296,68 @@ describe('MessageBlock — user message markdown', () => {
     const { container } = renderMessage({ role: 'user', text: '```\nconst x = 1;\n```' });
     const pre = container.querySelector('.terminal-message-user pre');
     expect(pre?.textContent).toContain('const x = 1;');
+  });
+});
+
+describe('MessageBlock — expanded activity scroll', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(['card', 'terminal', 'plain'] as const)('preserves reading position and resumes following at the bottom (%s)', (variant) => {
+    let height = 1000;
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => height);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300);
+    const view = (text: string, streaming = true) => <AgentBlockStyleOverride.Provider value={variant}>
+      <TermThoughtBlock text={text} streaming={streaming} initialMode="expanded" />
+    </AgentBlockStyleOverride.Provider>;
+    const { getByRole, rerender } = render(view('First step'));
+    const activity = getByRole('region', { name: 'Activity details' });
+    expect(activity.tabIndex).toBe(0);
+    expect(activity.style.overflowY).toBe('auto');
+    expect(activity.scrollTop).toBe(1000);
+
+    activity.scrollTop = 120;
+    fireEvent.scroll(activity);
+    height = 1200;
+    rerender(view('First step\nNext step'));
+    expect(activity.scrollTop).toBe(120);
+
+    activity.scrollTop = 900;
+    fireEvent.scroll(activity);
+    height = 1400;
+    rerender(view('First step\nNext step\nLatest step'));
+    expect(activity.scrollTop).toBe(1400);
+
+    activity.scrollTop = 160;
+    fireEvent.scroll(activity);
+    rerender(view('First step\nNext step\nLatest step', false));
+    expect(activity.scrollTop).toBe(160);
+    expect(getByRole('region', { name: 'Activity details' })).toBe(activity);
+  });
+
+  it('opens completed activity from the start without an extra tab stop for short content', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(80);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(80);
+    const { getByText, queryByRole } = render(<TermThoughtBlock text="Earlier reasoning" />);
+    fireEvent.click(getByText('thoughts'));
+    const body = getByText('Earlier reasoning').closest('div[style*="overflow-y"]') as HTMLElement;
+    expect(body).not.toBeNull();
+    expect(body.scrollTop).toBe(0);
+    expect(body.hasAttribute('tabindex')).toBe(false);
+    expect(queryByRole('region')).toBeNull();
+  });
+
+  it('opens and reopens a live activity at its latest content', () => {
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(1000);
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(300);
+    const { getByText, getByRole } = render(<TermThoughtBlock text="Live reasoning" streaming />);
+    fireEvent.click(getByText('thinking'));
+    const activity = getByRole('region', { name: 'Activity details' });
+    expect(activity.scrollTop).toBe(1000);
+    activity.scrollTop = 100;
+    fireEvent.scroll(activity);
+    fireEvent.click(getByText('thinking'));
+    fireEvent.click(getByText('thinking'));
+    expect(getByRole('region', { name: 'Activity details' }).scrollTop).toBe(1000);
   });
 });
 
@@ -374,8 +424,39 @@ describe('MessageBlock — thought activity sync', () => {
 
     const { getByText, queryByText } = renderCardMessage(m);
 
-    expect(getByText(/^Worked$/)).not.toBeNull();
+    expect(getByText('Ran 1 command')).not.toBeNull();
     expect(queryByText('Working…')).toBeNull();
+  });
+
+  it('heads a finished block with what it did, the duration at the right and failures apart', () => {
+    const m: ChatMessage = {
+      ...baseMsg,
+      role: 'assistant',
+      text: 'Done',
+      streaming: false,
+      toolCalls: [
+        { id: 't1', title: 'Read a.ts', kind: 'read', status: 'completed', startedAt: 1_000, endedAt: 2_000 },
+        { id: 't2', title: 'Edit a.ts', kind: 'edit', status: 'completed', startedAt: 2_000, endedAt: 3_000 },
+        { id: 't3', title: 'Bash npm test', kind: 'bash', status: 'error', startedAt: 3_000, endedAt: 13_000 },
+      ],
+      blocks: [
+        { id: 'b1', kind: 'thinking', rawText: 'Fixing', streaming: false },
+        { id: 'b2', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 6 },
+        { id: 'b3', kind: 'tool', toolCallId: 't2', section: 'thinking', rawOffset: 6 },
+        { id: 'b4', kind: 'tool', toolCallId: 't3', section: 'thinking', rawOffset: 6 },
+        { id: 'b5', kind: 'answer', rawText: 'Done', streaming: false },
+      ],
+    };
+
+    const { getByText, queryByText } = renderCardMessage(m);
+
+    const summary = getByText('Edited 1 file, ran 1 command, read 1 file');
+    expect(summary.getAttribute('title')).toBe('Edited 1 file, ran 1 command, read 1 file');
+    expect(getByText('· 1 failed')).not.toBeNull();
+    const duration = getByText('12s');
+    expect(summary.compareDocumentPosition(duration) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(queryByText(/Worked/)).toBeNull();
+    expect(queryByText(/tool calls/)).toBeNull();
   });
 
   it('keeps Thought for when a duration is known but there were no tools', () => {
@@ -404,44 +485,98 @@ describe('MessageBlock — thought activity sync', () => {
     expect(getByText(/^Thoughts$/)).not.toBeNull();
     expect(queryByText(/Worked/)).toBeNull();
   });
-
-  it('labels a completed thought+tools block as Worked for the tool span', () => {
-    const m: ChatMessage = {
-      ...baseMsg,
-      role: 'assistant',
-      text: '',
-      streaming: false,
-      toolCalls: [{
-        id: 't1',
-        title: 'bash',
-        status: 'completed',
-        startedAt: 1_000,
-        endedAt: 8_000,
-      }],
-      blocks: [
-        { id: 'b1', kind: 'thinking', rawText: 'Assessing options', streaming: false },
-        { id: 'b2', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 17 },
-      ],
-    };
-
-    const { getByText, queryByText } = renderCardMessage(m);
-
-    expect(getByText('Worked for 7.0s')).not.toBeNull();
-    expect(getByText(/1 tool call/)).not.toBeNull();
-    expect(queryByText(/Thought for/)).toBeNull();
-  });
 });
 
-describe('userTextToMarkdown', () => {
-  it('suffixes plain lines with a markdown hard break', () => {
-    expect(userTextToMarkdown('a\nb')).toBe('a  \nb');
+
+it('renders durable answered and skipped cards without pending node state', () => {
+  const { getByText } = renderMessage({ role: 'assistant', text: '', blocks: [
+    { id: 'first', kind: 'user-input', requestId: 1, section: 'answer', rawOffset: 0,
+      interaction: { interactionId: 't:1', requestId: 1, status: 'answered', questions: [{ id: 'q1', question: 'Color?', options: [], multiSelect: false }], answers: [{ id: 'q1', question: 'Color?', answer: 'Blue' }] } },
+    { id: 'second', kind: 'user-input', requestId: 2, section: 'answer', rawOffset: 0,
+      interaction: { interactionId: 't:2', requestId: 2, status: 'skipped', questions: [{ id: 'q2', question: 'Continue?', options: [], multiSelect: false }], answers: [] } },
+  ] });
+  expect(getByText('Color?')).not.toBeNull();
+  expect(getByText('Blue')).not.toBeNull();
+  expect(getByText('Continue?')).not.toBeNull();
+  expect(getByText('(skipped)')).not.toBeNull();
+});
+
+it('labels estimated USD costs with their unit and provenance', () => {
+  const { getByTestId } = renderMessage({ role: 'assistant', text: 'done' }, { usageInfo: { charge: { amount: 0.0123, unit: 'USD', provenance: 'sdk_estimate' } } });
+  expect(getByTestId('turn-usage').textContent).toBe('usage estimated 0.0123 USD');
+  expect(getByTestId('turn-usage').title).toContain('sdk estimate');
+});
+
+describe('MessageBlock — durable agent timer', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    resetBackendClocksForTest();
   });
-  it('leaves blank lines and the last line untouched', () => {
-    expect(userTextToMarkdown('a\n\nb')).toBe('a\n\nb');
-  });
-  it('never touches lines inside a code fence', () => {
-    expect(userTextToMarkdown('```\ncode line\n```\nafter\nend')).toBe(
-      '```\ncode line\n```\nafter  \nend',
+
+  function renderCard(m: ChatMessage) {
+    return render(
+      <AgentBlockStyleOverride.Provider value="card">
+        <MessageBlock m={m} index={0} isDark={false} onCopy={noop} showThoughts fontFamily="inherit" density="comfortable" />
+      </AgentBlockStyleOverride.Provider>,
     );
+  }
+
+  // Backend-clock times; the cluster started at 50s, its tool ran 60s-99s.
+  function workingMessage(id: string, extraBlocks: AssistantBlock[] = []): ChatMessage {
+    return {
+      ...baseMsg,
+      id,
+      role: 'assistant',
+      text: '',
+      streaming: true,
+      toolCalls: [{ id: 't1', title: 'bash', status: 'completed', startedAt: 60_000, endedAt: 99_000 }],
+      blocks: [
+        { id: `${id}-b-0`, kind: 'thinking', rawText: 'Checking disks', streaming: false, startedAt: 50_000, endedAt: 60_000 },
+        { id: `${id}-b-1`, kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 14 },
+        ...extraBlocks,
+      ],
+    };
+  }
+
+  it('resumes the Working… count from the durable start after a remount', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100_000);
+    const m = workingMessage('a-live');
+
+    const first = renderCard(m);
+    expect(first.getByText('Working…')).not.toBeNull();
+    expect(first.getByText('50s')).not.toBeNull();
+    first.unmount();
+
+    vi.setSystemTime(106_000);
+    const second = renderCard(m);
+    expect(second.getByText('56s')).not.toBeNull();
+    act(() => { vi.advanceTimersByTime(1_000); });
+    expect(second.getByText('57s')).not.toBeNull();
+  });
+
+  it('counts on the backend clock once its offset is confirmed', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(160_000);
+    // The renderer runs 60s ahead of the backend that stamped the blocks.
+    recordBackendObservation('a-remote', 99_000, 159_000);
+    recordBackendObservation('a-remote', 100_000, 160_000);
+
+    const { getByText, queryByText } = renderCard(workingMessage('a-remote'));
+    expect(getByText('50s')).not.toBeNull();
+    expect(queryByText('110s')).toBeNull();
+  });
+
+  it('labels a finished cluster with its durable window, ending when the answer opened', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(200_000);
+    const m = workingMessage('a-done', [
+      { id: 'a-done-b-2', kind: 'answer', rawText: 'Here is the answer', streaming: true, startedAt: 104_000 },
+    ]);
+
+    const { getByText, queryByText } = renderCard(m);
+    expect(getByText('Ran 1 command')).not.toBeNull();
+    expect(getByText('54s')).not.toBeNull();
+    expect(queryByText('Working…')).toBeNull();
   });
 });

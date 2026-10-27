@@ -15,11 +15,13 @@ import {
   setKnownBackendConnections,
   type BackendConnectionSummary,
 } from '../../../../config/backendConnections';
+import { backendEntityId } from '../../../../config/backendIdentity';
 import type { Project } from '../../../../state/chatTypes';
 import { Button } from '../../../ui/controls';
 import '../../../RemoteConnection.css';
 import { confirmDialog } from '../../../ui/ConfirmDialog';
 import { RemoteDesktopConnect } from '../../../RemoteDesktopConnect';
+import { RemoteUpdateNotice } from '../../../RemoteUpdateNotice';
 import { useRemoteWorkspaces, type RemoteWorkspacesState } from './useRemoteWorkspaces';
 
 type ConnectionDraft = {
@@ -157,9 +159,11 @@ export function ConnectionsPane({ projects, onOpenWorkspace }: { projects: Proje
               connection.sshHost, connection.sshUser, connection.sshPort, connection.remotePort, connection.hasToken])}
             connection={connection}
             // Local hydration determines only whether navigation is safe, never remote membership.
-            canOpenWorkspace={id => projects.some(project => project.id === id
+            canOpenWorkspace={id => projects.some(project => project.id === backendEntityId(connection.id, id)
               && project.backendConnectionId === connection.id && !project.deletedAt && !project.archivedAt)}
-            onOpenWorkspace={onOpenWorkspace}
+            onOpenWorkspace={onOpenWorkspace
+              ? id => onOpenWorkspace(backendEntityId(connection.id, id))
+              : undefined}
             onEdit={() => {
               setQuickConnect(false);
               setDraft({
@@ -327,6 +331,7 @@ function ConnectionRow({
           </span>
         </div>
         <div className="remote-machine__address" title={address}>{address}</div>
+        {!local && <RemoteUpdateNotice connectionId={connection.id} name={connection.name} onUpdated={onRefresh} />}
         {!local && <div className="remote-machine__footer">
           <div className="remote-machine__actions">
             {onRefresh && <Button variant="ghost" size="sm" disabled={loading} onClick={onRefresh}>

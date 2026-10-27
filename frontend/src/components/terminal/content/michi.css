@@ -1,0 +1,292 @@
+/* Michi content primitives. Colours come only from the terminal palette tokens
+   (--term-*, --sel-bar-*), so every palette (Monokai, Bone, Slate, Gruvbox)
+   reads without per-theme rules. */
+
+/* ── State glyph: the running arc turns (static under reduced motion) ── */
+.michi-state-dot__spin {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  animation: tspin var(--t-loop-fast) linear infinite;
+}
+
+/* ── App badge: CC / CX / KR / CW (short) · Claude Code (full) ── */
+.michi-app-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 3px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-sm);
+  color: var(--term-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 14px;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.michi-app-badge--full {
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 16px;
+}
+.michi-app-badge[data-app='michi'] {
+  border-color: var(--term-accent);
+  color: var(--term-accent);
+}
+
+/* ── Tags: NEW · Agent says · You edited · Back after archive · ignored ── */
+.michi-tag {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: var(--ui-radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 16px;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.michi-tag[data-variant='new'] { color: var(--term-accent); }
+.michi-tag[data-variant='agent-says'] { color: var(--term-digest); border-style: dashed; }
+.michi-tag[data-variant='you-edited'] { color: var(--term-mauve); }
+.michi-tag[data-variant='back-after-archive'] { color: var(--term-select); }
+.michi-tag[data-variant='ignored'] { color: var(--term-muted); border-color: var(--term-line); }
+.michi-tag[data-variant='archived'] { color: var(--term-muted); border-color: var(--term-line); }
+
+/* ── Section caption: ● WAITING ON YOU 2 ─────────────────────── */
+.michi-section-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.michi-section-label__dot {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.michi-section-label__text {
+  color: var(--term-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.michi-section-label__count {
+  color: var(--term-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.michi-section-label__right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Continue split button ───────────────────────────────────── */
+.michi-continue {
+  display: inline-flex;
+  align-items: stretch;
+  flex-shrink: 0;
+  border-radius: var(--ui-radius);
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+.michi-continue__main,
+.michi-continue__caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  margin: 0;
+  background: var(--term-accent);
+  color: var(--term-surface);
+  font-family: var(--ui-font);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t-quick) ease;
+}
+.michi-continue__main {
+  gap: 4px;
+  white-space: nowrap;
+}
+.michi-continue__caret {
+  border-left: 1px solid color-mix(in srgb, var(--term-surface) 35%, transparent);
+}
+.michi-continue__main:hover,
+.michi-continue__caret:hover,
+.michi-continue__caret[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--term-accent) 86%, var(--term-fg));
+}
+.michi-continue__main:focus-visible,
+.michi-continue__caret:focus-visible {
+  outline: 2px solid var(--term-fg);
+  outline-offset: -2px;
+}
+.michi-continue[data-size='md'] .michi-continue__main { height: 26px; padding: 0 10px 0 12px; font-size: var(--fs-md); }
+.michi-continue[data-size='md'] .michi-continue__caret { height: 26px; width: 24px; }
+.michi-continue[data-size='sm'] .michi-continue__main { height: 22px; padding: 0 7px 0 9px; font-size: var(--fs-sm); }
+.michi-continue[data-size='sm'] .michi-continue__caret { height: 22px; width: 20px; }
+
+.michi-continue-menu {
+  --m-width: 320px;
+}
+.michi-continue-menu .michi-menu-label {
+  white-space: nowrap;
+}
+/* Focus sits on the list; the highlighted row (aria-activedescendant) shows it. */
+.michi-continue-menu__list:focus {
+  outline: none;
+}
+.michi-continue-menu__handoff {
+  margin-top: 4px;
+  padding: 8px var(--m-rowX) 4px;
+  border-top: 1px solid var(--term-line);
+  list-style: none;
+}
+.michi-continue-menu__caption {
+  color: var(--term-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.michi-continue-menu__line {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--term-mid);
+  font-size: var(--fs-md);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Sidebar sync line: Synced 1m ago · Reading 3… · not reachable ── */
+.michi-sync-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 12px 2px;
+  color: var(--term-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.michi-sync-line[data-state='lost'] {
+  color: var(--term-danger-text);
+}
+.michi-sync-line__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-sync-line__spinner {
+  width: 8px;
+  height: 8px;
+}
+
+/* ── Undo toast ──────────────────────────────────────────────── */
+/* Always-mounted live regions (polite and assertive); the pill comes and goes in one of them. */
+.michi-toast-region {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 24px;
+  z-index: var(--z-toast);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+/* While a batch bar is up the toast sits above it: MichiUndoToast measures the
+   bars (each page places its own) and sets the region's bottom; this is the
+   first frame's guess. */
+body:has(.michi-batch, .michi-doc-batch) .michi-toast-region {
+  bottom: 72px;
+}
+.michi-toast-live {
+  /* Empty, it takes no room; it stays in the tree so its first message is heard. */
+  display: flex;
+  justify-content: center;
+}
+.michi-toast {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(560px, calc(100vw - 48px));
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--sel-bar-line);
+  border-radius: var(--ui-radius-lg);
+  background: var(--sel-bar-bg);
+  box-shadow: var(--sel-bar-shadow);
+  color: var(--sel-bar-fg);
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  animation: fadeIn var(--t-soft) ease-out both;
+}
+/* How it went: digest for done, danger for failed, quiet for plain information. */
+.michi-toast__dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--ui-radius-pill);
+  background: var(--sel-bar-muted);
+}
+.michi-toast[data-tone='success'] .michi-toast__dot { background: var(--term-digest); }
+.michi-toast[data-tone='error'] .michi-toast__dot { background: var(--term-danger); }
+.michi-toast__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-toast__btn,
+.michi-toast__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 24px;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--sel-bar-fg);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--t-quick) ease, color var(--t-quick) ease;
+}
+.michi-toast__btn {
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--sel-bar-line);
+  font-weight: 500;
+}
+.michi-toast__close {
+  width: 24px;
+  padding: 0;
+  border: 0;
+  color: var(--sel-bar-mid);
+}
+.michi-toast__btn:hover,
+.michi-toast__close:hover {
+  background: var(--sel-bar-hover);
+  color: var(--sel-bar-fg);
+}
+.michi-toast__btn:focus-visible,
+.michi-toast__close:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 60%, transparent);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .michi-state-dot__spin { animation: none; }
+  .michi-toast { animation: none; }
+  .michi-continue__main, .michi-continue__caret, .michi-toast__btn, .michi-toast__close { transition: none; }
+}

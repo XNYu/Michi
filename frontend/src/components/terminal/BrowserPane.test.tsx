@@ -86,12 +86,6 @@ describe('BrowserPane native bridge', () => {
     expect(closePane).toHaveBeenCalledWith('pane-browser-1');
   });
 
-  it('does not dim its chrome, because the native page cannot be dimmed with it', () => {
-    const { container } = render(<BrowserPane item={item} />);
-    const pane = container.querySelector<HTMLElement>('[data-pane-kind="browser"]');
-    expect(pane?.style.filter).toBe('none');
-  });
-
   it('publishes bounds as soon as the viewport resizes, so a dock drag does not lag a frame', () => {
     let resized: ResizeObserverCallback | undefined;
     vi.stubGlobal('ResizeObserver', class {

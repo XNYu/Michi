@@ -1,0 +1,161 @@
+import { isKiroSignInError } from './kiroSignIn';
+import { ACPNativeSessionMissingError, ACPError, ACPProcessExitedError, ACPNotRunningError } from "./acpClient";
+import { NativeResumeFailedError } from "../../contract/errors";
+
+/**
+ * Cancel-watchdog recovery restarts the shared Kiro process, so it is refused
+ * while a healthy peer session or control request still uses that process.
+ * The quarantined session is untouched; recovery can be attempted again once
+ * the peer finishes. KiroSession waits on this error instead of failing.
+ */
+export class KiroCancelRecoveryBusyError extends NativeResumeFailedError {
+  /** The busy peer is a workflow run. A paused workflow never finishes by itself. */
+  readonly workflowRunning: boolean;
+  constructor(opts: { workflowRunning?: boolean } = {}) {
+    super(
+      new Error("Shared Kiro process is busy"),
+      opts.workflowRunning
+        // Say what to do: waiting alone cannot unblock a paused workflow.
+        ? "Recovery would restart the Kiro process that runs a workflow in this folder, which would end it. The original session is retained. Retry after the workflow finishes, or resume or stop a paused workflow from its card."
+        : "Recovery is waiting for another task using this Kiro process. The original session is retained. Retry after the other task finishes.",
+    );
+    this.name = "KiroCancelRecoveryBusyError";
+    this.workflowRunning = opts.workflowRunning === true;
+  }
+}
+
+/**
+ * kiro-cli collapses every runtime failure into JSON-RPC `-32603 "Internal
+ * error"`; the discriminator lives entirely in the `rpcData` string (the ACP
+ * spec defines no structured auth/rate-limit codes). kiro-cli is built on the
+ * AWS Rust SDK (aws-smithy) + the CodeWhisperer/Q streaming client, so the
+ * observable error surface is that stack's taxonomy. Fixtures for every branch
+ * below are the exact strings seen in ~/.michi/logs/backend.log plus markers
+ * lifted from the kiro-cli binary's baked-in error variants.
+ *
+ * Four internal classes; the UI collapses to three (see toErrorKind):
+ *   - connection: the SDK connection/process is dead — respawn required.
+ *   - transient:  service-side blip — a same-session resend usually clears it.
+ *   - auth:       SSO/OIDC token expired — no retry, prompt re-login.
+ *   - generic:    validation / quota / anything else — surface raw, no retry.
+ */
+export type AcpErrorClass = "connection" | "transient" | "auth" | "generic";
+
+/** UI-facing collapse: connection + transient both read as a "connection" banner. */
+export type AcpErrorKind = "connection" | "auth" | "generic";
+
+// SSO/OIDC re-authentication needed. Checked first (before quota/transient) so a
+// token error never masquerades as retryable.
+const AUTH_MARKERS = [
+  "expiredtokenexception",
+  "invalidgrantexception",
+  "unauthorizedclientexception",
+  "notauthorizedexception",
+  "authorizationpendingexception",
+];
+
+// Usage caps / capacity. Checked before transient + connection so a quota error
+// wrapped in the "response stream" envelope is never retried.
+const QUOTA_MARKERS = [
+  "monthlyrequestcount",
+  "dailyrequestcount",
+  "insufficientmodelcapacity",
+];
+
+// Service-side transient — connection is fine, a same-session resend clears it.
+const TRANSIENT_MARKERS = [
+  "throttl", // throttled / ThrottlingError
+  "modeltemporarilyunavailable",
+  "model_temporarily_unavailable",
+  "internalserver", // InternalServerError / InternalServerException
+  "failed to generate a response",
+];
+
+// Connection/transport layer is dead — the request never completed. Requires a
+// fresh kiro process. Checked last so more-specific classes win the envelope.
+const CONNECTION_MARKERS = [
+  "dispatch failure",
+  "dispatchfailure",
+  "response stream", // "Encountered an error in the response stream: ..."
+  "timed out",
+  "request has timed out",
+  "timeouterror",
+  "providertimedout",
+  "stalledstream",
+  "connection reset",
+  "host unreachable",
+  "responseerror",
+];
+
+function haystack(err: unknown): string {
+  if (!(err instanceof Error)) return typeof err === "string" ? err.toLowerCase() : "";
+  let text = err.message ?? "";
+  if (err instanceof ACPError && err.rpcData != null) {
+    text += " " + (typeof err.rpcData === "string" ? err.rpcData : safeStringify(err.rpcData));
+  }
+  return text.toLowerCase();
+}
+
+function safeStringify(v: unknown): string {
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
+}
+
+function matchesAny(hay: string, markers: string[]): boolean {
+  return markers.some((m) => hay.includes(m));
+}
+
+export function classifyAcpError(err: unknown): AcpErrorClass {
+  if (isKiroSignInError(haystack(err))) return 'auth';
+  // A dead process is unambiguously a connection failure regardless of message.
+  if (err instanceof ACPProcessExitedError || err instanceof ACPNotRunningError) {
+    return "connection";
+  }
+  const hay = haystack(err);
+  if (matchesAny(hay, AUTH_MARKERS)) return "auth";
+  if (matchesAny(hay, QUOTA_MARKERS)) return "generic";
+  if (matchesAny(hay, TRANSIENT_MARKERS)) return "transient";
+  if (matchesAny(hay, CONNECTION_MARKERS)) return "connection";
+  return "generic";
+}
+
+/** True for classes where a single automatic retry is worthwhile. */
+export function isRetryable(cls: AcpErrorClass): boolean {
+  return cls === "connection" || cls === "transient";
+}
+
+/** True only when recovery must spawn a fresh kiro process (dead connection). */
+export function needsRespawn(cls: AcpErrorClass): boolean {
+  return cls === "connection";
+}
+
+/** Collapse the 4 internal classes to the 3 the UI banner distinguishes. */
+export function toErrorKind(cls: AcpErrorClass): AcpErrorKind {
+  if (cls === "auth") return "auth";
+  if (cls === "generic") return "generic";
+  return "connection";
+}
+
+/**
+ * Human-facing reason for an in-flight auto-retry, shown in the streaming
+ * activity indicator while the hidden retry runs. Kept distinct from the
+ * terminal banner text: `transient` means the connection is fine and the model
+ * is briefly busy, so it must NOT read as "cannot reach Kiro" here even though
+ * toErrorKind collapses it into the `connection` banner on final failure.
+ */
+export function retryReason(cls: AcpErrorClass): string {
+  if (cls === "transient") return "The selected model is temporarily unavailable";
+  return "Connection to Kiro was interrupted"; // connection (auth/generic are never retried)
+}
+
+/** Match the actual session/load envelope, not unrelated MCP/file "not found" errors. */
+export function isNativeSessionUnavailable(error: unknown, nativeSessionId: string): boolean {
+  if (!(error instanceof ACPError) || error.method !== 'session/load' || error.sessionId !== nativeSessionId) return false;
+  if (error instanceof ACPNativeSessionMissingError) return true;
+  if (error.rpcCode === -32601) return true; // session/load is explicitly unsupported.
+  return error.rpcCode === -32603
+    && error.rpcData === `Failed to start session: Session not found: ${nativeSessionId}`;
+}

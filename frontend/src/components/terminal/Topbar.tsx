@@ -9,13 +9,16 @@ import {
   useStructuralSelector,
   shallowArrayEqual,
 } from '../../state/chatStore';
+import { paneScopeKey } from '../../state/paneState';
 import { usePrefs } from '../../state/prefs';
 import { IconBtn } from './primitives';
 import { getElectron } from '../../lib/electronBridge';
 import type { AppUpdateState } from '../../lib/electronBridge';
 import SidebarToggleButton from './SidebarToggleButton';
+import { AREA_RAIL_WIDTH } from './rail/AreaRail';
 import PaneCaption from './PaneCaption';
 import PaneLauncher from './PaneLauncher';
+import PaneTabStrip from './PaneTabStrip';
 import BrowserLauncher from './BrowserLauncher';
 import { HeaderTooltip } from './WorkspaceMenuButton';
 import { selectUnreadTotal } from '../../state/sidebarSelectors';
@@ -31,9 +34,29 @@ import type { PageId } from '../../state/commands';
 import { kbd } from '../../lib/platform';
 import { pageBackground } from '../../lib/pageBackground';
 import { ArtifactsIcon, BranchesIcon, DigestIcon, MapIcon } from './icons';
+import { Columns2, Plus, Sparkles } from 'lucide-react';
+import { useSpaceTopbar } from '../../state/pages/spaceTopbar';
+import { openNewChatSheet, useCurrentSpaceScope } from '../../state/spaceConversations/store';
+import { Button } from '../ui/controls';
+import './spaces/conversation/conversation.css';
 import { selectArchivedGroupCountForPage } from '../../state/topbarSelectors';
+import { usePaneBackgroundWorkCounts } from './backgroundWork/usePaneBackgroundWork';
+import { isSystemWorkspace, systemWorkspaceIds } from '../../state/assistant/systemWorkspace';
+
+const ASSISTANT_TITLE = 'Assistant';
 
 const TOPBAR_HEIGHT = 44;
+/** The breadcrumb's bold title (active thread, Michi project). */
+const BREADCRUMB_TITLE_STYLE: React.CSSProperties = {
+  fontSize: 'var(--fs-lg)',
+  fontWeight: 600,
+  color: 'var(--term-fg)',
+  letterSpacing: 'var(--ls-tight)',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  minWidth: 0,
+};
 // Traffic-light cluster ends at ~x=66 (start 14 + 3×12 + 2×8 = 66). Pushing
 // our icon cluster to x=96 leaves a ~30px breathing gap so the chrome (dots)
 // and our chrome (sidebar/+/search) read as two distinct groups.
@@ -59,30 +82,47 @@ export default function TerminalTopbar({
   page,
   onNav: _onNav,
   sidebarCollapsed,
+  sidebarRail = false,
   onToggleSidebar,
   onNewThread,
   onOpenPalette,
   artifactsOpen = false,
   workspaceReady = true,
   remoteRecoveryControl,
+  spacesCrumb,
+  areaCrumb,
+  spacesAssistant,
+  navigation,
 }: {
+  navigation?: { canBack: boolean; canForward: boolean; onBack: () => void; onForward: () => void };
   page: PageId;
   onNav: (p: PageId) => void;
   sidebarCollapsed: boolean;
+  /** Wide-layout collapsed state leaves only the area rail; narrow/profile do not. */
+  sidebarRail?: boolean;
   onToggleSidebar: () => void;
   onNewThread?: () => void;
   onOpenPalette?: () => void;
   artifactsOpen?: boolean;
   workspaceReady?: boolean;
   remoteRecoveryControl?: React.ReactNode;
+  /** ‹ back on a Michi workspace document: return to the page that opened it (default Home). */
+  /** What a Pages home shows after `PAGES ›`: Home or the workspace's name. */
+  spacesCrumb?: string;
+  /** What Settings and Scheduled show after their label: the open section or page; none on the job list. */
+  areaCrumb?: string;
+  /** The Meta agent window's toggle (⌘J) in the Spaces area. */
+  spacesAssistant?: { open: boolean; onToggle: () => void };
 }) {
   const {
     activeProject,
+    projects,
     focusedNodeId,
     canNavBack,
     canNavForward,
   } = useChatProjects();
-  const { openPanes: activePanes, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const { openPanes: activePanes, tabPanes, pagePane, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const paneScope = paneScopeKey(activeProject, pagePane);
   const { focusedPane: visualFocus } = usePresentedPaneFocus(focusedPane);
   const { paneIds: presentedPanes, paneItems, exitingIds: allExitingIds } = usePresentedPanes(activePanes, activeItems);
   const openPanes = useMemo(() => presentedPanes.filter(id => paneItems[id]?.kind !== 'browser'), [presentedPanes, paneItems]);
@@ -107,8 +147,11 @@ export default function TerminalTopbar({
     setPaneWidth(keepId, undefined);
   }, [activePanes, closePane, focusPane, setPaneWidth]);
 
+  // The assistant's hidden workspace has no rows in Activity, so its replies
+  // don't count here either (the panel shows them).
+  const hiddenProjectIds = useMemo(() => systemWorkspaceIds(projects), [projects]);
   const unreadTotal = useStructuralSelector(
-    (nodes) => selectUnreadTotal(nodes, focusedNodeId),
+    (nodes) => selectUnreadTotal(nodes, focusedNodeId, hiddenProjectIds),
   );
   const unreadDisplay = !workspaceReady || unreadTotal === 0 ? '' : unreadTotal >= 10 ? '9+' : String(unreadTotal);
 
@@ -121,8 +164,12 @@ export default function TerminalTopbar({
 
   // Per-pane data we need to render captions: title, status, kind. Uses
   // useStructuralSelector so HIGH_FREQ streaming dispatches don't re-render the topbar.
+  // The assistant's conversation opened as a pane: its hidden workspace is the
+  // active one. The topbar names it "Assistant" (never the workspace or a
+  // generated title) and drops launchers that would act on that workspace.
+  const inAssistant = isSystemWorkspace(activeProject);
   const paneTitles = useStructuralSelector(
-    (nodesMap) => openPanes.map((id) => paneItems[id]?.title ?? nodesMap[id]?.title ?? ''),
+    (nodesMap) => openPanes.map((id) => paneItems[id]?.title ?? (inAssistant ? ASSISTANT_TITLE : nodesMap[id]?.title) ?? ''),
     shallowArrayEqual,
   );
   const paneStatuses = useStructuralSelector(
@@ -139,6 +186,9 @@ export default function TerminalTopbar({
     (nodesMap) => openPanes.map((id) => paneItems[id]?.kind ?? nodesMap[id]?.kind ?? 'chat'),
     shallowArrayEqual,
   );
+  // Running subagents and workflows per chat pane (the caption badge);
+  // changes only when a count does, not on every stream chunk.
+  const paneBackgroundWork = usePaneBackgroundWorkCounts(openPanes, paneItems);
   // Pane widths drive the cell grid template — keep zone-2 cells aligned with
   // the Dashboard's pane columns so caption ↔ pane is a single visual stack.
   const paneWidths = useStructuralSelector(
@@ -164,11 +214,13 @@ export default function TerminalTopbar({
       : visualFocus,
   ]));
   retainedCaptionFocus.current = captionFocus;
-  const showPaneCells = workspaceReady && page === 'dashboard' && openPanes.length > 0;
+  // Single-page mode swaps the caption cells for a browser-style tab bar.
+  const showTabs = workspaceReady && page === 'dashboard' && !!tabPanes?.length;
+  const showPaneCells = workspaceReady && page === 'dashboard' && openPanes.length > 0 && !tabPanes;
   const paneLayout = usePaneLayout(cellsStripRef, {
     paneIds: openPanes, customWidths: paneWidths, mode: prefs.paneWidthMode, exitingIds,
     defaultPaneWidth: prefs.defaultPaneWidth, enabled: showPaneCells,
-    scope: `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`,
+    scope: paneScope,
     appReduceMotion: prefs.reduceMotion,
   });
 
@@ -266,6 +318,10 @@ export default function TerminalTopbar({
   // with the active thread (not just the workspace) and offers a ‹ back crumb
   // to the conversation, so the fullscreen page can't read as global.
   const threadPage = page === 'branches' || page === 'map' || page === 'digest';
+  const showWorkspaceControls = page !== 'scheduled' && page !== 'spaces' && page !== 'space';
+  // Michi pages are global, not thread-scoped: All threads is a bare label, a
+  // workspace document gets a ‹ back crumb plus the Michi project's title
+  // (MichiProjectCrumb, the only part of the topbar that follows Michi data).
   const activeTree =
     activeProject?.trees.find((t) => t.id === activeProject.activeTreeId) ?? null;
   const threadRootId = activeTreeRootNodeId(activeProject);
@@ -274,9 +330,11 @@ export default function TerminalTopbar({
     const n = nodesMap[threadRootId];
     return n ? n.title || chatLabel(n) : '';
   });
-  const threadTitle = activeTree
-    ? activeTree.name?.trim() || threadRootTitle || 'Untitled thread'
-    : activeProject?.name ?? '';
+  const threadTitle = inAssistant
+    ? ASSISTANT_TITLE
+    : activeTree
+      ? activeTree.name?.trim() || threadRootTitle || 'Untitled thread'
+      : activeProject?.name ?? '';
   // The Digest toggle carries the unread dot that used to live on the
   // sidebar's Digest row.
   const hasUnreadDigest = useStructuralSelector((nodesMap) => {
@@ -294,12 +352,12 @@ export default function TerminalTopbar({
   });
 
   const showWorkspaceTitle =
-    page === 'workspaces' || page === 'trash' || page === 'archived' ||
+    page === 'workspaces' || page === 'trash' || page === 'archived' || page === 'scheduled' ||
     page === 'workspace-manage' || page === 'agents' || page === 'agent-manage' ||
+    page === 'threads' || page === 'spaces' || page === 'space' || page === 'settings' ||
     (!!activeProject && threadPage);
-  // Each page paints its own body background. The topbar must match so
-  // there is no visible seam between the two. pageBackground() is the
-  // single source of truth for both; see lib/pageBackground.ts.
+  // Without a docked sidebar, the topbar follows the page background. Docked
+  // layouts override this fallback with the shared outer-frame material.
   // Dashboard reuses Home once the shared presentation layer has finished
   // removing the last pane. Match that rendered surface here; using the raw
   // route kept the pane surface white above Home's gray canvas.
@@ -314,8 +372,12 @@ export default function TerminalTopbar({
     : page === 'digest' ? 'DIGEST'
     : page === 'workspaces' ? 'WORKSPACES'
     : page === 'trash' ? 'HISTORY'
+    : page === 'scheduled' ? 'SCHEDULED'
+    : page === 'settings' ? 'SETTINGS'
     : page === 'archived' ? 'ARCHIVED'
     : page === 'agents' ? 'AGENTS'
+    : page === 'threads' ? 'ALL THREADS'
+    : page === 'spaces' || page === 'space' ? 'PAGES'
     : '';
   const agentBackendConnectionId = page === 'agent-manage' && manageAgentRoute
     ? manageAgentRoute.backendConnectionId
@@ -342,7 +404,7 @@ export default function TerminalTopbar({
   });
   const prevReduceMotion = useRef(prefs.reduceMotion);
   useEffect(() => {
-    const scope = `${activeProject?.id ?? ''}::${activeProject?.activeTreeId ?? ''}`;
+    const scope = paneScope;
     const prev = prevActivePanesRef.current;
     prevActivePanesRef.current = { scope, ids: activePanes };
     prevReduceMotion.current = prefs.reduceMotion;
@@ -384,7 +446,7 @@ export default function TerminalTopbar({
       });
     }, 1200);
     return () => window.clearTimeout(timer);
-  }, [activePanes, activeProject?.id, activeProject?.activeTreeId, focusedPane, prefs.reduceMotion]);
+  }, [activePanes, paneScope, focusedPane, prefs.reduceMotion]);
 
   // When a new pane gets focused, clear its "new" mark immediately.
   useEffect(() => {
@@ -415,7 +477,7 @@ export default function TerminalTopbar({
       style={{
         height: TOPBAR_HEIGHT,
         flexShrink: 0,
-        background: topbarBg,
+        background: `var(--term-chrome-bg, ${topbarBg})`,
         display: 'flex',
         alignItems: 'stretch',
         position: 'relative',
@@ -425,29 +487,21 @@ export default function TerminalTopbar({
       {/* Zone 1: chrome region. The icon strip (toggle, new-chat, search) is
           always absolutely positioned over the topbar's left edge so it can
           stay visually fixed regardless of sidebar state. A separate in-flow
-          spacer below it carries the sidebar's surface background + right
-          border and animates its width in lockstep with the sidebar — that
+          spacer below it animates its width in lockstep with the sidebar — that
           way captions don't snap left when the sidebar collapses; they slide
           along with it. */}
       <div
         aria-hidden
+        className="terminal-topbar-sidebar-spacer"
         style={{
-          width: sidebarCollapsed ? 0 : 'var(--term-sidebar-width, 280px)',
+          width: sidebarRail
+            ? AREA_RAIL_WIDTH
+            : sidebarCollapsed
+              ? 0
+              : 'var(--term-sidebar-width, 280px)',
           flexShrink: 0,
-          background: 'var(--term-sidebar-bg, var(--term-surface))',
-          borderRight: sidebarCollapsed ? 'none' : '1px solid color-mix(in srgb, var(--term-line) 50%, transparent)',
-          // Mirror the Sidebar's right-edge glow so the soft shadow line runs
-          // continuously from the topbar through the sidebar. clipPath clips
-          // the bottom so this shadow meets the Sidebar's shadow exactly at
-          // y=topbar_bottom without overlap (the Sidebar already clips its
-          // top edge to match). zIndex pairs with the Sidebar's z-index so
-          // the two stack consistently above adjacent pane content.
-          boxShadow: sidebarCollapsed
-            ? undefined
-            : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.025))',
-          clipPath: sidebarCollapsed ? undefined : 'inset(-8px -8px 0 0)',
-          position: 'relative',
-          zIndex: sidebarCollapsed ? undefined : 1,
+          // Layout only: a painted edge here crosses the native traffic-light
+          // cluster when this track shrinks to the 56px navigation rail.
           overflow: 'hidden',
           transition: sidebarResizing
             ? 'none'
@@ -457,6 +511,7 @@ export default function TerminalTopbar({
         }}
       />
       <div
+        className="terminal-topbar-controls"
         style={{
           position: 'absolute',
           left: 0,
@@ -512,8 +567,8 @@ export default function TerminalTopbar({
           </Zone1IconButton>
         )}
         <Zone1IconButton
-          onClick={navBack}
-          disabled={!workspaceReady || !canNavBack}
+          onClick={navigation?.onBack ?? navBack}
+          disabled={!workspaceReady || !(navigation?.canBack ?? canNavBack)}
           tooltip="Back"
           tooltipKbd={kbd('mod', '[')}
           aria-label="Navigate back"
@@ -521,8 +576,8 @@ export default function TerminalTopbar({
           <NavBackIcon />
         </Zone1IconButton>
         <Zone1IconButton
-          onClick={navForward}
-          disabled={!workspaceReady || !canNavForward}
+          onClick={navigation?.onForward ?? navForward}
+          disabled={!workspaceReady || !(navigation?.canForward ?? canNavForward)}
           tooltip="Forward"
           tooltipKbd={kbd('mod', ']')}
           aria-label="Navigate forward"
@@ -534,19 +589,14 @@ export default function TerminalTopbar({
       {/* Zone 2: main surface. When collapsed, this zone owns the traffic-light
           pad plus space for the absolutely-positioned sidebar toggle button. */}
       <div
+        className="terminal-topbar-main"
         data-pane-caption-viewport={showPaneCells ? '' : undefined}
         style={{
           marginRight: page === 'dashboard' ? 'var(--browser-dock-width, 0px)' : 0,
           flex: 1,
-          // Zone 2 spans the whole over-body stretch of the topbar. When pane
-          // cells are visible, use --term-bg so the topbar area to the right
-          // of the last caption cell matches the shell background that shows
-          // in the Dashboard strip below it; caption cells already paint
-          // their own --term-pane-bg on top. Under macOS vibrancy the topbar
-          // root carries the chrome frost tint (to blend with the sidebar),
-          // which must never show over the body — this zone covers it.
-          // Without pane cells, fall back to topbarBg.
-          background: showPaneCells ? 'var(--term-bg)' : topbarBg,
+          // Docked layouts share one chrome surface across the entire topbar.
+          // Narrow/profile layouts retain the page's own background.
+          background: `var(--term-topbar-zone-bg, ${showPaneCells ? 'var(--term-bg)' : topbarBg})`,
           display: 'flex',
           alignItems: 'stretch',
           minWidth: 0,
@@ -590,7 +640,7 @@ export default function TerminalTopbar({
               // + 3 icons) when sidebar is collapsed; otherwise the title would
               // sit under it.
               const firstCellLeftPad = isFirst && sidebarCollapsed
-                ? zone1Width
+                ? zone1Width - (sidebarRail ? AREA_RAIL_WIDTH : 0)
                 : 0;
               return (
                 <div
@@ -598,7 +648,7 @@ export default function TerminalTopbar({
                   data-pane-caption-id={id}
                   data-pane-exiting={exitingIds.has(id) ? '' : undefined}
                   aria-hidden={exitingIds.has(id) || undefined}
-                  {...(exitingIds.has(id) ? { inert: '' } : {})}
+                  inert={exitingIds.has(id)}
                   onClick={() => focusPane(id)}
                   onAnimationEnd={isCellNew ? () => clearNewMark(id) : undefined}
                   style={{
@@ -613,7 +663,7 @@ export default function TerminalTopbar({
                     paddingLeft: firstCellLeftPad + 12,
                     paddingRight: 0,
                     // First cell's left pad shrinks/grows opposite the sidebar
-                    // spacer (zone1Width → 0 as spacer goes 0 → sidebar_width).
+                    // spacer (zone1Width → 0 as the spacer grows back to sidebar width).
                     // Without a matching transition, padding flips instantly
                     // while spacer eases, so the title snaps to ~12px and then
                     // slides right — visible as a flicker on toggle.
@@ -632,14 +682,11 @@ export default function TerminalTopbar({
                       'filter var(--t-soft) var(--t-ease)',
                     ].filter(Boolean).join(', '),
                     borderRight: !prefs.paneRules ? 'none' : '1px solid var(--term-line)',
-                    // Match TPane's dimming formula so the caption cell mirrors
-                    // its pane below — unfocused panes get a dim title strip.
-                    background: 'var(--term-pane-bg, var(--term-surface))',
-                    // Dim unfocused cells using brightness only — NOT opacity.
-                    // opacity < 1 makes the cell semi-transparent, revealing the
-                    // topbar container bg (white) behind it. brightness() darkens
-                    // without transparency, so the right-cluster icons area
-                    // (transparent) correctly shows the dimmed cell bg.
+                    // Docked captions leave the frame visible; narrow layouts
+                    // retain the pane's surface behind the title.
+                    background: 'var(--term-topbar-zone-bg, var(--term-pane-bg, var(--term-surface)))',
+                    // Match the pane's focus dimming without changing opacity
+                    // or adding another tint layer to the shared frame.
                     filter: cellFocus == null || isCellFocused ? 'none' : `brightness(${1 - prefs.focusDim / 100 * 0.6})`,
                     // Layer 1: entrance animation — accent bg highlight fade-out.
                     ...(isCellNew ? { animation: 'pane-entrance-bg var(--t-slow) ease-out forwards' } : {}),
@@ -653,6 +700,7 @@ export default function TerminalTopbar({
                     streaming={status === 'streaming'}
                     error={status === 'error'}
                     isNew={isCellNew}
+                    backgroundWork={paneBackgroundWork(i)}
                     kind={paneKinds[i] as 'chat' | 'digest' | 'artifact' | 'launcher' | 'files' | 'review' | 'file' | 'diff' | 'terminal' | 'browser'}
                     onFocus={focusPane}
                     onClose={closePane}
@@ -664,6 +712,12 @@ export default function TerminalTopbar({
               );
             })}
           </div>
+        )}
+        {showTabs && (
+          <PaneTabStrip
+            titleOverride={inAssistant ? ASSISTANT_TITLE : undefined}
+            leftInset={sidebarCollapsed ? zone1Width - (sidebarRail ? AREA_RAIL_WIDTH : 0) : 0}
+          />
         )}
         {workspaceReady && showWorkspaceTitle && (
           <div
@@ -678,7 +732,9 @@ export default function TerminalTopbar({
               // paddingLeft) so this div's box starts AFTER the Zone 1
               // cluster — otherwise its -webkit-app-region: drag covers
               // Zone 1's no-drag buttons and swallows their clicks.
-              marginLeft: sidebarCollapsed ? zone1Width : 0,
+              marginLeft: sidebarCollapsed
+                ? zone1Width - (sidebarRail ? AREA_RAIL_WIDTH : 0)
+                : 0,
               paddingLeft: 14,
               // Extra right padding clears the absolutely-positioned right
               // cluster so the title/breadcrumb text doesn't run under icons.
@@ -713,7 +769,9 @@ export default function TerminalTopbar({
                 {pageLabel}
               </span>
             )}
-            {page !== 'workspace-manage' && page !== 'agent-manage' && page !== 'workspaces' && (
+            {page !== 'workspace-manage' && page !== 'agent-manage' && page !== 'workspaces'
+              && page !== 'threads' && page !== 'spaces' && page !== 'space'
+              && page !== 'scheduled' && page !== 'settings' && (
               <span style={{ color: 'var(--term-faint)', fontSize: 'var(--fs-sm)' }}>·</span>
             )}
             {page === 'agent-manage' ? (
@@ -738,6 +796,8 @@ export default function TerminalTopbar({
               >
                 Trash
               </span>
+            ) : page === 'scheduled' || page === 'settings' ? (
+              areaCrumb ? <CrumbTitle title={areaCrumb} /> : null
             ) : page === 'archived' ? (
               <span
                 style={{
@@ -748,20 +808,12 @@ export default function TerminalTopbar({
               >
                 {archivedCount} archived
               </span>
+            ) : page === 'spaces' ? (
+              spacesCrumb ? <CrumbTitle title={spacesCrumb} /> : null
+            ) : page === 'space' ? (
+              <SpaceCrumb />
             ) : (
-              <span
-                title={threadTitle}
-                style={{
-                  fontSize: 'var(--fs-lg)',
-                  fontWeight: 600,
-                  color: 'var(--term-fg)',
-                  letterSpacing: 'var(--ls-tight)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  minWidth: 0,
-                }}
-              >
+              <span title={threadTitle} style={BREADCRUMB_TITLE_STYLE}>
                 {threadTitle}
               </span>
             )}
@@ -903,9 +955,10 @@ export default function TerminalTopbar({
               )}
             </span>
           )}
-          {workspaceReady && !!activeProject && (
+          {(page === 'space' || page === 'spaces') && <SpaceTopbarActions page={page} assistant={spacesAssistant} />}
+          {showWorkspaceControls && workspaceReady && !!activeProject && !inAssistant && (
             <>
-              <PaneLauncher />
+              {!showTabs && <PaneLauncher />}
               <BrowserLauncher />
               <TopbarIconToggle
                 onClick={() => _onNav('branches')}
@@ -936,15 +989,17 @@ export default function TerminalTopbar({
               </TopbarIconToggle>
             </>
           )}
-          <TopbarIconToggle
-            onClick={toggleArtifacts}
-            disabled={!workspaceReady}
-            active={artifactsOpen}
-            label="Artifacts"
-            tooltip="Artifacts"
-          >
-            <ArtifactsIcon size={14} />
-          </TopbarIconToggle>
+          {showWorkspaceControls && (
+            <TopbarIconToggle
+              onClick={toggleArtifacts}
+              disabled={!workspaceReady}
+              active={artifactsOpen}
+              label="Artifacts"
+              tooltip="Artifacts"
+            >
+              <ArtifactsIcon size={14} />
+            </TopbarIconToggle>
+          )}
       </div>
     </div>
   );
@@ -1043,6 +1098,75 @@ function BrandHomeButton({ onClick }: { onClick: () => void }) {
       />
       Michi
     </button>
+  );
+}
+
+/** `› <workspace> › <Space page title>` after SPACES, published by the open Space page. */
+function SpaceCrumb() {
+  const space = useSpaceTopbar();
+  const scope = useCurrentSpaceScope();
+  if (!space?.title) return null;
+  return <>
+    {scope?.workspaceName && <CrumbSegment title={scope.workspaceName} />}
+    <CrumbTitle title={space.title} />
+  </>;
+}
+
+function CrumbSeparator() {
+  return <span aria-hidden="true" style={{ color: 'var(--term-faint)', fontSize: 'var(--fs-sm)' }}>›</span>;
+}
+
+/** A crumb between SPACES and the title. */
+function CrumbSegment({ title }: { title: string }) {
+  return (
+    <>
+      <CrumbSeparator />
+      <span title={title} style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-md)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flexShrink: 1 }}>{title}</span>
+    </>
+  );
+}
+
+function CrumbTitle({ title }: { title: string }) {
+  return (
+    <>
+      <CrumbSeparator />
+      <span title={title} style={BREADCRUMB_TITLE_STYLE}>{title}</span>
+    </>
+  );
+}
+
+/**
+ * Spaces actions: Start a task opens the sheet on the page on screen, a page
+ * (not a home) opens beside the chat, and every Spaces page toggles the
+ * assistant window.
+ */
+function SpaceTopbarActions({ page, assistant }: { page: PageId; assistant?: { open: boolean; onToggle: () => void } }) {
+  const space = useSpaceTopbar();
+  const scope = useCurrentSpaceScope();
+  const beside = page === 'space' ? space?.onOpenBeside : undefined;
+  if (!scope && !beside && !assistant) return null;
+  return (
+    <>
+      {scope && (
+        <TopbarTextButton onClick={() => openNewChatSheet()} label="Start a task" ariaLabel="Start a task from this page" icon={<Plus size={13} strokeWidth={1.7} aria-hidden="true" />} />
+      )}
+      {beside && (
+        <TopbarTextButton onClick={beside} label="Open beside chat" icon={<Columns2 size={13} strokeWidth={1.6} aria-hidden="true" />} />
+      )}
+      {assistant && (
+        <TopbarIconToggle onClick={assistant.onToggle} active={assistant.open} label="Assistant" tooltip={assistant.open ? 'Minimize assistant' : 'Ask assistant'} tooltipKbd={kbd('mod', 'J')}>
+          <Sparkles size={14} strokeWidth={1.6} />
+        </TopbarIconToggle>
+      )}
+    </>
+  );
+}
+
+function TopbarTextButton({ onClick, label, ariaLabel, icon }: { onClick: () => void; label: string; ariaLabel?: string; icon: React.ReactNode }) {
+  return (
+    <Button size="sm" className="space-topbar-btn" aria-label={ariaLabel} onClick={onClick} style={{ height: ZONE1_BUTTON_W }}>
+      {icon}{label}
+    </Button>
   );
 }
 

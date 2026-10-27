@@ -1,7 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDigestOrchestration } from './digestOrchestration';
 import { reduceNodes } from './chatReducers';
+import { computeSourceFingerprint, staleSources } from './digest';
 import type { ChatAction, ChatNodeState, Project } from './chatTypes';
 import type { StreamCallbacks } from '../services/digestApi';
 
@@ -28,6 +29,9 @@ function setup() {
   return { ...hook, nodesRef, dispatch };
 }
 
+// The real payload builder imports the store's module graph. Finish that cold
+// import before timing interactions with the deliberately unresolved stream.
+beforeAll(async () => { await import('../lib/digestPayload'); }, 30_000);
 beforeEach(() => { streamDigest.mockReset(); });
 
 describe('digest orchestration', () => {
@@ -40,7 +44,10 @@ describe('digest orchestration', () => {
     });
     const { result, nodesRef } = setup();
     let request!: Promise<void>;
-    act(() => { request = result.current.refreshDigest('d1'); });
+    await act(async () => {
+      request = result.current.refreshDigest('d1');
+      await vi.dynamicImportSettled();
+    });
     await waitFor(() => expect(streamDigest).toHaveBeenCalledOnce());
     expect(streamDigest.mock.calls[0][0]).toMatchObject({ previousContent: '# Previous result', customPrompt: 'Original prompt' });
     act(() => {
@@ -65,7 +72,10 @@ describe('digest orchestration', () => {
     const { result, nodesRef } = setup();
     let first!: Promise<void>;
     let second!: Promise<void>;
-    act(() => { first = result.current.refreshDigest('d1'); });
+    await act(async () => {
+      first = result.current.refreshDigest('d1');
+      await vi.dynamicImportSettled();
+    });
     await waitFor(() => expect(pending).toHaveLength(1));
     act(() => { second = result.current.refreshDigest('d1'); });
     await waitFor(() => expect(pending).toHaveLength(2));
@@ -80,5 +90,39 @@ describe('digest orchestration', () => {
     expect(nodesRef.current.d1.digest?.status).toBe('streaming');
     await act(async () => { pending[1].finish('# New result'); await second; });
     expect(nodesRef.current.d1.digest?.content).toBe('# New result');
+  });
+
+  it('keeps the fingerprint of the supplied transcript when a source changes during generation', async () => {
+    let finish!: (text: string) => void;
+    streamDigest.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const { result, nodesRef } = setup();
+    nodesRef.current.s1 = {
+      ...nodesRef.current.s1,
+      messages: [{ id: 'answer-1', role: 'assistant', text: 'Original answer', toolCalls: [] }],
+    };
+    const originalFingerprint = computeSourceFingerprint(nodesRef.current.s1);
+    let request!: Promise<void>;
+    await act(async () => {
+      request = result.current.refreshDigest('d1');
+      await vi.dynamicImportSettled();
+    });
+    await waitFor(() => expect(streamDigest).toHaveBeenCalledOnce());
+    expect(streamDigest.mock.calls[0][0].nodes[0].messages).toEqual([
+      { role: 'assistant', text: 'Original answer' },
+    ]);
+    act(() => {
+      nodesRef.current.s1 = {
+        ...nodesRef.current.s1,
+        messages: [...nodesRef.current.s1.messages, { id: 'answer-2', role: 'assistant', text: 'Arrived later', toolCalls: [] }],
+      };
+    });
+    await act(async () => { finish('# Digest of the original answer'); await request; });
+    const digest = nodesRef.current.d1.digest!;
+    expect(digest.sourceFingerprints.s1).toBe(originalFingerprint);
+    expect(staleSources(digest, nodesRef.current)).toEqual(['s1']);
+
+    streamDigest.mockResolvedValueOnce('# Refreshed digest');
+    await act(async () => { await result.current.refreshDigest('d1'); });
+    expect(staleSources(nodesRef.current.d1.digest!, nodesRef.current)).toEqual([]);
   });
 });

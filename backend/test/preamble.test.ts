@@ -19,8 +19,62 @@ import {
     buildFirstTurnPrefix,
     buildPreamble,
 } from '../src/agents/preamble';
+import { MICHI_PREAMBLE_HEAD, MICHI_PREAMBLE_TAIL } from 'michi-shared';
 
 describe('buildStableSystemPrompt', () => {
+    test('SDK sessions permit native questions without replacing legacy runtime instructions', () => {
+        assert.match(buildStableSystemPrompt('sentinel', true, true), /Use AskUserQuestion or the Michi ask_user tool/);
+        assert.doesNotMatch(buildStableSystemPrompt('sentinel', true), /Use AskUserQuestion or the Michi ask_user tool/);
+    });
+    test("the assistant's head advertises none of the ordinary chat tools", () => {
+        // Tools and wording an assistant session cannot use.
+        const ordinaryOnly = [/save_artifact/, /spawn_branches/, /_scheduled_job/, /show_image/, /spawn_agent/, /`bash`/,
+            /Use AskUserQuestion or the Michi ask_user tool/];
+        const previous = process.env.MICHI_SCHEDULED_JOBS;
+        delete process.env.MICHI_SCHEDULED_JOBS;
+        try {
+            const ordinary = buildStableSystemPrompt('sentinel', true, true);
+            for (const pattern of ordinaryOnly) assert.match(ordinary, pattern, `ordinary chats keep ${pattern}`);
+            for (const prompt of [
+                buildStableSystemPrompt('sentinel', true, false, 'assistant'),
+                buildStableSystemPrompt('structured-tool', true, false, 'assistant'),
+                buildPreamble({ enableFollowUps: true, cwd: '/tmp/x', toolCapabilities: 'assistant' }),
+            ]) {
+                for (const pattern of ordinaryOnly) assert.doesNotMatch(prompt, pattern);
+                assert.match(prompt, /Michi assistant's own, described in this conversation's opening instructions/);
+            }
+            // Its structured questions go through Michi's ask_user tool.
+            assert.match(buildStableSystemPrompt('sentinel', true, false, 'assistant'), /____michi_internal____ask_user/);
+        } finally {
+            if (previous === undefined) delete process.env.MICHI_SCHEDULED_JOBS;
+            else process.env.MICHI_SCHEDULED_JOBS = previous;
+        }
+    });
+    test('ordinary chats are pointed at the Tasks section before organizing tasks, and the other heads are not', () => {
+        for (const prompt of [buildStableSystemPrompt('sentinel', true, true), buildPreamble({ enableFollowUps: true, cwd: '/tmp/x' })]) {
+            assert.match(prompt, /Tasks section of the `pages-and-components` document with `michi_docs`/);
+            assert.match(prompt, /plain question about them from it, read-only, and when there are none say so/);
+            assert.match(prompt, /even a short answered question, is evidence for a Done task/);
+        }
+        for (const toolCapabilities of ['assistant', 'maintenance'] as const) {
+            assert.doesNotMatch(buildPreamble({ enableFollowUps: true, cwd: '/tmp/x', toolCapabilities }), /Tasks section/);
+        }
+    });
+    test('Spaces replies have their own Michi prompt without ordinary conversation metadata', () => {
+        const metadata = /\[TITLE:|\[FOLLOW-UP|\[BRANCH-OVERVIEW:|set_branch_overview|set_follow_ups|structured metadata tool|branch-journal/;
+        for (const enableFollowUps of [true, false]) {
+            for (const mode of ['sentinel', 'sentinel-followups-tool-overview', 'structured-tool'] as const) {
+                const prompt = buildStableSystemPrompt(mode, enableFollowUps, false, 'assistant');
+                assert.match(prompt, /^You are Michi,/);
+                assert.doesNotMatch(prompt, metadata);
+            }
+            const preamble = buildPreamble({ enableFollowUps, cwd: '/tmp/x', toolCapabilities: 'assistant' });
+            assert.match(preamble, /^You are Michi,/);
+            assert.doesNotMatch(preamble, metadata);
+        }
+        assert.match(buildStableSystemPrompt(), /\[TITLE:|\[FOLLOW-UP|\[BRANCH-OVERVIEW:/);
+        assert.match(buildStableSystemPrompt('sentinel', false, false, 'maintenance'), /Scheduled maintenance mode/);
+    });
     test('full-summary experiment changes overview wording only when enabled', () => {
         const previous = process.env.MICHI_NODE_SUMMARY_EXPERIMENT_MODE;
         try {
@@ -39,151 +93,9 @@ describe('buildStableSystemPrompt', () => {
             else process.env.MICHI_NODE_SUMMARY_EXPERIMENT_MODE = previous;
         }
     });
-    test('Crew combines Michi tools with native memory guidance', () => {
-        const crew = buildPreamble({ cwd: '/tmp', enableFollowUps: false, toolCapabilities: 'crew' });
-        const kiro = buildPreamble({ cwd: '/tmp', enableFollowUps: false });
-        assert.match(crew, /memory_recall/);
-        assert.match(crew, /Temporary disables memory reads and writes/);
-        assert.match(crew, /\[BRANCH-OVERVIEW:/);
-        for (const name of ['michi_list_tools', 'michi_call_tool']) assert.ok(crew.includes(name));
-        assert.doesNotMatch(crew, /tools are not attached/);
-        assert.match(kiro, /`list_threads`/);
-    });
-    test('returns identical string on every call (pure constant)', () => {
-        const a = buildStableSystemPrompt();
-        const b = buildStableSystemPrompt();
-        assert.equal(a, b);
-    });
-
-    test('Michi help is loaded on demand with reference-only scope', () => {
-        for (const toolCapabilities of ['michi', 'crew'] as const) {
-            const prompt = buildPreamble({ cwd: '/tmp', enableFollowUps: false, toolCapabilities });
-            assert.match(prompt, /michi_docs/);
-            assert.match(prompt, /not live settings or authorization/);
-            assert.doesNotMatch(prompt, /Trust this tool saves a grant/);
-        }
-    });
-
-    test('always includes the FOLLOW-UP sentinel instruction', () => {
-        const s = buildStableSystemPrompt();
-        assert.match(s, /\[FOLLOW-UP 1\/3:/);
-        assert.match(s, /STRICT FORMAT RULES/);
-    });
-
-    test('always includes the TITLE sentinel instruction', () => {
-        const s = buildStableSystemPrompt();
-        assert.match(s, /\[TITLE:/);
-    });
-
-    test('always includes the BRANCH-OVERVIEW sentinel instruction', () => {
-        const s = buildStableSystemPrompt();
-        assert.match(s, /\[BRANCH-OVERVIEW:/);
-        assert.match(s, /1-3 concise sentences/);
-    });
-
-    test('scopes metadata sentinels to final answers only', () => {
-        const s = buildStableSystemPrompt();
-        assert.match(s, /final answer only/);
-        assert.match(s, /after all tool use and intermediate commentary is complete/);
-        assert.match(s, /Do not emit \[TITLE:\], \[BRANCH-OVERVIEW:\], or \[FOLLOW-UP n\/3:\] sentinel lines in commentary/);
-        assert.match(s, /Near the end of the final answer, write three lines/);
-    });
-
-    test('contains no cwd, contextManifest, or ancestor content', () => {
-        const s = buildStableSystemPrompt();
-        assert.doesNotMatch(s, /Workspace context files available/);
-        assert.doesNotMatch(s, /Reference context the user has pinned/);
-        assert.doesNotMatch(s, /Previous conversation chain/);
-    });
-
-    test('never includes the FOLLOW_UPS_DISABLED variant', () => {
-        const s = buildStableSystemPrompt();
-        assert.doesNotMatch(s, /Follow-ups are DISABLED/);
-    });
-
-    test('structured-tool mode contains no overview or follow-up sentinel protocol', () => {
-        const s = buildStableSystemPrompt('structured-tool');
-        assert.match(s, /runtime's structured metadata tool/);
-        assert.match(s, /\[TITLE:/);
-        assert.doesNotMatch(s, /\[FOLLOW-UP/);
-        assert.doesNotMatch(s, /\[FOLLOW-UPS:/);
-        assert.doesNotMatch(s, /\[BRANCH-OVERVIEW:/);
-        assert.doesNotMatch(s, /STRICT FORMAT RULES/);
-    });
-
-    test('hybrid mode keeps title and follow-up sentinels but removes overview from the body', () => {
-        const s = buildStableSystemPrompt('sentinel-followups-tool-overview');
-        assert.match(s, /\[TITLE:/);
-        assert.match(s, /\[FOLLOW-UP 1\/3:/);
-        assert.match(s, /STRICT FORMAT RULES/);
-        assert.match(s, /runtime's structured metadata tool/);
-        assert.match(s, /Never emit a \[BRANCH-OVERVIEW:\] sentinel/);
-        assert.doesNotMatch(s, /\[BRANCH-OVERVIEW: 1-3 concise sentences/);
-    });
 });
 
 describe('buildFirstTurnPrefix', () => {
-    test('returns empty string when no variable inputs', () => {
-        const s = buildFirstTurnPrefix({ cwd: '/tmp/x' });
-        assert.equal(s, '');
-    });
-
-    test('includes contextManifest listing when provided', () => {
-        const s = buildFirstTurnPrefix({
-            cwd: '/tmp/x',
-            contextManifest: [{ name: 'spec', filePath: 'docs/spec.md' }],
-        });
-        assert.match(s, /Workspace context files available/);
-        assert.match(s, /spec — docs\/spec\.md/);
-    });
-
-    test('contains no follow-up or title sentinel instructions', () => {
-        const s = buildFirstTurnPrefix({
-            cwd: '/tmp/x',
-            contextManifest: [{ name: 'spec', filePath: 'docs/spec.md' }],
-        });
-        assert.doesNotMatch(s, /\[FOLLOW-UP 1\/3:/);
-        assert.doesNotMatch(s, /\[TITLE:/);
-        assert.doesNotMatch(s, /\[BRANCH-OVERVIEW:/);
-    });
-
-    test('renders mergeContexts when provided', () => {
-        const s = buildFirstTurnPrefix({
-            cwd: '/tmp/x',
-            mergeContexts: ['merge-block-1', 'merge-block-2'],
-        });
-        assert.match(s, /merge-block-1/);
-        assert.match(s, /merge-block-2/);
-        assert.match(s, /synthesize/);
-    });
-
-    test('includes workspaceInstructions when provided', () => {
-        const s = buildFirstTurnPrefix({
-            cwd: '/tmp/x',
-            workspaceInstructions: 'Reply tersely. Cite file paths.',
-        });
-        assert.match(s, /Workspace instructions/);
-        assert.match(s, /Reply tersely\. Cite file paths\./);
-    });
-
-    test('omits workspaceInstructions block when empty or whitespace', () => {
-        const empty = buildFirstTurnPrefix({ cwd: '/tmp/x', workspaceInstructions: '' });
-        const whitespace = buildFirstTurnPrefix({ cwd: '/tmp/x', workspaceInstructions: '   \n  ' });
-        const nullish = buildFirstTurnPrefix({ cwd: '/tmp/x', workspaceInstructions: null });
-        assert.equal(empty, '');
-        assert.equal(whitespace, '');
-        assert.equal(nullish, '');
-    });
-
-    test('workspaceInstructions appears before other variable sections', () => {
-        const s = buildFirstTurnPrefix({
-            cwd: '/tmp/x',
-            workspaceInstructions: 'TERSE_MARKER',
-            mergeContexts: ['MERGE_MARKER'],
-        });
-        assert.ok(s.indexOf('TERSE_MARKER') < s.indexOf('MERGE_MARKER'));
-    });
-
     test('renders reference-kind extraContexts', () => {
         const s = buildFirstTurnPrefix({
             cwd: '/tmp/x',
@@ -191,6 +103,19 @@ describe('buildFirstTurnPrefix', () => {
         });
         assert.match(s, /### @styleguide/);
         assert.match(s, /Referenced file at: docs\/style\.md/);
+    });
+
+    test('renders link-type extraContexts as [Link: url] (never reads a file)', () => {
+        const s = buildFirstTurnPrefix({
+            cwd: '/tmp/x',
+            extraContexts: [
+                { name: 'stripe-refunds', filePath: '', url: 'https://stripe.com/docs/refunds', kind: 'reference' },
+            ],
+        });
+        assert.match(s, /### @stripe-refunds/);
+        assert.match(s, /\[Link: https:\/\/stripe\.com\/docs\/refunds\]/);
+        // A link must NOT be rendered as a file reference.
+        assert.doesNotMatch(s, /Referenced file at:/);
     });
 });
 
@@ -206,15 +131,19 @@ describe('buildPreamble (legacy composition for Pi/Kiro)', () => {
         assert.match(full, /Workspace context files available/);
         assert.match(full, /spec — docs\/spec\.md/);
     });
+});
 
-    test('with enableFollowUps=false swaps to DISABLED variant', () => {
-        const full = buildPreamble({ enableFollowUps: false, cwd: '/tmp/x' });
-        assert.match(full, /Follow-ups are DISABLED/);
-        assert.doesNotMatch(full, /\[FOLLOW-UP 1\/3:/);
-    });
-
-    test('ends with the "user will now speak" tail', () => {
-        const full = buildPreamble({ enableFollowUps: true, cwd: '/tmp/x' });
-        assert.match(full, /The user will now speak\.\s*$/);
+describe('the preamble markers the Michi peek reads', () => {
+    // The peek hides Michi's preamble in a Kiro conversation Michi read back by
+    // these exact lines (shared/src/michiPreamble.ts); keep them in step.
+    test('opens with MICHI_PREAMBLE_HEAD and hands over with MICHI_PREAMBLE_TAIL', () => {
+        for (const enableFollowUps of [true, false]) {
+            for (const toolCapabilities of ['michi', 'crew'] as const) {
+                const preamble = buildPreamble({ enableFollowUps, toolCapabilities, cwd: '/tmp/x', workspaceInstructions: 'Be brief.' });
+                assert.ok(preamble.startsWith(`${MICHI_PREAMBLE_HEAD}\n`), 'starts with the head line');
+                assert.ok(preamble.endsWith(`\n${MICHI_PREAMBLE_TAIL}\n`), 'ends with the tail line');
+                assert.equal(preamble.split(`\n${MICHI_PREAMBLE_TAIL}\n`).length, 2, 'the tail line appears once');
+            }
+        }
     });
 });

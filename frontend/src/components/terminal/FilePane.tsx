@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FilePaneItem, SourceLocation } from '../../state/paneItems';
 import { useChatActions, useChatProjects, useChatStore, ChatNodeStoreContext } from '../../state/chatStore';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
@@ -11,6 +11,11 @@ import { computeTextSelector, rangeToOffsets, type TextSelector } from '../../li
 import { RetryIcon, ExternalLinkIcon } from './icons';
 import { usePrefs } from '../../state/prefs';
 import { DARK_PALETTES } from './tokens';
+import { usePaneViewState } from './PaneViewState';
+import { LOCAL_BACKEND_CONNECTION_ID } from '../../config/backendConnections';
+import { createFileReadSnapshot, isFileFeedbackTargetValid, type FileFeedbackTarget, type FileReadSnapshot } from '../../state/fileFeedback';
+import type { ChatNodeState } from '../../state/chatTypes';
+import { findTreeIdForNode } from '../../state/tree';
 
 const MARKDOWN_EXTS = new Set(['md', 'mdx', 'markdown']);
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -24,9 +29,15 @@ type LoadState =
       modifiedAt: number;
       extension: string;
       resolvedFilePath: string;
+      snapshot: FileReadSnapshot;
       sourceReferenceFallback?: boolean;
     }
   | { phase: 'error'; message: string };
+
+interface CapturedFileSelection {
+  source: QuoteSource;
+  target: FileFeedbackTarget | null;
+}
 
 function basename(filePath: string): string {
   return filePath.split(/[\\/]/).filter(Boolean).pop() ?? filePath;
@@ -61,7 +72,8 @@ const fileProseVars: React.CSSProperties = {
 export default function FilePane({ item }: { item: FilePaneItem }) {
   const { projects } = useChatProjects();
   const { focusPane, setFocusedNodeId, updatePaneItem, createChildChat, addPendingComment, setComposerDraft } = useChatActions();
-  const { focusedNodeId } = useChatStore();
+  // Keep destination choices current when threads are deleted or archived.
+  useChatStore();
   const nodeStore = useContext(ChatNodeStoreContext)!;
   const project = projects.find((candidate) => candidate.id === item.projectId);
   const shellStyle = usePaneShellStyle(item.id);
@@ -69,10 +81,14 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
   const isDark = DARK_PALETTES.has(prefs.terminalPalette);
   const [state, setState] = useState<LoadState>({ phase: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const loadRef = useRef<{ key: string; promise: Promise<LoadState> } | null>(null);
   const diskStateRef = useRef(item.diskState);
   diskStateRef.current = item.diskState;
   const contentScrollRef = useRef<HTMLDivElement>(null);
+  const viewState = usePaneViewState();
+  const feedbackDraftKey = JSON.stringify([project?.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID, item.projectId, item.treeId, item.filePath, item.sourceReferencePath ?? null]);
+  const viewIdentity = JSON.stringify([item.createdAt, item.projectId, item.treeId, project?.backendConnectionId ?? null, item.filePath, item.sourceReferencePath ?? null, item.viewMode]);
   const sourcePreRef = useRef<HTMLPreElement>(null);
   /** Track the exact source-location request already handled. A reopened link
    *  receives a new object even when it targets the same line. */
@@ -84,80 +100,148 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
     ? state.phase === 'loaded' && state.sourceReferenceFallback ? item.sourceLocation : undefined
     : item.sourceLocation;
 
-  // Track the last focused chat pane so selection actions route there even
-  // while the file pane itself is focused (for reading).
-  const lastFocusedChatRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (focusedNodeId && focusedNodeId !== item.id) {
-      const target = nodeStore.getNode(focusedNodeId);
-      if (target && target.kind === 'chat') {
-        lastFocusedChatRef.current = focusedNodeId;
+  const getTargetNodes = useCallback(() => {
+    const nodes: Record<string, ChatNodeState> = {};
+    for (const candidate of projects) {
+      for (const id of candidate.chatIds) {
+        const node = nodeStore.getNode(id);
+        if (node) nodes[id] = node;
       }
     }
-  }, [focusedNodeId, item.id, nodeStore]);
+    return nodes;
+  }, [projects, nodeStore]);
 
-  /** Resolve the target chat node for quote/comment/branch routing. */
-  const getTargetChatNodeId = useCallback((): string | null => {
-    if (focusedNodeId && focusedNodeId !== item.id) {
-      const target = nodeStore.getNode(focusedNodeId);
-      if (target && target.kind === 'chat') return focusedNodeId;
+  const captureSelectionContext = useCallback((text: string, range: Range): CapturedFileSelection | null => {
+    if (state.phase !== 'loaded') return null;
+    const offsets = contentScrollRef.current
+      ? rangeToOffsets(range, contentScrollRef.current, state.content) : null;
+    // A rendered Markdown selection may not map back to raw Markdown. Keep
+    // the exact passage and version without inventing positions in that case.
+    const selector: TextSelector = offsets
+      ? computeTextSelector(state.content, offsets.startOffset, offsets.endOffset)
+      : { exact: text };
+    const target: FileFeedbackTarget | null = item.originChatNodeId && state.snapshot.treeId ? {
+      backendConnectionId: state.snapshot.backendConnectionId,
+      projectId: state.snapshot.projectId,
+      treeId: state.snapshot.treeId,
+      nodeId: item.originChatNodeId,
+    } : null;
+    setFeedbackError(null);
+    return {
+      source: { type: 'artifact', name: basename(state.resolvedFilePath), filePath: state.resolvedFilePath, selector, snapshot: state.snapshot },
+      target: target && isFileFeedbackTargetValid(target, projects, getTargetNodes()) ? target : null,
+    };
+  }, [state, item.originChatNodeId, item.projectId, item.treeId, projects, getTargetNodes]);
+
+  const validatedSelection = useCallback((context: unknown): CapturedFileSelection | null => {
+    const selection = context as CapturedFileSelection | null;
+    if (!selection?.source.snapshot || !selection.target
+      || selection.source.snapshot.projectId !== selection.target.projectId
+      || selection.source.snapshot.backendConnectionId !== selection.target.backendConnectionId
+      || (selection.source.snapshot.treeId != null && selection.source.snapshot.treeId !== selection.target.treeId)
+      || !isFileFeedbackTargetValid(selection.target, projects, getTargetNodes())) {
+      setFeedbackError('Choose an available thread in this tree. Your text is kept.');
+      return null;
     }
-    return lastFocusedChatRef.current;
-  }, [focusedNodeId, item.id, nodeStore]);
-
-  const fileSource = useMemo((): QuoteSource | undefined => {
-    return { type: 'artifact', name: basename(resolvedFilePath), filePath: resolvedFilePath };
-  }, [resolvedFilePath]);
+    setFeedbackError(null);
+    return selection;
+  }, [projects, getTargetNodes]);
 
   const handleQuote = useCallback(
-    (text: string) => {
-      const targetId = getTargetChatNodeId();
-      if (!targetId) return;
+    (text: string, _range?: Range, context?: unknown) => {
+      const selection = validatedSelection(context);
+      if (!selection?.target) return false;
+      const targetId = selection.target.nodeId;
       const target = nodeStore.getNode(targetId);
       setComposerDraft(targetId, {
         value: target?.composerDraft?.value ?? '',
         mentions: target?.composerDraft?.mentions ?? [],
         quotedText: text,
+        quoteSource: selection.source,
       });
+      return true;
     },
-    [getTargetChatNodeId, nodeStore, setComposerDraft],
+    [validatedSelection, nodeStore, setComposerDraft],
   );
 
   const handleBranch = useCallback(
-    (quoted: string, prompt: string) => {
-      const targetId = getTargetChatNodeId();
-      if (!targetId) return;
+    (quoted: string, prompt: string, _anchorMessageId?: string, _range?: Range, context?: unknown) => {
+      const selection = validatedSelection(context);
+      if (!selection?.target) return false;
       void createChildChat(
-        targetId,
-        formatQuotedMessage(quoted, prompt, fileSource),
-        { quotedText: quoted, displayText: prompt },
+        selection.target.nodeId,
+        formatQuotedMessage(quoted, prompt, selection.source),
+        { quotedText: quoted, displayText: prompt, quoteSource: selection.source },
       ).catch(() => {});
+      return true;
     },
-    [getTargetChatNodeId, createChildChat, fileSource],
+    [validatedSelection, createChildChat],
   );
 
   const handleComment = useCallback(
-    (quoted: string, body: string, range?: Range) => {
-      const targetId = getTargetChatNodeId();
-      if (!targetId) return;
-      const docText = state.phase === 'loaded' ? state.content : null;
-      let sourceWithSelector = fileSource;
-      if (range && docText && fileSource && contentScrollRef.current) {
-        const offsets = rangeToOffsets(range, contentScrollRef.current, docText);
-        if (offsets) {
-          const selector = computeTextSelector(docText, offsets.startOffset, offsets.endOffset);
-          sourceWithSelector = { ...fileSource, selector };
-        }
-      }
-      addPendingComment(targetId, quoted, body, sourceWithSelector);
+    (quoted: string, body: string, _range?: Range, context?: unknown) => {
+      const selection = validatedSelection(context);
+      if (!selection?.target) return false;
+      const accepted = addPendingComment(selection.target.nodeId, quoted, body, selection.source, selection.target);
+      if (accepted === false) setFeedbackError('That thread is no longer available. Your text is kept. Choose another thread.');
+      return accepted;
     },
-    [getTargetChatNodeId, addPendingComment, fileSource, state],
+    [validatedSelection, addPendingComment],
   );
+
+  const renderSelectionContext = useCallback((context: unknown, replace: (next: unknown) => void) => {
+    const selection = context as CapturedFileSelection | null;
+    if (!selection?.source.snapshot) return <div role="status">Select text after the file finishes loading.</div>;
+    const snapshot = selection.source.snapshot;
+    const nodes = getTargetNodes();
+    const sourceProject = projects.find(candidate => candidate.id === snapshot.projectId);
+    const options = Object.values(nodes).flatMap(node => {
+      const treeId = snapshot.treeId ?? (sourceProject ? findTreeIdForNode(node.nodeId, sourceProject) : null);
+      const target = treeId ? {
+        backendConnectionId: snapshot.backendConnectionId, projectId: snapshot.projectId, treeId, nodeId: node.nodeId,
+      } : null;
+      return target && isFileFeedbackTargetValid(target, projects, nodes) ? [{ node, target }] : [];
+    });
+    const selectedAvailable = options.some(({ node }) => node.nodeId === selection.target?.nodeId);
+    const previousVersion = state.phase !== 'loaded' || state.snapshot.contentHash !== snapshot.contentHash
+      || state.snapshot.backendConnectionId !== snapshot.backendConnectionId;
+    return (
+      <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--sel-bar-fg)', display: 'grid', gap: 5, padding: '6px 0' }}>
+        <span title={snapshot.contentHash}>Read version {snapshot.contentHash.slice(0, 8)}{previousVersion ? ' · previously read content' : ''}</span>
+        <details>
+          <summary style={{ cursor: 'pointer' }}>Selected passage</summary>
+          <div style={{ maxHeight: 100, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selection.source.selector?.exact}</div>
+        </details>
+        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          Send to
+          <select aria-label="File feedback thread" value={selectedAvailable ? selection.target!.nodeId : ''}
+            style={{ minWidth: 0, maxWidth: 210, background: 'var(--sel-bar-bg)', color: 'var(--sel-bar-fg)', border: '1px solid var(--sel-bar-line)' }}
+            onChange={(event) => {
+              const nodeId = event.target.value;
+              setFeedbackError(null);
+              replace({ ...selection, target: options.find(option => option.node.nodeId === nodeId)?.target ?? null });
+            }}>
+            <option value="">Choose a thread</option>
+            {options.map(({node}) => <option key={node.nodeId} value={node.nodeId}>{node.title || 'Untitled thread'}</option>)}
+          </select>
+        </label>
+        {feedbackError ? <span role="status">{feedbackError}</span> : null}
+      </div>
+    );
+  }, [feedbackError, getTargetNodes, projects, state]);
 
   useEffect(() => {
     let active = true;
+    // A reload can reuse DOM text nodes. Remove the native range before
+    // replacing their text, while SelectionActions keeps an open comment's
+    // captured passage and version independently.
+    const nativeSelection = window.getSelection();
+    if (nativeSelection?.rangeCount && contentScrollRef.current?.contains(nativeSelection.getRangeAt(0).commonAncestorContainer)) {
+      nativeSelection.removeAllRanges();
+    }
     setState({ phase: 'loading' });
-    const key = `${item.projectId}\0${item.filePath}\0${item.sourceReferencePath ?? ''}\0${reloadKey}`;
+    const backendConnectionId = project?.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID;
+    const key = JSON.stringify([backendConnectionId, item.projectId, item.treeId, item.filePath, item.sourceReferencePath, reloadKey]);
     const loadPath = async (targetPath: string): Promise<Extract<LoadState, { phase: 'loaded' }>> => {
       const electron = getElectron();
       if (isAbsoluteFilePath(targetPath) && electron?.readFile && !project?.backendConnectionId) {
@@ -176,6 +260,9 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
           modifiedAt: result.modifiedAt,
           extension,
           resolvedFilePath: targetPath,
+          snapshot: await createFileReadSnapshot(result.content, {
+            backendConnectionId, projectId: item.projectId, treeId: item.treeId, resolvedFilePath: targetPath, size: result.size, modifiedAt: result.modifiedAt,
+          }),
         };
       }
       const result = await fetchArtifactContent(item.projectId, targetPath);
@@ -186,6 +273,9 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
         modifiedAt: result.modifiedAt,
         extension: result.extension.toLowerCase(),
         resolvedFilePath: targetPath,
+        snapshot: await createFileReadSnapshot(result.content, {
+          backendConnectionId, projectId: item.projectId, treeId: item.treeId, resolvedFilePath: targetPath, size: result.size, modifiedAt: result.modifiedAt,
+        }),
       };
     };
     const load = async (): Promise<LoadState> => {
@@ -212,7 +302,36 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
       if (next.phase === 'loaded' && diskStateRef.current) updatePaneItem(item.id, { diskState: undefined });
     });
     return () => { active = false; };
-  }, [item.filePath, item.id, item.projectId, item.sourceReferencePath, project?.backendConnectionId, reloadKey, updatePaneItem]);
+  }, [item.filePath, item.id, item.projectId, item.treeId, item.sourceReferencePath, project?.backendConnectionId, reloadKey, updatePaneItem]);
+
+  // Dashboard navigation may unmount this view. Retain only the reading
+  // position; reopen the file normally and restore after the same revision loads.
+  useLayoutEffect(() => {
+    if (state.phase !== 'loaded' || !viewState) return;
+    const container = contentScrollRef.current;
+    if (!container) return;
+    const saved = viewState.read(item, viewIdentity);
+    if (saved && saved.resolvedFilePath === state.resolvedFilePath
+      && saved.modifiedAt === state.modifiedAt && saved.size === state.size
+      && saved.sourceLocation === sourceLocation) {
+      container.scrollTop = saved.scrollTop;
+      container.scrollLeft = saved.scrollLeft;
+      scrolledToRef.current = sourceLocation;
+    }
+    const save = () => viewState.write(item, viewIdentity, {
+      scrollTop: container.scrollTop,
+      scrollLeft: container.scrollLeft,
+      resolvedFilePath: state.resolvedFilePath,
+      modifiedAt: state.modifiedAt,
+      size: state.size,
+      sourceLocation,
+    });
+    container.addEventListener('scroll', save, { passive: true });
+    return () => {
+      save();
+      container.removeEventListener('scroll', save);
+    };
+  }, [item, sourceLocation, state, viewIdentity, viewState]);
 
   // Scroll to the requested source line once per navigation request without
   // creating one DOM element per line.
@@ -297,10 +416,14 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
       </div>
       <div ref={contentScrollRef} className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '18px 22px 28px', color: 'var(--term-fg)' }}>
         <SelectionActions
+          key={feedbackDraftKey}
+          selectionDraftKey={feedbackDraftKey}
           containerRef={contentScrollRef}
           onQuote={handleQuote}
           onBranch={handleBranch}
           onComment={handleComment}
+          captureSelectionContext={captureSelectionContext}
+          renderSelectionContext={renderSelectionContext}
         />
         {state.phase === 'loading' ? <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>loading {basename(item.filePath)}…</div> : null}
         {state.phase === 'error' ? <div style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)' }}>⚠ {state.message}</div> : null}

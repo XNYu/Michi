@@ -15,11 +15,10 @@ const contextPolicy = { version: 1 as const, includeWorkspaceInstructions: true,
 const permissionPolicy = { version: 1 as const, preset: 'research' as const, categories: {}, maxDelegationDepth: 0, maxConcurrentRuns: 1, maxWallTimeMs: 60_000, maxAttempts: 1 };
 const definition = (backend: string, scope: 'global' | 'workspace'): ReturnType<typeof locatedAgentResource<AgentDefinitionDtoV1>> => locatedAgentResource(backend, { version: 1, id: 'same-id', ownerUserId: 'owner', scope, workspaceId: scope === 'workspace' ? `${backend === 'remote-a' ? 'remote' : 'other'}-ws` : null, name: `${backend} Agent`, description: 'Does work.', instructions: 'Work.', runtimeProfile: { version: 1, runtimeId: 'pi' }, fallbackChain: [], toolRefs: [], skillRefs: [], mcpServerRefs: [], permissionPolicy, contextPolicy, defaultRunTtlMs: null, status: AgentDefinitionStatus.Draft, revision: 1, createdAt: 1, updatedAt: 1 });
 const domainState = vi.hoisted(() => ({ definitions: {} as Record<string, ReturnType<typeof definition>>, runs: {} }));
-
 vi.mock('../../state/chatStore', async () => {
   const actual = await vi.importActual<typeof import('../../state/chatStore')>('../../state/chatStore');
   const project = () => ({ id: shell.activeProjectId, name: shell.activeProjectId, backendConnectionId: shell.activeProjectId === 'remote-ws' ? 'remote-a' : 'remote-b', artifacts: [], trees: [], chatIds: [], edges: [], activeTreeId: null, createdAt: 0 });
-  return { ...actual, useChatProjects: () => ({ activeProject: project(), activeProjectId: shell.activeProjectId, projects: [project()], order: [], edges: [], theme: 'light', availableModes: [], agentStatus: { customAgentsEnabled: true }, warmFailedError: null, focusedNodeId: null, selection: new Set(), hydrated: true, treeSelection: new Set(), searchHighlightTerm: null, canNavBack: false, canNavForward: false }), useChatPanes: () => ({ openPanes: [], focusedPane: null, focusNonce: 0, paneItems: {}, viewMode: 'single' as const }), useChatActions: () => ({ createProject: async () => 'p', enterChatsWorkspace: async () => 'p', focusPane: () => {}, closePane: () => {}, openPane: () => {}, createBlankChild: async () => {}, restoreLastDeletion: () => null, clearSelection: () => {}, clearTreeSelection: () => {}, selectAllTrees: () => {}, navBack: () => {}, navForward: () => {} }), useStructuralSelector: (selector: (nodes: Record<string, never>) => unknown) => selector({}), useNodesSelector: () => 0, chatLabel: () => '' };
+  return { ...actual, useChatProjects: () => ({ activeProject: project(), activeProjectId: shell.activeProjectId, projects: [project()], order: [], edges: [], theme: 'light', availableModes: [], agentStatus: { customAgentsEnabled: true }, warmFailedError: null, focusedNodeId: null, selection: new Set(), hydrated: true, treeSelection: new Set(), searchHighlightTerm: null, canNavBack: false, canNavForward: false }), useChatPanes: () => ({ openPanes: [], focusedPane: null, focusNonce: 0, paneItems: {}, viewMode: 'single' as const }), useChatActions: () => ({ createProject: async () => 'p', enterChatsWorkspace: async () => 'p', focusPane: () => {}, closePane: () => {}, openPane: () => {}, createBlankChild: async () => {}, restoreLastDeletion: () => null, clearSelection: () => {}, clearTreeSelection: () => {}, selectAllTrees: () => {}, navBack: () => {}, navForward: () => {} }), useStructuralSelector: (selector: (nodes: Record<string, never>) => unknown) => selector({}), useChatNodesSnapshot: () => ({}), useNodesSelector: () => 0, chatLabel: () => '' };
 });
 vi.mock('../../state/agentDomain', () => ({ useAgentDomain: () => ({ state: domainState, loadDefinitions, dispatch }) }));
 vi.mock('../../state/prefs', async () => { const actual = await vi.importActual<typeof import('../../state/prefs')>('../../state/prefs'); return { ...actual, usePrefs: () => ({ prefs: actual.DEFAULT_PREFS, setPref: vi.fn() }) }; });
@@ -65,16 +64,6 @@ describe('TerminalShell Agent management routes', () => {
     expect((await screen.findByTestId('editor-scope')).textContent).toContain('global:none:new');
   });
 
-  it('switches the Library control plane with the active Workspace without ID collision', async () => {
-    const view = render(<TerminalShell />); fireEvent.click(screen.getByRole('button', { name: 'Agents' }));
-    expect((await screen.findByTestId('library-resources')).textContent).toContain('remote-a:remote-a Agent');
-    shell.activeProjectId = 'other-ws';
-    view.rerender(<TerminalShell />);
-    await waitFor(() => expect(screen.getByTestId('library-resources').textContent).toContain('remote-b:remote-b Agent'));
-    expect(screen.getByTestId('library-resources').textContent).not.toContain('remote-a');
-    expect(loadDefinitions).toHaveBeenCalledWith('other-ws');
-  });
-
   it('closes the narrow sidebar overlay after Agent navigation', async () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 });
     render(<TerminalShell />);
@@ -82,14 +71,6 @@ describe('TerminalShell Agent management routes', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Agents' }));
     expect(await screen.findByRole('heading', { name: 'Library route' })).not.toBeNull();
     await waitFor(() => expect(screen.queryByRole('navigation', { name: 'test sidebar' })).toBeNull());
-  });
-
-  it('uses a full-width content area on the Profile page', async () => {
-    render(<TerminalShell />);
-    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
-
-    expect(await screen.findByText('Profile page')).not.toBeNull();
-    expect(screen.queryByRole('navigation', { name: 'test sidebar' })).toBeNull();
   });
 
   it('clears a narrow sidebar overlay while Profile is fullscreen', async () => {

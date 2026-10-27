@@ -4,6 +4,7 @@ import { getMichiDataDir } from './dataDir';
 
 const INTERNAL_RUNTIME_PATHS = [
   /^(?:\/api)?\/mcp\/[^/]+$/,
+  /^(?:\/api)?\/mcp-session\/[^/]+$/,
   /^(?:\/api)?\/codex-hooks\/[^/]+\/stop$/,
 ];
 
@@ -24,9 +25,11 @@ export function resolveListenHost(): string {
     }
     return explicit;
   }
-  return remoteAccessEnabled() || process.env.MICHI_CLOUD === '1'
-    ? '0.0.0.0'
-    : '127.0.0.1';
+  // Remote access stays on loopback and is reached through an SSH tunnel; a
+  // wider bind needs an explicit MICHI_BIND_HOST (the launcher's --public).
+  // Cloud runs in a container behind enforced auth, where publishing the port
+  // is the deployment's decision.
+  return process.env.MICHI_CLOUD === '1' ? '0.0.0.0' : '127.0.0.1';
 }
 
 export function validateRemoteAccessConfiguration(): void {
@@ -56,7 +59,7 @@ export function isLoopbackAddress(address: string | undefined): boolean {
     || address === '::ffff:127.0.0.1';
 }
 
-function isInternalRuntimeRequest(path: string, remoteAddress: string | undefined): boolean {
+export function isInternalRuntimeRequest(path: string, remoteAddress: string | undefined): boolean {
   return isLoopbackAddress(remoteAddress)
     && INTERNAL_RUNTIME_PATHS.some((pattern) => pattern.test(path));
 }

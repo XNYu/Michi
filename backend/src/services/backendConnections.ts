@@ -1,9 +1,8 @@
-import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import path from 'node:path';
-import { getMichiDataDir } from './dataDir';
+import { getMichiConnectionConfigPath } from './configPaths';
+import { readJsonConfig, updateJsonConfig } from './jsonConfigStore';
 
-const CONFIG_PATH = () => path.join(getMichiDataDir(), 'config.json');
+const CONFIG_PATH = getMichiConnectionConfigPath;
 
 export type BackendConnectionTransport = 'direct' | 'ssh';
 
@@ -55,21 +54,7 @@ interface MichiConfigFile {
 }
 
 function readConfig(): MichiConfigFile {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH(), 'utf8'));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as MichiConfigFile
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeConfig(config: MichiConfigFile): void {
-  const filePath = CONFIG_PATH();
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(config, null, 2), { mode: 0o600 });
-  fs.chmodSync(filePath, 0o600);
+  return readJsonConfig(CONFIG_PATH()) ?? {};
 }
 
 function parseRecord(value: unknown): BackendConnectionRecord | null {
@@ -98,8 +83,8 @@ function parseRecord(value: unknown): BackendConnectionRecord | null {
   };
 }
 
-function readRecords(): BackendConnectionRecord[] {
-  const raw = readConfig().backendConnections;
+function readRecords(config: MichiConfigFile = readConfig()): BackendConnectionRecord[] {
+  const raw = config.backendConnections;
   return Array.isArray(raw) ? raw.flatMap((value) => {
     const parsed = parseRecord(value);
     return parsed ? [parsed] : [];
@@ -224,36 +209,41 @@ export function getBackendConnection(id: string): BackendConnectionRecord | null
 }
 
 export function saveBackendConnection(input: BackendConnectionInput): BackendConnectionSummary {
-  const config = readConfig();
-  const records = readRecords();
-  const existing = input.id ? records.find((record) => record.id === input.id) : undefined;
-  if (input.id && !existing) throw new Error('Connection not found');
-  const record = normalizeBackendConnection(input, existing);
-  const duplicate = records.find((candidate) => (
-    candidate.id !== existing?.id
-    && candidate.transport === record.transport
-    && (record.transport === 'direct'
-      ? candidate.apiUrl === record.apiUrl
-      : candidate.sshHost === record.sshHost
-        && candidate.sshUser === record.sshUser
-        && (candidate.sshPort ?? 22) === (record.sshPort ?? 22)
-        && (candidate.remotePort ?? 3000) === (record.remotePort ?? 3000))
-  ));
-  if (duplicate) throw new Error('A connection for this backend already exists');
-  const nextRecords = existing
-    ? records.map((candidate) => candidate.id === existing.id ? record : candidate)
-    : [...records, record];
-  writeConfig({ ...config, backendConnections: nextRecords });
-  return summary(record);
+  let result!: BackendConnectionSummary;
+  updateJsonConfig(CONFIG_PATH(), (config) => {
+    const records = readRecords(config);
+    const existing = input.id ? records.find((record) => record.id === input.id) : undefined;
+    if (input.id && !existing) throw new Error('Connection not found');
+    const record = normalizeBackendConnection(input, existing);
+    const duplicate = records.find((candidate) => (
+      candidate.id !== existing?.id
+      && candidate.transport === record.transport
+      && (record.transport === 'direct'
+        ? candidate.apiUrl === record.apiUrl
+        : candidate.sshHost === record.sshHost
+          && candidate.sshUser === record.sshUser
+          && (candidate.sshPort ?? 22) === (record.sshPort ?? 22)
+          && (candidate.remotePort ?? 3000) === (record.remotePort ?? 3000))
+    ));
+    if (duplicate) throw new Error('A connection for this backend already exists');
+    const nextRecords = existing
+      ? records.map((candidate) => candidate.id === existing.id ? record : candidate)
+      : [...records, record];
+    result = summary(record);
+    return { ...config, backendConnections: nextRecords };
+  });
+  return result;
 }
 
 export function deleteBackendConnection(id: string): boolean {
-  const config = readConfig();
-  const records = readRecords();
-  const next = records.filter((record) => record.id !== id);
-  if (next.length === records.length) return false;
-  writeConfig({ ...config, backendConnections: next });
-  return true;
+  let removed = false;
+  updateJsonConfig(CONFIG_PATH(), (config) => {
+    const records = readRecords(config);
+    const next = records.filter((record) => record.id !== id);
+    removed = next.length !== records.length;
+    return { ...config, backendConnections: next };
+  });
+  return removed;
 }
 
 export async function probeBackendConnection(input: {

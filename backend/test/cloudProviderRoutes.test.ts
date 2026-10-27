@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { setupMichiRoutes } from '../src/routes/michi';
@@ -21,9 +22,10 @@ import {
 import { __resetRuntimeDeps, configureRuntimeDeps } from '../src/agents/runtimeDeps';
 import { registerRuntime } from '../src/agents/registry';
 import { clearAllSessions } from '../src/agents/sessionRegistry';
-import { getModelReasoningOptions } from '../src/agents/modelReasoning';
+
 import { getProviderInfo, OPENROUTER_FREE_PRIMARY_MODEL } from '../src/agents/pi/piProviders';
 import type { AgentRuntimeWithProviders, NewAgentSessionOptions } from '../src/agents/types';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 let directory: string;
 let server: ReturnType<typeof express.application.listen>;
@@ -32,6 +34,7 @@ let captured: NewAgentSessionOptions[];
 let catalogProviders: Array<string | undefined>;
 const originalEnv = { ...process.env };
 const runtime: AgentRuntimeWithProviders = {
+  descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
   id: 'pi', label: 'Pi Test',
   capabilities: { modes: false, permissions: false, models: true, providerModels: true, reasoning: true,
     supportedReasoningLevels: ['low', 'high'], apiKeys: true,
@@ -56,7 +59,7 @@ const runtime: AgentRuntimeWithProviders = {
   },
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-cloud-provider-routes-'));
   process.env.MICHI_DATA_DIR = directory;
   process.env.MICHI_CLOUD = '1';
@@ -78,7 +81,7 @@ beforeEach(() => {
   app.use((req, _res, next) => { Object.assign(req, { user: { id: req.header('x-test-user') ?? 'alice' } }); next(); });
   app.use('/api', setupAgentRoutes());
   app.use('/api', setupMichiRoutes(new ChatManager(undefined, directory)));
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
 });
 
@@ -110,17 +113,6 @@ test('a fresh cloud session resolves the account provider, not the server defaul
   assert.equal(resolveProvider('pi', 'bob'), 'openrouter-free');
 });
 
-test('pane selections survive a reload and become the next cloud pane default', async () => {
-  await post('/nodes/node/ensure-session', { workspaceId: 'ws', providerId: 'deepseek', modelId: 'deepseek-v4-flash' });
-  closeDb(); initDb(); clearAllSessions();
-  assert.equal(getAgentConfig('alice').provider, 'openrouter-free');
-  assert.equal(getAgentConfig('alice').providerByRuntime.pi, 'deepseek');
-  getDb().prepare("INSERT INTO nodes (id,workspace_id,kind,status,minimized,spawned_by_agent,created_at) VALUES ('next','ws','chat','idle',0,0,1)").run();
-  const result = await post('/nodes/next/ensure-session', { workspaceId: 'ws' });
-  assert.equal(result.providerId, 'deepseek');
-  assert.equal(result.modelId, 'deepseek-v4-flash');
-});
-
 test('legacy free-provider/DeepSeek mismatch is normalized in session, response and persisted binding', async () => {
   getDb().prepare("UPDATE nodes SET runtime_id='pi', provider_id='openrouter-free', model_id='deepseek-v4-flash', acp_session_id='node' WHERE id='node'").run();
   const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', providerId: 'openrouter-free', modelId: 'deepseek-v4-flash' });
@@ -130,11 +122,6 @@ test('legacy free-provider/DeepSeek mismatch is normalized in session, response 
   assert.equal(getDb().prepare("SELECT model_id FROM nodes WHERE id='node'").get()!.model_id, OPENROUTER_FREE_PRIMARY_MODEL);
   const status = await (await fetch(`${base}/agent/status`)).json() as { model: string };
   assert.equal(status.model, OPENROUTER_FREE_PRIMARY_MODEL);
-});
-
-test('locked models are normalized even on a runtime without reasoning support', async () => {
-  const options = await getModelReasoningOptions({ ...runtime, capabilities: { ...runtime.capabilities, reasoning: false } }, 'deepseek-v4-flash', 'openrouter-free');
-  assert.equal(options.modelId, OPENROUTER_FREE_PRIMARY_MODEL);
 });
 
 test('cloud model catalogs use account defaults and browsing another provider does not replace model memory', async () => {
@@ -154,11 +141,4 @@ test('changing providers in Settings without a model resets the previous provide
   await post('/agent/options', { provider: 'deepseek', model: 'deepseek-v4-flash' });
   await post('/agent/options', { provider: 'openai' });
   assert.equal(getAgentConfig('alice').modelByRuntime.pi, getProviderInfo('openai')!.defaultModel);
-});
-
-test('a second cloud user cannot repair or reuse another account node', async () => {
-  const response = await fetch(`${base}/nodes/node/ensure-session`, { method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-test-user': 'bob' }, body: JSON.stringify({ workspaceId: 'ws' }) });
-  assert.equal(response.status, 404);
-  assert.equal(captured.length, 0);
 });

@@ -16,8 +16,10 @@ import {
   sanitizePortableBackupJson,
 } from '../services/agentRunBackup';
 import { assertAgentOwnerWritable } from '../services/agentOwnerDeletionGate';
-import { AgentRunContractError, type AgentRunBackupFragmentV2 } from 'michi-shared';
+import { AgentRunContractError, isSystemWorkspaceSettings, type AgentRunBackupFragmentV2 } from 'michi-shared';
 import { requireWorkspaceOwner } from './middleware/ownership';
+import { purgeWorkspacePages } from '../services/pages/repository';
+import { purgeScheduledJobsForWorkspace } from '../services/scheduledJobs/workspacePurge';
 
 export interface BackupPayload {
   version: 1 | 2;
@@ -36,6 +38,19 @@ export interface BackupPayload {
 
 function agentOwnerId(req: express.Request): string {
   return process.env.MICHI_CLOUD === '1' ? req.user?.id ?? '' : LOCAL_AGENT_OWNER_ID;
+}
+
+/**
+ * A system workspace (the Michi assistant's) is not the user's work and is
+ * neither exported nor imported: an import would write it without its
+ * server-owned marker (saveWorkspace keeps only the stored one), turning its
+ * conversation into an ordinary thread.
+ */
+function portable(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return true;
+  const workspace = (data as { workspace?: unknown }).workspace;
+  const settings = workspace && typeof workspace === 'object' ? (workspace as { settings?: unknown }).settings : null;
+  return !isSystemWorkspaceSettings(typeof settings === 'string' ? settings : null);
 }
 
 function sanitizeWorkspace(data: BackupPayload['workspaces'][number]): BackupPayload['workspaces'][number] {
@@ -62,6 +77,46 @@ function sanitizeWorkspace(data: BackupPayload['workspaces'][number]): BackupPay
       url: portableUrl(context.url),
     })),
   };
+}
+
+/** Export only ordinary conversations. Authoritative workspace loaders keep helpers for page embedding. */
+function withoutUnpromotedHelpers(data: BackupPayload['workspaces'][number]): BackupPayload['workspaces'][number] {
+  const hidden = new Set(data.nodes.filter((node) => node.page_id != null).map((node) => node.id));
+  if (!hidden.size) return data;
+
+  const hiddenTrees = new Set(data.trees.filter((tree) => hidden.has(tree.root_node_id)).map((tree) => tree.id));
+  for (const node of data.nodes) if (node.tree_id && hiddenTrees.has(node.tree_id)) hidden.add(node.id);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of data.nodes) {
+      if (!hidden.has(node.id) && node.parent_node_id && hidden.has(node.parent_node_id)) {
+        hidden.add(node.id);
+        changed = true;
+      }
+    }
+  }
+
+  const hiddenMessages = new Set(data.messages.filter((message) => hidden.has(message.node_id)).map((message) => message.id));
+  const trees = data.trees.filter((tree) => !hiddenTrees.has(tree.id));
+  const treeIds = new Set(trees.map((tree) => tree.id));
+  const nodes = data.nodes.filter((node) => !hidden.has(node.id)).map((node) => ({
+    ...node,
+    ...(node.tree_id && !treeIds.has(node.tree_id) ? { tree_id: null } : {}),
+    ...(node.follow_ups_source_message_id && hiddenMessages.has(node.follow_ups_source_message_id)
+      ? { follow_ups_source_message_id: null } : {}),
+  }));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const messages = data.messages.filter((message) => nodeIds.has(message.node_id));
+  const messageIds = new Set(messages.map((message) => message.id));
+  const edges = data.edges.filter((edge) => nodeIds.has(edge.source_node_id) && nodeIds.has(edge.target_node_id)
+    && (!edge.anchor_message_id || messageIds.has(edge.anchor_message_id))
+    && (!edge.fork_boundary_message_id || messageIds.has(edge.fork_boundary_message_id)));
+  const contexts = data.contexts.filter((context) => (!context.origin_node_id || nodeIds.has(context.origin_node_id))
+    && (!context.origin_message_id || messageIds.has(context.origin_message_id)));
+  const activeTreeId = data.workspace.active_tree_id && treeIds.has(data.workspace.active_tree_id)
+    ? data.workspace.active_tree_id : null;
+  return { ...data, workspace: { ...data.workspace, active_tree_id: activeTreeId }, trees, nodes, messages, edges, contexts };
 }
 
 function sanitizeEncodedJson(encoded: string | null | undefined): string | null {
@@ -263,6 +318,12 @@ function replaceWorkspaceInTransaction(workspaceId: string, userId?: string): vo
       .get(workspaceId, userId);
     if (!owned) return;
   }
+  const workspace = db.prepare('SELECT owner_user_id,purged_at,settings FROM workspaces WHERE id=?').get(workspaceId) as
+    { owner_user_id: string | null; purged_at: number | null; settings: string | null } | undefined;
+  if (workspace && workspace.purged_at === null && !isSystemWorkspaceSettings(workspace.settings)) {
+    purgeScheduledJobsForWorkspace(workspaceId);
+    purgeWorkspacePages(workspaceId, workspace.owner_user_id ?? LOCAL_AGENT_OWNER_ID);
+  }
   const now = Date.now();
   db.prepare('UPDATE workspaces SET purged_at = ? WHERE id = ? AND purged_at IS NULL').run(now, workspaceId);
   db.prepare('UPDATE nodes SET purged_at = ? WHERE workspace_id = ? AND purged_at IS NULL').run(now, workspaceId);
@@ -324,7 +385,7 @@ export function setupBackupRoutes(): express.Router {
       const userId: string | undefined = process.env.MICHI_CLOUD === '1' ? req.user?.id : undefined;
       const ownerUserId = agentOwnerId(req);
       if (!ownerUserId) return res.status(401).json({ error: 'authentication_required' });
-      const workspaces = loadAllWorkspaces(userId).map(sanitizeWorkspace);
+      const workspaces = loadAllWorkspaces(userId).filter(portable).map(withoutUnpromotedHelpers).map(sanitizeWorkspace);
       const payload: BackupPayload = {
         version: 2,
         exportedAt: Date.now(),
@@ -350,12 +411,12 @@ export function setupBackupRoutes(): express.Router {
       const ownerUserId = agentOwnerId(req);
       if (!ownerUserId) return res.status(401).json({ error: 'authentication_required' });
       const data = loadFullWorkspace(req.params.workspaceId, userId);
-      if (!data) return res.status(404).json({ error: 'Workspace not found' });
+      if (!data || !portable(data)) return res.status(404).json({ error: 'Workspace not found' });
       const payload: BackupPayload = {
         version: 2,
         exportedAt: Date.now(),
         app: 'michi',
-        workspaces: [sanitizeWorkspace(data)],
+        workspaces: [sanitizeWorkspace(withoutUnpromotedHelpers(data))],
         agents: exportAgentRunBackup(ownerUserId, req.params.workspaceId),
       };
       res.json(payload);
@@ -393,7 +454,7 @@ export function setupBackupRoutes(): express.Router {
       let workspaceCount = 0;
       let importedDefinitions = 0;
       let importedRuns = 0;
-      const portableWorkspaces = body.workspaces.map(sanitizeWorkspace);
+      const portableWorkspaces = body.workspaces.filter(portable).map(sanitizeWorkspace);
       portableWorkspaces.forEach(validateWorkspaceGraph);
       const allTrees = portableWorkspaces.flatMap((workspace) => workspace.trees);
       const allNodes = portableWorkspaces.flatMap((workspace) => workspace.nodes);

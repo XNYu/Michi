@@ -124,6 +124,18 @@ export const DARK_PALETTES: ReadonlySet<TerminalPalette> = new Set<TerminalPalet
 ]);
 
 /**
+ * Error TEXT colour. On the dark palettes danger reads only 3.1–4.3:1 on
+ * bg/surface/alt (Monokai 3.1–3.9, Gruvbox 3.4–4.3) — fine for icons and
+ * fills, too dim for words — so there it mixes 55:45 toward the foreground
+ * (4.8:1 or better). The light palettes' danger already clears 5.2:1 and is
+ * used as is. tokens.test.ts checks the 4.5:1 floor.
+ */
+export function dangerTextFor(palette: TerminalPalette): string {
+  const p = PALETTES[palette];
+  return DARK_PALETTES.has(palette) ? `color-mix(in srgb, ${p.danger} 55%, ${p.fg})` : p.danger;
+}
+
+/**
  * Build a CSS custom-property map for a palette + user overrides.
  * Apply these as `style={cssVarsFor(...)}` on the shell root; all terminal
  * components read `var(--term-fg)` etc.
@@ -185,6 +197,8 @@ export function cssVarsFor(
     '--term-mauve': p.mauve,
     '--term-mauve-f': p.mauveF,
     '--term-danger': p.danger,
+    // Error text (icons and fills keep --term-danger); see dangerTextFor.
+    '--term-danger-text': dangerTextFor(palette),
     // Override Tailwind prose body/heading colors so markdown content inside
     // the terminal shell uses the palette foreground instead of the default
     // gray (which is nearly invisible on light palettes like bone/slate).

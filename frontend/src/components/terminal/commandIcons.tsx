@@ -2,9 +2,11 @@ import React from 'react';
 import type { CommandIcon } from '../../state/commands';
 import {
   AgentIcon,
+  AllThreadsIcon,
   ArchiveIcon,
   BranchesIcon,
   ChatIcon,
+  ClockIcon,
   DigestIcon,
   ExportIcon,
   HomeIcon,
@@ -40,6 +42,8 @@ const COMMAND_ICONS: Record<CommandIcon, (props: { size?: number }) => React.Rea
   export: ExportIcon,
   close: StopIcon,
   chat: ChatIcon,
+  threads: AllThreadsIcon,
+  clock: ClockIcon,
 };
 
 /** The house SVG for a command palette row, sized to the menu icon slot. */

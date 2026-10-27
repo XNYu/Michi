@@ -1,0 +1,60 @@
+{
+  "name": "michi-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "license": "ISC",
+  "description": "Run Kiro-CLI, Kiro Crew, Codex and Claude Code agents from a server-side Node host behind one AgentRuntime / AgentSession contract.",
+  "keywords": [
+    "agent",
+    "agent-runtime",
+    "acp",
+    "mcp",
+    "kiro",
+    "codex",
+    "claude-code"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./internal/*": "./src/*.ts",
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "internal/*": [
+        "src/*.ts"
+      ]
+    }
+  },
+  "scripts": {
+    "typecheck": "npm --prefix .. run shared:build && tsc --noEmit -p tsconfig.json",
+    "test": "npm --prefix .. run shared:build && node --require ts-node/register --test --test-timeout=30000 test/*.test.ts",
+    "build": "npm --prefix .. run shared:build && node scripts/build.mjs",
+    "pack:check": "npm run build && node scripts/pack.mjs"
+  },
+  "dependencies": {
+    "michi-shared": "file:../shared",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.21.3"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.306"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.306",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.27.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

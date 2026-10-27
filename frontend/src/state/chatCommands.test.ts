@@ -39,3 +39,22 @@ it('compact stays runtime agnostic and unsupported commands return visible failu
   vi.mocked(executeChatCommand).mockResolvedValue({ success: false, message: 'Unsupported by server' });
   expect((await executeComposerCommand('node', { name: 'unknown' })).message).toBe('Unsupported by server');
 });
+
+it('routes only supported Claude host commands and keeps queued boundaries intact', async () => {
+  vi.mocked(executeChatCommand).mockResolvedValue({ success: true, message: 'SDK is connected',
+    sessionState: { runtimeId: 'claude', nativeEngine: 'agent-sdk', modelId: 'claude-sonnet-4-6' } });
+  for (const name of ['status', 'model', 'context', 'mcp']) {
+    expect(parseChatCommand(`/${name}`, 'claude')).toEqual({ name, value: undefined });
+  }
+  const command = parseChatCommand('/model claude-sonnet-4-6', 'claude')!;
+  expect(command).toEqual({ name: 'model', value: 'claude-sonnet-4-6' });
+  expect(await executeComposerCommand('node', command)).toMatchObject({ success: true,
+    sessionState: { runtimeId: 'claude', nativeEngine: 'agent-sdk' } });
+  expect(executeChatCommand).toHaveBeenLastCalledWith('node', 'model', { value: 'claude-sonnet-4-6' });
+  const queue = [queued('one'), queued('/model claude-sonnet-4-6'), queued('two')];
+  expect(nextQueuedBatch(queue, 'claude')).toEqual(queue.slice(0, 1));
+  expect(nextQueuedBatch(queue.slice(1), 'claude')).toEqual(queue.slice(1, 2));
+  expect(parseChatCommand('/status\nexplain this', 'claude')).toBeNull();
+  expect(parseChatCommand('/tmp/file', 'claude')).toBeNull();
+  expect(parseChatCommand('/review', 'claude')).toBeNull();
+});

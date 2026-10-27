@@ -19,6 +19,7 @@ vi.mock('../../../state/chatStore', () => ({
 vi.mock('../../../services/auth', () => ({ useAuthSession: () => null }));
 vi.mock('./settings/AppearancePane', () => ({ AppearancePane: () => <div>Appearance pane</div> }));
 vi.mock('./settings/ModelPane', () => ({ ModelPane: () => <div>Model pane</div> }));
+vi.mock('./settings/assistant/MichiAssistantSettings', () => ({ MichiAssistantSettings: () => <div>Native assistant settings</div> }));
 vi.mock('./settings/ConnectionsPane', () => ({ ConnectionsPane: () => <div>Connections pane</div> }));
 vi.mock('./settings/NotificationsPane', () => ({ NotificationsPane: () => <div>Notifications pane</div> }));
 vi.mock('./settings/ShortcutsPane', () => ({ ShortcutsPane: () => <div>Shortcuts pane</div> }));
@@ -41,19 +42,14 @@ describe('Settings categories', () => {
     view.rerender(<TerminalSettings workspaceReady />);
     expect(screen.getByText('Connections pane')).toBeTruthy();
   });
+});
 
-  // Custom Agents / Agent Runs are switched on by the backend's environment
-  // (MICHI_CUSTOM_AGENTS=1). Settings must not offer a way to turn them on —
-  // not even a category — whatever the backend currently reports.
-  it.each([true, false])('offers no Custom Agents category or switch (backend reports %s)', (enabled) => {
-    mocks.agentStatus = { customAgentsEnabled: enabled };
-    render(<TerminalSettings />);
-
-    const categories = screen
-      .getAllByRole('button')
-      .map((button) => button.textContent?.trim());
-    expect(categories).toEqual(['Appearance', 'Model', 'Connections', 'Browser', 'Notifications', 'Shortcuts']);
-    expect(screen.queryByText(/custom agents/i)).toBeNull();
-    expect(screen.queryByRole('switch')).toBeNull();
-  });
+it('keeps native settings available without an external service category', () => {
+  render(<TerminalSettings />);
+  expect(screen.getByRole('button', { name: 'Appearance' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Model' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Connections' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Desk' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Assistant' }));
+  expect(screen.getByText('Native assistant settings')).toBeTruthy();
 });

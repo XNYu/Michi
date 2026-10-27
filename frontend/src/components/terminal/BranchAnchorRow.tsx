@@ -28,7 +28,7 @@ export const BranchAnchorRow = React.memo(function BranchAnchorRow({
   createdAt,
   status,
   onOpen,
-}: BranchAnchorRowProps): JSX.Element {
+}: BranchAnchorRowProps): React.JSX.Element {
   const msgLabel = messageCount === 1 ? '1 message' : `${messageCount} messages`;
   const timeLabel = relativeTime(createdAt);
   const metaId = React.useId();

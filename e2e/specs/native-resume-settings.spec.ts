@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { installMockApi, bootWithWorkspace } from '../fixtures/mockApi';
+import { describeRuntimeCapabilities } from '../../backend/src/agents/capabilityDescriptors';
+import { openSettings } from '../fixtures/shell';
 
 test('Model settings retain Native Resume and Native Fork independently for each runtime', async ({ page }, testInfo) => {
   let runtime = 'codex';
@@ -17,7 +19,7 @@ test('Model settings retain Native Resume and Native Fork independently for each
         capabilities: { modes: false, permissions: false, models: false, providerModels: false,
           reasoning: false, apiKeys: false, warmSessions: false, saveContext: false,
           spawnBranches: true, nativeResume: runtime !== 'pi' },
-        capabilityDescriptor: { sessionFork: { availability: runtime === 'pi' ? 'michi_simulated' : 'native' } },
+        capabilityDescriptor: describeRuntimeCapabilities(runtime),
         availableRuntimes: runtimes, nativeResumeByRuntime: resumePreferences,
         nativeForkByRuntime: forkPreferences, hasRequiredKey: true } });
       return true;
@@ -33,8 +35,7 @@ test('Model settings retain Native Resume and Native Fork independently for each
     return false;
   } });
   await bootWithWorkspace(page, 'Native Resume Settings');
-  await page.getByText('Settings', { exact: true }).last().click();
-  await page.getByText('Model', { exact: true }).click();
+  await openSettings(page, 'Runtime (global)');
   const codex = page.getByRole('switch', { name: 'Native Resume for Codex' });
   const codexFork = page.getByRole('switch', { name: 'Native Fork for Codex' });
   await expect(codex).toHaveAttribute('aria-checked', 'true');
@@ -55,8 +56,7 @@ test('Model settings retain Native Resume and Native Fork independently for each
   await expect(codexFork).toHaveAttribute('aria-checked', 'false');
   await page.reload();
   await page.getByRole('dialog', { name: 'New workspace' }).getByRole('button', { name: 'cancel', exact: true }).click();
-  await page.getByText('Settings', { exact: true }).last().click();
-  await page.getByText('Model', { exact: true }).click();
+  await openSettings(page, 'Runtime (global)');
   await expect(codex).toHaveAttribute('aria-checked', 'false');
   await expect(codexFork).toHaveAttribute('aria-checked', 'false');
   await page.screenshot({ path: testInfo.outputPath('native-resume-desktop.png'), fullPage: true });

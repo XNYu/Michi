@@ -70,23 +70,6 @@ describe('ModelPane Kiro sidecar title setting', () => {
     await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ provider: 'p2', model: 'p2-default', expectedRuntime: 'pi' }));
   });
 
-  it('saves Native Fork per runtime without changing Native Resume', async () => {
-    agentStatus = nativeResumeStatus();
-    const { rerender } = render(<ModelPane activeProjectId={null} />);
-    const fork = screen.getByRole('switch', { name: 'Native Fork for Codex' });
-    expect(fork.getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(fork);
-    await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ nativeForkByRuntime: { codex: false } }));
-    await waitFor(() => expect(fork.getAttribute('aria-checked')).toBe('false'));
-    expect(screen.getByRole('switch', { name: 'Native Resume for Codex' }).getAttribute('aria-checked')).toBe('true');
-    agentStatus = nativeResumeStatus('claude');
-    rerender(<ModelPane activeProjectId={null} />);
-    const claudeFork = screen.getByRole('switch', { name: 'Native Fork for Claude' });
-    expect(claudeFork.getAttribute('aria-checked')).toBe('false');
-    fireEvent.click(claudeFork);
-    await waitFor(() => expect(saveAgentOptions).toHaveBeenLastCalledWith({ nativeForkByRuntime: { claude: true } }));
-  });
-
   it('keeps the Native Fork preference on failure and supports retry', async () => {
     agentStatus = nativeResumeStatus();
     saveAgentOptions.mockResolvedValueOnce({ ok: false, error: 'Unable to persist fork preference' });
@@ -100,63 +83,18 @@ describe('ModelPane Kiro sidecar title setting', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('hides Native Fork on replay-only runtimes and older backends', () => {
-    agentStatus = { ...nativeResumeStatus('pi'), capabilityDescriptor: { sessionFork: { availability: 'michi_simulated' } } };
+  it('says that crossing YOLO restarts Claude chats and stops their workflows, only when Claude is available', () => {
+    const status = (runtime: string) => ({
+      runtime, label: runtime,
+      capabilities: { modes: false, permissions: false, providerModels: false, reasoning: false, apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false },
+      availableRuntimes: [], hasRequiredKey: true,
+    });
+    agentStatus = status('claude');
     const { rerender } = render(<ModelPane activeProjectId={null} />);
-    expect(screen.queryByRole('switch', { name: /Native Fork/ })).toBeNull();
-    agentStatus = { ...nativeResumeStatus(), nativeForkByRuntime: undefined };
+    expect(screen.getByText(/restarts it on its next message, which stops any workflow it is running/)).toBeTruthy();
+    agentStatus = status('codex');
     rerender(<ModelPane activeProjectId={null} />);
-    expect(screen.queryByRole('switch', { name: /Native Fork/ })).toBeNull();
-  });
-
-  it('shows an enabled Native Fork switch for Kiro by default', () => {
-    agentStatus = { ...nativeResumeStatus('kiro'), label: 'Kiro', nativeForkByRuntime: {} };
-    render(<ModelPane activeProjectId={null} />);
-    expect(screen.getByRole('switch', { name: 'Native Fork for Kiro' }).getAttribute('aria-checked')).toBe('true');
-  });
-
-  it('saves Native Resume for only the selected runtime and restores each runtime value', async () => {
-    agentStatus = nativeResumeStatus();
-    const { rerender } = render(<ModelPane activeProjectId={null} />);
-    const toggle = screen.getByRole('switch', { name: 'Native Resume for Codex' });
-    expect(toggle.getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(toggle);
-    await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ nativeResumeByRuntime: { codex: false } }));
-    await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('false'));
-    agentStatus = nativeResumeStatus('claude');
-    rerender(<ModelPane activeProjectId={null} />);
-    const claudeToggle = screen.getByRole('switch', { name: 'Native Resume for Claude' });
-    expect(claudeToggle.getAttribute('aria-checked')).toBe('false');
-    fireEvent.click(claudeToggle);
-    await waitFor(() => expect(saveAgentOptions).toHaveBeenLastCalledWith({ nativeResumeByRuntime: { claude: true } }));
-  });
-
-  it('keeps the saved setting on failure and supports retry', async () => {
-    agentStatus = nativeResumeStatus();
-    saveAgentOptions.mockResolvedValueOnce({ ok: false, error: 'Unable to persist preference' });
-    render(<ModelPane activeProjectId={null} />);
-    const toggle = screen.getByRole('switch', { name: 'Native Resume for Codex' });
-    fireEvent.click(toggle);
-    expect((await screen.findByRole('alert')).textContent).toContain('Unable to persist preference');
-    expect(toggle.getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(toggle);
-    await waitFor(() => expect(toggle.getAttribute('aria-checked')).toBe('false'));
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('hides Native Resume for replay-only runtimes and older backends', () => {
-    agentStatus = { ...nativeResumeStatus(), capabilities: { nativeResume: false } };
-    const { rerender } = render(<ModelPane activeProjectId={null} />);
-    expect(screen.queryByRole('switch', { name: /Native Resume/ })).toBeNull();
-    agentStatus = { ...nativeResumeStatus(), nativeResumeByRuntime: undefined };
-    rerender(<ModelPane activeProjectId={null} />);
-    expect(screen.queryByRole('switch', { name: /Native Resume/ })).toBeNull();
-  });
-
-  it('defaults an unset runtime preference to enabled', () => {
-    agentStatus = { ...nativeResumeStatus(), nativeResumeByRuntime: {} };
-    render(<ModelPane activeProjectId={null} />);
-    expect(screen.getByRole('switch', { name: /Native Resume/ }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByText(/stops any workflow it is running/)).toBeNull();
   });
 
   it('renders for the active, available Kiro runtime and enables the preference', () => {
@@ -181,45 +119,6 @@ describe('ModelPane Kiro sidecar title setting', () => {
 
     fireEvent.click(toggle);
     expect(setPref).toHaveBeenCalledExactlyOnceWith('enableKiroSidecarTitles', true);
-  });
-
-  it('does not render when a different runtime is selected, even if Kiro is available', () => {
-    agentStatus = {
-      runtime: 'codex',
-      label: 'Codex',
-      capabilities: {
-        modes: false, permissions: false, providerModels: false, reasoning: false,
-        apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false,
-      },
-      availableRuntimes: [
-        { id: 'kiro', label: 'Kiro', available: true },
-        { id: 'codex', label: 'Codex', available: true },
-      ],
-      hasRequiredKey: true,
-    };
-
-    render(<ModelPane activeProjectId={null} />);
-
-    expect(screen.queryByRole('switch', { name: 'Generate Kiro titles in background' })).toBeNull();
-    expect(screen.queryByText('▸ TITLES')).toBeNull();
-  });
-
-  it('does not render when Kiro is selected but unavailable', () => {
-    agentStatus = {
-      runtime: 'kiro',
-      label: 'Kiro',
-      capabilities: {
-        modes: false, permissions: false, providerModels: false, reasoning: false,
-        apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false,
-      },
-      availableRuntimes: [{ id: 'kiro', label: 'Kiro', available: false }],
-      hasRequiredKey: true,
-    };
-
-    render(<ModelPane activeProjectId={null} />);
-
-    expect(screen.queryByRole('switch', { name: 'Generate Kiro titles in background' })).toBeNull();
-    expect(screen.queryByText('▸ TITLES')).toBeNull();
   });
 
   it('configures the selected web-search provider without exposing its saved key', async () => {
@@ -260,23 +159,5 @@ describe('ModelPane Kiro sidecar title setting', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save key' }));
     await waitFor(() => expect(saveWebSearchKey).toHaveBeenCalledWith('jina', 'jina-test-key'));
     expect(refreshAgentStatus).toHaveBeenCalled();
-  });
-
-  it('does not render web-search settings when the backend does not advertise the Railway feature', () => {
-    agentStatus = {
-      runtime: 'pi',
-      label: 'Pi',
-      capabilities: {
-        modes: false, permissions: false, providerModels: false, reasoning: false,
-        apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false,
-      },
-      availableRuntimes: [],
-      hasRequiredKey: true,
-    };
-
-    render(<ModelPane activeProjectId={null} />);
-
-    expect(screen.queryByRole('combobox', { name: 'Web search provider' })).toBeNull();
-    expect(screen.queryByText('▸ WEB SEARCH')).toBeNull();
   });
 });

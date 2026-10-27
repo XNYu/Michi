@@ -88,8 +88,10 @@ describe('remote access token middleware', () => {
     };
 
     assert.deepEqual(invoke('/mcp/slot-1', '127.0.0.1'), { status: 0, nextCalls: 1 });
+    assert.deepEqual(invoke('/mcp-session/group-1', '127.0.0.1'), { status: 0, nextCalls: 1 });
     assert.deepEqual(invoke('/codex-hooks/slot-1/stop', '::1'), { status: 0, nextCalls: 1 });
     assert.deepEqual(invoke('/mcp/slot-1', '10.0.0.42'), { status: 401, nextCalls: 0 });
+    assert.deepEqual(invoke('/mcp-session/group-1', '10.0.0.42'), { status: 401, nextCalls: 0 });
     assert.deepEqual(invoke('/workspaces/all', '127.0.0.1'), { status: 401, nextCalls: 0 });
   });
 
@@ -164,13 +166,24 @@ describe('backend listen host', () => {
     assert.equal(resolveListenHost(), '127.0.0.1');
   });
 
-  test('defaults remote and cloud modes to all interfaces', () => {
-    delete process.env.MICHI_BIND_HOST;
+  test('keeps remote access on loopback unless a bind host is set', () => {
     process.env.MICHI_REMOTE_ACCESS = '1';
+    delete process.env.MICHI_CLOUD;
+    delete process.env.MICHI_BIND_HOST;
+    assert.equal(resolveListenHost(), '127.0.0.1');
+    process.env.MICHI_BIND_HOST = '0.0.0.0';
     assert.equal(resolveListenHost(), '0.0.0.0');
+  });
+
+  test('binds all interfaces only for the cloud container', () => {
     delete process.env.MICHI_REMOTE_ACCESS;
+    delete process.env.MICHI_BIND_HOST;
     process.env.MICHI_CLOUD = '1';
     assert.equal(resolveListenHost(), '0.0.0.0');
+    for (const value of ['true', '0']) {
+      process.env.MICHI_CLOUD = value;
+      assert.equal(resolveListenHost(), '127.0.0.1', value);
+    }
   });
 
   test('honors an explicit loopback binding and rejects malformed hosts', () => {

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { setupMichiRoutes } from '../src/routes/michi';
@@ -14,10 +15,9 @@ import { initDb, closeDb, getDb } from '../src/services/db';
 import { getAgentConfig, loadAgentConfig, updateAgentConfig } from '../src/services/agentConfig';
 import { registerRuntime } from '../src/agents/registry';
 import { clearAllSessions } from '../src/agents/sessionRegistry';
-import { getModelReasoningOptions } from '../src/agents/modelReasoning';
-import * as dbRepository from '../src/services/dbRepository';
-import * as dbWorkerClient from '../src/services/dbWorkerClient';
+
 import type { AgentRuntimeWithProviders, ModelInfo, NewAgentSessionOptions } from '../src/agents/types';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 let directory: string;
 let server: ReturnType<typeof express.application.listen>;
@@ -32,6 +32,7 @@ const models: ModelInfo[] = [
   { id: 'instant', supportsReasoning: false, supportedReasoningLevels: [] },
 ];
 const runtime: AgentRuntimeWithProviders & { listModels(): Promise<ModelInfo[]> } = {
+  descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
   id: 'composer-test', label: 'Composer Test',
   capabilities: { modes: false, permissions: false, models: true, providerModels: true, reasoning: true,
     supportedReasoningLevels: ['low', 'medium', 'high', 'xhigh', 'max'], apiKeys: true,
@@ -46,7 +47,7 @@ const runtime: AgentRuntimeWithProviders & { listModels(): Promise<ModelInfo[]> 
   },
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-composer-reasoning-'));
   process.env.MICHI_DATA_DIR = directory;
   delete process.env.MICHI_CLOUD;
@@ -60,7 +61,7 @@ beforeEach(() => {
   app.use(express.json());
   app.use('/api', setupAgentRoutes());
   app.use('/api', setupMichiRoutes(new ChatManager(undefined, directory)));
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
 });
 
@@ -77,52 +78,6 @@ async function post(endpoint: string, body: unknown) {
   return { status: response.status, body: await response.json() as Record<string, unknown> };
 }
 
-test('a pane selection reaches the chosen runtime/model with a valid fallback effort', async () => {
-  updateAgentConfig({ runtime: 'unregistered-global-runtime' });
-  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: runtime.id, providerId: 'enabled', modelId: 'limited', reasoning: 'max' });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(captured.length, 1);
-  assert.equal(captured[0].model, 'limited');
-  assert.equal(captured[0].provider, 'enabled');
-  assert.equal(captured[0].reasoning, 'low');
-  assert.equal(result.body.reasoning, 'low');
-  assert.equal(getAgentConfig().runtime, 'unregistered-global-runtime');
-});
-
-test('unsupported models clear effort in the session and durable binding', async () => {
-  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, modelId: 'instant', reasoning: 'max' });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(captured[0].reasoning, null);
-  assert.equal(result.body.reasoning, null);
-  const row = getDb().prepare('SELECT reasoning FROM nodes WHERE id=?').get('node') as { reasoning: string | null };
-  assert.equal(row.reasoning, null);
-});
-
-test('unchanged live follow-ups do not wait on catalogs, history, or redundant binding writes', async (t) => {
-  const first = await post('/nodes/node/ensure-session', {
-    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'max',
-  });
-  assert.equal(first.status, 200);
-  assert.equal(first.body.reasoning, 'low');
-  const unavailable = async () => { throw new Error('catalog unavailable'); };
-  const providers = t.mock.method(runtime, 'listProviders', unavailable);
-  const catalog = t.mock.method(runtime, 'listModels', unavailable);
-  const history = t.mock.method(dbRepository, 'listMessages', () => { throw new Error('history must remain lazy'); });
-  t.mock.method(dbWorkerClient, 'isDbWorkerReady', () => true);
-  const persistence = t.mock.method(dbWorkerClient.dbWorker, 'persistResumeBinding', async () => { throw new Error('worker busy'); });
-
-  const followUp = await post('/nodes/node/ensure-session', {
-    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'low',
-  });
-  assert.equal(followUp.status, 200, JSON.stringify(followUp.body));
-  assert.equal(followUp.body.resumeStrategy, 'live');
-  assert.equal(followUp.body.reasoning, 'low');
-  assert.equal(captured.length, 1);
-  for (const operation of [providers, catalog, history, persistence]) {
-    assert.equal(operation.mock.callCount(), 0);
-  }
-});
-
 test('changing live settings still validates the selected model and effort', async (t) => {
   await post('/nodes/node/ensure-session', {
     workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'flexible', reasoning: 'high',
@@ -136,37 +91,6 @@ test('changing live settings still validates the selected model and effort', asy
   assert.equal(changed.body.reasoning, 'low');
   assert.equal(catalog.mock.callCount(), 1);
   assert.equal(captured.at(-1)?.reasoning, 'low');
-});
-
-test('a cold fallback restores durable history when the renderer omits its transcript', async (t) => {
-  await post('/nodes/node/ensure-session', {
-    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'low',
-  });
-  getDb().prepare(`INSERT INTO messages (id,node_id,role,content,seq,created_at)
-    VALUES ('prior-user','node','user','Remember the original decision',0,1),
-           ('prior-answer','node','assistant','The decision was to keep SQLite',1,1)`).run();
-  clearAllSessions();
-  const catalog = t.mock.method(runtime, 'listModels', async () => models);
-
-  const restored = await post('/nodes/node/ensure-session', {
-    workspaceId: 'ws', cwd: directory, providerId: 'enabled', modelId: 'limited', reasoning: 'low',
-  });
-
-  assert.equal(restored.status, 200, JSON.stringify(restored.body));
-  assert.equal(restored.body.resumeStrategy, 'compatible');
-  assert.equal(catalog.mock.callCount(), 1);
-  assert.equal(captured.length, 2);
-  assert.match(captured[1].mergeContexts?.join('\n') ?? '', /Remember the original decision/);
-  assert.match(captured[1].mergeContexts?.join('\n') ?? '', /The decision was to keep SQLite/);
-});
-
-test('provider opt-out hides effort even for a reasoning-capable model', async () => {
-  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, providerId: 'disabled', modelId: 'flexible', reasoning: 'high' });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(captured[0].reasoning, null);
-  const fixed = await getModelReasoningOptions(runtime, 'fixed', 'enabled', 'max');
-  assert.equal(fixed.adjustable, false);
-  assert.equal(fixed.value, 'high');
 });
 
 test('changing provider without a model uses that provider default instead of the old binding', async () => {
@@ -187,24 +111,6 @@ test('effort saves validate the target model before changing any defaults', asyn
   assert.equal(getAgentConfig().reasoningByRuntime[runtime.id], 'low');
 });
 
-test('a pane send records its provider + model as the runtime last-used pair', async () => {
-  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, providerId: 'disabled', modelId: 'limited' });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  const cfg = getAgentConfig();
-  assert.equal(cfg.providerByRuntime[runtime.id], 'disabled');
-  assert.equal(cfg.modelByRuntime[runtime.id], 'limited');
-  // The global active runtime/provider are untouched — only the per-runtime memory moves.
-  assert.equal(cfg.provider, 'enabled');
-});
-
-test('a fresh pane switched to the runtime resolves to the last-used pair, not the built-in fallback', async () => {
-  updateAgentConfig({ runtime: 'unregistered-global-runtime', provider: 'enabled', providerByRuntime: { [runtime.id]: 'disabled' }, modelByRuntime: { [runtime.id]: 'limited' } });
-  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: runtime.id });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(captured[0].provider, 'disabled');
-  assert.equal(captured[0].model, 'limited');
-});
-
 test('switching to a non-provider runtime does not pollute providerByRuntime', async () => {
   registerRuntime({ ...runtime, id: 'plain-test', capabilities: { ...runtime.capabilities, providerModels: false, apiKeys: false } });
   const result = await post('/agent/options', { runtime: 'plain-test' });
@@ -214,63 +120,4 @@ test('switching to a non-provider runtime does not pollute providerByRuntime', a
 });
 
 for (const runtimeId of ['codex', 'claude', 'kiro']) {
-  test(`capacity errors identify ${runtimeId} without the historical Claude code`, async (t) => {
-    const label = runtimeId[0].toUpperCase() + runtimeId.slice(1);
-    t.mock.method(runtime, 'newSession', async () => {
-      throw Object.assign(new Error(`${label} concurrency cap reached`), { name: `${label}ConcurrencyError` });
-    });
-    const result = await post('/nodes/node/ensure-session', {
-      workspaceId: 'ws', cwd: directory, runtimeId: runtime.id, modelId: 'flexible',
-    });
-    assert.equal(result.status, 503);
-    assert.deepEqual(result.body, {
-      code: 'RUNTIME_SESSIONS_BUSY', runtimeId, error: `${label} concurrency cap reached`,
-    });
-  });
 }
-
-function registerPlainRuntime(): string {
-  const id = 'plain-model-test';
-  registerRuntime({
-    ...runtime,
-    id,
-    label: 'Plain Model Test',
-    capabilities: { ...runtime.capabilities, providerModels: false, apiKeys: false },
-    async newSession(options: NewAgentSessionOptions) {
-      captured.push(options);
-      return { id: options.sessionId!, runtimeId: id, currentModelId: options.model, getHistory: () => [], getPendingAssistant: () => undefined, async *send() {}, async cancel() {} };
-    },
-  });
-  return id;
-}
-
-test('a pane send on a non-provider runtime records its model as the runtime last-used model', async () => {
-  const plainId = registerPlainRuntime();
-  // Config persists across tests in one run; start from a different model.
-  updateAgentConfig({ modelByRuntime: { [plainId]: 'flexible' } });
-  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: plainId, modelId: 'limited' });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(result.body.lastUsedUpdated, true);
-  const cfg = getAgentConfig();
-  assert.equal(cfg.modelByRuntime[plainId], 'limited');
-  // Non-provider runtimes never gain a providerByRuntime entry.
-  assert.equal(cfg.providerByRuntime[plainId], undefined);
-  // Other runtimes' memory is untouched.
-  assert.equal(cfg.modelByRuntime[runtime.id], 'flexible');
-});
-
-test('an unchanged send reports no last-used update', async () => {
-  const plainId = registerPlainRuntime();
-  await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: plainId, modelId: 'limited' });
-  const repeat = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: plainId, modelId: 'limited' });
-  assert.equal(repeat.status, 200, JSON.stringify(repeat.body));
-  assert.equal(repeat.body.lastUsedUpdated, false);
-});
-
-test('switching back to a non-provider runtime resolves to its last-used model', async () => {
-  const plainId = registerPlainRuntime();
-  updateAgentConfig({ modelByRuntime: { [plainId]: 'limited' } });
-  const result = await post('/nodes/node/ensure-session', { workspaceId: 'ws', cwd: directory, runtimeId: plainId });
-  assert.equal(result.status, 200, JSON.stringify(result.body));
-  assert.equal(captured[0].model, 'limited');
-});

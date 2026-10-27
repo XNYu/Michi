@@ -27,7 +27,9 @@ function parseWorkspace(value: unknown): RemoteWorkspaceSummary {
 
 /** Read the current inventory through the authenticated proxy, without hydrating or caching it. */
 export async function fetchRemoteWorkspaces(connectionId: string, signal?: AbortSignal): Promise<RemoteWorkspaceSummary[]> {
-  const deadline = AbortSignal.timeout(20_000);
+  // The gateway may spend 35 seconds opening a cold SSH proxy before it can
+  // issue the read. Keep this deadline outside that forwarding budget.
+  const deadline = AbortSignal.timeout(45_000);
   const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   try {
     const response = await fetch(`${backendApiBase(connectionId)}/workspaces`, { signal: requestSignal, cache: 'no-store' });

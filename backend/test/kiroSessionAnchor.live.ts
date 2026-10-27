@@ -9,8 +9,8 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { AgentSession } from '../src/agents/types';
-import type { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
-import type { AcpClient } from '../src/services/acpClient';
+import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import type { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
 
 if (process.env.MICHI_KIRO_ANCHOR_LIVE !== '1') throw new Error('Set MICHI_KIRO_ANCHOR_LIVE=1 to use real Kiro');
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'michi-kiro-anchor-live-')));
@@ -21,10 +21,13 @@ delete process.env.MICHI_CLOUD;
 const { initDb, closeDb } = require('../src/services/db') as typeof import('../src/services/db');
 const repo = require('../src/services/dbRepository') as typeof import('../src/services/dbRepository');
 const { McpSlotRegistry, mountMcp } = require('../src/services/mcpServer') as typeof import('../src/services/mcpServer');
-const { KiroRuntime: Runtime } = require('../src/agents/kiro/KiroRuntime') as typeof import('../src/agents/kiro/KiroRuntime');
+const { KiroRuntime: Runtime } = require('michi-runtime/internal/adapters/kiro/KiroRuntime') as typeof import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
+const { kiroEnvOptions } = require('../src/agents/michiKiroOptions') as typeof import('../src/agents/michiKiroOptions');
 initDb();
 repo.saveWorkspace({ id: 'anchor-live', name: 'Disposable session-anchor experiment', cwd: root, created_at: 1, updated_at: 1 });
-const registry = new McpSlotRegistry();
+// Read once the server below listens: the port the runtime gets.
+const registry = new McpSlotRegistry({ mcpPort: () => (server.address() as AddressInfo).port });
 const requests: Array<{ url: string; method: string; name?: string; arguments?: any }> = [];
 const effects: Array<Record<string, any>> = [];
 const turns: Array<Record<string, any>> = [];
@@ -89,7 +92,8 @@ async function answer(session: AgentSession, marker: string, opts?: { branch?: b
             + `Record branch overview mentioning ${marker}, then answer briefly. Actual MCP calls are required. Do not use file, shell, web, or other external tools.`;
     let cancelled = false;
     for await (const event of session.send(prompt)) {
-        record.events.push(event.kind);
+        // Michi's product events are host events; record them by type.
+        record.events.push(event.kind === 'host_event' ? event.type : event.kind);
         if (['chunk', 'tool_call'].includes(event.kind) && record.firstActivityMs === undefined) {
             record.firstActivityMs = Math.round(performance.now() - start);
         }
@@ -131,7 +135,8 @@ async function main() {
     const port = (server.address() as AddressInfo).port;
     const options = { cwd: root, workspaceId: 'anchor-live', enableFollowUps: false, model };
     try {
-        runtime = new Runtime(bridge, registry, port, root, undefined, { engine: 'v3' });
+        assert.equal(new URL(registry.endpoint('probe').url).port, String(port), 'the slot provider serves on the live port');
+        runtime = new Runtime({ bridge, mcpSlots: registry, defaultCwd: root, ...kiroEnvOptions(), host: michiTestHost(), engine: 'v3' });
         await timed('anchor_real_warm', () => runtime!.warm(root, { model }));
         const firstWarm = runtime.listWarmedSessions()[0]?.sid;
         assert.ok(firstWarm);

@@ -6,7 +6,9 @@ import {
   getBackendConnection, listBackendConnections, normalizeBackendConnection,
   probeBackendConnection, saveBackendConnection, type BackendConnectionSummary,
 } from './backendConnections';
-import { sshTunnelManager, type SshTunnelManager } from './sshTunnelManager';
+import { SSH_CONNECT_TIMEOUT_SECONDS, sshTunnelManager, type SshTunnelManager } from './sshTunnelManager';
+import type { MichiBuildInfo, RemoteUpdateStatus } from 'michi-shared';
+import { compareRemoteBuild, runningBuild, type BuildInfo } from './buildInfo';
 
 export class RemoteDesktopError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
@@ -31,7 +33,7 @@ export const runRemoteSsh: RunSsh = (target, script, signal, progress, diagnosti
   if (signal?.aborted) { reject(signal.reason); return; }
   const args = [
     '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
-    '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
+    '-o', `ConnectTimeout=${SSH_CONNECT_TIMEOUT_SECONDS}`, '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
     ...(target.sshPort ? ['-p', String(target.sshPort)] : []),
     target.sshUser ? `${target.sshUser}@${target.sshHost}` : target.sshHost, 'bash -s',
   ];
@@ -132,6 +134,8 @@ export const runRemoteSsh: RunSsh = (target, script, signal, progress, diagnosti
       start: 'Michi could not start. Check the remote service log.',
       busy: 'Another Michi setup is running on this machine. Wait for it to finish, then reconnect.',
       modified_source: 'The managed remote checkout has local changes. Preserve them before rebuilding.',
+      update_source: 'Could not fetch this app’s commit from the configured repository. Check repository access and that this version has been published.',
+      update_start: 'The updated service could not start. Michi tried to restore the previous installation. Open the logs for details.',
       path: 'The remote folder does not exist or cannot be read.',
       missing_install: 'The existing remote Michi build is missing. Use Connect remote to prepare this machine.',
     };
@@ -197,13 +201,15 @@ for file in candidates:
     candidate = dict(result, token=token, port=port, dataDir=str(file.parent))
     # Prefer the build that owns this data directory when several checkouts
     # coexist. A stopped process still leaves a useful launcher path behind.
-    try:
-        record = json.loads((file.parent / 'remote.pid').read_text())
-        server = pathlib.Path(record.get('serverPath', ''))
-        repo = server.parent.parent.parent
-        if server.name == 'server.js' and server.is_file() and (repo / 'scripts/remote-control.mjs').is_file():
-            candidate['repo'] = str(repo)
-    except (OSError, ValueError, TypeError, AttributeError): pass
+    for record_file in [file.parent / 'remote-installation.json', file.parent / 'remote.pid']:
+        try:
+            record = json.loads(record_file.read_text())
+            server = pathlib.Path(record.get('serverPath', ''))
+            repo = server.parent.parent.parent
+            if server.name == 'server.js' and server.is_file() and (repo / 'scripts/remote-control.mjs').is_file():
+                candidate['repo'] = str(repo)
+                break
+        except (OSError, ValueError, TypeError, AttributeError): pass
     try:
         request = urllib.request.Request('http://127.0.0.1:%d/api/health' % port, headers={'Authorization': 'Bearer ' + token})
         with urllib.request.urlopen(request, timeout=2) as response: health=json.load(response)
@@ -227,6 +233,52 @@ function readRemoteJson<T>(output: string): T {
   if (!row) throw new RemoteDesktopError('invalid_response', 'The remote machine returned an incomplete setup response.');
   try { return JSON.parse(row.slice('MICHI_SETUP_JSON:'.length)) as T; }
   catch { throw new RemoteDesktopError('invalid_response', 'The remote machine returned an invalid setup response.'); }
+}
+
+// Build in a new checkout while the current service stays available. The old
+// installation remains intact for rollback; data and credentials stay in place.
+export function buildRemoteUpdateScript(info: { repo: string; dataDir: string; token: string; port: number }, sourceUrl: string, ref: string, revision: string, attemptId: string): string {
+  if (!/^[a-f0-9]{40}$/i.test(revision) || !/^[a-zA-Z0-9-]+$/.test(attemptId)) throw new Error('Invalid update identity');
+  return `set -eu
+umask 077
+export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"
+root="$HOME/.local/share/michi/devdesktop"
+old_repo=${shellQuote(info.repo)}
+data=${shellQuote(info.dataDir)}
+mkdir -p "$root/releases"
+mkdir "$root/setup.lock" 2>/dev/null || { echo MICHI_ERROR:busy; exit 1; }
+if ! mkdir "$data/remote-recovery.lock" 2>/dev/null; then rmdir "$root/setup.lock"; echo MICHI_ERROR:busy; exit 1; fi
+trap 'rmdir "$root/setup.lock" "$data/remote-recovery.lock" 2>/dev/null || true' EXIT
+log="$root/update.${attemptId}.log"
+touch "$log"; chmod 600 "$log"
+[ -z "$(git -C "$old_repo" status --porcelain --untracked-files=normal -- . ':!package-lock.json')" ] || { echo MICHI_ERROR:modified_source; exit 1; }
+node_bin=""
+for candidate in "$root/node/bin/node" "$(command -v node || true)" "$HOME"/.nvm/versions/node/*/bin/node; do
+  [ -x "$candidate" ] || continue
+  if "$candidate" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)' 2>/dev/null; then node_bin="$candidate"; break; fi
+done
+[ -n "$node_bin" ] || { echo MICHI_ERROR:node_compatibility; exit 1; }
+export PATH="$(dirname "$node_bin"):$PATH"
+export GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10'
+repo="$root/releases/${revision}-${attemptId}"
+echo MICHI_PROGRESS:source
+if ! (git clone --no-checkout --single-branch --branch ${shellQuote(ref)} -- ${shellQuote(sourceUrl)} "$repo" &&
+  git -C "$repo" cat-file -e '${revision}^{commit}' && git -C "$repo" checkout --detach ${shellQuote(revision)}) >>"$log" 2>&1; then
+  tail -c 32000 "$log"; echo MICHI_ERROR:update_source; exit 1
+fi
+export MICHI_DATA_DIR="$data" MICHI_CONFIG_DIR="$data" MICHI_LOG_DIR="$data/logs"
+echo MICHI_PROGRESS:build
+if ! (cd "$repo" && npm run remote:setup) >>"$log" 2>&1; then tail -c 32000 "$log"; echo MICHI_ERROR:build; exit 1; fi
+unset PORT MICHI_REMOTE_TOKEN MICHI_BIND_HOST
+echo MICHI_PROGRESS:start
+if ! (cd "$old_repo" && "$node_bin" scripts/remote-control.mjs stop --data-dir "$data") >>"$log" 2>&1; then tail -c 32000 "$log"; echo MICHI_ERROR:start; exit 1; fi
+if ! (cd "$repo" && "$node_bin" scripts/remote-control.mjs launch --no-setup --data-dir "$data") >>"$log" 2>&1; then
+  (cd "$repo" && "$node_bin" scripts/remote-control.mjs stop --data-dir "$data") >>"$log" 2>&1 || true
+  (cd "$old_repo" && "$node_bin" scripts/remote-control.mjs launch --no-setup --data-dir "$data") >>"$log" 2>&1 || true
+  tail -c 32000 "$log"; echo MICHI_ERROR:update_start; exit 1
+fi
+"$node_bin" -e 'const fs=require("node:fs"),p=require("node:path");const file=p.join(process.argv[1],"remote-installation.json");fs.writeFileSync(file+".tmp",JSON.stringify({serverPath:p.join(process.argv[2],"backend/dist/server.js")}),{mode:0o600});fs.renameSync(file+".tmp",file)' "$data" "$repo"
+${inspectRemoteScript({ token: info.token, port: info.port }, info.dataDir)}`;
 }
 
 // Recovery only uses an existing build and its saved environment. It never
@@ -342,7 +394,62 @@ export type RemoteSetupResult =
   | { kind: 'connected'; connection: BackendConnectionSummary; home: string; runtimes: string[]; runtimeWarnings: string[] };
 
 export class RemoteDesktopSetup {
-  constructor(private readonly deps: { runSsh?: RunSsh; tunnelManager?: SshTunnelManager; sourceUrl?: string; ref?: string } = {}) {}
+  constructor(private readonly deps: { runSsh?: RunSsh; tunnelManager?: SshTunnelManager; sourceUrl?: string; ref?: string; build?: BuildInfo } = {}) {}
+
+  async checkVersion(connectionId: string, signal?: AbortSignal): Promise<RemoteUpdateStatus> {
+    const connection = getBackendConnection(connectionId);
+    if (!connection) throw new RemoteDesktopError('missing_connection', 'Connection not found.');
+    const local = this.deps.build ?? runningBuild;
+    const apiUrl = await (this.deps.tunnelManager ?? sshTunnelManager).apiUrl(connection);
+    const headers = { Authorization: `Bearer ${connection.token}` };
+    const requestSignal = AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]);
+    const response = await fetch(`${apiUrl}/health`, { headers, signal: requestSignal });
+    if (!response.ok) throw new RemoteDesktopError('version', 'Could not check the remote version (HTTP ' + response.status + ').');
+    const health = await response.json() as { service?: string; status?: string; build?: MichiBuildInfo };
+    if (health.service !== 'michi-backend' || health.status !== 'healthy') throw new RemoteDesktopError('version', 'This connection is not a healthy Michi backend.');
+    let remote = health.build ?? null;
+    if (!remote) {
+      // Older installations already expose this Git identity, so they can be
+      // upgraded without first installing the new health protocol manually.
+      try {
+        const legacy = await fetch(`${apiUrl}/version`, { headers, signal: requestSignal });
+        const body = legacy.ok ? await legacy.json() as { localHash?: string } : null;
+        if (body?.localHash && /^[a-f0-9]{7,40}$/i.test(body.localHash)) remote = { version: 'unknown', revision: body.localHash };
+      } catch { signal?.throwIfAborted(); }
+    }
+    return compareRemoteBuild(local, remote, connection.transport === 'ssh');
+  }
+
+  async update(connectionId: string, progress: Progress, signal?: AbortSignal, diagnostics?: RemoteDiagnosticLog): Promise<RemoteUpdateStatus> {
+    const connection = getBackendConnection(connectionId);
+    if (!connection || connection.transport !== 'ssh' || !connection.sshHost) throw new RemoteDesktopError('missing_connection', 'Select a saved SSH connection before updating Michi.');
+    progress('version', 'Checking the remote Michi version…');
+    const status = await this.checkVersion(connectionId, signal);
+    if (status.state === 'current') return status;
+    if (!status.canUpdate || !status.local.revision) throw new RemoteDesktopError('version', status.message ?? 'The remote version could not be confirmed as older than this app.');
+    const run = this.deps.runSsh ?? runRemoteSsh;
+    const target = { sshHost: connection.sshHost, sshUser: connection.sshUser, sshPort: connection.sshPort };
+    diagnostics?.protect(connection.token);
+    progress('ssh', 'Checking the saved remote installation…');
+    const info = readRemoteJson<RemoteInfo>(await run(target,
+      `set -e\nexport PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"\n${inspectRemoteScript({ port: connection.remotePort, token: connection.token })}`, signal, progress, diagnostics));
+    if (!info.repo || !info.dataDir || info.token !== connection.token || info.port !== connection.remotePort) {
+      throw new RemoteDesktopError('connection_changed', 'The remote installation does not match this saved connection. Reconnect before updating.');
+    }
+    const attemptId = diagnostics?.report.id ?? randomUUID();
+    diagnostics?.append('remote update log', '~/.local/share/michi/devdesktop/update.' + attemptId + '.log');
+    const result = readRemoteJson<RemoteInfo>(await run(target, buildRemoteUpdateScript({ repo: info.repo, dataDir: info.dataDir, token: info.token!, port: info.port! },
+      this.deps.sourceUrl ?? process.env.MICHI_REMOTE_SOURCE_URL ?? 'https://github.com/XNYu/Michi.git',
+      this.deps.ref ?? process.env.MICHI_REMOTE_SOURCE_REF ?? 'main', status.local.revision, attemptId), signal, progress, diagnostics));
+    if (!result.healthy || result.token !== connection.token || result.port !== connection.remotePort || result.dataDir !== info.dataDir) {
+      throw new RemoteDesktopError('verify', 'The updated service did not retain this connection’s data directory, port and credentials.');
+    }
+    progress('verify', 'Reconnecting and verifying the updated Michi service…');
+    (this.deps.tunnelManager ?? sshTunnelManager).stop(connectionId);
+    const updated = await this.checkVersion(connectionId, signal);
+    if (updated.state !== 'current') throw new RemoteDesktopError('verify', 'The remote service is reachable, but its running version does not match this app yet.');
+    return updated;
+  }
 
   async recover(connectionId: string, signal?: AbortSignal, diagnostics?: RemoteDiagnosticLog): Promise<void> {
     const connection = getBackendConnection(connectionId);

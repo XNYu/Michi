@@ -3,6 +3,7 @@ import { getElectron } from './electronBridge';
 import { descendants } from '../state/tree';
 import { ChatNodeState, Project } from '../state/chatStore';
 import { migrateAssistantToBlocks, visibleMessageText } from '../state/assistantBlocks';
+import { isVisibleConversationNode } from '../state/conversationVisibility';
 import type { ChatMessage } from '../state/chatTypes';
 
 /** Filter a node's messages down to user/assistant pairs suitable for export. */
@@ -87,9 +88,9 @@ export function buildExportPayload(
   rootNodeId: string,
   nodes: Record<string, ChatNodeState>,
 ): ExportRequestPayload {
-  const alive = (id: string) => !nodes[id]?.deletedAt;
+  const alive = (id: string) => !nodes[id]?.deletedAt && isVisibleConversationNode(nodes[id]);
   const included = descendants(rootNodeId, project.edges, alive);
-  included.add(rootNodeId);
+  if (isVisibleConversationNode(nodes[rootNodeId])) included.add(rootNodeId);
   const depths = computeDepths(rootNodeId, project.edges);
   const rootNode = nodes[rootNodeId];
   const rootTitle = rootNode?.title

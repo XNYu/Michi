@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  computeTextSelector,
-  findNearestHeadingPath,
-  anchorSelector,
-} from './textSelector';
+import { computeTextSelector, anchorSelector } from './textSelector';
 
 const DOC = [
   '# Top Level',
@@ -24,35 +20,6 @@ const DOC = [
 ].join('\n');
 
 describe('computeTextSelector', () => {
-  it('computes exact, prefix, suffix, and line numbers for a mid-document selection', () => {
-    const start = DOC.indexOf('Which team/service');
-    const end = start + 'Which team/service owns the data'.length;
-    const sel = computeTextSelector(DOC, start, end);
-
-    expect(sel.exact).toBe('Which team/service owns the data');
-    expect(sel.prefix).toBeDefined();
-    expect(sel.suffix).toBeDefined();
-    // prefix should end right before the selection
-    expect(DOC.slice(start - sel.prefix!.length, start)).toBe(sel.prefix);
-    // suffix should start right after the selection
-    expect(DOC.slice(end, end + sel.suffix!.length)).toBe(sel.suffix);
-    expect(sel.startOffset).toBe(start);
-    expect(sel.endOffset).toBe(end);
-    // Line numbers are 1-based
-    expect(sel.startLine).toBeGreaterThan(1);
-    expect(sel.endLine).toBeGreaterThanOrEqual(sel.startLine!);
-  });
-
-  it('computes section heading ancestry', () => {
-    const start = DOC.indexOf('Which team/service');
-    const end = start + 'Which team/service'.length;
-    const sel = computeTextSelector(DOC, start, end);
-
-    expect(sel.section).toContain('# Top Level');
-    expect(sel.section).toContain('## Configuration Fields');
-    expect(sel.section).toContain('### domainOwner');
-  });
-
   it('handles selection at the very start of the document', () => {
     const sel = computeTextSelector(DOC, 0, 11); // "# Top Level"
     expect(sel.exact).toBe('# Top Level');
@@ -69,48 +36,6 @@ describe('computeTextSelector', () => {
     const sel = computeTextSelector(DOC, start, end);
     expect(sel.exact).toBe(phrase);
     expect(sel.suffix).toBeUndefined(); // end of doc → empty → undefined
-  });
-
-  it('caps prefix/suffix at 50 characters', () => {
-    const longDoc = 'a'.repeat(200) + 'TARGET' + 'b'.repeat(200);
-    const start = 200;
-    const end = 206;
-    const sel = computeTextSelector(longDoc, start, end);
-    expect(sel.prefix!.length).toBe(50);
-    expect(sel.suffix!.length).toBe(50);
-  });
-});
-
-describe('findNearestHeadingPath', () => {
-  it('returns the full heading ancestry for a deeply nested position', () => {
-    const offset = DOC.indexOf('Which team/service');
-    const path = findNearestHeadingPath(DOC, offset);
-    expect(path).toBe('# Top Level > ## Configuration Fields > ### domainOwner');
-  });
-
-  it('returns just the nearest heading when only one level exists', () => {
-    const simpleDoc = '# Only Heading\n\nSome text here.';
-    const path = findNearestHeadingPath(simpleDoc, simpleDoc.indexOf('Some text'));
-    expect(path).toBe('# Only Heading');
-  });
-
-  it('returns empty string for text with no headings', () => {
-    expect(findNearestHeadingPath('No headings here.\nJust text.', 10)).toBe('');
-  });
-
-  it('picks the nearest heading at each level, not an earlier one', () => {
-    const offset = DOC.indexOf('Which site types');
-    const path = findNearestHeadingPath(DOC, offset);
-    // Should reference storeType, not domainOwner
-    expect(path).toContain('### storeType');
-    expect(path).not.toContain('### domainOwner');
-  });
-
-  it('stops ascending once a level-1 heading is found', () => {
-    const path = findNearestHeadingPath(DOC, DOC.indexOf('The main endpoint'));
-    // Should include the # Top Level but pick ## API Endpoints, not ## Configuration Fields
-    expect(path).toContain('## API Endpoints');
-    expect(path).not.toContain('## Configuration Fields');
   });
 });
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useState } from 'react';
 import { isCrewMemoryMode, type CrewMemoryMode } from 'michi-shared';
 import { toast } from 'sonner';
+import { backendFetch } from '../../services/api/backendRequest';
 
 export const CREW_MEMORY_CHOICES: ReadonlyArray<{ mode: CrewMemoryMode; label: string; description: string }> = [
   { mode: 'persistent', label: 'Read & learn', description: 'Recall saved memory and learn reusable preferences.' },
@@ -25,7 +26,7 @@ export function useCrewMemory(apiBase: string, enabled: boolean, nodeId?: string
     if (!enabled) return;
     const controller = new AbortController();
     // Unsaved graph nodes do not exist on the backend yet. Resolve only the default.
-    void fetch(`${apiBase}/crew/memory${bound && nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { signal: controller.signal })
+    void backendFetch(`${apiBase}/crew/memory${bound && nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { signal: controller.signal })
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok || !isCrewMemoryMode(body.defaultMode)) throw new Error('Crew memory settings are unavailable');
@@ -62,7 +63,7 @@ export function CrewMemorySettings({ apiBase }: { apiBase: string }) {
         if (!isCrewMemoryMode(mode)) return;
         setSaving(true);
         try {
-          const res = await fetch(`${apiBase}/crew/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ defaultMode: mode }) });
+          const res = await backendFetch(`${apiBase}/crew/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ defaultMode: mode }) });
           if (!res.ok) throw new Error('Failed to save Crew memory default');
           defaultsChanged.dispatchEvent(new Event(apiBase));
         } catch (err) {

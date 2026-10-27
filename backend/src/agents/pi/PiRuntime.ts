@@ -1,6 +1,7 @@
+import { assertReleaseOwnership } from '../runs/runtimeRunAdapter';
 import { randomUUID } from "crypto";
-import type { CapabilityDescriptor } from "michi-shared";
-import { describeRuntimeCapabilities } from "../capabilityDescriptors";
+import type { RuntimeDescriptor } from "michi-runtime/internal/contract/descriptor";
+import { PI_RUNTIME_DESCRIPTOR } from "./piDescriptor";
 import type {
     AgentCapabilities,
     AgentProviderInfo,
@@ -14,10 +15,15 @@ import type {
     VerifyProviderKeyResult,
 } from "../types";
 import type { AgentToolBridge } from "../toolBridge";
+import { sameOwner } from "../types";
+import { chatOwner, isRunOwner } from "../ownerMapping";
+import { PendingSessionAcquisitions } from "../sessionAcquisition";
 import { PiSession } from "./PiSession";
 import { createPiSession, shouldNavigatePiTreeOnMichiBranch } from "./PiSdkSession";
 import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble, buildFormatReminder } from "../preamble";
+import { isAssistantProfile } from "../../assistant/policy";
+import { isMaintenanceProfile } from '../maintenancePolicy';
 import { renderBranchContext } from "../../services/branchBoundary";
 import {
     listPiModels,
@@ -63,11 +69,12 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         // native-resume advantage and shouldn't pay the extra round-trip.
         nativeResume: false,
     };
-    public get capabilityDescriptor(): CapabilityDescriptor {
-        return describeRuntimeCapabilities("pi");
+    public get descriptor(): RuntimeDescriptor {
+        return PI_RUNTIME_DESCRIPTOR;
     }
 
-    private sessions = new Map<string, AgentSession & { destroy(): void }>();
+    private readonly acquisitions = new PendingSessionAcquisitions<AgentSession>();
+    private sessions = new Map<string, AgentSession & { destroy(): void; dispose?(): Promise<void> }>();
 
     constructor(private readonly bridge: AgentToolBridge) {}
 
@@ -76,25 +83,37 @@ export class PiRuntime implements AgentRuntimeWithProviders {
     }
 
     async newSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
+        const owner = resolveSessionOwner(opts.owner, opts.sessionId);
+        const id = publicSessionId(owner, opts.sessionId);
+        return this.acquisitions.acquire(id, () => this.createSession({ ...opts, owner, sessionId: id }), (session) => {
+            assertCompatibleSession(session, owner, opts.profileHash ?? null);
+            if ((session as PiSession).getOwnerUserId && (session as PiSession).getOwnerUserId() !== (opts.ownerUserId ?? null)) throw new Error('session user owner mismatch');
+            return session;
+        });
+    }
+
+    private async createSession(opts: NewAgentSessionOptions): Promise<AgentSession> {
         // Adopt the caller-supplied id when present so chatId === nodeId
         // (Pi runtime convention; Kiro must server-mint per ACP). When
         // absent (legacy callers), fall back to a UUID.
         const owner = resolveSessionOwner(opts.owner, opts.sessionId);
-        const id = owner.kind === "agent_run" ? owner.attemptId : (opts.sessionId ?? owner.nodeId);
+        const id = publicSessionId(owner, opts.sessionId);
         const existing = this.sessions.get(id);
         if (existing) {
             assertCompatibleSession(existing, owner, opts.profileHash ?? null);
             return existing;
         }
-        const enableFollowUps = opts.enableFollowUps !== false;
+        const enableFollowUps = opts.enableFollowUps !== false
+            && !isAssistantProfile(opts.toolProfile)
+            && !isMaintenanceProfile(opts.toolProfile);
 
         // Walk the parent's chain (parent's own ancestors + parent itself).
         // Lazy-load any session whose getHistory() is empty — this covers the
         // cold path where the user branches from a parent that hasn't been
         // re-opened since backend restart.
         const ancestorChain: AgentSession[] = [];
-        if (!opts.branchContext && owner.kind === "chat_node" && opts.parentChatId) {
-            await this.ensureChainLoaded(opts.parentChatId, opts.cwd);
+        if (!opts.branchContext && !isRunOwner(owner) && opts.parentChatId) {
+            sessionRegistry.ensureAncestorChainLoaded(opts.parentChatId);
             const parent = sessionRegistry.getSession(opts.parentChatId);
             if (parent) {
                 ancestorChain.push(...sessionRegistry.getAncestors(opts.parentChatId), parent);
@@ -106,6 +125,9 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             : null;
         const preamble = buildPreamble({
             enableFollowUps,
+            // The assistant gets its own short tool note, not the ordinary chat tools.
+            ...(isAssistantProfile(opts.toolProfile) ? { toolCapabilities: "assistant" as const } : {}),
+            ...(isMaintenanceProfile(opts.toolProfile) ? { toolCapabilities: "maintenance" as const } : {}),
             cwd: opts.cwd,
             contextManifest: opts.contextManifest,
             extraContexts: opts.extraContexts,
@@ -130,8 +152,8 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             cwd: opts.cwd,
             enableFollowUps,
             preamble: effectivePreamble,
-            firstUserGlue: buildFormatReminder(enableFollowUps),
-            parentChatId: owner.kind === "chat_node" ? opts.parentChatId : undefined,
+            firstUserGlue: isAssistantProfile(opts.toolProfile) ? "" : buildFormatReminder(enableFollowUps),
+            parentChatId: isRunOwner(owner) ? undefined : opts.parentChatId,
             workspaceId: opts.workspaceId ?? null,
             ownerUserId: opts.ownerUserId ?? null,
             owner,
@@ -143,10 +165,10 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             requestedReasoning: opts.reasoning ?? null,
             initialMessages,
         };
-        const session = owner.kind === "agent_run"
+        const session = isRunOwner(owner)
             ? new PiSession(id, sessionDeps)
             : await createPiSession(id, sessionDeps);
-        this.sessions.set(id, session as AgentSession & { destroy(): void });
+        this.sessions.set(id, session as AgentSession & { destroy(): void; dispose?(): Promise<void> });
         sessionRegistry.registerSession(session, opts.ownerUserId ?? null, owner);
         return session;
     }
@@ -170,6 +192,15 @@ export class PiRuntime implements AgentRuntimeWithProviders {
      */
     async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
         const owner = resolveSessionOwner(opts.owner, opts.sessionId);
+        return this.acquisitions.acquire(opts.sessionId, () => this.restoreSession(opts), (session) => {
+            assertCompatibleSession(session, owner, opts.profileHash ?? null);
+            if ((session as PiSession).getOwnerUserId && (session as PiSession).getOwnerUserId() !== (opts.ownerUserId ?? null)) throw new Error('session user owner mismatch');
+            return session;
+        });
+    }
+
+    private async restoreSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
+        const owner = resolveSessionOwner(opts.owner, opts.sessionId);
         const existing = this.sessions.get(opts.sessionId);
         if (existing) {
             assertCompatibleSession(existing, owner, opts.profileHash ?? null);
@@ -180,7 +211,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         // Caller-supplied workspaceId wins — covers the cold-start window where the
         // node row hasn't been synced from the frontend yet.
         let workspaceId: string | null = opts.workspaceId ?? null;
-        if (owner.kind === "agent_run") {
+        if (isRunOwner(owner)) {
             initialMessages = rowsToAgentMessages((opts.replayHistory ?? []).map((message) => ({
                 role: message.role,
                 content: message.content,
@@ -198,15 +229,20 @@ export class PiRuntime implements AgentRuntimeWithProviders {
 
         const ancestorChain: AgentSession[] = [];
         if (parentChatId) {
-            await this.ensureChainLoaded(parentChatId, opts.cwd);
+            sessionRegistry.ensureAncestorChainLoaded(parentChatId);
             const parent = sessionRegistry.getSession(parentChatId);
             if (parent) {
                 ancestorChain.push(...sessionRegistry.getAncestors(parentChatId), parent);
             }
         }
 
+        const enableFollowUps = opts.enableFollowUps !== false
+            && !isAssistantProfile(opts.toolProfile)
+            && !isMaintenanceProfile(opts.toolProfile);
         const preamble = buildPreamble({
-            enableFollowUps: true,
+            enableFollowUps,
+            ...(isAssistantProfile(opts.toolProfile) ? { toolCapabilities: "assistant" as const } : {}),
+            ...(isMaintenanceProfile(opts.toolProfile) ? { toolCapabilities: "maintenance" as const } : {}),
             cwd: opts.cwd,
             ancestors: ancestorChain,
         });
@@ -215,7 +251,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         const sessionDeps = {
             bridge: this.bridge,
             cwd: opts.cwd,
-            enableFollowUps: true,
+            enableFollowUps,
             preamble: effectivePreamble,
             initialMessages,
             parentChatId,
@@ -229,39 +265,12 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             requestedModel: opts.model ?? null,
             requestedReasoning: opts.reasoning ?? null,
         };
-        const session = owner.kind === "agent_run"
+        const session = isRunOwner(owner)
             ? new PiSession(opts.sessionId, sessionDeps)
             : await createPiSession(opts.sessionId, sessionDeps);
-        this.sessions.set(opts.sessionId, session as AgentSession & { destroy(): void });
+        this.sessions.set(opts.sessionId, session as AgentSession & { destroy(): void; dispose?(): Promise<void> });
         sessionRegistry.registerSession(session, opts.ownerUserId ?? null, owner);
         return session;
-    }
-
-    /**
-     * Walk a chatId's parent chain, lazy-loading any session whose history
-     * isn't already in memory. Called by newSession() before building the
-     * preamble so cold-restart branches still inherit ancestor transcripts.
-     *
-     * Stops at the first chain link with no in-memory session and no DB row
-     * (root or unsynced node), or on cycle.
-     */
-    private async ensureChainLoaded(chatId: string, cwd: string): Promise<void> {
-        const visited = new Set<string>();
-        let cursor: string | undefined = chatId;
-        while (cursor && !visited.has(cursor)) {
-            visited.add(cursor);
-            let session = sessionRegistry.getSession(cursor);
-            if (!session) {
-                try {
-                    session = await this.loadSession({ sessionId: cursor, cwd });
-                    sessionRegistry.registerSession(session);
-                } catch (err) {
-                    console.warn(`[piRuntime] ensureChainLoaded: failed loading ${cursor}:`, err);
-                    return;
-                }
-            }
-            cursor = session.parentChatId;
-        }
     }
 
     async listModels(opts?: { provider?: string }): Promise<ModelInfo[]> {
@@ -309,51 +318,42 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         return verifyPiProviderKey({ provider, key: apiKey, model: body.model });
     }
 
-    /** Drop a session (used by the route layer when a chat ends). */
-    dropSession(id: string): void {
-        const s = this.sessions.get(id);
-        if (s) {
-            s.destroy();
-            this.sessions.delete(id);
-        }
+    /** Compatibility alias; release must await provider/MCP retirement. */
+    dropSession(id: string): Promise<void> { return this.releaseSession(id); }
+
+    async releaseSession(id: string, expectedOwner?: RuntimeSessionOwner): Promise<void> {
+        return this.acquisitions.release(id, () => this.disposeSession(id, expectedOwner));
     }
 
-    releaseSession(id: string, expectedOwner?: RuntimeSessionOwner): void {
+    private async disposeSession(id: string, expectedOwner?: RuntimeSessionOwner): Promise<void> {
         const session = this.sessions.get(id);
-        const actualOwner = session?.owner ?? (session ? { kind: "chat_node" as const, nodeId: session.id } : undefined);
-        if (expectedOwner && (!actualOwner || !sameRuntimeOwner(actualOwner, expectedOwner))) return;
-        this.dropSession(id);
+        const actualOwner = session?.owner ?? (session ? chatOwner(session.id) : undefined);
+        if (expectedOwner && actualOwner) assertReleaseOwnership(actualOwner, expectedOwner);
+        if (session?.dispose) await session.dispose();
+        else session?.destroy();
+        if (this.sessions.get(id) === session) this.sessions.delete(id);
         sessionRegistry.dropSession(id);
     }
 
     async shutdown(): Promise<void> {
-        for (const s of this.sessions.values()) {
-            try {
-                s.destroy();
-            } catch {
-                /* ignore */
-            }
-        }
-        this.sessions.clear();
+        await Promise.allSettled([...this.acquisitions.values()]);
+        await Promise.allSettled([...this.sessions.keys()].map((id) => this.releaseSession(id)));
     }
 }
 
 function resolveSessionOwner(owner: RuntimeSessionOwner | undefined, sessionId?: string): RuntimeSessionOwner {
     if (owner) {
-        if (owner.kind === "agent_run" && sessionId && sessionId !== owner.attemptId) {
+        if (isRunOwner(owner) && sessionId && sessionId !== owner.key) {
             throw new Error("Agent Run public session id must equal attemptId");
         }
         return owner;
     }
-    return { kind: "chat_node", nodeId: sessionId ?? randomUUID() };
+    return chatOwner(sessionId ?? randomUUID());
 }
 
-function sameRuntimeOwner(left: RuntimeSessionOwner, right: RuntimeSessionOwner): boolean {
-    if (left.kind !== right.kind) return false;
-    return left.kind === "chat_node"
-        ? left.nodeId === (right as Extract<RuntimeSessionOwner, { kind: "chat_node" }>).nodeId
-        : left.runId === (right as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).runId
-            && left.attemptId === (right as Extract<RuntimeSessionOwner, { kind: "agent_run" }>).attemptId;
+/** An Agent Run's session id is its owner's key; a chat adopts the caller's id, else its owner's. */
+function publicSessionId(owner: RuntimeSessionOwner, sessionId: string | undefined): string {
+    return isRunOwner(owner) ? owner.key : (sessionId ?? owner.key);
 }
 
 function assertCompatibleSession(
@@ -361,8 +361,9 @@ function assertCompatibleSession(
     owner: RuntimeSessionOwner,
     profileHash: string | null,
 ): void {
-    const actualOwner = session.owner ?? { kind: "chat_node" as const, nodeId: session.id };
-    if (!sameRuntimeOwner(actualOwner, owner)) {
+    (session as PiSession).assertAvailable?.();
+    const actualOwner = session.owner ?? chatOwner(session.id);
+    if (!sameOwner(actualOwner, owner)) {
         throw new Error(`session ${session.id} is already bound to a different owner`);
     }
     if ((session.runtimeProfileHash ?? null) !== profileHash) {

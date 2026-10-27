@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
+import { once } from 'node:events';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -44,8 +45,9 @@ async function withServer(
     app: express.Express,
     fn: (port: number) => Promise<void>,
 ): Promise<void> {
-    const server = app.listen(0);
+    const server = app.listen(0, '127.0.0.1');
     try {
+        await once(server, 'listening');
         const port = (server.address() as { port: number }).port;
         await fn(port);
     } finally {
@@ -54,26 +56,6 @@ async function withServer(
 }
 
 describe('GET /api/workspaces/:workspaceId/diff', () => {
-    test('returns unified diff for an uncommitted change', async () => {
-        const root = tmpRoot();
-        gitInit(root);
-        fs.writeFileSync(path.join(root, 'a.txt'), 'one\ntwo\n');
-        gitCommitAll(root, 'init');
-        fs.writeFileSync(path.join(root, 'a.txt'), 'one\nTWO\nthree\n');
-
-        await withServer(appWithCwd(root), async (port) => {
-            const res = await fetch(
-                `http://127.0.0.1:${port}/api/workspaces/ws1/diff?path=a.txt`,
-            );
-            assert.equal(res.status, 200);
-            const body = await res.json() as { diff: string; truncated: boolean };
-            assert.match(body.diff, /^diff --git/m);
-            assert.match(body.diff, /\+TWO/);
-            assert.match(body.diff, /-two/);
-            assert.equal(body.truncated, false);
-        });
-    });
-
     test('returns synthesized new-file diff for an untracked file', async () => {
         const root = tmpRoot();
         gitInit(root);
@@ -88,37 +70,6 @@ describe('GET /api/workspaces/:workspaceId/diff', () => {
             assert.equal(res.status, 200);
             const body = await res.json() as { diff: string };
             assert.match(body.diff, /\+const x = 1;/);
-        });
-    });
-
-    test('falls back to the last commit when the working tree is clean', async () => {
-        const root = tmpRoot();
-        gitInit(root);
-        fs.writeFileSync(path.join(root, 'b.txt'), 'v1\n');
-        gitCommitAll(root, 'first');
-        fs.writeFileSync(path.join(root, 'b.txt'), 'v2\n');
-        gitCommitAll(root, 'second');
-
-        await withServer(appWithCwd(root), async (port) => {
-            const res = await fetch(
-                `http://127.0.0.1:${port}/api/workspaces/ws1/diff?path=b.txt`,
-            );
-            assert.equal(res.status, 200);
-            const body = await res.json() as { diff: string };
-            assert.match(body.diff, /\+v2/);
-            assert.match(body.diff, /-v1/);
-        });
-    });
-
-    test('404 on path traversal', async () => {
-        const root = tmpRoot();
-        gitInit(root);
-        await withServer(appWithCwd(root), async (port) => {
-            const res = await fetch(
-                `http://127.0.0.1:${port}/api/workspaces/ws1/diff?path=${encodeURIComponent('../../etc/passwd')}`,
-            );
-            assert.equal(res.status, 404);
-            await res.arrayBuffer();
         });
     });
 

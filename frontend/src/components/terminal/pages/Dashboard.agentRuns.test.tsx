@@ -1,7 +1,9 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentRunStatus } from 'michi-shared';
+import type { AgentRunPaneProps } from '../agentRuns/AgentRunPane';
+import type { AgentDomainState } from '../../../state/agentDomain';
 import { agentRunPaneId } from '../../../state/paneItems';
 
 const mocks = vi.hoisted(() => ({
@@ -9,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   closePane: vi.fn(),
   loadRuns: vi.fn(async () => undefined),
   subscribeWorkspace: vi.fn(() => vi.fn()),
-  getAgentRunDetail: vi.fn(() => new Promise(() => undefined)),
+  getAgentRunDetail: vi.fn<(...args: unknown[]) => Promise<unknown>>(() => new Promise(() => undefined)),
+  respondAgentRunInteraction: vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => undefined),
+  dispatch: vi.fn(), sendInput: vi.fn(async () => undefined), cancel: vi.fn(async () => undefined),
+  state: { runs: {}, eventsByRun: {}, interactionsByRun: {} } as Pick<AgentDomainState, 'runs' | 'eventsByRun' | 'interactionsByRun'>,
 }));
 
 const run = {
@@ -36,29 +41,55 @@ vi.mock('../../../state/chatStore', () => ({
 }));
 vi.mock('../../../state/agentDomain', () => ({
   useAgentDomain: () => ({
-    state: { runs: { '["backend-a","run-1"]': { backendConnectionId: 'backend-a', value: run } }, eventsByRun: {}, interactionsByRun: {} },
+    state: mocks.state,
     loadRuns: mocks.loadRuns, subscribeWorkspace: mocks.subscribeWorkspace,
-    dispatch: vi.fn(), sendInput: vi.fn(), cancel: vi.fn(),
+    dispatch: mocks.dispatch, sendInput: mocks.sendInput, cancel: mocks.cancel,
   }),
 }));
 vi.mock('../../../state/prefs', () => ({ usePrefs: () => ({ prefs: { singlePaneContentWidth: null, defaultPaneWidth: 480 } }) }));
 vi.mock('../../../services/api', () => ({
   getAgentRunDetail: mocks.getAgentRunDetail,
-  getWebUploadCwd: vi.fn(), importWorkspaceFileUpload: vi.fn(), respondAgentRunInteraction: vi.fn(),
+  getWebUploadCwd: vi.fn(), importWorkspaceFileUpload: vi.fn(), respondAgentRunInteraction: mocks.respondAgentRunInteraction,
 }));
 vi.mock('../../../services/notifications', () => ({ notify: vi.fn() }));
 vi.mock('../../../lib/electronBridge', () => ({ getElectron: () => null }));
 vi.mock('../agentRuns/AgentRunPane', () => ({
-  AgentRunPane: ({ onClose }: { onClose: () => void }) => <button onClick={onClose}>Run pane</button>,
+  AgentRunPane: ({ onClose, onRespondInteraction, run, attempts }: AgentRunPaneProps) => <div>
+    <span>{run.value.id}</span><span>attempts: {attempts?.length ?? 0}</span>
+    <button onClick={() => onClose({ backendConnectionId: run.backendConnectionId, id: run.value.id })}>Run pane</button>
+    <button disabled={!onRespondInteraction} onClick={() => onRespondInteraction?.(
+      { backendConnectionId: run.backendConnectionId, id: run.value.id },
+      { id: 'interaction-1' } as Parameters<NonNullable<AgentRunPaneProps['onRespondInteraction']>>[1],
+      { decision: 'allow' },
+    )}>Respond</button>
+  </div>,
 }));
 vi.mock('../../ResizeHandle', () => ({ default: () => null }));
 
 import TerminalDashboard from './Dashboard';
+import AgentRunPaneSurface from '../agentRuns/AgentRunPaneSurface';
+
+function detail(id = 'run-1') {
+  return { backendConnectionId: 'backend-a', value: { run: { ...run, id }, attempts: [{ id: `attempt-${id}` }], events: [], interactions: [] } };
+}
+
+function deferred() {
+  let resolve!: (value: unknown) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
 
 describe('Dashboard Agent Run panes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.customAgentsEnabled = true;
+    mocks.getAgentRunDetail.mockReset().mockImplementation(() => new Promise(() => undefined));
+    mocks.respondAgentRunInteraction.mockReset().mockResolvedValue(undefined);
+    mocks.state = { runs: { '["backend-a","run-1"]': { backendConnectionId: 'backend-a', value: run } as AgentDomainState['runs'][string] }, eventsByRun: {}, interactionsByRun: {} };
+    mocks.dispatch.mockImplementation((action) => {
+      if (action.type === 'replace-run-feed') mocks.state.runs[JSON.stringify([action.resource.backendConnectionId, action.resource.value.id])] = action.resource;
+    });
     HTMLElement.prototype.scrollTo = vi.fn();
   });
 
@@ -69,11 +100,104 @@ describe('Dashboard Agent Run panes', () => {
     expect(mocks.closePane).toHaveBeenCalledWith(paneId);
     expect(mocks.subscribeWorkspace).toHaveBeenCalledWith('workspace-1');
   });
-
-  it.each([false, undefined])('does not poll optional Run routes when support is %s', (enabled) => {
-    mocks.customAgentsEnabled = enabled;
-    render(<TerminalDashboard />);
-    expect(mocks.loadRuns).not.toHaveBeenCalled();
-    expect(mocks.subscribeWorkspace).not.toHaveBeenCalled();
+  it('shows initial read failure, allows closing, and retries only the read', async () => {
+    mocks.state.runs = {};
+    mocks.getAgentRunDetail.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(detail());
+    render(<AgentRunPaneSurface item={item} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('offline');
+    expect(screen.queryByRole('status')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Close Run Pane' }));
+    expect(mocks.closePane).toHaveBeenCalledWith(paneId);
+    fireEvent.click(screen.getByRole('button', { name: 'Check current status' }));
+    expect(await screen.findByRole('button', { name: 'Run pane' })).not.toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(mocks.getAgentRunDetail).toHaveBeenCalledTimes(2);
+    expect(mocks.cancel).not.toHaveBeenCalled();
+    expect(mocks.sendInput).not.toHaveBeenCalled();
+    expect(mocks.respondAgentRunInteraction).not.toHaveBeenCalled();
   });
+
+  it('keeps existing details visible when refreshing fails', async () => {
+    mocks.getAgentRunDetail.mockRejectedValueOnce(new Error('refresh unavailable'));
+    render(<AgentRunPaneSurface item={item} />);
+    expect((await screen.findByRole('alert')).textContent).toContain('refresh unavailable');
+    expect(screen.getByRole('button', { name: 'Run pane' })).not.toBeNull();
+    expect(screen.getByText('run-1')).not.toBeNull();
+  });
+
+  it('ignores a late read after switching Run identity', async () => {
+    mocks.state.runs = {};
+    const old = deferred();
+    mocks.getAgentRunDetail.mockReturnValueOnce(old.promise).mockResolvedValueOnce(detail('run-2'));
+    const { rerender } = render(<AgentRunPaneSurface item={item} />);
+    rerender(<AgentRunPaneSurface item={{ ...item, runId: 'run-2' }} />);
+    expect(await screen.findByText('run-2')).not.toBeNull();
+    await act(async () => old.resolve(detail()));
+    expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('run-1')).toBeNull();
+    expect(screen.getByText('attempts: 1')).not.toBeNull();
+  });
+
+  it('ignores a late error from the previous backend with the same Run id', async () => {
+    const old = deferred();
+    mocks.getAgentRunDetail.mockReturnValueOnce(old.promise).mockResolvedValueOnce({ ...detail(), backendConnectionId: 'backend-b' });
+    const { rerender } = render(<AgentRunPaneSurface item={item} />);
+    rerender(<AgentRunPaneSurface item={{ ...item, backendConnectionId: 'backend-b' }} />);
+    await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1));
+    await act(async () => old.reject(new Error('stale backend failure')));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Run pane' })).not.toBeNull();
+  });
+
+  it('ignores detail completion after unmount', async () => {
+    const pending = deferred();
+    mocks.getAgentRunDetail.mockReturnValueOnce(pending.promise);
+    const { unmount } = render(<AgentRunPaneSurface item={item} />);
+    unmount();
+    await act(async () => pending.resolve(detail()));
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('shows an uncertain interaction response and checks status without resending', async () => {
+    mocks.getAgentRunDetail.mockResolvedValue(detail());
+    mocks.respondAgentRunInteraction.mockRejectedValueOnce(new Error('connection lost'));
+    render(<AgentRunPaneSurface item={item} />);
+    await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Interaction response could not be confirmed');
+    expect((screen.getByRole('button', { name: 'Respond' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.getAgentRunDetail).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Check current status' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(mocks.getAgentRunDetail).toHaveBeenCalledTimes(2);
+    expect(mocks.respondAgentRunInteraction).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refresh the old identity after an interaction completes late', async () => {
+    const response = deferred();
+    mocks.respondAgentRunInteraction.mockReturnValueOnce(response.promise);
+    mocks.getAgentRunDetail.mockResolvedValueOnce(detail()).mockResolvedValueOnce(detail('run-2'));
+    const { rerender } = render(<AgentRunPaneSurface item={item} />);
+    await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    rerender(<AgentRunPaneSurface item={{ ...item, runId: 'run-2' }} />);
+    expect(await screen.findByText('run-2')).not.toBeNull();
+    await act(async () => response.resolve(undefined));
+    expect(mocks.getAgentRunDetail).toHaveBeenCalledTimes(2);
+    expect(mocks.dispatch).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('keeps content after a successful response followed by a failed read', async () => {
+    mocks.getAgentRunDetail.mockResolvedValueOnce(detail()).mockRejectedValueOnce(new Error('read failed'));
+    render(<AgentRunPaneSurface item={item} />);
+    await waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not load Agent Run details: read failed');
+    expect(screen.getByRole('button', { name: 'Run pane' })).not.toBeNull();
+    expect(screen.getByText('attempts: 1')).not.toBeNull();
+    expect((screen.getByRole('button', { name: 'Respond' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.respondAgentRunInteraction).toHaveBeenCalledTimes(1);
+  });
+
 });

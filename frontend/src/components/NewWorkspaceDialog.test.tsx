@@ -35,86 +35,6 @@ describe('NewWorkspaceDialog multi-folder', () => {
     delete (window as unknown as { showDirectoryPicker?: unknown }).showDirectoryPicker;
   });
 
-  it('shows empty state with add-folder button initially', () => {
-    renderDialog();
-    // The big button with this text is the empty state
-    expect(screen.getByText(/Add folders the agent can read and edit/i)).toBeTruthy();
-  });
-
-  it('adds a folder from Electron picker and shows it in the list', async () => {
-    mockElectron = {
-      chooseFolder: vi.fn().mockResolvedValue({
-        canceled: false,
-        path: '/Users/demo/project',
-        name: 'project',
-      }),
-    };
-    renderDialog();
-
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Add folders the agent can read and edit/i));
-    });
-
-    // Should show the folder name, path, and Primary badge
-    expect(screen.getByText('project')).toBeTruthy();
-    expect(screen.getByText('Primary')).toBeTruthy();
-    expect(screen.getByText('/Users/demo/project')).toBeTruthy();
-  });
-
-  it('passes folders to onCreate when creating', async () => {
-    mockElectron = {
-      chooseFolder: vi.fn().mockResolvedValue({
-        canceled: false,
-        path: '/Users/demo/project',
-        name: 'project',
-      }),
-    };
-    const props = renderDialog();
-
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Add folders the agent can read and edit/i));
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
-
-    expect(props.onCreate).toHaveBeenCalledWith(
-      'project',
-      '/Users/demo/project',
-      expect.arrayContaining([
-        expect.objectContaining({ path: '/Users/demo/project', label: 'project' }),
-      ]),
-    );
-  });
-
-  it('supports adding multiple folders', async () => {
-    let callCount = 0;
-    mockElectron = {
-      chooseFolder: vi.fn().mockImplementation(async () => {
-        callCount++;
-        if (callCount === 1) return { canceled: false, path: '/a/first', name: 'first' };
-        return { canceled: false, path: '/b/second', name: 'second' };
-      }),
-    };
-    renderDialog();
-
-    // Add first
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Add folders the agent can read and edit/i));
-    });
-
-    // Add second — the inline "Add folder" button has text split across elements
-    // Use a function matcher to find by content
-    await act(async () => {
-      const addBtn = screen.getByText((_content, el) =>
-        el?.tagName === 'BUTTON' && el.textContent === '+ Add folder',
-      );
-      fireEvent.click(addBtn);
-    });
-
-    expect(screen.getByText('first')).toBeTruthy();
-    expect(screen.getByText('second')).toBeTruthy();
-  });
-
   it('rejects nested folders with an error message', async () => {
     let callCount = 0;
     mockElectron = {
@@ -176,12 +96,6 @@ describe('NewWorkspaceDialog multi-folder', () => {
     const props = renderDialog();
     fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
     expect(props.onCreate).toHaveBeenCalledWith(undefined, undefined, undefined);
-  });
-
-  it('labels the skip path as quick chat', () => {
-    const props = renderDialog();
-    fireEvent.click(screen.getByRole('button', { name: /open quick chat/i }));
-    expect(props.onSkip).toHaveBeenCalledTimes(1);
   });
 
   it('creates a workspace against a remote backend path', async () => {

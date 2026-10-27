@@ -6,13 +6,16 @@ vi.mock('../services/api', () => ({
 }));
 
 import * as api from '../services/api';
-import { CHAT_STREAM_EVENTS, dispatchChatStreamEvent } from '../services/chatStreamEvents';
+import { CHAT_STREAM_EVENTS, dispatchChatStreamEvent, parseChatStreamEvent } from '../services/chatStreamEvents';
 import { runChatStream } from './chatStreamRunner';
 import { reduceNodes } from './chatReducers';
 import { assistantAnswerRawText } from './assistantBlocks';
+import { mapMessageRow } from './chatHydration';
 import type { ChatAction, ChatNodeState } from './chatTypes';
 import { indexBackendProjects, setKnownBackendConnections } from '../config/backendConnections';
 import { closeRemoteAuthentication, completeRemoteAuthentication, getRemoteAuthentication, reportRemoteCredentialError } from './remoteAuthentication';
+import { resetTurnPageReceiptInvalidationForTests } from '../lib/turnPageReceipt';
+import { subscribePageChanges } from './pages/pageEvents';
 vi.mock('../../../shared/src/remoteCredentials', () => ({ REMOTE_CREDENTIALS: {
   name: 'Example SSO', localAction: 'Refresh Example SSO on this computer', localCommand: ['example-login'],
   remoteCommand: ['example-login', '--remote'], remoteCookie: null,
@@ -20,6 +23,16 @@ vi.mock('../../../shared/src/remoteCredentials', () => ({ REMOTE_CREDENTIALS: {
 } }));
 
 const mockStream = api.streamMessage as ReturnType<typeof vi.fn>;
+
+it('carries file version provenance into the durable message request', () => {
+  mockStream.mockClear();
+  const quoteSource = { type: 'artifact' as const, filePath: '/doc.txt', snapshot: {
+    hashKind: 'sha256-text-utf8' as const, contentHash: 'a'.repeat(64), backendConnectionId: 'local', projectId: 'p1', treeId: 't1', resolvedFilePath: '/doc.txt',
+  } };
+  runChatStream({ prompt: 'review', nodeId: 'n1', assistantId: 'a1', dispatch: vi.fn(),
+    assistantTextBufs: {current:{}}, cancelFns: {current:{}}, userMetadata: {quotedText:'selected',quoteSource} });
+  expect(mockStream.mock.calls[0][3].userMetadata).toEqual({quotedText:'selected',quoteSource});
+});
 
 it('clears an old remote sign-in incident only after a successful turn without credential errors', () => {
   setKnownBackendConnections([{ id: 'sso-remote', name: 'Remote', transport: 'ssh', sshHost: 'box', hasToken: true, createdAt: 1, updatedAt: 1 }]);
@@ -61,6 +74,93 @@ function makeNode(): ChatNodeState {
 }
 
 describe('chatStreamRunner — chunk/tool-call ordering', () => {
+  it('publishes split page receipts before the turn ends and scopes reused tool IDs to their turn', () => {
+    mockStream.mockClear();
+    resetTurnPageReceiptInvalidationForTests();
+    const changed = vi.fn();
+    const dispatch = vi.fn();
+    const stop = subscribePageChanges({ backendConnectionId: 'local', workspaceId: 'ws-page' }, changed);
+    runChatStream({ prompt: 'edit', nodeId: 'n1', assistantId: 'a1', workspaceId: 'p1', dispatch,
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} } });
+    const handlers = mockStream.mock.calls[0][2];
+    const output = JSON.stringify({ michiPageWrite: {
+      kind: 'michiPageWrite', resourceKind: 'page', resourceId: 'page-live', workspaceId: 'ws-page',
+      appliedCount: 1, proposedCount: 0, revision: 2, viewVersion: 5, commitStatus: 'committed',
+    } });
+    try {
+      handlers.onTurnStart({ turnId: 'turn-a', assistantId: 'a1' });
+      handlers.onToolCall({ toolCallId: 'same-tool', title: 'edit_page', status: 'in_progress' });
+      handlers.onToolCallUpdate({ toolCallId: 'same-tool', title: '', output });
+      expect(changed).not.toHaveBeenCalled();
+      handlers.onToolCallUpdate({ toolCallId: 'same-tool', title: '', status: 'completed' });
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(changed).toHaveBeenLastCalledWith({ backendConnectionId: 'local', workspaceId: 'ws-page', pageId: 'page-live', viewVersion: 5 });
+      expect(dispatch.mock.calls.some(([action]) => action.type === 'done')).toBe(false);
+      handlers.onToolCallUpdate({ toolCallId: 'same-tool', status: 'completed', output });
+      expect(changed).toHaveBeenCalledTimes(1);
+      handlers.onTurnStart({ turnId: 'turn-b', assistantId: 'a2' });
+      handlers.onToolCallUpdate({ toolCallId: 'same-tool', title: 'edit_page', status: 'completed', output });
+      expect(changed).toHaveBeenCalledTimes(2);
+      handlers.onToolCallUpdate({ toolCallId: 'failed', title: 'edit_page', status: 'failed', output });
+      handlers.onToolCallUpdate({ toolCallId: 'cancelled', title: 'edit_page', status: 'interrupted', output });
+      expect(changed).toHaveBeenCalledTimes(2);
+    } finally { stop(); }
+  });
+
+  it('retains backfilled tool input through dispatch, later output, replay and snapshot hydration', () => {
+    mockStream.mockClear();
+    let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
+    runChatStream({ prompt: 'write it', nodeId: 'n1', assistantId: 'a1',
+      dispatch: (action) => { nodes = reduceNodes(nodes, action); },
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} },
+    });
+    const handlers = mockStream.mock.calls[0][2];
+    const deliver = (name: string, data: Record<string, unknown>) => {
+      const parsed = parseChatStreamEvent(name, JSON.stringify({ assistantId: 'a1', turnId: 'turn-input', ...data }));
+      expect(parsed).not.toBeNull();
+      dispatchChatStreamEvent(parsed!, handlers);
+    };
+    const inputJson = JSON.stringify({ file_path: '/tmp/app.ts', content: 'first line\nsecond line' });
+    deliver('tool_call', { toolCallId: 'write-1', title: 'Write', status: 'in_progress', seq: 1 });
+    const backfill = { toolCallId: 'write-1', title: 'Write', status: 'in_progress', inputJson, seq: 2 };
+    deliver('tool_call_update', backfill);
+    expect(nodes.n1.messages[0].toolCalls[0].inputJson).toBe(inputJson);
+    deliver('tool_call_update', { toolCallId: 'write-1', title: '', status: 'completed', output: 'saved', seq: 3 });
+    deliver('tool_call_update', backfill);
+    deliver('done', { stopReason: 'end_turn', persisted: true, completedAt: 10, seq: 4 });
+
+    const message = nodes.n1.messages[0];
+    expect(message.toolCalls).toHaveLength(1);
+    expect(message.toolCalls[0]).toMatchObject({ inputJson, output: 'saved', status: 'completed' });
+    const hydrated = mapMessageRow({
+      id: message.id, node_id: 'n1', role: 'assistant', content: '', seq: 1, created_at: 1,
+      blocks: JSON.stringify(message.blocks), tool_calls: JSON.stringify(message.toolCalls),
+    });
+    expect(hydrated.toolCalls).toEqual(message.toolCalls);
+    expect(hydrated.blocks).toEqual(message.blocks);
+  });
+  it('invalidates only a successfully completed native page write from the tool result', () => {
+    resetTurnPageReceiptInvalidationForTests();
+    const changed = vi.fn();
+    const unsubscribe = subscribePageChanges({ backendConnectionId: 'local', workspaceId: 'p1', databaseId: 'db-1' }, changed);
+    runChatStream({ prompt: 'hi', nodeId: 'n1', assistantId: 'a1', workspaceId: 'p1',
+      dispatch: vi.fn(), assistantTextBufs: { current: {} }, cancelFns: { current: {} },
+    });
+    const handlers = mockStream.mock.calls.at(-1)?.[2];
+    const output = JSON.stringify({ michiPageWrite: {
+      kind: 'michiPageWrite', resourceKind: 'database', resourceId: 'db-1', title: 'Roadmap',
+      appliedCount: 1, proposedCount: 0, affectedTargetIds: ['row-1'],
+    } });
+    handlers.onToolCallUpdate({ toolCallId: 'write-1', title: 'mcp__michi-tools__edit_database', status: 'failed', output });
+    expect(changed).not.toHaveBeenCalled();
+    handlers.onToolCallUpdate({ toolCallId: 'write-1', title: 'mcp__michi-tools__edit_database', status: 'completed', output });
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed.mock.calls[0][0]).toEqual({
+      backendConnectionId: 'local', workspaceId: 'p1', databaseId: 'db-1',
+    });
+    unsubscribe();
+  });
+
   it('adds accepted steering as one user message while keeping the current reply streaming', () => {
     mockStream.mockClear();
     let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
@@ -567,6 +667,8 @@ describe('onTurnEnd', () => {
         nodeId: 'n1',
         assistantId: 'a1',
         message: 'Agent process exited before completing the turn.',
+        errorKind: 'turn_outcome_unknown',
+        turnId: '',
       },
     ]);
     expect(onTurnEnd).toHaveBeenCalledTimes(1);
@@ -649,4 +751,17 @@ describe('chatStreamRunner — onImage targets the retargeted assistant id', () 
     expect(img!.path).toBe('.artifacts/x.png');
     expect(img!.size).toBe(10);
   });
+});
+
+
+it('retains the complete typed persistence error without resending a recoverable turn', () => {
+  mockStream.mockClear();
+  let nodes: Record<string, ChatNodeState> = { n1: makeNode() };
+  runChatStream({ prompt: 'hi', nodeId: 'n1', assistantId: 'a1',
+    dispatch: action => { nodes = reduceNodes(nodes, action); }, assistantTextBufs: { current: {} }, cancelFns: { current: {} } });
+  dispatchChatStreamEvent({ event: 'error', data: { message: 'Could not persist', code: 'turn_persistence_failed', recoverable: true, completedAt: 12345, turnId: 't', seq: 1 } }, mockStream.mock.calls[0][2]);
+  expect(nodes.n1.errorKind).toBe('turn_persistence_failed');
+  expect(nodes.n1.errorRecoverable).toBe(true);
+  expect(nodes.n1.errorCompletedAt).toBe(12345);
+  expect(mockStream).toHaveBeenCalledTimes(1);
 });

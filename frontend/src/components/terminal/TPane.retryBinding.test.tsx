@@ -77,6 +77,7 @@ vi.mock('../../state/chatStore', async () => {
     ...actual,
     useChatStore: () => ({ ...projects(), ...panes(), ...actions() }),
     useChatActions: () => actions(),
+    useOptionalChatActions: () => actions(),
     useChatProjects: () => projects(),
     useChatPanes: () => panes(),
     useStructuralSelector: (selector: (nodes: Record<string, ChatNodeState>) => unknown) =>

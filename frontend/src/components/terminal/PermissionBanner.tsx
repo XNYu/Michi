@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { permissionSourceLabel } from 'michi-shared';
 import type { PermissionRequest } from '../../state/chatTypes';
 import { Button } from '../ui/controls';
@@ -10,12 +10,6 @@ interface PermissionBannerProps {
 }
 
 export default function PermissionBanner({ permission, onRespond, readOnly = false }: PermissionBannerProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    containerRef.current?.focus();
-  }, []);
-
   const rejectOptions = permission.options.filter(
     (o) => o.kind === 'reject_once' || o.kind === 'reject_always',
   );
@@ -26,8 +20,8 @@ export default function PermissionBanner({ permission, onRespond, readOnly = fal
 
   return (
     <div
-      ref={containerRef}
-      tabIndex={-1}
+      role="group"
+      aria-label="Permission request"
       style={{
         borderTop: '1px solid var(--term-line)',
         padding: '12px 14px',
@@ -40,6 +34,9 @@ export default function PermissionBanner({ permission, onRespond, readOnly = fal
       }}
     >
       <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
         style={{
           fontSize: 'var(--fs-md)',
           fontWeight: 600,
@@ -48,6 +45,7 @@ export default function PermissionBanner({ permission, onRespond, readOnly = fal
         }}
       >
         {permission.title}
+        {readOnly && <span className="sr-only"> — Viewing only; another window must respond.</span>}
         <div
           data-testid="permission-source"
           style={{ fontWeight: 400, color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', marginTop: 4 }}

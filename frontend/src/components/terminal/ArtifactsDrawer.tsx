@@ -1,3 +1,4 @@
+import { serverEntityId } from '../../config/backendIdentity';
 import { openPreferredUrl } from '../../services/openUrl';
 import React, { useCallback, useMemo, useState } from 'react';
 import { useChatStore } from '../../state/chatStore';
@@ -213,7 +214,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
         // image route, which resolves within cwd.
         if (activeProject?.id) {
           const rel = c.filePath.replace(/^\/+/, '');
-          setLightbox({ src: `${workspaceBackendApiBase(activeProject.id)}/files/${activeProject.id}/${rel}`, name: c.name });
+          setLightbox({ src: `${workspaceBackendApiBase(activeProject.id)}/files/${serverEntityId(activeProject.id)}/${rel}`, name: c.name });
         }
         return;
       }

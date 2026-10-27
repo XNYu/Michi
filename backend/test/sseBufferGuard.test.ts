@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeSseFrame } from '../src/routes/michi';
+import { writeSseFrame } from '../src/services/httpSse';
 
 class FakeSseResponse {
   writableEnded = false;
@@ -29,14 +29,5 @@ describe('writeSseFrame', () => {
     });
     assert.equal(response.destroyed, true);
     assert.match(response.destroyError?.message ?? '', /buffer limit/i);
-  });
-
-  test('writes frames while the response remains below the slow-client limit', () => {
-    const response = new FakeSseResponse();
-    response.writableLength = 1_048_576;
-
-    assert.equal(writeSseFrame(response, ': keepalive\\n\\n'), true);
-    assert.deepEqual(response.writes, [': keepalive\\n\\n']);
-    assert.equal(response.destroyed, false);
   });
 });

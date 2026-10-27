@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi, sseBody, type SseEvent } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 declare global {
   interface Window {
@@ -27,7 +28,7 @@ for (const width of [1280, 390]) {
     });
     await bootWithWorkspace(page, 'Tail space regression');
     const send = async (text: string) => {
-      await page.locator('[contenteditable="true"]').first().fill(text);
+      await page.locator(COMPOSER_EDITOR).first().fill(text);
       await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
       await expect.poll(() => page.evaluate(() => !!window.tailSpacerTestStream)).toBe(true);
     };

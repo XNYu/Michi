@@ -1,8 +1,9 @@
 import type { AgentRuntime } from '../types';
+import { CODEX_RUN } from 'michi-runtime/internal/adapters/codex/codexDescriptor';
 import type { NativeToolMode, RuntimeRunAdapter, SteeringStrategy } from './runtimeRunAdapter';
 
 /**
- * Codex Run adapter.
+ * Codex Run adapter. The values come from the Codex descriptor's run facet.
  *
  * - **nativeToolMode `runtime_default`**: Codex provides its own native tool
  *   set via the app-server daemon and Michi injects only the per-session MCP
@@ -18,9 +19,10 @@ import type { NativeToolMode, RuntimeRunAdapter, SteeringStrategy } from './runt
  */
 export class CodexRunAdapter implements RuntimeRunAdapter {
   readonly runtimeId = 'codex';
-  readonly supportsNativeResume = true;
-  readonly nativeToolMode: NativeToolMode = 'runtime_default';
-  readonly steering: SteeringStrategy = 'native';
+  readonly supportsNativeResume = CODEX_RUN.supportsNativeResume;
+  readonly nativeToolMode: NativeToolMode = CODEX_RUN.toolMode;
+  readonly steering: SteeringStrategy = CODEX_RUN.steering;
+  readonly immediateSteering = CODEX_RUN.immediateSteering;
 
   assertCompatible(runtime: AgentRuntime): void {
     if (runtime.id !== this.runtimeId) {

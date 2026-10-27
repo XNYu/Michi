@@ -1,18 +1,28 @@
-import type { AgentRuntime, AgentSession, ProviderEnvBinding } from "./types";
-import type { AgentToolBridge } from "./toolBridge";
-import type { McpSlotRegistry } from "../services/mcpServer";
-import { PiRuntime } from "./pi/PiRuntime";
-import { ClaudeRuntime } from "./claude/ClaudeRuntime";
-import { KiroRuntime } from "./kiro/KiroRuntime";
-import { CREW_DESCRIPTOR } from "./capabilityDescriptors";
-import { crewAvailability, resolveCrewAcpLaunch } from "./crew/crewLaunch";
-import type { AcpLaunch } from "../services/acpClient";
-import { CodexRuntime } from "./codex";
 import { AntigravityRuntime } from "./antigravity";
 import { CursorRuntime } from "./cursor/CursorRuntime";
 import { GrokRuntime } from "./grok/GrokRuntime";
+import { michiKiroRestrictedAgent } from './kiro/kiroMetaAgent';
+import os from "node:os";
+import path from "node:path";
+import type { AgentRuntime, ProviderEnvBinding } from "./types";
+import type { AgentToolBridge } from "./toolBridge";
+import type { McpSlotRegistry } from "../services/mcpServer";
+import { PiRuntime } from "./pi/PiRuntime";
+import { ClaudeRuntime } from "michi-runtime/internal/adapters/claude/ClaudeRuntime";
+import { michiClaudeAdapterOptions } from "./michiClaudeOptions";
+import { KiroRuntime } from "michi-runtime/internal/adapters/kiro/KiroRuntime";
+import { resolveKiroEngine } from "michi-runtime/internal/adapters/kiro/kiroProtocol";
+import { createCrewRuntime } from "michi-runtime/internal/adapters/crew/crewRuntime";
+import { crewEnvOptions, kiroEnvOptions } from "./michiKiroOptions";
+import { CodexRuntime, type CodexAdapterOptions } from "michi-runtime/internal/adapters/codex/index";
+import { michiCodexHostText } from "./michiCodexOptions";
+import { probeKiroCli } from 'michi-runtime/internal/adapters/kiro/kiroCli';
+import { kiroAuth } from './kiro/kiroAuth';
 import { getProviderEnvBindings } from "./pi/piProviders";
 import type { RuntimeModelCache } from "./runtimeModelCache";
+import type { RuntimeDescriptor } from "michi-runtime/internal/contract/descriptor";
+import type { RuntimeHost } from "michi-runtime/internal/contract/host";
+import { STATIC_RUNTIME_DESCRIPTORS } from "./runtimeStaticDescriptors";
 
 /**
  * Dependencies passed to a RuntimeFactory.create. Adding a new runtime
@@ -30,7 +40,8 @@ export interface RuntimeFactoryDeps {
     mcpRegistry?: McpSlotRegistry;
     /**
      * The HTTP port the MCP server is listening on (same as the backend port).
-     * Required by Claude/Kiro to build the slot URL.
+     * No built-in runtime reads it: Kiro, Crew, Claude and Codex take their
+     * URLs from mcpRegistry.
      */
     mcpPort?: number;
     /**
@@ -41,6 +52,12 @@ export interface RuntimeFactoryDeps {
     defaultCwd?: string;
     /** Shared persistent catalog cache for dynamic CLI runtimes. */
     modelCache?: RuntimeModelCache;
+    /**
+     * The runtime host ports (server.ts: createMichiRuntimeHost(), created
+     * once). Kiro, Crew, Claude and Codex read Michi through it; Pi does not
+     * take it.
+     */
+    host: RuntimeHost;
 }
 
 export interface RuntimeFactory {
@@ -48,6 +65,14 @@ export interface RuntimeFactory {
     label: string;
     /** Provider env-var bindings collected by secrets.ts at startup. */
     envBindings?: ProviderEnvBinding[];
+    /**
+     * The runtime's description without an instance, independent of
+     * availability, for a runtime that is configured but not registered.
+     * It is the shape under default configuration (Kiro: engine v2); once an
+     * instance exists, read the instance's `descriptor` instead. Taken from
+     * STATIC_RUNTIME_DESCRIPTORS, the table routes read without a factory.
+     */
+    staticDescriptor: RuntimeDescriptor;
     create(deps: RuntimeFactoryDeps): AgentRuntime;
 }
 
@@ -55,88 +80,79 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
     {
         id: "kiro",
         label: "Kiro",
-        create: (deps) => new KiroRuntime(
-            deps.bridge,
-            deps.mcpRegistry,
-            deps.mcpPort ?? 3000,
-            deps.defaultCwd,
-            deps.modelCache,
-        ),
+        staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.kiro,
+        create: (deps) => new KiroRuntime({
+            ...kiroEnvOptions(),
+            restrictedAgent: michiKiroRestrictedAgent,
+            startClient: (launch) => {
+                const cli = probeKiroCli();
+                if (!cli.installed) throw new Error('kiro-cli not found. Install Kiro CLI before starting a session.');
+                return kiroAuth.start(cli.path!, launch);
+            },
+            onSignedOut: (binary) => kiroAuth.signedOut(binary),
+            engine: resolveKiroEngine(process.env.MICHI_KIRO_ENGINE),
+            host: deps.host,
+            bridge: deps.bridge,
+            mcpSlots: deps.mcpRegistry,
+            defaultCwd: deps.defaultCwd,
+            modelCache: deps.modelCache,
+        }),
     },
     {
         id: "crew",
         label: "Kiro Crew",
-        create: (deps) => new KiroRuntime(
-            deps.bridge,
-            deps.mcpRegistry,
-            deps.mcpPort ?? 3000,
-            deps.defaultCwd,
-            deps.modelCache,
-            {
-                // Pinned: one adapter process per cwd, sessions multiplexed.
-                // MICHI_KIRO_ENGINE=v3 must not flip Crew to per-session workers.
-                engine: "v2",
-                id: "crew",
-                label: "Kiro Crew",
-                launch: CREW_LAUNCH,
-                // The sidecar would open an extra Crew session per chat title.
-                sidecarTitles: false,
-                descriptorOverride: CREW_DESCRIPTOR,
-                capabilitiesOverride: {
-                    // ACP modes select Crew templates; member identities and
-                    // approval policy are deliberately not agent modes.
-                    modes: true,
-                    // Official sessionApproval consent gates the adapter at each turn.
-                    permissions: true,
-                    // Only drives boot warm, /warm and the per-cwd warm pool. Off keeps the
-                    // adapter from spawning at boot; it creates Crew slots lazily anyway.
-                    warmSessions: false,
-                    // Available through the optional official App stdio relay.
-                    saveContext: true,
-                    spawnBranches: true,
-                    // Kept: nativeResume (session/load), models (adapter's models block),
-                    // reasoning (v2 sends `effort`; errors remain visible).
-                },
-                // Offline: adapter resolves and the app secret file exists. When this
-                // fails, KiroRuntime refuses to spawn the adapter at all.
-                checkAvailability: () => crewAvailability(),
-            },
-        ),
+        staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.crew,
+        // The preset pins engine v2, so MICHI_KIRO_ENGINE=v3 does not flip Crew
+        // to per-session workers. It reads the adapter and App locations from
+        // Michi's environment at each spawn and availability check.
+        create: (deps) => createCrewRuntime({
+            ...kiroEnvOptions(),
+            restrictedAgent: michiKiroRestrictedAgent,
+            host: deps.host,
+            bridge: deps.bridge,
+            mcpSlots: deps.mcpRegistry,
+            defaultCwd: deps.defaultCwd,
+            modelCache: deps.modelCache,
+            crew: crewEnvOptions,
+        }),
     },
     {
         id: "pi",
         label: "Pi (multi-provider)",
         envBindings: getProviderEnvBindings(),
+        staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.pi,
         create: (deps) => new PiRuntime(deps.bridge),
     },
     {
         id: "claude",
         label: "Claude",
-        create: (deps) => new ClaudeRuntime(
-            deps.bridge,
-            deps.mcpRegistry!,
-            deps.mcpPort ?? 3000,
-            { cache: deps.modelCache },
-        ),
+        staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.claude,
+        create: (deps) => new ClaudeRuntime({
+            ...michiClaudeAdapterOptions(deps.host, { cache: deps.modelCache }),
+            bridge: deps.bridge,
+            mcpSlots: deps.mcpRegistry!,
+        }),
     },
     {
         id: "codex",
         label: "Codex",
-        create: (deps) => new CodexRuntime(
-            deps.bridge,
-            deps.mcpRegistry!,
-            deps.mcpPort ?? 3000,
-            { modelCache: deps.modelCache },
-        ),
+        staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.codex,
+        create: (deps) => new CodexRuntime({
+            ...codexAdapterOptions(deps),
+            bridge: deps.bridge,
+            mcpSlots: deps.mcpRegistry!,
+        }),
     },
     {
         id: "antigravity",
         label: "Antigravity",
+        staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.antigravity,
         create: (deps) => new AntigravityRuntime({ modelCache: deps.modelCache }),
     },
     {
         id: "cursor",
         label: "Cursor",
+        staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.cursor,
         create: (deps) => new CursorRuntime(
             deps.bridge,
             deps.mcpRegistry,
@@ -148,6 +164,7 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
     {
         id: "grok",
         label: "Grok",
+        staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.grok,
         create: (deps) => new GrokRuntime(
             deps.bridge,
             deps.mcpRegistry,
@@ -158,32 +175,41 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
     },
 ];
 
-/**
- * Placeholder when no adapter resolves at spawn time. KiroRuntime never reaches it
- * while crewAvailability() is false; if the adapter vanishes later, the child
- * exits at once with a readable stderr line instead of a spawn ENOENT.
- */
-const MISSING_CREW_LAUNCH: AcpLaunch = {
-    bin: process.execPath,
-    args: () => ["-e", "process.stderr.write('Kiro Crew ACP adapter not found; set MICHI_CREW_ACP_BIN\\n'); process.exit(1)"],
-};
+const CODEX_FOLLOW_UPS_HOOK_POC_VALUES = new Set(["1", "true", "yes", "on"]);
 
 /**
- * Resolved at each spawn, not at boot, so building the adapter bundle or
- * setting MICHI_CREW_ACP_BIN after Michi started takes effect without a
- * restart. AcpClient reads `bin` once in its constructor and calls `args`
- * once per start.
+ * The Codex adapter's options from `env`, parsed as the adapter itself did
+ * before it took options. The app-server child gets `env` itself; the title
+ * deadline is read at each title, the rest once, here.
  */
-const CREW_LAUNCH: AcpLaunch = {
-    standardFork: true,
-    get bin() {
-        return (resolveCrewAcpLaunch() ?? MISSING_CREW_LAUNCH).bin;
-    },
-    args: (model) => (resolveCrewAcpLaunch() ?? MISSING_CREW_LAUNCH).args(model),
-    // Gateway can keep a stopped slot draining for several seconds (6.8s in
-    // the live probe); give the adapter's 10s idle wait room to finish.
-    cancelTimeoutMs: 15_000,
-};
+export function codexAdapterOptions(
+    deps: Pick<RuntimeFactoryDeps, "host" | "modelCache">,
+    env: NodeJS.ProcessEnv = process.env,
+): CodexAdapterOptions {
+    const followUpsHookPoc = CODEX_FOLLOW_UPS_HOOK_POC_VALUES.has(
+        (env.MICHI_CODEX_FOLLOW_UPS_HOOK_POC ?? "").trim().toLowerCase(),
+    );
+    return {
+        host: deps.host,
+        modelCache: deps.modelCache,
+        binaryPath: env.CODEX_CLI_BIN,
+        codexHome: env.CODEX_HOME,
+        spawnEnv: () => env,
+        rpcTimeoutMs: parseInt(env.MICHI_CODEX_RPC_TIMEOUT_MS ?? "30000", 10),
+        initTimeoutMs: parseInt(env.MICHI_CODEX_INIT_TIMEOUT_MS ?? "30000", 10),
+        approveTimeoutMs: parseInt(env.MICHI_APPROVE_TIMEOUT_MS ?? "300000", 10),
+        titleTimeoutMs: () => parseInt(env.MICHI_CODEX_TITLE_TIMEOUT_MS ?? "10000", 10),
+        maxConcurrent: Number(env.MICHI_CODEX_MAX_CONCURRENT),
+        hostText: michiCodexHostText(),
+        ...(followUpsHookPoc ? {
+            followUpsHook: {
+                // The POC's own CODEX_HOME, so bypass_hook_trust never sees the user's hooks.
+                isolatedCodexHome: path.resolve(env.MICHI_CODEX_FOLLOW_UPS_HOOK_HOME
+                    || path.join(env.MICHI_DATA_DIR || path.join(os.homedir(), ".michi"), "codex-follow-ups-hook-poc")),
+            },
+        } : {}),
+    };
+}
 
 /**
  * Filter RUNTIME_FACTORIES by the MICHI_ENABLED_RUNTIMES env var (comma
@@ -222,6 +248,3 @@ export function getEnabledFactories(): readonly RuntimeFactory[] {
     }
     return filtered;
 }
-
-// Re-export for convenience to server.ts
-export type { AgentSession };

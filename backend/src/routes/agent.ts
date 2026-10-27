@@ -1,3 +1,4 @@
+import { isReasoningLevel, REASONING_LEVELS } from 'michi-shared';
 import { Router, Request, Response } from "express";
 import { crewRoutes } from "./crew";
 import {
@@ -22,7 +23,8 @@ import {
   getUserProviderKey,
 } from "../services/userKeys";
 import { listRuntimes, getRuntime } from "../agents/registry";
-import { describeRuntimeCapabilities } from "../agents/capabilityDescriptors";
+import { staticRuntimeDescriptor } from "../agents/runtimeStaticDescriptors";
+import { descriptorOf } from "michi-runtime/internal/core/descriptors";
 import { hasProviders } from "../agents/types";
 import { getModelReasoningOptions } from '../agents/modelReasoning';
 import { getProviderInfo, providerRequiresUserKey } from "../agents/pi/piProviders";
@@ -44,12 +46,18 @@ import type { AgentRuntime, AgentStatus, AgentRuntimeOption, AgentReasoning, Run
 import type { RuntimeCatalogCache } from "../agents/runtimeModelCache";
 import type { CustomAgentsFeatureControl } from '../services/customAgentsFeatureGate';
 
-const VALID_REASONING: AgentReasoning[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 export interface AgentRouteOptions {
   catalogCache?: RuntimeCatalogCache;
   customAgentsEnabled?: boolean;
   customAgents?: CustomAgentsFeatureControl;
+}
+
+/** Runtimes whose workflow feature needs an opt-in, as their descriptors say (Kiro CLI on the V3 engine). */
+function workflowCapableRuntimes(): string[] {
+  return listRuntimes()
+    .filter((runtime) => descriptorOf(runtime).topology.workflowsRequireOptIn === true)
+    .map((runtime) => runtime.id);
 }
 
 /**
@@ -143,7 +151,8 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
           modes: false, permissions: false, models: false, providerModels: false, reasoning: false, supportedReasoningLevels: [],
           apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: false,
         },
-        capabilityDescriptor: describeRuntimeCapabilities(cfg.runtime),
+        // MICHI_ENABLED_RUNTIMES may exclude the configured runtime: describe it without an instance.
+        capabilityDescriptor: staticRuntimeDescriptor(cfg.runtime).harness,
         availableRuntimes,
         provider: resolveProvider(cfg.runtime, userId),
         ...webSearchStatus,
@@ -154,6 +163,8 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
         reasoningByRuntime: cfg.reasoningByRuntime,
         nativeResumeByRuntime: cfg.nativeResumeByRuntime ?? {},
         nativeForkByRuntime: cfg.nativeForkByRuntime ?? {},
+        workflowsByRuntime: cfg.workflowsByRuntime ?? {},
+        workflowRuntimes: workflowCapableRuntimes(),
         hasRequiredKey: true,
       };
       res.json(status);
@@ -201,7 +212,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       label: active.label,
       customAgentsEnabled: isCustomAgentsEnabled(),
       capabilities: active.capabilities,
-      capabilityDescriptor: active.capabilityDescriptor ?? describeRuntimeCapabilities(active.id),
+      capabilityDescriptor: active.descriptor.harness,
       availableRuntimes,
       provider: effectiveProvider,
       providers,
@@ -213,6 +224,8 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       reasoningByRuntime: cfg.reasoningByRuntime,
       nativeResumeByRuntime: cfg.nativeResumeByRuntime ?? {},
       nativeForkByRuntime: cfg.nativeForkByRuntime ?? {},
+      workflowsByRuntime: cfg.workflowsByRuntime ?? {},
+      workflowRuntimes: workflowCapableRuntimes(),
       hasRequiredKey,
     };
     res.json(status);
@@ -264,6 +277,16 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       patch.nativeForkByRuntime = { ...value };
     }
 
+    if (req.body?.workflowsByRuntime !== undefined) {
+      const value = req.body.workflowsByRuntime;
+      if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.entries(value).some(([id, enabled]) => !getRuntime(id) || typeof enabled !== 'boolean')) {
+        res.status(400).json({ ok: false, error: 'workflowsByRuntime must map registered runtimes to booleans' });
+        return;
+      }
+      patch.workflowsByRuntime = { ...value };
+    }
+
     if (req.body?.runtime !== undefined) {
       if (typeof req.body.runtime !== "string" || !req.body.runtime.trim()) {
         res.status(400).json({ ok: false, error: "Invalid runtime" });
@@ -303,14 +326,14 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
     }
     let reasoningToSet: AgentReasoning | undefined;
     if (req.body?.reasoning !== undefined) {
-      if (!VALID_REASONING.includes(req.body.reasoning)) {
+      if (!isReasoningLevel(req.body.reasoning)) {
         res.status(400).json({
           ok: false,
-          error: `Invalid reasoning level. Expected one of: ${VALID_REASONING.join(", ")}`,
+          error: `Invalid reasoning level. Expected one of: ${REASONING_LEVELS.join(", ")}`,
         });
         return;
       }
-      reasoningToSet = req.body.reasoning as AgentReasoning;
+      reasoningToSet = req.body.reasoning;
     }
     const runtimeForModel = getRuntime(patch.runtime ?? cfg.runtime);
     const effectiveRuntime = patch.runtime ?? cfg.runtime;
@@ -433,6 +456,10 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   router.get("/agent/models", async (req: Request, res: Response) => {
     const userId = req.user?.id as string | undefined;
     const cfg = getAgentConfig(userId);
+    if (typeof req.query.expectedRuntime === "string" && req.query.expectedRuntime !== cfg.runtime) {
+      res.status(409).json({ error: "Active runtime changed", code: "runtime_changed" });
+      return;
+    }
     const active = getRuntime(cfg.runtime);
     if (!active) {
       res.json({ models: [], sanitizedModel: null });

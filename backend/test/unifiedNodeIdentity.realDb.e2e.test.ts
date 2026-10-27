@@ -19,6 +19,7 @@ import type {
 } from '../src/agents/types';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import type { ChatManager } from '../src/services/chatManager';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 const enabled = process.env.MICHI_REAL_DB_E2E === '1';
 
@@ -92,6 +93,7 @@ test('unified node identity against an online backup of the real DB', { skip: !e
   const loadCalls: LoadAgentSessionOptions[] = [];
 
   const runtime: AgentRuntime = {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id: 'kiro',
     label: 'Kiro identity E2E fake',
     capabilities: {

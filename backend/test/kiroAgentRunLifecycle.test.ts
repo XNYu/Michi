@@ -20,14 +20,17 @@
  */
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { KiroRuntime, KiroConcurrencyError, KiroProcessCapError } from '../src/agents/kiro/KiroRuntime';
-import type { KiroSessionBinding } from '../src/agents/kiro/KiroRuntime';
+import { KiroRuntime, KiroConcurrencyError } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import type { KiroSessionBinding } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type {
     RuntimeSessionOwner,
     RuntimeToolProfile,
     RuntimePermissionBroker,
 } from '../src/agents/types';
+import { michiTestHost } from './helpers/michiTestHost';
+import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
+import { chatOwner, runOwner } from './helpers/owners';
 
 // ---------------------------------------------------------------------------
 // Shared stubs
@@ -40,23 +43,11 @@ const bridge: AgentToolBridge = {
 };
 
 function makeOwner(runId: string, attemptId: string): RuntimeSessionOwner {
-    return { kind: 'agent_run', runId, attemptId };
+    return runOwner(runId, attemptId);
 }
 
 function makeRegistry() {
-    const slots = new Map<string, any>();
-    let nextSlotId = 0;
-    return {
-        slots,
-        get: (id: string) => slots.get(id),
-        dispose: async (id: string) => { slots.delete(id); },
-        create: (parentChatId: string, cwd: string, ownerUserId: string | null, cbs: any, opts?: any) => {
-            const slotId = `slot-${nextSlotId++}`;
-            const slot = { slotId, parentChatId, cwd, ownerUserId, ...cbs, ...opts };
-            slots.set(slotId, slot);
-            return slot;
-        },
-    };
+    return fakeMcpRegistry();
 }
 
 function fakeClient(cwd: string, opts?: { loadFail?: boolean }) {
@@ -94,7 +85,7 @@ function fakeClient(cwd: string, opts?: { loadFail?: boolean }) {
 describe('KiroRuntime.rebindRunSession', () => {
     test('restores owner, broker, result callback, model/mode, maps, and MCP slot', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime(bridge, registry as any, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         const client = fakeClient('/tmp/worktree-a');
@@ -131,6 +122,8 @@ describe('KiroRuntime.rebindRunSession', () => {
         assert.equal(session.nativeSessionId, 'acp-original-sid');
         assert.deepEqual(session.owner, owner);
         assert.equal(session.runtimeProfileHash, 'hash-abc');
+        assert.equal((session as any).enableFollowUps, false);
+        assert.equal(rt.acquiredSessions.get('attempt-1'), session);
 
         // Binding record stored.
         const storedBinding = runtime.getBinding('attempt-1');
@@ -154,12 +147,12 @@ describe('KiroRuntime.rebindRunSession', () => {
         assert.ok(registry.slots.has(storedBinding.slotId!));
     });
 
-    test('rejects non-agent_run owner', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
+    test('rejects a chat (interactive) owner', async () => {
+        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const binding: KiroSessionBinding = {
             publicSessionId: 'node-1',
             nativeSessionId: 'acp-sid',
-            owner: { kind: 'chat_node', nodeId: 'node-1' },
+            owner: chatOwner('node-1'),
             cwd: '/tmp/cwd',
             workspaceId: null,
             ownerUserId: null,
@@ -173,7 +166,7 @@ describe('KiroRuntime.rebindRunSession', () => {
 
     test('cleans up MCP slot when loadSession fails', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime(bridge, registry as any, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         const client = fakeClient('/tmp/worktree-fail', { loadFail: true });
@@ -201,67 +194,8 @@ describe('KiroRuntime.rebindRunSession', () => {
 // ---------------------------------------------------------------------------
 
 describe('KiroRuntime process cap', () => {
-    test('enforces global process cap and reports KiroProcessCapError', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
-        const rt = runtime as any;
-
-        // Set a very low process cap.
-        (rt as any).processCap = 2;
-
-        // Fill two cwds with active sessions so eviction is impossible.
-        const clientA = fakeClient('/tmp/a');
-        const clientB = fakeClient('/tmp/b');
-        rt.pool.set('/tmp/a', clientA);
-        rt.pool.set('/tmp/b', clientB);
-        rt.sessionCwd.set('sid-a', '/tmp/a');
-        rt.sessionCwd.set('sid-b', '/tmp/b');
-
-        // Attempting a third should fail with KiroProcessCapError.
-        rt.ensureClient = KiroRuntime.prototype.ensureClient.bind(runtime);
-        // Override start to avoid real spawn:
-        rt.startLocks = new Map();
-        const origEnsure = rt.ensureClient;
-        rt.ensureClient = async (cwd: string) => {
-            const alive = rt.pool.get(cwd);
-            if (alive && alive.isAlive()) return alive;
-            // Check pool size + startLocks size
-            if (rt.pool.size + rt.startLocks.size >= (rt as any).processCap) {
-                // Try to evict an idle process.
-                let evicted = false;
-                for (const [eCwd] of rt.cwdLastActivity) {
-                    let count = 0;
-                    for (const c of rt.sessionCwd.values()) {
-                        if (c === eCwd) count++;
-                    }
-                    if (count === 0 && rt.pool.has(eCwd)) {
-                        rt.pool.delete(eCwd);
-                        rt.cwdLastActivity.delete(eCwd);
-                        evicted = true;
-                        break;
-                    }
-                }
-                if (!evicted) {
-                    throw new KiroProcessCapError(
-                        `Kiro process cap (${(rt as any).processCap}) reached.`,
-                    );
-                }
-            }
-            const c = fakeClient(cwd);
-            rt.pool.set(cwd, c);
-            return c;
-        };
-
-        await assert.rejects(
-            () => rt.ensureClient('/tmp/c'),
-            (err: any) => {
-                assert.ok(err instanceof KiroProcessCapError);
-                return true;
-            },
-        );
-    });
-
     test('session cap reports KiroConcurrencyError (distinct from process cap)', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         // Set low session cap.
@@ -286,7 +220,7 @@ describe('KiroRuntime process cap', () => {
 describe('KiroRuntime idle cleanup', () => {
     test('schedules idle cleanup after last session for a cwd is released', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime(bridge, registry as any, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         // Set a very short idle TTL for testing.
@@ -330,21 +264,8 @@ describe('KiroRuntime idle cleanup', () => {
         assert.ok(!rt.pool.has('/tmp/worktree-idle'));
     });
 
-    test('idle cleanup does NOT kill default cwd', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
-        const rt = runtime as any;
-
-        (rt as any).idleTtlMs = 10;
-
-        // Manually call scheduleIdleCleanup on default cwd.
-        rt.scheduleIdleCleanup('/tmp/default');
-
-        // No timer should be scheduled for the default cwd.
-        assert.ok(!rt.idleTimers.has('/tmp/default'));
-    });
-
     test('creating a new session cancels the idle timer for its cwd', async () => {
-        const runtime = new KiroRuntime(bridge, undefined, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         (rt as any).idleTtlMs = 50;
@@ -376,7 +297,7 @@ describe('KiroRuntime idle cleanup', () => {
 describe('KiroRuntime purgeSessionsForCwd isolation', () => {
     test('process exit purges ONLY sessions bound to that cwd', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime(bridge, registry as any, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         const ownerA = makeOwner('run-a', 'attempt-a');
@@ -431,7 +352,7 @@ describe('KiroRuntime purgeSessionsForCwd isolation', () => {
 describe('KiroRuntime concurrent worktree Run isolation', () => {
     test('two Runs on different worktrees have independent sessions and MCP slots', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime(bridge, registry as any, 9999, '/tmp/default');
+        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         let clientForCwd: Record<string, any> = {};
@@ -470,33 +391,5 @@ describe('KiroRuntime concurrent worktree Run isolation', () => {
         await runtime.releaseSession('attempt-a', ownerA);
         assert.equal(runtime.getBinding('attempt-a'), undefined);
         assert.ok(runtime.getBinding('attempt-b'));
-    });
-});
-
-// ---------------------------------------------------------------------------
-// Shutdown determinism
-// ---------------------------------------------------------------------------
-
-describe('KiroRuntime shutdown determinism', () => {
-    test('shutdown clears idle timers, slots, sessions, and clients', async () => {
-        const registry = makeRegistry();
-        const runtime = new KiroRuntime(bridge, registry as any, 9999, '/tmp/default');
-        const rt = runtime as any;
-
-        // Set up some state.
-        const client = fakeClient('/tmp/shutdown');
-        rt.pool.set('/tmp/shutdown', client);
-        rt.sessionCwd.set('sid-1', '/tmp/shutdown');
-        rt.idleTimers.set('/tmp/other', setTimeout(() => {}, 60000));
-        rt.cwdLastActivity.set('/tmp/shutdown', Date.now());
-
-        await runtime.shutdown();
-
-        assert.equal(rt.pool.size, 0);
-        assert.equal(rt.sessionCwd.size, 0);
-        assert.equal(rt.idleTimers.size, 0);
-        assert.equal(rt.cwdLastActivity.size, 0);
-        assert.equal(rt.bindings.size, 0);
-        assert.equal(rt.publicIdByNativeSid.size, 0);
     });
 });

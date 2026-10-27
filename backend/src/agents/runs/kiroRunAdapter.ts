@@ -1,8 +1,9 @@
 import type { AgentRuntime } from '../types';
+import { KIRO_RUN } from 'michi-runtime/internal/adapters/kiro/kiroDescriptor';
 import type { NativeToolMode, RuntimeRunAdapter, SteeringStrategy } from './runtimeRunAdapter';
 
 /**
- * Kiro Run adapter.
+ * Kiro Run adapter. The values come from the Kiro descriptor's run facet.
  *
  * - **nativeToolMode `runtime_default`**: Kiro provides its own native tool
  *   set (shell, filesystem, search, etc.) and Michi injects only the
@@ -17,10 +18,10 @@ import type { NativeToolMode, RuntimeRunAdapter, SteeringStrategy } from './runt
  */
 export class KiroRunAdapter implements RuntimeRunAdapter {
   readonly runtimeId = 'kiro';
-  readonly supportsNativeResume = true;
-  readonly nativeToolMode: NativeToolMode = 'runtime_default';
-  readonly steering: SteeringStrategy = 'native';
-  readonly immediateSteering = 'next_turn' as const;
+  readonly supportsNativeResume = KIRO_RUN.supportsNativeResume;
+  readonly nativeToolMode: NativeToolMode = KIRO_RUN.toolMode;
+  readonly steering: SteeringStrategy = KIRO_RUN.steering;
+  readonly immediateSteering = KIRO_RUN.immediateSteering;
 
   assertCompatible(runtime: AgentRuntime): void {
     if (runtime.id !== this.runtimeId) {

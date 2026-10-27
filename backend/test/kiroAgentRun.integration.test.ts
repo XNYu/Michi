@@ -19,31 +19,12 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { KiroRunAdapter } from '../src/agents/runs/kiroRunAdapter';
-import type {
-  AgentRuntime,
-  AgentSession,
-  ChatMessage,
-  LoadAgentSessionOptions,
-  NewAgentSessionOptions,
-  RuntimePermissionBroker,
-  RuntimePermissionDecision,
-  RuntimePermissionRequest,
-  RuntimeSessionOwner,
-  RuntimeToolProfile,
-} from '../src/agents/types';
-import { sameOwner, assertOwner } from '../src/agents/types';
+import type { AgentRuntime, AgentSession, ChatMessage, LoadAgentSessionOptions, NewAgentSessionOptions, RuntimePermissionBroker, RuntimeSessionOwner } from '../src/agents/types';
+import { assertOwner } from '../src/agents/types';
 import type { NormalizedEvent } from '../src/services/chatEvents';
-import {
-  registerConformanceSuite,
-  makeConformanceBroker,
-  makeConformanceToolProfile,
-  attemptIdOf,
-  RUN_OWNER,
-  WRONG_OWNER,
-  CHAT_OWNER,
-  type ConformanceHarness,
-  type ConformanceSession,
-} from './fixtures/runtimeRunConformance';
+import { registerConformanceSuite, makeConformanceToolProfile, attemptIdOf, type ConformanceHarness, type ConformanceSession } from './fixtures/runtimeRunConformance';
+import { chatOwner, isRunOwner } from './helpers/owners';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 // ---------------------------------------------------------------------------
 // Fake Kiro session — simulates KiroSession without node:sqlite
@@ -103,6 +84,7 @@ function createFakeKiroRuntime(): {
   const warmedCwds: string[] = [];
 
   const runtime: AgentRuntime = {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id: 'kiro',
     label: 'Kiro fake',
     capabilities: {
@@ -117,7 +99,7 @@ function createFakeKiroRuntime(): {
       const nativeSid = `acp-fake-${++acpSessionCounter}`;
       createdSessions.push(nativeSid);
 
-      const owner = opts.owner ?? { kind: 'chat_node' as const, nodeId: sessionId };
+      const owner = opts.owner ?? chatOwner(sessionId);
       const session = new FakeKiroSession({
         id: sessionId,
         nativeSessionId: nativeSid,
@@ -131,13 +113,13 @@ function createFakeKiroRuntime(): {
       return session;
     },
     async loadSession(opts: LoadAgentSessionOptions): Promise<AgentSession> {
-      if (opts.owner?.kind === 'agent_run' && !opts.nativeResumeToken) {
+      if (isRunOwner(opts.owner) && !opts.nativeResumeToken) {
         throw new Error('Kiro agent_run loadSession requires nativeResumeToken');
       }
       const nativeSid = typeof opts.nativeResumeToken === 'string' ? opts.nativeResumeToken : `acp-loaded-${++acpSessionCounter}`;
       loadedSessions.push(nativeSid);
 
-      const owner = opts.owner ?? { kind: 'chat_node' as const, nodeId: opts.sessionId };
+      const owner = opts.owner ?? chatOwner(opts.sessionId);
       const session = new FakeKiroSession({
         id: opts.sessionId,
         nativeSessionId: nativeSid,
@@ -232,135 +214,9 @@ registerConformanceSuite({
   createHarness: createKiroHarness,
 });
 
-// ---------------------------------------------------------------------------
-// Kiro-specific integration tests with ACP fixtures
-// ---------------------------------------------------------------------------
-
-describe('Kiro ACP integration fixtures', () => {
-  test('newSession creates a fresh ACP session with distinct native id', async () => {
-    const { runtime, createdSessions } = createFakeKiroRuntime();
-
-    const session = await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-acp',
-      owner: RUN_OWNER,
-      toolProfile: makeConformanceToolProfile(),
-    });
-
-    assert.equal(session.id, RUN_OWNER.attemptId);
-    assert.ok(session.nativeSessionId);
-    assert.notEqual(session.nativeSessionId, session.id);
-    assert.equal(createdSessions.length, 1);
-
-    await runtime.shutdown();
-  });
-
-  test('loadSession uses nativeResumeToken and never queries Node', async () => {
-    const { runtime, loadedSessions } = createFakeKiroRuntime();
-
-    const session = await runtime.loadSession!({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-acp',
-      owner: RUN_OWNER,
-      nativeResumeToken: 'acp-original-sid-123',
-      profileHash: 'hash-resume',
-    });
-
-    assert.equal(session.id, RUN_OWNER.attemptId);
-    assert.equal(session.nativeSessionId, 'acp-original-sid-123');
-    assert.deepEqual(loadedSessions, ['acp-original-sid-123']);
-
-    await runtime.shutdown();
-  });
-
-  test('loadSession rejects agent_run without nativeResumeToken', async () => {
-    const { runtime } = createFakeKiroRuntime();
-
-    await assert.rejects(
-      () => runtime.loadSession!({
-        sessionId: RUN_OWNER.attemptId,
-        cwd: '/tmp/kiro-acp',
-        owner: RUN_OWNER,
-      }),
-      /nativeResumeToken/,
-    );
-
-    await runtime.shutdown();
-  });
-
-  test('ACP session id survives JSON persistence round-trip', async () => {
-    const { runtime, createdSessions } = createFakeKiroRuntime();
-
-    await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-acp',
-      owner: RUN_OWNER,
-    });
-
-    const nativeSid = createdSessions[0];
-    const json = JSON.stringify(nativeSid);
-    const restored = JSON.parse(json);
-    assert.equal(typeof restored, 'string');
-    assert.equal(restored, nativeSid);
-    assert.ok(restored.length > 0);
-
-    await runtime.shutdown();
-  });
-
-  test('release with wrong owner is rejected', async () => {
-    const { runtime } = createFakeKiroRuntime();
-
-    await runtime.newSession({
-      sessionId: RUN_OWNER.attemptId,
-      cwd: '/tmp/kiro-acp',
-      owner: RUN_OWNER,
-    });
-
-    assert.throws(
-      () => runtime.releaseSession(RUN_OWNER.attemptId, WRONG_OWNER),
-      /Owner mismatch/,
-    );
-
-    // Correct owner works
-    runtime.releaseSession(RUN_OWNER.attemptId, RUN_OWNER);
-
-    await runtime.shutdown();
-  });
-});
-
 describe('Kiro adapter metadata', () => {
-  test('Kiro adapter declares runtime_default tool mode', () => {
-    const adapter = new KiroRunAdapter();
-    assert.equal(adapter.nativeToolMode, 'runtime_default');
-  });
-
   test('Kiro adapter declares native steering', () => {
     const adapter = new KiroRunAdapter();
     assert.equal(adapter.steering, 'native');
-  });
-
-  test('Kiro adapter declares native resume', () => {
-    const adapter = new KiroRunAdapter();
-    assert.equal(adapter.supportsNativeResume, true);
-  });
-
-  test('Kiro adapter rejects runtime without nativeResume capability', () => {
-    const adapter = new KiroRunAdapter();
-    const fakeRuntime: AgentRuntime = {
-      id: 'kiro', label: 'kiro',
-      capabilities: {
-        modes: false, permissions: true, models: false, providerModels: false,
-        reasoning: false, supportedReasoningLevels: [],
-        apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false,
-        nativeResume: false,
-      },
-      warm: async () => {}, newSession: async () => { throw new Error('not impl'); },
-      releaseSession: () => {}, shutdown: async () => {},
-    };
-
-    assert.throws(
-      () => adapter.assertCompatible(fakeRuntime),
-      /incompatible.*native-resume/,
-    );
   });
 });

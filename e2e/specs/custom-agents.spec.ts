@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, createCustomAgentsMockController, installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 test.describe('Custom Agents release flow', () => {
   test('definition → primary Agent → durable Runs → conversion actions', async ({ page }) => {
@@ -36,7 +37,7 @@ test.describe('Custom Agents release flow', () => {
     await page.getByText('E2E Implementer', { exact: true }).click();
     await expect(page.locator('[title="Switch agent — E2E Implementer"]')).toBeVisible();
 
-    const composer = page.locator('[contenteditable="true"]').first();
+    const composer = page.locator(COMPOSER_EDITOR).first();
     await composer.fill('Delegate the work');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
     await expect(page.getByText('I delegated two durable Agent Runs.')).toBeVisible({ timeout: 5_000 });

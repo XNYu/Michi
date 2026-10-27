@@ -174,12 +174,8 @@ export function subagentToolInfo(tool: ToolCallState): SubagentToolInfo | null {
   // with its result content (e.g. `[{"type":"text",...}]` for MCP tools), and
   // matching that `"type":"text"` would mislabel every MCP tool as
   // "SubAgent · Text".
-  const rawAgentType = detailField(detail, detailObject, [
-    'subagent_type',
-    'subagentType',
-    'agent_type',
-    'agentType',
-  ]);
+  const agentTypeKeys = ['subagent_type', 'subagentType', 'agent_type', 'agentType'];
+  const rawAgentType = detailField(detail, detailObject, agentTypeKeys);
   const hasSignal =
     SUBAGENT_TOOL_TITLES.has(title) ||
     kind === 'subagent' ||
@@ -188,12 +184,34 @@ export function subagentToolInfo(tool: ToolCallState): SubagentToolInfo | null {
 
   if (!hasSignal) return null;
 
+  // Runtimes that keep `detail` for purpose text carry the delegation input in
+  // `inputJson` (Kiro V3, Codex). Explicit subagent tools may name the agent
+  // with a plain `name` key there; other tools never reach this point.
+  const input = tool.inputJson;
+  const inputObject = parseDetailObject(input);
+  const fromEither = (keys: string[]) => detailField(detail, detailObject, keys) ?? detailField(input, inputObject, keys);
+  const agentType = rawAgentType
+    ?? detailField(input, inputObject, agentTypeKeys)
+    ?? (kind === 'subagent' ? detailField(input, inputObject, ['name']) : undefined);
   return {
-    agentType: humanizeIdentifier(rawAgentType),
-    description: detailField(detail, detailObject, ['description', 'summary', 'goal', 'task']),
-    prompt: detailField(detail, detailObject, ['prompt', 'query', 'instructions']),
-    model: detailField(detail, detailObject, ['model']),
+    agentType: humanizeIdentifier(agentType),
+    description: fromEither(['description', 'summary', 'goal', 'task', 'explanation']),
+    prompt: fromEither(['prompt', 'query', 'instructions']),
+    model: fromEither(['model']),
   };
+}
+
+/**
+ * A tool that delegates: a recognised subagent tool, or any tool a roster
+ * entry names as its parent (Kiro V2 crews report under "Spawning agent crew").
+ */
+export function delegationToolInfo(
+  tool: ToolCallState,
+  roster: readonly SubagentInfo[] | undefined,
+): SubagentToolInfo | null {
+  const info = subagentToolInfo(tool);
+  if (info) return info;
+  return roster?.some((entry) => entry.parentToolCallId === tool.id) ? {} : null;
 }
 
 export function subagentHeading(info: SubagentToolInfo): string {
@@ -239,15 +257,16 @@ export function findOwningSubagent(
 }
 
 /**
- * Drops parent-session tool-calls that conceptually belong to an active
- * subagent (Bash/Glob/Read forwarded for visibility). SubAgent tool-calls
- * themselves are always kept — they ARE the card.
+ * Drops parent-stream tool-calls that a subagent reported as its own
+ * activity (same tool-call id), so a relayed child tool renders once — in
+ * the subagent's trail — not again as a parent row. Delegation tool-calls
+ * themselves are always kept; they ARE the card.
  *
- * The filter applies ONLY while at least one subagent is actively working:
- * once every subagent has terminated, all tool-calls render normally. The
- * node-level `subagents` roster outlives the turn (cleared on the next
- * user send), and the main agent's own tool-calls (michi tools, reads made
- * after the subagents finished) must not be hidden by a stale roster.
+ * Matching is exact. Runtimes route child tools to subagent activity, so the
+ * parent's own tools — including ones running in parallel with a subagent or
+ * after a backgrounded one — always stay visible. (An earlier heuristic hid
+ * every running peer while any subagent worked; with rosters on every
+ * runtime that hid the parent's real work.)
  *
  * If `subagents` is empty/undefined the input is returned as-is, so this
  * is safe to call unconditionally on every tool group.
@@ -257,19 +276,14 @@ export function filterSubagentRelayedTools(
   subagents: readonly SubagentInfo[] | undefined,
 ): ToolCallState[] {
   if (!subagents || subagents.length === 0) return [...tools];
-  const anyWorking = subagents.some((s) => s.status === 'working');
-  if (!anyWorking) return [...tools];
-  return tools.filter((tool) => {
-    // Always keep SubAgent tool-calls; they ARE the card.
-    if (subagentToolInfo(tool)) return true;
-    // Keep tool-calls that already reached a terminal status — these are
-    // the parent agent's own completed work (build, read, grep, etc.)
-    // done before the subagent was spawned.  Only hide still-running
-    // calls which are relayed subagent activity shown via the card's
-    // Now: line.
-    if (isTerminalStatus(tool.status)) return true;
-    return false;
-  });
+  const relayed = new Set<string>();
+  for (const subagent of subagents) {
+    for (const item of subagent.activity ?? []) {
+      if (item.kind === 'tool') relayed.add(item.id);
+    }
+  }
+  if (relayed.size === 0) return [...tools];
+  return tools.filter((tool) => !relayed.has(tool.id) || !!delegationToolInfo(tool, subagents));
 }
 
 /** Priority order for the one-line argument shown beside a tool name.
@@ -366,6 +380,22 @@ export function prettifyToolTitle(title: string): string {
   return trimmed;
 }
 
+/** Kiro ACP keeps this generated start label after ask_user finishes. Derive
+ * its display state without rewriting raw provider titles or stored history. */
+export function toolDisplayTitle(tool: ToolCallState): string {
+  if (tool.title === 'Running: @michi/ask_user') {
+    switch (tool.status) {
+      case 'completed': return 'Completed: @michi/ask_user';
+      case 'error':
+      case 'failed': return 'Failed: @michi/ask_user';
+      case 'interrupted':
+      case 'cancelled':
+      case 'canceled': return 'Interrupted: @michi/ask_user';
+    }
+  }
+  return prettifyToolTitle(tool.title);
+}
+
 export function failedToolCount(tools: readonly ToolCallState[]): number {
   return tools.reduce((n, t) => n + (isFailedStatus(t.status) ? 1 : 0), 0);
 }
@@ -407,13 +437,17 @@ export function formatDurationMs(ms: number): string {
 /**
  * Base summary without the failed-count suffix, so renderers can color the
  * failure fragment independently (color marks state, never whole rows).
+ *
+ * `subagentStatus` replaces a lone SubAgent's status word ("in background",
+ * "stopped"), which the tool status alone cannot say; see
+ * useDelegationStatusLabel. Other summaries ignore it.
  */
-export function summarizeToolsBase(tools: ToolCallState[]): string {
+export function summarizeToolsBase(tools: ToolCallState[], subagentStatus?: string): string {
   if (tools.length === 0) return '';
 
   const subagentInfos = tools.map(subagentToolInfo);
   if (tools.length === 1 && subagentInfos[0]) {
-    return `${subagentHeading(subagentInfos[0])} · ${subagentStatusLabel(tools[0].status)}`;
+    return `${subagentHeading(subagentInfos[0])} · ${subagentStatus ?? subagentStatusLabel(tools[0].status)}`;
   }
   if (tools.length > 1 && subagentInfos.every(Boolean)) {
     const running = tools.filter((t) => isRunningStatus(t.status)).length;
@@ -424,7 +458,7 @@ export function summarizeToolsBase(tools: ToolCallState[]): string {
   }
 
   if (tools.length === 1) {
-    return prettifyToolTitle(tools[0].title) || BUCKETS[toolBucketKey(tools[0])].verb;
+    return toolDisplayTitle(tools[0]) || BUCKETS[toolBucketKey(tools[0])].verb;
   }
 
   const counts = new Map<BucketKey, number>();
@@ -459,6 +493,59 @@ export function summarizeTools(tools: ToolCallState[]): string {
     return subagentToolInfo(tools[0]) ? base : `${base} · failed`;
   }
   return `${base} · ${failed} failed`;
+}
+
+/** Phrase order for the agent block header: changes first, then commands
+ *  and delegation, then lookups, so a long run's edits survive truncation. */
+const WORK_PHRASE_ORDER: ReadonlyArray<BucketKey | 'subagent'> = [
+  'edit', 'write', 'bash', 'subagent', 'grep', 'read', 'glob', 'unknown',
+];
+const WORK_SUMMARY_MAX_PHRASES = 3;
+
+/**
+ * What an agent block did, for its collapsed header: "Edited 3 files, ran 5
+ * commands, read 12 files". Hidden metadata tools and tools relayed from a
+ * SubAgent's own session are excluded, matching what ToolCallGroup shows.
+ * `failed` counts the same visible tools so the caller can color it apart.
+ */
+export function summarizeWork(
+  tools: readonly ToolCallState[],
+  subagents?: readonly SubagentInfo[],
+): { text: string; failed: number } {
+  const visible = filterSubagentRelayedTools(tools, subagents)
+    .filter((tool) => !isHiddenInternalTool(tool.title));
+  const failed = failedToolCount(visible);
+  if (visible.length === 0) return { text: '', failed };
+
+  const counts = new Map<BucketKey | 'subagent', number>();
+  for (const tool of visible) {
+    const key = subagentToolInfo(tool) ? 'subagent' : toolBucketKey(tool);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  // A lone tool we can't classify reads better by name than as "used 1 tool".
+  if (visible.length === 1 && counts.has('unknown')) {
+    return { text: toolDisplayTitle(visible[0]), failed };
+  }
+
+  const phrases: string[] = [];
+  let rest = 0;
+  for (const key of WORK_PHRASE_ORDER) {
+    const count = counts.get(key);
+    if (!count) continue;
+    if (phrases.length === WORK_SUMMARY_MAX_PHRASES) {
+      rest += count;
+      continue;
+    }
+    phrases.push(
+      key === 'subagent'
+        ? `ran ${count} ${pluralize('SubAgent', count)}`
+        : `${BUCKETS[key].verb} ${count} ${pluralize(BUCKETS[key].noun, count)}`,
+    );
+  }
+  if (rest > 0) phrases.push(`+${rest} more`);
+  const text = phrases.join(', ');
+  return { text: text.charAt(0).toUpperCase() + text.slice(1), failed };
 }
 
 function stripHtml(html: string): string {

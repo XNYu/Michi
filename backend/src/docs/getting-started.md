@@ -2,6 +2,8 @@
 
 Applies to: ordinary chats in desktop/web, with local or connected remote backends. Source checked: 2026-10-16. Runtime availability depends on the backend installation. This is a source-reviewed guide, not a live test of your credentials.
 
+Pages-related sections checked against source on 2026-10-26; other topics retain the review scope above.
+
 ## Install, launch and update
 
 On macOS (Apple Silicon), use the desktop release linked from the repository README, or install from the public source:
@@ -71,6 +73,12 @@ Explicitly ask when you want split work. `spawn_branches` fans out at most five 
 Use Artifacts for reusable specs, reports, files, images and links. Ask the agent to save a summary as an Artifact, then reference its name with `@` in another prompt. Favoriting an Artifact changes its shelf ordering; it does not send the full document on every turn.
 
 Use a thread's Export action for a Markdown transcript. A transcript is useful for reading and sharing, but is not a full restorable application backup. See `files-and-artifacts` and `data-and-backups`.
+
+## 6. Keep a living Page
+
+Open **Pages** for native documents, child pages and database views. Click **+** to start text, or choose **Other blocks** for another native block. Use **Page actions → Layout preferences** to describe how this page should be organized. The Pages **Assistant** has saved conversation history, **New conversation** and a **Full screen** view within Pages.
+
+Pages currently supports the local backend only. Automatic updates require workspace maintenance to be enabled, the page tree not to be excluded, and an available Meta agent configured in **Settings → Meta agent**; saving a preference does not start an update. See `pages-and-components`, `pages-maintenance` and `page-component-design` before relying on automation or generating custom components.
 
 ## Get help
 

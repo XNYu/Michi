@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi, sseBody } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 declare global {
   interface Window {
@@ -26,7 +27,7 @@ for (const width of [1280, 390]) {
       };
     });
     await bootWithWorkspace(page, 'MCP scroll regression');
-    const composer = page.locator('[contenteditable="true"]').first();
+    const composer = page.locator(COMPOSER_EDITOR).first();
     await composer.fill('Continue this task');
     await page.getByRole('button', { name: /Send \(Enter\)/ }).click();
     await expect.poll(() => page.evaluate(() => !!window.mcpErrorTestStream)).toBe(true);

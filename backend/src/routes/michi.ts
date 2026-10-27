@@ -1,3 +1,5 @@
+import { writeSseFrame } from "../services/httpSse";
+export { writeSseFrame, type SseWritableResponse } from "../services/httpSse";
 import { resetKiroContext } from '../services/resetKiroContext';
 import { subscribeSessionStates } from '../agents/sessionStateFeed';
 import express from "express";
@@ -11,18 +13,25 @@ import {
     NotFoundError,
 } from "../agents/tools/pathSandbox";
 import { ChatManager, ExtraContext, PrimaryAgentBindingError, primaryAgentSessionOptions } from "../services/chatManager";
+import { isAssistantNode } from "../assistant/identity";
 import { summarizeWorkspace, ExportRequest } from "../services/exportSummary";
 import { finalTerminalEvent } from "./chatStreamEvents";
 import { chatReplayUnavailable } from './chatReplay';
 import { getRuntime } from "../agents/registry";
+import { descriptorOf } from "michi-runtime/internal/core/descriptors";
 import { getModelReasoningOptions } from '../agents/modelReasoning';
 import { getAgentConfig, resolveModel, resolveReasoning, resolveProvider, recordLastUsedProviderModel } from "../services/agentConfig";
 import { startupMark } from "../services/startupTrace";
+import { workspaceCwdError } from "../services/workspaceCwd";
 import { log } from "../services/logger";
 import * as sessionRegistry from "../agents/sessionRegistry";
+import { chatOwner } from "../agents/ownerMapping";
 import { chatHub, type BackgroundCursor, type HubSubscriber } from "../agents/chatHub";
+import { encodeScheduledJobEvent, encodeScheduledJobsChangedEvent, scheduledJobEvents } from "../services/scheduledJobs/events";
 import { HEARTBEAT_INTERVAL_MS } from "../config/constants";
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from "michi-shared";
+import { MetaAgentChatContextError, parseMetaAgentChatTurnContext } from 'michi-shared';
+import { withMetaAgentContext } from "../services/metaAgent/chatTurnContext";
 import { isChatPermissionMode } from 'michi-shared';
 import { writeNodePermissionMode } from '../services/chatPermissions';
 import { isCrewMemoryMode } from 'michi-shared';
@@ -50,11 +59,15 @@ import {
     type BranchBoundary,
 } from "../services/branchBoundary";
 import { ensureDurableGraphNode } from "../services/graphCommands";
+import { DomainError } from "../services/domainErrors";
+import { domainErrorResponse } from "./domainErrorResponse";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
-import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeId } from '../services/nativeResume';
+import { acquireSessionRestoreLock, loadNativeSession, NativeResumeFailedError, nativeResumeIdFor } from '../services/nativeResume';
 import { tryForkChatSession } from '../services/nativeFork';
 import { isNativeResumeEnabled } from '../services/agentConfig';
 import { requireWorkspaceOwner, requireChatOwner, requireNodeOwner } from "./middleware/ownership";
+import { META_AGENT_GUARD_ERROR_CODE, isMetaAgentGuardError } from '../agents/metaAgentGuard';
+import { recordAssistantGuardCheck } from '../assistant/binding';
 import {
     buildCompatibleResumeContext,
     buildTargetResumeSignature,
@@ -104,40 +117,6 @@ export function isRuntimeChatBoundToNode(chatId: string, nodeId: string, userId?
 }
 
 const MAX_BACKGROUND_CURSORS = 5_000;
-const MAX_SSE_BUFFER_BYTES = 1_048_576;
-
-/** The small writable surface shared by Express' SSE responses and route tests. */
-export interface SseWritableResponse {
-    writableEnded: boolean;
-    destroyed: boolean;
-    writableLength: number;
-    write(frame: string): unknown;
-    destroy(error?: Error): unknown;
-}
-
-/**
- * Write one SSE frame, dropping only this HTTP response when its outgoing
- * buffer grows beyond 1 MiB. Callers detach their subscriber on `false`; the
- * ChatHub turn itself deliberately continues so a client can replay later.
- */
-export function writeSseFrame(response: SseWritableResponse, frame: string): boolean {
-    if (response.writableEnded || response.destroyed) return false;
-    try {
-        response.write(frame);
-    } catch {
-        return false;
-    }
-    if (response.writableLength > MAX_SSE_BUFFER_BYTES) {
-        try {
-            response.destroy(new Error('SSE client exceeded buffer limit'));
-        } catch {
-            // The peer is already gone; either way this subscriber is done.
-        }
-        return false;
-    }
-    return true;
-}
-
 function readBackgroundCursors(raw: unknown): Record<string, BackgroundCursor> {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     const out: Record<string, BackgroundCursor> = {};
@@ -221,6 +200,10 @@ function isConcurrencyError(err: unknown): boolean {
 }
 
 function sendAgentRouteError(res: express.Response, err: unknown): void {
+    if (isMetaAgentGuardError(err)) {
+        res.status(503).json({ code: META_AGENT_GUARD_ERROR_CODE, error: (err as Error).message });
+        return;
+    }
     if (err instanceof BranchBoundaryError) {
         res.status(409).json({ code: err.code, error: err.message });
         return;
@@ -660,18 +643,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             assertCwdAllowed(cwd, userId);
         } else {
             const cwdRaw: unknown = req.body?.cwd;
-            if (typeof cwdRaw !== "string" || !path.isAbsolute(cwdRaw)) {
-                return res.status(400).json({ error: "cwd must be an absolute path" });
-            }
-            cwd = cwdRaw;
-            try {
-                const s = fs.statSync(cwd);
-                if (!s.isDirectory()) {
-                    return res.status(400).json({ error: "cwd is not a directory" });
-                }
-            } catch {
-                return res.status(400).json({ error: "cwd does not exist or is not accessible" });
-            }
+            const invalid = workspaceCwdError(cwdRaw);
+            if (invalid) return res.status(400).json(invalid);
+            cwd = cwdRaw as string;
         }
 
         const userIdForConfig: string | undefined = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
@@ -979,7 +953,19 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const nodeRow = getNode(resolvedNodeId);
             const chatRow = getNode(chatId);
             const row = nodeRow ?? chatRow;
+            if (row?.maintenance_job_id) {
+                return res.status(409).json({ error: 'Scheduled maintenance nodes cannot be loaded through ordinary session recovery', code: 'MAINTENANCE_PROFILE_LOCKED' });
+            }
+            const primaryAgent = row?.workspace_id ? await chatManager.resolvePrimaryAgentBinding({
+                ownerUserId: req.user?.id ?? LOCAL_AGENT_OWNER_ID,
+                workspaceId: row.workspace_id,
+                nodeId: resolvedNodeId,
+            }) : null;
+            // The assistant runs only on its own settings, as ensure-session
+            // pins them: a reload cannot move it to another runtime or model.
+            const pinned = isAssistantNode(resolvedNodeId) ? primaryAgent?.effectiveDefinition.runtimeProfile : undefined;
             const runtimeId =
+                pinned?.runtimeId ??
                 (bodyRuntimeId as string | undefined) ??
                 row?.runtime_id ??
                 inferRuntimeId(row, resolvedNodeId) ??
@@ -988,6 +974,18 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             if (!runtime?.loadSession) {
                 return res.status(404).json({ error: `Runtime ${runtimeId} cannot load sessions` });
             }
+            const userId = process.env.MICHI_CLOUD === "1" ? req.user?.id : undefined;
+            // The node's native session belongs to another runtime (or Kiro engine), which
+            // cannot load it: like a send, continue on a new session that carries the history.
+            const boundRuntimeId = row && (row.acp_session_id || row.external_session_id)
+                ? row.runtime_id ?? inferRuntimeId(row, resolvedNodeId) ?? null
+                : null;
+            const runtimeChanged = !!boundRuntimeId && (boundRuntimeId !== runtimeId
+                || (runtimeId === 'kiro' && (row?.runtime_engine ?? 'v2') !== (runtime.nativeEngine ?? 'v2')));
+            // The old runtime's model, provider and reasoning do not carry over; the new one's defaults apply.
+            const switchedTo = runtimeChanged && !pinned
+                ? buildTargetResumeSignature({ ...getAgentConfig(userId), runtime: runtimeId }, runtime, typeof model === 'string' ? model : undefined, userId)
+                : null;
 
             // Resolve workspaceId for the reloaded session.
             //   1. Client-supplied — required for Kiro because chatId is an
@@ -1006,17 +1004,13 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             if (!workspaceId) {
                 workspaceId = row?.workspace_id ?? null;
             }
-            const live = sessionRegistry.getSessionForOwner(resolvedNodeId, { kind: 'chat_node', nodeId: resolvedNodeId }, req.user?.id ?? null);
-            const requestedModel = typeof model === 'string' ? model : row?.model_id;
-            const primaryAgent = row?.workspace_id ? await chatManager.resolvePrimaryAgentBinding({
-                ownerUserId: req.user?.id ?? LOCAL_AGENT_OWNER_ID,
-                workspaceId: row.workspace_id,
-                nodeId: resolvedNodeId,
-            }) : null;
+            const live = sessionRegistry.getSessionForOwner(resolvedNodeId, chatOwner(resolvedNodeId), req.user?.id ?? null);
+            const requestedModel = pinned ? pinned.modelId ?? undefined
+                : typeof model === 'string' ? model : switchedTo ? switchedTo.modelId ?? undefined : row?.model_id;
             const canReuse = live?.runtimeId === runtimeId
                 && live.nativeEngine === runtime.nativeEngine
                 && (!requestedModel || live.currentModelId === requestedModel)
-                && (live.nativeSessionId ?? live.id) === nativeResumeId(runtimeId, row)
+                && (live.nativeSessionId ?? live.id) === nativeResumeIdFor(runtime, row)
                 && (live.runtimeProfileHash ?? null) === (primaryAgent?.profileHash ?? null);
             if (!canReuse && chatHub.isActive(resolvedNodeId)) {
                 throw new NativeResumeFailedError(new Error('Cannot reload an active turn'));
@@ -1027,32 +1021,36 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 nodeId: resolvedNodeId,
                 cwd: normalizeWorkspaceCwd(cwd),
                 model: requestedModel,
-                provider: row?.provider_id,
-                reasoning: normalizeReasoning(row?.reasoning),
+                provider: pinned ? pinned.providerId : switchedTo ? switchedTo.providerId : row?.provider_id,
+                reasoning: normalizeReasoning(pinned ? pinned.reasoning : switchedTo ? switchedTo.reasoning : row?.reasoning),
                 workspaceId,
                 ownerUserId: req.user?.id ?? null,
                 ...primaryAgentSessionOptions(primaryAgent),
             };
             const nativeResumeEnabled = isNativeResumeEnabled(runtimeId, req.user?.id);
-            const transcript = !nativeResumeEnabled ? listMessages(resolvedNodeId, req.user?.id)
+            const compatible = runtimeChanged || (runtime.capabilities.nativeResume && !nativeResumeEnabled);
+            const transcript = compatible ? listMessages(resolvedNodeId, req.user?.id)
                 .filter((message) => message.role === 'user' || message.role === 'assistant')
                 .map((message) => ({ role: message.role as 'user' | 'assistant', content: message.content })) : [];
-            const session = canReuse ? live : runtime.capabilities.nativeResume && !nativeResumeEnabled
+            // Pi replays the history as its own turns; other runtimes read it as one prior-context block.
+            const session = canReuse ? live : compatible
                 ? await runtime.newSession({
                     ...loadOptions,
                     parentChatId: row?.parent_node_id ?? undefined,
-                    mergeContexts: [buildCompatibleResumeContext(transcript, { nodeId: resolvedNodeId })]
-                        .filter((value): value is string => !!value),
+                    ...(runtime.id === 'pi' ? { replayHistory: transcript } : {
+                        mergeContexts: [buildCompatibleResumeContext(transcript, { nodeId: resolvedNodeId, title: row?.title ?? null })]
+                            .filter((value): value is string => !!value),
+                    }),
                 })
                 : runtime.capabilities.nativeResume
-                ? await loadNativeSession(runtime, loadOptions, nativeResumeId(runtimeId, row))
+                ? await loadNativeSession(runtime, loadOptions, nativeResumeIdFor(runtime, row))
                 : await runtime.loadSession(loadOptions);
             if (!session) return res.status(404).json({ error: 'Native session is unavailable' });
             sessionRegistry.registerSession(session, req.user?.id ?? null);
             try {
                 await persistResumeBinding(resolvedNodeId, session, {
                     runtimeId, modelId: session.currentModelId ?? requestedModel ?? null,
-                    providerId: row?.provider_id ?? null, reasoning: normalizeReasoning(row?.reasoning),
+                    providerId: loadOptions.provider ?? null, reasoning: loadOptions.reasoning,
                 }, null);
             } catch (error) {
                 if (session !== live) await retireLiveSession(session);
@@ -1101,7 +1099,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 };
                 if (graphInput.node?.id !== nodeId
                     || (body.workspaceId && graphInput.workspace?.id !== body.workspaceId)) {
-                    throw new Error('graph prerequisite must identify the requested node and workspace');
+                    throw new DomainError('conflict', 'graph_prerequisite_identity_mismatch', 'graph prerequisite must identify the requested node and workspace');
                 }
                 if (isDbWorkerReady()) {
                     await dbWorker.ensureDurableGraphNode(graphInput);
@@ -1109,8 +1107,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     ensureDurableGraphNode(graphInput);
                 }
             } catch (err) {
-                return res.status(409).json({
-                    error: (err as Error).message,
+                const failure = domainErrorResponse(err);
+                return res.status(failure.status).json({
+                    error: failure.error,
                     code: 'NODE_PREREQUISITE_FAILED',
                 });
             }
@@ -1118,6 +1117,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
         const durableNode = getNode(nodeId);
         if (!durableNode) return res.status(409).json({ code: 'NODE_NOT_PERSISTED', error: 'durable node prerequisite required' });
+        if (durableNode.maintenance_job_id) {
+            return res.status(409).json({ error: 'Scheduled maintenance nodes can only be opened by their managed job', code: 'MAINTENANCE_PROFILE_LOCKED' });
+        }
         if (body.workspaceId && body.workspaceId !== durableNode.workspace_id) {
             return res.status(409).json({ code: 'IDENTITY_MISMATCH', error: 'node and workspace do not match' });
         }
@@ -1284,9 +1286,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             if (!runtime) {
                 return res.status(500).json({ error: `Unknown agent runtime: ${runtimeId}` });
             }
-            const persistedBinding = nativeResumeId(runtimeId, row);
-            const liveSession = sessionRegistry.getSessionForOwner(nodeId, { kind: 'chat_node', nodeId }, req.user?.id ?? null)
-                ?? (existingChatId ? sessionRegistry.getSessionForOwner(existingChatId, { kind: 'chat_node', nodeId }, req.user?.id ?? null) : undefined);
+            const persistedBinding = nativeResumeIdFor(runtime, row);
+            const liveSession = sessionRegistry.getSessionForOwner(nodeId, chatOwner(nodeId), req.user?.id ?? null)
+                ?? (existingChatId ? sessionRegistry.getSessionForOwner(existingChatId, chatOwner(nodeId), req.user?.id ?? null) : undefined);
             const targetSignature: ResumeSignature = primaryProfile
                 ? {
                     runtimeId,
@@ -1393,7 +1395,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             // History is only needed for a fresh/fallback reconstruction. Live
             // and exact continuations already retain the runtime's conversation.
             const transcript = session ? [] : readTranscriptMessages(body.priorMessages, nodeId, michiUserId);
-            if (!session && !hasResumeBinding && transcript.length === 0) {
+            // A host command can bind a blank child before its first prompt.
+            // If that native session later disappears, rebuild from the saved
+            // branch cut rather than inheriting the parent's current tail.
+            if (!session && transcript.length === 0) {
                 try {
                     branchBoundary = resolveBranchBoundary({
                         childNodeId: nodeId,
@@ -1465,8 +1470,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     }
                 }
 
+                const replaysMessages = descriptorOf(runtime).topology.historyReplay === 'messages';
                 const seededMergeContexts = [
-                    ...(resumeContext && runtime.id !== 'pi' ? [resumeContext] : []),
+                    ...(resumeContext && !replaysMessages ? [resumeContext] : []),
                     ...(parentTranscriptContext ? [parentTranscriptContext] : []),
                     ...mergeContexts,
                 ];
@@ -1475,7 +1481,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     cwd,
                     parentChatId: effectiveParentChatId,
                     ...(branchContext === undefined ? {} : { branchContext }),
-                    ...(runtime.id === 'pi' ? { replayHistory: transcript } : {}),
+                    ...(replaysMessages ? { replayHistory: transcript } : {}),
                     mergeContexts: seededMergeContexts.length > 0 ? seededMergeContexts : undefined,
                     extraContexts,
                     contextManifest,
@@ -1583,6 +1589,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             });
         } catch (err) {
             console.error("Failed to ensure session:", err);
+            recordAssistantGuardCheck(nodeId, err);
             startupMark("ensure_session_route_failed", {
                 nodeId,
                 durMs: Date.now() - routeStart,
@@ -1623,6 +1630,22 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         }
         if (!session || !nodeId) {
             return res.status(404).json({ error: `unknown chat: ${requestedIdentifier}` });
+        }
+        // The Spaces chat window's page context reaches the runtime as a prefix; displayText stays the user's own.
+        let wireText = text;
+        if (req.body?.metaAgentContext !== undefined) {
+            if (!isAssistantNode(nodeId)) {
+                return res.status(400).json({ error: 'metaAgentContext is only accepted by the Michi assistant', code: 'invalid_meta_agent_context' });
+            }
+            try {
+                wireText = withMetaAgentContext(text, parseMetaAgentChatTurnContext(req.body.metaAgentContext));
+            } catch (err) {
+                if (!(err instanceof MetaAgentChatContextError)) throw err;
+                return res.status(400).json({ error: err.message, code: 'invalid_meta_agent_context' });
+            }
+        }
+        if (getNode(nodeId)?.maintenance_job_id) {
+            return res.status(409).json({ error: 'Scheduled maintenance nodes cannot accept ordinary messages', code: 'MAINTENANCE_PROFILE_LOCKED' });
         }
         if (legacyNodeId && legacyNodeId !== nodeId) {
             return res.status(409).json({
@@ -1666,9 +1689,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 });
             }
             started = await chatHub.startTurn({
-                chatId: nodeId, nodeId, text, displayText, enableKiroSidecarTitle, userMetadata, session: currentSession,
+                chatId: nodeId, nodeId, text: wireText, displayText, enableKiroSidecarTitle, userMetadata, session: currentSession,
                 turnId,
                 ownerUserId: req.user?.id ?? null,
+                humanOrigin: true,
             });
         } catch (err) {
             return res.status(409).json({
@@ -1851,7 +1875,21 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 if (res.writableEnded || res.destroyed) return;
                 if (!writeSseFrame(res, encodeChatStreamEvent({ event: 'session_state', data: { ...state, nodeId, chatId: nodeId } }))) detachSubscriber();
             }, backgroundUserId);
-            detach = () => { detachTurns(); detachStates(); };
+            // Scheduled runs create threads without a renderer. This control
+            // frame lets every open window install the new thread and refresh
+            // it when the run ends. Scheduling is desktop-only (no owners).
+            const detachScheduled = process.env.MICHI_CLOUD === "1"
+                ? () => {}
+                : scheduledJobEvents.subscribe({
+                    send: (event) => {
+                        if (!writeSseFrame(res, encodeScheduledJobEvent(event))) detachSubscriber();
+                    },
+                    // Jobs created/edited elsewhere (another window, an agent tool).
+                    sendChange: (event) => {
+                        if (!writeSseFrame(res, encodeScheduledJobsChangedEvent(event))) detachSubscriber();
+                    },
+                });
+            detach = () => { detachTurns(); detachStates(); detachScheduled(); };
             if (detached) detach();
         } catch {
             detachSubscriber();
@@ -1980,13 +2018,23 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const session = getSessionByIdentifier(req.params.chatId, req.user?.id ?? null);
         if (!session) return res.status(404).json({ error: "unknown chat" });
         const nodeId = session.id;
-        const { requestId, answers, skip } = req.body ?? {};
+        const { requestId, interactionId, answers, skip } = req.body ?? {};
         if (typeof requestId !== "number") {
             return res.status(400).json({ error: "requestId (number) is required" });
         }
+        if (interactionId !== undefined && typeof interactionId !== 'string') {
+            return res.status(400).json({ error: 'interactionId must be a string when provided' });
+        }
+        const pending = chatHub.getPendingUserInput(nodeId);
+        // Numeric-only clients remain supported; current clients bind their
+        // response to the exact durable interaction across session recreation.
+        if (!pending || pending.requestId !== requestId || (interactionId !== undefined && pending.interactionId !== interactionId)) {
+            return res.status(409).json({ error: 'User input request is no longer pending' });
+        }
         if (skip === true) {
-            session.skipUserInput?.(requestId);
-            chatHub.resolveUserInput(nodeId, requestId);
+            if (!session.skipUserInput) return res.status(400).json({ error: 'Session does not support skipping user input requests' });
+            session.skipUserInput(requestId);
+            chatHub.resolveUserInput(nodeId, requestId, [], true);
             return res.json({ ok: true });
         }
         if (!Array.isArray(answers)) {
@@ -1995,8 +2043,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (!session.respondToUserInput) {
             return res.status(400).json({ error: "Session does not support user input requests" });
         }
+        if (!answers.every((answer: unknown) => answer && typeof answer === 'object'
+            && typeof (answer as { question?: unknown }).question === 'string'
+            && typeof (answer as { answer?: unknown }).answer === 'string'
+            && ((answer as { id?: unknown }).id === undefined || typeof (answer as { id?: unknown }).id === 'string'))) {
+            return res.status(400).json({ error: 'Each answer requires question and answer strings' });
+        }
         session.respondToUserInput(requestId, answers);
-        chatHub.resolveUserInput(nodeId, requestId);
+        chatHub.resolveUserInput(nodeId, requestId, answers, false);
         res.json({ ok: true });
     });
 
@@ -2026,6 +2080,10 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         const runtime = getRuntime(cfg.runtime);
         if (!runtime?.capabilities.modes) {
             return res.json({ availableModes: [], defaultModeId: null });
+        }
+        if (cwd !== undefined) {
+            const invalid = workspaceCwdError(cwd);
+            if (invalid) return res.status(400).json(invalid);
         }
         try {
             // Kiro discovers the default Agent from the same fresh ACP session
@@ -2136,15 +2194,37 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (!session?.executeCommand) {
             return res.status(400).json({ error: "Active session does not support command execution" });
         }
-        if (chatHub.isActive(session.id)) return res.status(409).json({ error: 'Wait for the active turn to finish before executing a command.' });
+        if (chatHub.isActive(session.id) || chatHub.isOwnerTurnActive(session.id)) return res.status(409).json({ error: 'Wait for the active turn to finish before executing a command.' });
         try {
-            if (command === 'clear' && session.runtimeId === 'kiro' && session.nativeEngine === 'v3') {
+            // Where /clear replaces the native session (Kiro v3), Michi resets the chat's context.
+            const clearRuntime = command === 'clear' ? getRuntime(session.runtimeId) : undefined;
+            if (clearRuntime && descriptorOf(clearRuntime).topology.clearCreatesNewNativeSession === true) {
                 const primaryAgent = await chatManager.resolvePrimaryAgentBinding({
                     ownerUserId: req.user?.id ?? LOCAL_AGENT_OWNER_ID,
                     workspaceId: getNode(session.id)?.workspace_id ?? null, nodeId: session.id,
                 });
                 const replacement = await resetKiroContext(session, req.user?.id ?? null, primaryAgentSessionOptions(primaryAgent));
                 return res.json({ success: true, message: 'Started a new Kiro context. Previous messages remain in Michi.', sessionState: replacement.getSessionState?.() });
+            }
+            // The host command changes the same durable binding as the model
+            // picker, so restoring the session cannot undo a successful switch.
+            if (session.runtimeId === 'claude' && command === 'model' && typeof args?.value === 'string' && args.value.trim()) {
+                const nodeId = resolvePublicNodeId(req.params.chatId, req.user?.id ?? null) ?? req.params.chatId;
+                const releaseRestore = await acquireSessionRestoreLock(nodeId);
+                try {
+                    if (getSessionByIdentifier(req.params.chatId, req.user?.id ?? null) !== session
+                        || chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId)) {
+                        return res.status(409).json({ error: 'Cannot change model during an active turn' });
+                    }
+                    const result = await session.executeCommand(command, args);
+                    if (result.success) {
+                        const row = getNode(nodeId);
+                        await persistResumeBinding(nodeId, session, { runtimeId: session.runtimeId,
+                            modelId: session.currentModelId ?? null, providerId: row?.provider_id ?? null,
+                            reasoning: normalizeReasoning(row?.reasoning) }, null);
+                    }
+                    return res.json({ ...result, sessionState: session.getSessionState?.() });
+                } finally { releaseRestore(); }
             }
             const result = await session.executeCommand(command, args ?? undefined);
             res.json({ ...result, sessionState: session.getSessionState?.() });
@@ -2184,9 +2264,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         try {
             const { execFile } = await import("child_process");
             const { promisify } = await import("util");
-            const { findKiroCli } = await import("../services/acpClient");
+            const { findKiroCli } = await import("michi-runtime/internal/adapters/kiro/acpClient");
             const pexec = promisify(execFile);
-            const bin = process.env.KIRO_CLI_BIN || findKiroCli();
+            const bin = process.env.KIRO_CLI_BIN || findKiroCli({ kiroCliBin: process.env.KIRO_CLI_BIN, localAppData: process.env.LOCALAPPDATA });
             const { stdout } = await pexec(bin, ["chat", "--list-models", "--format", "json"], {
                 timeout: 5000,
             });

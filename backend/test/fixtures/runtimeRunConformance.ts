@@ -28,6 +28,7 @@ import type {
   RuntimeToolProfile,
 } from '../../src/agents/types';
 import type { RuntimeRunAdapter } from '../../src/agents/runs/runtimeRunAdapter';
+import { chatOwner, hostOwner, runOwner } from '../helpers/owners';
 import type { ResultBundleV1 } from 'michi-shared';
 
 // ---------------------------------------------------------------------------
@@ -83,22 +84,14 @@ export interface ConformanceHarness {
 // Standard test owners and helpers
 // ---------------------------------------------------------------------------
 
-export const RUN_OWNER: Extract<RuntimeSessionOwner, { kind: 'agent_run' }> = {
-  kind: 'agent_run',
-  runId: 'conformance-run',
-  attemptId: 'conformance-attempt',
-};
+export const CONFORMANCE_RUN_ID = 'conformance-run';
+export const CONFORMANCE_ATTEMPT_ID = 'conformance-attempt';
 
-export const WRONG_OWNER: Extract<RuntimeSessionOwner, { kind: 'agent_run' }> = {
-  kind: 'agent_run',
-  runId: 'wrong-run',
-  attemptId: 'wrong-attempt',
-};
+export const RUN_OWNER: RuntimeSessionOwner = runOwner(CONFORMANCE_RUN_ID, CONFORMANCE_ATTEMPT_ID);
 
-export const CHAT_OWNER: Extract<RuntimeSessionOwner, { kind: 'chat_node' }> = {
-  kind: 'chat_node',
-  nodeId: 'node-chat-conformance',
-};
+export const WRONG_OWNER: RuntimeSessionOwner = runOwner('wrong-run', 'wrong-attempt');
+
+export const CHAT_OWNER: RuntimeSessionOwner = chatOwner('node-chat-conformance');
 
 export function makeConformanceBroker(
   decisions: Record<string, RuntimePermissionDecision> = {},
@@ -126,8 +119,9 @@ export function makeConformanceToolProfile(
  * an agent_run. Provides safe narrowing for tests.
  */
 export function attemptIdOf(owner: RuntimeSessionOwner): string {
-  if (owner.kind !== 'agent_run') throw new Error('Expected agent_run owner');
-  return owner.attemptId;
+  const michi = hostOwner(owner);
+  if (michi.kind !== 'agent_run') throw new Error('Expected agent_run owner');
+  return michi.attemptId;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +153,7 @@ export function registerConformanceSuite(opts: ConformanceSuiteOptions): void {
       const harness = await createHarness();
       try {
         const { session } = await harness.createRunSession({ owner: RUN_OWNER });
-        assert.equal(session.id, RUN_OWNER.attemptId,
+        assert.equal(session.id, CONFORMANCE_ATTEMPT_ID,
           `${harness.runtimeLabel}: session.id must equal attemptId`);
       } finally {
         await harness.cleanup();
@@ -240,7 +234,7 @@ export function registerConformanceSuite(opts: ConformanceSuiteOptions): void {
       try {
         await harness.createRunSession({ owner: RUN_OWNER });
         // Should not throw
-        await harness.releaseSession(RUN_OWNER.attemptId, RUN_OWNER);
+        await harness.releaseSession(CONFORMANCE_ATTEMPT_ID, RUN_OWNER);
       } finally {
         await harness.cleanup();
       }
@@ -252,13 +246,13 @@ export function registerConformanceSuite(opts: ConformanceSuiteOptions): void {
         await harness.createRunSession({ owner: RUN_OWNER });
         if (harness.releaseSessionWrongOwner) {
           await assert.rejects(
-            () => harness.releaseSessionWrongOwner!(RUN_OWNER.attemptId, WRONG_OWNER),
+            () => harness.releaseSessionWrongOwner!(CONFORMANCE_ATTEMPT_ID, WRONG_OWNER),
             /Owner mismatch/,
             `${harness.runtimeLabel}: wrong owner release must throw`,
           );
         } else {
           await assert.rejects(
-            () => harness.releaseSession(RUN_OWNER.attemptId, WRONG_OWNER),
+            () => harness.releaseSession(CONFORMANCE_ATTEMPT_ID, WRONG_OWNER),
             /Owner mismatch/,
             `${harness.runtimeLabel}: wrong owner release must throw`,
           );
@@ -289,14 +283,14 @@ export function registerConformanceSuite(opts: ConformanceSuiteOptions): void {
         const deserialized = JSON.parse(serialized) as string;
 
         // Release old session first
-        await harness.releaseSession(RUN_OWNER.attemptId, RUN_OWNER);
+        await harness.releaseSession(CONFORMANCE_ATTEMPT_ID, RUN_OWNER);
 
         // Resume with the deserialized token
         const resumed = await harness.resumeRunSession({
           owner: RUN_OWNER,
           nativeResumeToken: deserialized,
         });
-        assert.equal(resumed.session.id, RUN_OWNER.attemptId,
+        assert.equal(resumed.session.id, CONFORMANCE_ATTEMPT_ID,
           `${harness.runtimeLabel}: resumed session.id must be attemptId`);
         assert.deepEqual(resumed.session.owner, RUN_OWNER,
           `${harness.runtimeLabel}: resumed session.owner must match`);

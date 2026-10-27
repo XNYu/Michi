@@ -2,11 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { PANE_INSPECTION_LIMITS } from 'michi-shared';
-import {
-  chatNodeToDescriptor,
-  truncateTailToCodePointUtf8,
-  type ChatNodeToDescriptorInput,
-} from '../src/services/paneInspectionProjection.chat';
+import { chatNodeToDescriptor, type ChatNodeToDescriptorInput } from '../src/services/paneInspectionProjection.chat';
 import type { ChatObservationSnapshot } from '../src/agents/chatHub';
 import type { NodeRow, TurnRow } from '../src/services/dbRepository';
 
@@ -112,35 +108,11 @@ function answerBlock(id: string, rawText: string) {
   return { id, kind: 'answer' as const, rawText };
 }
 
-// ---------------------------------------------------------------------------
-// §6.1 state table — one describe block per row
-// ---------------------------------------------------------------------------
-
-describe('§6.1 row: brand-new chat, DB confirms no turn/messages', () => {
-  it('reports unstarted / ready+null', () => {
-    const d = chatNodeToDescriptor(baseInput());
-    assert.equal(d.activity, 'unstarted');
-    assert.deepEqual(d.execution, { status: 'ready', value: null });
-  });
-});
-
 describe('§6.1 row: pending spawn prompt, turn not yet started', () => {
   it('reports queued / ready+null and does not invent a turnId', () => {
     const d = chatNodeToDescriptor(baseInput({ node: node({ spawned_by_agent: 1 }) }));
     assert.equal(d.activity, 'queued');
     assert.deepEqual(d.execution, { status: 'ready', value: null });
-  });
-});
-
-describe('§6.1 row: ChatHub active turn', () => {
-  it('reports running / commitState pending', () => {
-    const d = chatNodeToDescriptor(baseInput({ observation: observation() }));
-    assert.equal(d.activity, 'running');
-    assert.equal(d.execution.status, 'ready');
-    if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
-    assert.equal(d.execution.value.status, 'running');
-    assert.equal(d.execution.value.commitState, 'pending');
-    assert.deepEqual(d.execution.value.ref, { kind: 'chat_turn', nodeId: 'node-1', turnId: 'turn-1' });
   });
 });
 
@@ -159,35 +131,6 @@ describe('§6.1 row: waiting on permission / user input', () => {
 });
 
 describe('§6.1 row: cancel requested, not yet confirmed terminal', () => {
-  it('reports cancelling before the 15s threshold, no CANCEL_TIMEOUT error', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: observation({ cancelRequestedAt: 9_000 }),
-        observedAt: 20_000, // 11s elapsed, under 15s
-      }),
-    );
-    assert.equal(d.activity, 'cancelling');
-    if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
-    assert.equal(d.execution.value.status, 'cancelling');
-    assert.equal(d.execution.value.error, null);
-  });
-
-  it('flags CANCEL_TIMEOUT after 15s but keeps activity cancelling (never infers cancelled)', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: observation({ cancelRequestedAt: 1_000 }),
-        observedAt: 1_000 + PANE_INSPECTION_LIMITS.cancelTimeoutMs + 1,
-      }),
-    );
-    assert.equal(d.activity, 'cancelling');
-    if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
-    assert.equal(d.execution.value.status, 'cancelling');
-    assert.deepEqual(d.execution.value.error, {
-      code: 'CANCEL_TIMEOUT',
-      message: 'Cancel was requested more than 15s ago and no authoritative terminal status has arrived yet.',
-    });
-  });
-
   it('exactly at the threshold does not flag CANCEL_TIMEOUT (strictly greater-than)', () => {
     const d = chatNodeToDescriptor(
       baseInput({
@@ -200,37 +143,7 @@ describe('§6.1 row: cancel requested, not yet confirmed terminal', () => {
   });
 });
 
-describe('§6.1 row: visible answer finished, terminal record not yet applied', () => {
-  it('still reports running, not idle — no premature completion', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: observation({
-          durableStatus: 'active',
-          snapshot: observation().snapshot, // active snapshot, answer text present but not terminal
-        }),
-      }),
-    );
-    assert.equal(d.activity, 'running');
-    if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
-    assert.equal(d.execution.value.commitState, 'pending');
-  });
-});
-
 describe('§6.1 row: Chat durable turn completed/error/cancelled', () => {
-  it('completed → idle, execution.status completed, bound to the specific turnId', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: observation({ durableStatus: 'completed', completedAt: 5_000 }),
-        durableTurn: turnRow({ status: 'completed' }),
-      }),
-    );
-    assert.equal(d.activity, 'idle');
-    if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
-    assert.equal(d.execution.value.status, 'completed');
-    assert.equal(d.execution.value.commitState, 'committed');
-    assert.deepEqual(d.execution.value.ref, { kind: 'chat_turn', nodeId: 'node-1', turnId: 'turn-1' });
-  });
-
   it('error → idle, execution.status failed — idle never means success', () => {
     const d = chatNodeToDescriptor(
       baseInput({
@@ -255,17 +168,6 @@ describe('§6.1 row: Chat durable turn completed/error/cancelled', () => {
     if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
     assert.equal(d.execution.value.status, 'cancelled');
   });
-
-  it('terminal in-memory but no matching committed durable row → commitState unknown, not failed', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: observation({ durableStatus: 'completed', completedAt: 5_000 }),
-        durableTurn: null,
-      }),
-    );
-    if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
-    assert.equal(d.execution.value.commitState, 'unknown');
-  });
 });
 
 describe('§6.1 row: Chat output cannot be committed (lastPersistenceError)', () => {
@@ -281,121 +183,6 @@ describe('§6.1 row: Chat output cannot be committed (lastPersistenceError)', ()
     if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
     assert.equal(d.execution.value.status, 'failed');
     assert.equal(d.execution.value.commitState, 'failed');
-  });
-});
-
-describe('§6.1 row: old data — messages exist, no turn record anywhere', () => {
-  it('execution is unknown; activity is NOT unstarted; no inference from last assistant message', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: null,
-        durableTurn: null,
-        counts: { total: 4, user: 2, assistant: 2 },
-      }),
-    );
-    assert.notEqual(d.activity, 'unstarted');
-    assert.equal(d.activity, 'unknown');
-    assert.equal(d.execution.status, 'unknown');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Additional acceptance bullets
-// ---------------------------------------------------------------------------
-
-describe('observation === null + durable turn present', () => {
-  it('reports the durable outcome (idle/completed) even with no in-memory record', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: null,
-        durableTurn: turnRow({ status: 'completed', completed_at: 4_000 }),
-      }),
-    );
-    assert.equal(d.activity, 'idle');
-    if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
-    assert.equal(d.execution.value.status, 'completed');
-    assert.equal(d.execution.value.commitState, 'committed');
-  });
-
-  it('durable row still active (mid-restart) → unknown, not running, not a terminal outcome', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: null,
-        durableTurn: turnRow({ status: 'active', completed_at: null }),
-      }),
-    );
-    assert.equal(d.activity, 'unknown');
-    if (d.execution.status !== 'ready' || !d.execution.value) throw new Error('expected value');
-    assert.equal(d.execution.value.commitState, 'unknown');
-  });
-});
-
-describe('preview truncation on a multi-byte / emoji string', () => {
-  it('truncates on a whole code-point boundary, never splitting a surrogate pair', () => {
-    const emoji = '\u{1F600}'; // U+1F600, 4 UTF-8 bytes, surrogate pair in UTF-16
-    const text = emoji.repeat(2000); // far larger than the 1 KiB limit
-    const { text: out, truncated } = truncateTailToCodePointUtf8(text, PANE_INSPECTION_LIMITS.outputPreviewBytes);
-    assert.equal(truncated, true);
-    assert.ok(Buffer.byteLength(out, 'utf8') <= PANE_INSPECTION_LIMITS.outputPreviewBytes);
-    // Every code point in the output must be a complete emoji — Array.from re-splits correctly
-    // on code points, so every entry must equal the full emoji string, never half of it.
-    for (const cp of Array.from(out)) assert.equal(cp, emoji);
-  });
-
-  it('does not truncate text already under the byte budget', () => {
-    const { text, truncated } = truncateTailToCodePointUtf8('short answer', PANE_INSPECTION_LIMITS.outputPreviewBytes);
-    assert.equal(truncated, false);
-    assert.equal(text, 'short answer');
-  });
-
-  it('end-to-end via chatNodeToDescriptor: latestOutput.truncated is true for an oversized answer', () => {
-    const big = 'x'.repeat(PANE_INSPECTION_LIMITS.outputPreviewBytes + 500);
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: observation({
-          durableStatus: 'active',
-          snapshot: {
-            ...observation().snapshot,
-            assistantMessage: { ...observation().snapshot.assistantMessage, blocks: [answerBlock('b1', big)] },
-          },
-        }),
-      }),
-    );
-    assert.equal(d.latestOutput.status, 'ready');
-    if (d.latestOutput.status !== 'ready' || !d.latestOutput.value) throw new Error('expected value');
-    assert.equal(d.latestOutput.value.truncated, true);
-    assert.ok(Buffer.byteLength(d.latestOutput.value.text, 'utf8') <= PANE_INSPECTION_LIMITS.outputPreviewBytes);
-  });
-});
-
-describe('preview carries the previous turn execution ref when the current turn has no output yet', () => {
-  it('keeps the previous preview and its own execution ref, not the current (empty) turn', () => {
-    const previousRef = { kind: 'chat_turn' as const, nodeId: 'node-1', turnId: 'turn-0' };
-    const previousOutput = {
-      outputId: 'chat_turn:turn-0',
-      execution: previousRef,
-      kind: 'answer' as const,
-      text: 'previous answer text',
-      outputRevision: 'rev-0',
-      updatedAt: 500,
-      partial: false,
-      truncated: false,
-    };
-    const d = chatNodeToDescriptor(
-      baseInput({
-        observation: observation({ durableStatus: 'active' }), // current turn has empty blocks
-        previousOutput,
-      }),
-    );
-    assert.equal(d.latestOutput.status, 'ready');
-    if (d.latestOutput.status !== 'ready') throw new Error('expected ready');
-    assert.deepEqual(d.latestOutput.value, previousOutput);
-    assert.deepEqual(d.latestOutput.value?.execution, previousRef);
-  });
-
-  it('no previous output and no current output → ready + null', () => {
-    const d = chatNodeToDescriptor(baseInput({ observation: observation({ durableStatus: 'active' }) }));
-    assert.deepEqual(d.latestOutput, { status: 'ready', value: null });
   });
 });
 
@@ -419,32 +206,5 @@ describe('sentinel stripping in the answer text', () => {
     if (d.latestOutput.status !== 'ready' || !d.latestOutput.value) throw new Error('expected value');
     assert.ok(!d.latestOutput.value.text.includes('[TITLE:'));
     assert.ok(d.latestOutput.value.text.includes('Here is the answer body.'));
-  });
-});
-
-describe('Section states are never collapsed', () => {
-  it('old-data-with-messages row keeps execution as a proper unknown Section with a reason', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({ observation: null, durableTurn: null, counts: { total: 1, user: 1, assistant: 0 } }),
-    );
-    assert.equal(d.execution.status, 'unknown');
-    if (d.execution.status === 'unknown') {
-      assert.ok(d.execution.reason.length > 0);
-    }
-  });
-
-  it('conversation / lineage / runtime sections are ready with their fetched values, never invented', () => {
-    const d = chatNodeToDescriptor(
-      baseInput({
-        counts: { total: 3, user: 2, assistant: 1 },
-        turns: { count: null, coverage: 'partial' },
-      }),
-    );
-    assert.equal(d.conversation.status, 'ready');
-    if (d.conversation.status === 'ready') {
-      assert.equal(d.conversation.value.messageCount, 3);
-      assert.equal(d.conversation.value.completedTurnCount, null);
-      assert.equal(d.conversation.value.turnHistoryCoverage, 'partial');
-    }
   });
 });

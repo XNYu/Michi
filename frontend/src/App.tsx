@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import TerminalShell from './components/terminal/TerminalShell';
 import ApiKeyGate from './components/ApiKeyGate';
@@ -8,9 +8,10 @@ import { LandingPage } from './components/LandingPage';
 import { AuthSessionContext, authClient, fetchAuthConfig } from './services/auth';
 import DigestPromptDialog from './components/DigestPromptDialog';
 import type { ExportPanelState } from './components/ExportPanel';
-import { ChatProvider, useChatStore, useChatNodesSnapshot, activeTreeRootNodeId, chatLabel } from './state/chatStore';
+import { ChatProvider, useChatActions, useChatStore, useChatNodesSnapshot, activeTreeRootNodeId, chatLabel } from './state/chatStore';
 import { PrefsProvider, usePrefs } from './state/prefs';
 import { AgentDomainProvider } from './state/agentDomain';
+import { WorkflowDomainProvider, type EndedBackgroundSubagentsOfWorkspace } from './state/workflowDomain';
 import { DARK_PALETTES } from './components/terminal/tokens';
 import {
   runTranscript,
@@ -285,6 +286,18 @@ function AuthenticatedShell({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * The workflow domain, with a workspace feed's ended background subagents
+ * applied to the chat node they belong to (no turn, no focus change).
+ */
+function ChatWorkflowDomainProvider({ children }: { children: React.ReactNode }) {
+  const { dispatch } = useChatActions();
+  const onBackgroundSubagentsEnded = useCallback((ended: EndedBackgroundSubagentsOfWorkspace) => {
+    dispatch({ type: 'background-subagents-ended', nodeId: ended.nodeId, workspaceId: ended.workspaceId, subagents: ended.subagents });
+  }, [dispatch]);
+  return <WorkflowDomainProvider onBackgroundSubagentsEnded={onBackgroundSubagentsEnded}>{children}</WorkflowDomainProvider>;
+}
+
 function App() {
   return (
     <PrefsProvider>
@@ -292,12 +305,14 @@ function App() {
       <AppErrorBoundary>
         <AuthGate>
           <AgentDomainProvider>
+            <ChatWorkflowDomainProvider>
             <ShellSwitcher />
             <FirstRunSetup />
             <ApiKeyGate />
             <DigestPromptListener />
             <ExportPanelManager />
             <ConfirmDialogHost />
+            </ChatWorkflowDomainProvider>
           </AgentDomainProvider>
         </AuthGate>
       </AppErrorBoundary>

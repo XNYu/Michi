@@ -1,54 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  buildTitlePrompt,
-  cleanGeneratedTitle,
-  fallbackTitleFromUserText,
-  titleModelConfig,
-  withTitleTimeout,
-} from '../src/services/titleGeneration';
-import { KiroTitleGenerator, type KiroTitleClient } from '../src/agents/kiro/kiroTitleGenerator';
+import { buildTitlePrompt, titleModelConfig } from '../src/services/titleGeneration';
+import { KiroTitleGenerator, type KiroTitleClient } from 'michi-runtime/internal/adapters/kiro/kiroTitleGenerator';
 
 describe('titleGeneration helpers', () => {
-  it('cleans the usual ways a model ignores "output only the title"', () => {
-    assert.equal(cleanGeneratedTitle('[TITLE: Fixing flaky tests]'), 'Fixing flaky tests');
-    assert.equal(cleanGeneratedTitle('```\nFixing flaky tests\n```'), 'Fixing flaky tests');
-    assert.equal(cleanGeneratedTitle('### Fixing flaky tests.'), 'Fixing flaky tests');
-    assert.equal(cleanGeneratedTitle('Title: "Fixing flaky tests"'), 'Fixing flaky tests');
-    assert.equal(cleanGeneratedTitle('标题：用小模型生成标题的方案探讨。'), '用小模型生成标题的方案探讨');
-    assert.equal(cleanGeneratedTitle('**Fixing flaky tests**'), 'Fixing flaky tests');
-    assert.equal(cleanGeneratedTitle('Sure!\n\nFixing flaky tests\nSecond line'), 'Sure');
-    assert.equal(cleanGeneratedTitle('   '), '');
-  });
-
-  it('caps very long titles', () => {
-    const long = 'word '.repeat(60);
-    assert.ok(Array.from(cleanGeneratedTitle(long)).length <= 80);
-  });
-
-  it('falls back to the first sentence of the user text', () => {
-    assert.equal(fallbackTitleFromUserText('/btw How do I fix this? And also that.'), 'How do I fix this');
-    assert.equal(fallbackTitleFromUserText('看看 https://example.com/x 这个链接。然后呢'), '看看 这个链接');
-  });
-
-  it('truncates the user message inside the prompt', () => {
-    const prompt = buildTitlePrompt('x'.repeat(10_000));
-    assert.ok(prompt.length < 5_000);
-    assert.ok(prompt.includes('USER MESSAGE:'));
-  });
-
-  it('embeds quoted context so the title can name its subject', () => {
-    const prompt = buildTitlePrompt('具体修复的原理是什么？', '持久修复序列化：不要先调用 writeValueAsBytes()；应让 Jackson 直接写入 GZIP');
-    assert.ok(prompt.includes('CONTEXT'));
-    assert.ok(prompt.includes('writeValueAsBytes'));
-    assert.ok(prompt.includes('USER MESSAGE:\n具体修复的原理是什么？'));
-  });
-
-  it('omits the context block when no context is given', () => {
-    const prompt = buildTitlePrompt('hello', '   ');
-    assert.ok(!prompt.includes('CONTEXT'));
-  });
-
   it('caps the embedded context length', () => {
     const prompt = buildTitlePrompt('q', 'y'.repeat(5_000));
     assert.ok(Array.from(prompt.match(/CONTEXT[\s\S]*?USER MESSAGE:/)?.[0] ?? '').length < 1_200);
@@ -69,17 +24,6 @@ describe('titleGeneration helpers', () => {
     } finally {
       process.env = saved;
     }
-  });
-
-  it('withTitleTimeout aborts and rejects on deadline', async () => {
-    let aborted = false;
-    await assert.rejects(
-      withTitleTimeout((signal) => new Promise<string>((_, reject) => {
-        signal.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); });
-      }), 20, 'test'),
-      /timed out after 20ms/,
-    );
-    assert.equal(aborted, true);
   });
 });
 
@@ -133,47 +77,9 @@ function fakeClient(opts: FakeClientOptions = {}) {
 }
 
 describe('KiroTitleGenerator', () => {
-  it('opens one cheap-model session, reuses it, and declines tool permissions', async () => {
-    const { client, calls } = fakeClient({ replies: [['Fixing ', 'flaky tests'], ['Second title']] });
-    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'gpt-5.6-luna', timeoutMs: 1_000 });
-
-    assert.equal(await generator.generate('How do I fix flaky tests?'), 'Fixing flaky tests');
-    assert.equal(await generator.generate('Another question'), 'Second title');
-
-    assert.equal(calls.newSession, 1);
-    assert.deepEqual(calls.setModel, ['gpt-5.6-luna']);
-    assert.deepEqual(calls.cancelledPermissions, [7, 7]);
-    assert.ok(calls.prompts[0].includes('USER MESSAGE:\nHow do I fix flaky tests?'));
-  });
-
-  it('passes quoted context into the title prompt', async () => {
-    const { client, calls } = fakeClient({ replies: [['S3 序列化 GZIP 修复']] });
-    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'm', timeoutMs: 1_000 });
-    await generator.generate('具体修复的原理是什么？', undefined, '持久修复序列化：应让 Jackson 直接写入 GZIP');
-    assert.ok(calls.prompts[0].includes('CONTEXT'));
-    assert.ok(calls.prompts[0].includes('Jackson'));
-    assert.ok(calls.prompts[0].includes('USER MESSAGE:\n具体修复的原理是什么？'));
-  });
-
-  it('keeps working on the session default model when set_model is rejected', async () => {
-    const { client, calls } = fakeClient({ setModelError: new Error('unknown model') });
-    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'nope', timeoutMs: 1_000 });
-    assert.equal(await generator.generate('hello'), 'Generated title');
-    assert.equal(calls.newSession, 1);
-  });
-
-  it('recreates the session after the process died or the session was purged', async () => {
-    const { client, calls } = fakeClient();
-    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'm', timeoutMs: 1_000 });
-    await generator.generate('one');
-    client.destroySession('title-1');
-    await generator.generate('two');
-    assert.equal(calls.newSession, 2);
-  });
-
   it('rotates the session after maxTurnsPerSession prompts', async () => {
     const { client, calls } = fakeClient();
-    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'm', timeoutMs: 1_000, maxTurnsPerSession: 2 });
+    const generator = new KiroTitleGenerator({ ensureClient: async () => client, prompt: buildTitlePrompt, model: 'm', timeoutMs: 1_000, maxTurnsPerSession: 2 });
     await generator.generate('one');
     await generator.generate('two');
     assert.deepEqual(calls.destroyed, ['title-1']);
@@ -183,15 +89,9 @@ describe('KiroTitleGenerator', () => {
 
   it('times out a hung prompt, cancels the native session and drops the handle', async () => {
     const { client, calls } = fakeClient({ hang: true });
-    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'm', timeoutMs: 30 });
+    const generator = new KiroTitleGenerator({ ensureClient: async () => client, prompt: buildTitlePrompt, model: 'm', timeoutMs: 30 });
     await assert.rejects(generator.generate('slow'), /timed out/);
     assert.equal(calls.cancelled, 1);
     assert.deepEqual(calls.destroyed, ['title-1']);
-  });
-
-  it('returns null for an empty model reply', async () => {
-    const { client } = fakeClient({ replies: [['   ']] });
-    const generator = new KiroTitleGenerator({ ensureClient: async () => client, model: 'm', timeoutMs: 1_000 });
-    assert.equal(await generator.generate('blank'), null);
   });
 });

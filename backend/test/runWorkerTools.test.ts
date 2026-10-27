@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ResultBundleV1 } from 'michi-shared';
 import { createRunResultCollector, discoverRunWorkerTools, SUBMIT_AGENT_RESULT_TOOL } from '../src/agents/runs/runWorkerTools';
+import { chatOwner, runOwner } from './helpers/owners';
 
-const owner = { kind: 'agent_run' as const, runId: 'run-1', attemptId: 'attempt-1' };
+const owner = runOwner('run-1', 'attempt-1');
 
 function bundle(conclusion = 'done'): ResultBundleV1 {
   return {
@@ -15,8 +16,8 @@ function bundle(conclusion = 'done'): ResultBundleV1 {
 
 test('submit_agent_result is discoverable only by Agent Run owners', () => {
   assert.deepEqual(discoverRunWorkerTools(owner), [SUBMIT_AGENT_RESULT_TOOL]);
-  assert.deepEqual(discoverRunWorkerTools({ kind: 'chat_node', nodeId: 'node-1' }), []);
-  assert.throws(() => createRunResultCollector({ kind: 'chat_node', nodeId: 'node-1' }), /only to Agent Run/);
+  assert.deepEqual(discoverRunWorkerTools(chatOwner('node-1')), []);
+  assert.throws(() => createRunResultCollector(chatOwner('node-1')), /only to Agent Run/);
 });
 
 test('structured submission wins, is source-normalized, and identical retries are idempotent', () => {
@@ -30,7 +31,9 @@ test('structured submission wins, is source-normalized, and identical retries ar
 
 test('submission rejects wrong owners, malformed bundles, and secret-bearing payloads', () => {
   const collector = createRunResultCollector(owner);
-  assert.throws(() => collector.submit({ kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-2' }, bundle()), /owner does not match/);
+  assert.throws(() => collector.submit(runOwner('run-1', 'attempt-2'), bundle()), /owner does not match/);
+  assert.throws(() => collector.submit(runOwner('run-2', 'attempt-1'), bundle()), /owner does not match/);
+  assert.throws(() => collector.submit(chatOwner('attempt-1'), bundle()), /owner does not match/);
   assert.throws(() => collector.submit(owner, { version: 1 }), /handoff/);
   assert.throws(() => collector.submit(owner, { ...bundle(), structuredResult: { apiKey: 'secret' } }), /secret-bearing fields/);
 });

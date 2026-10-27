@@ -76,6 +76,14 @@ export interface PaneInspectionCaller {
   workspaceId: string;
   backendConnectionId: string;
   runOwner?: { runId: string } | null;
+  /**
+   * The Michi assistant, the user's own cross-workspace agent. Its tool layer
+   * re-scopes `workspaceId` to the target's workspace for each call (see
+   * `paneTargetWorkspaceId`), so the AI-navigation gate below is the target
+   * workspace's own "Let AI navigate this workspace" setting. Set only from
+   * the session binding, never for other callers.
+   */
+  assistant?: boolean;
 }
 
 /** Maps a caller onto the ring's `AuthorizationScope` shape. MUST stay structurally identical to
@@ -197,6 +205,7 @@ export function authorizeCaller(caller: PaneInspectionCaller, target: PaneTarget
 /** Caller gates also apply to discovery, including empty and surface-only lists. */
 export function assertPaneInspectionCaller(caller: PaneInspectionCaller, operation = 'inspect'): void {
   // §2.2 caller's own AI-navigation gate — before any read of the TARGET.
+  // For the assistant, `workspaceId` is already the target's (see above).
   if (!getAiGlobalContext(caller.workspaceId, caller.ownerUserId)) {
     throw new PaneInspectionError('NAVIGATION_DISABLED', operation, 'AI navigation is disabled for this workspace.');
   }
@@ -218,6 +227,21 @@ export function assertPaneInspectionCaller(caller: PaneInspectionCaller, operati
       throw new PaneInspectionError('NAVIGATION_DISABLED', operation, "caller Run's context policy does not allow message inspection.");
     }
   }
+}
+
+/**
+ * The workspace a pane target lives in, when `ownerUserId` owns it; null when
+ * it does not exist. Only the Michi assistant's tool layer uses this, to scope
+ * each of its calls to the target's own workspace before the normal checks.
+ */
+export function paneTargetWorkspaceId(ownerUserId: string, target: PaneTarget): string | null {
+  if (target.kind === 'node') {
+    const node = getNode(target.nodeId);
+    return node ? getWorkspace(node.workspace_id, ownerUserId)?.id ?? null : null;
+  }
+  if (target.kind === 'agent_run') return runsRepository.getRun(ownerUserId, target.runId)?.workspaceId ?? null;
+  const surface = panePresenceRegistry.getSurfaceRegistrationInfo(target.registrationId);
+  return surface ? getWorkspace(surface.workspaceId, ownerUserId)?.id ?? null : null;
 }
 
 function authorizeTarget(caller: PaneInspectionCaller, target: PaneTarget): AuthorizedTarget {

@@ -3,7 +3,8 @@ import { useChatActions, useChatProjects } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { getElectron } from '../../lib/electronBridge';
 import { webUrl, openExternalUrl } from '../../services/openUrl';
-import { backendApiBase } from '../../config/backendConnections';
+import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { backendFetch } from '../../services/api/backendRequest';
 
 export function useLinkOpening() {
   const { activeProject } = useChatProjects();
@@ -60,7 +61,7 @@ export function useLinkOpening() {
     const poll = async () => {
       try {
         if (document.visibilityState === 'visible') {
-          const res = await fetch(`${backendApiBase(connectionId)}/workspaces/${encodeURIComponent(id)}/open-url/claim`, {
+          const res = await backendFetch(`${workspaceBackendApiBase(id)}/workspaces/${encodeURIComponent(id)}/open-url/claim`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ treeId: treeId ?? null }), signal: controller.signal,
           });
           if (res.ok) {

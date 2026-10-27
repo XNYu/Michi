@@ -9,6 +9,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 
 import { setupPersistenceRoutes } from '../src/routes/persistence';
@@ -18,8 +19,9 @@ describe('GET /persistence/capabilities — paneInspection capability', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', setupPersistenceRoutes());
-    const server = app.listen(0);
+    const server = app.listen(0, '127.0.0.1');
     try {
+      await once(server, 'listening');
       const port = (server.address() as AddressInfo).port;
       await fn(`http://127.0.0.1:${port}/api`);
     } finally {

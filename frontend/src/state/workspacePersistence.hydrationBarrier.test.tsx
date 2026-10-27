@@ -1,3 +1,5 @@
+import { backendEntityId } from '../config/backendIdentity';
+import { markBackendConnectionUnavailable, markBackendConnectionReady } from '../config/backendConnectionState';
 /**
  * Cold-start hydration barrier.
  *
@@ -41,7 +43,8 @@ vi.mock('../services/api', () => ({
 }));
 
 import { getRemoteRecoveryIssues, retryRemoteWorkspace } from './remoteRecovery';
-import { ACTIVE_TREE_EAGER_BUDGET_MS, useWorkspacePersistence } from './workspacePersistence';
+import { ACTIVE_TREE_EAGER_BUDGET_MS, LEGACY_STATE_KEY, useWorkspacePersistence } from './workspacePersistence';
+import { STATE_SCHEMA_VERSION } from './chatHydration';
 
 const V2_CAPABILITIES = {
   protocolVersion: 2,
@@ -102,6 +105,102 @@ describe('cold-start hydration barrier', () => {
 
   afterEach(() => vi.useRealTimers());
 
+  it('loads same-ID workspaces and nodes independently and drops remote memory until reconnect succeeds', async () => {
+    const connection = { id: 'remote-boundary', name: 'Remote', transport: 'direct' as const, hasToken: true, createdAt: 1, updatedAt: 1 };
+    markBackendConnectionReady(connection.id);
+    let online = true;
+    apiMocks.listBackendConnections.mockResolvedValue([connection]);
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (id?: string) => {
+      if (id === connection.id && !online) throw new Error('disconnected');
+      return [{ ...backendWorkspaceRow, workspace: { ...backendWorkspaceRow.workspace, name: id === connection.id ? 'Remote original' : 'Local copy' } }];
+    });
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    const remoteId = backendEntityId(connection.id, 'ws-1');
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-1', remoteId]);
+    expect(Object.keys(result.current.nodes)).toEqual(['n1', backendEntityId(connection.id, 'n1')]);
+    online = false;
+    await act(async () => { markBackendConnectionUnavailable(connection.id); });
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-1']);
+    expect(Object.keys(result.current.nodes)).toEqual(['n1']);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1001); });
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-1']);
+    online = true;
+    await act(async () => { retryRemoteWorkspace(connection.id); await vi.advanceTimersByTimeAsync(10); });
+    expect(result.current.projects.find(project => project.id === remoteId)?.name).toBe('Remote original');
+    expect(result.current.projects.find(project => project.id === 'ws-1')?.name).toBe('Local copy');
+  });
+
+  it('moves off a dropped remote workspace to a user one, never the assistant system workspace', async () => {
+    const connection = { id: 'remote-sys', name: 'Remote', transport: 'direct' as const, hasToken: true, createdAt: 1, updatedAt: 1 };
+    markBackendConnectionReady(connection.id);
+    let online = true;
+    const systemRow = {
+      ...backendWorkspaceRow,
+      workspace: { id: 'ws-sys', name: 'Assistant', created_at: 1, settings: JSON.stringify({ system: 'assistant' }) },
+      nodes: [{ id: 'n-sys', created_at: 1 }],
+    };
+    const remoteRow = { ...backendWorkspaceRow, workspace: { id: 'ws-r', name: 'Remote', created_at: 1 }, nodes: [{ id: 'n-r', created_at: 1 }] };
+    apiMocks.listBackendConnections.mockResolvedValue([connection]);
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (id?: string) => {
+      if (id !== connection.id) return [systemRow, backendWorkspaceRow];
+      if (!online) throw new Error('disconnected');
+      return [remoteRow];
+    });
+    const remoteId = backendEntityId(connection.id, 'ws-r');
+    const { result } = renderHook(() => useHarness(remoteId));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(result.current.activeProjectId).toBe(remoteId);
+    online = false;
+    await act(async () => { markBackendConnectionUnavailable(connection.id); });
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-sys', 'ws-1']);
+    expect(result.current.activeProjectId).toBe('ws-1');
+  });
+
+  it('lets a landing remote snapshot pick the active workspace, never the assistant system workspace', async () => {
+    // The window was last on the assistant's pane; locally there is nothing
+    // else, so boot leaves no active workspace until the remote one lands.
+    const connection = { id: 'remote-fallback', name: 'Remote', transport: 'direct' as const, hasToken: true, createdAt: 1, updatedAt: 1 };
+    markBackendConnectionReady(connection.id);
+    const systemRow = {
+      ...backendWorkspaceRow,
+      workspace: { id: 'ws-sys', name: 'Assistant', created_at: 1, settings: JSON.stringify({ system: 'assistant' }) },
+      nodes: [{ id: 'n-sys', created_at: 1 }],
+    };
+    const remoteRow = { ...backendWorkspaceRow, workspace: { id: 'ws-r', name: 'Remote', created_at: 1 }, nodes: [{ id: 'n-r', created_at: 1 }] };
+    const remote = deferred<unknown[]>();
+    apiMocks.listBackendConnections.mockResolvedValue([connection]);
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (id?: string) => (id === connection.id ? remote.promise : [systemRow]));
+    const { result } = renderHook(() => useHarness('ws-sys'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(result.current.hydrated).toBe(true);
+    expect(result.current.activeProjectId).toBeNull();
+    remote.resolve([remoteRow]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(result.current.activeProjectId).toBe(backendEntityId(connection.id, 'ws-r'));
+  });
+
+  it('opens a saved local state on a user workspace when it was left on the assistant system workspace', async () => {
+    const project = (id: string, nodeId: string, extra: Record<string, unknown> = {}) => ({
+      id, name: id, chatIds: [nodeId], edges: [], artifacts: [], createdAt: 1,
+      trees: [{ id: `t-${id}`, rootNodeId: nodeId, createdAt: 1, lastActiveAt: 1 }], activeTreeId: `t-${id}`, ...extra,
+    });
+    const node = (nodeId: string, projectId: string) => ({ nodeId, projectId, kind: 'chat', chatId: null, title: nodeId, status: 'idle', followUps: [], messages: [] });
+    localStorage.setItem(LEGACY_STATE_KEY, JSON.stringify({
+      version: STATE_SCHEMA_VERSION,
+      activeProjectId: 'ws-sys',
+      projects: [project('ws-sys', 'n-sys', { system: 'assistant' }), project('ws-user', 'n-user')],
+      nodes: { 'n-sys': node('n-sys', 'ws-sys'), 'n-user': node('n-user', 'ws-user') },
+    }));
+    // The backend answers with no workspaces: hydration falls back to the saved state.
+    apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([]);
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(result.current.hydrated).toBe(true);
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-sys', 'ws-user']);
+    expect(result.current.activeProjectId).toBe('ws-user');
+  });
+
   it('persists the first workspace created after an empty hydration', async () => {
     apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([]);
     const { result } = renderHook(() => useHarness());
@@ -125,7 +224,7 @@ describe('cold-start hydration barrier', () => {
     const active = result.current.activeProjectId;
     apiMocks.listBackendConnections.mockResolvedValue([remote]);
     await act(async () => { window.dispatchEvent(new CustomEvent('michi:backend-connections-changed')); });
-    expect(result.current.projects.find(project => project.id === 'remote-ws')?.backendConnectionId).toBe('new-remote');
+    expect(result.current.projects.find(project => project.id === backendEntityId('new-remote', 'remote-ws'))?.backendConnectionId).toBe('new-remote');
     expect(result.current.activeProjectId).toBe(active);
     const count = apiMocks.fetchAllWorkspacesMeta.mock.calls.filter(([id]) => id === 'new-remote').length;
     await act(async () => { window.dispatchEvent(new CustomEvent('michi:backend-connections-changed')); });
@@ -196,7 +295,7 @@ describe('cold-start hydration barrier', () => {
     expect(result.current.hydrated).toBe(true);
     expect(result.current.projects).toHaveLength(2);
     expect(result.current.projects.find((project) => project.id === 'ws-1')?.backendConnectionId).toBeUndefined();
-    expect(result.current.projects.find((project) => project.id === 'ws-remote')?.backendConnectionId).toBe('remote-1');
+    expect(result.current.projects.find((project) => project.id === backendEntityId('remote-1', 'ws-remote'))?.backendConnectionId).toBe('remote-1');
   });
 
   it('keeps local workspaces available when a saved remote backend is offline', async () => {
@@ -243,8 +342,8 @@ describe('cold-start hydration barrier', () => {
 
     expect(remoteAttempts).toBeGreaterThanOrEqual(2);
     expect(getRemoteRecoveryIssues()).toEqual([]);
-    expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1', 'ws-remote-late']);
-    expect(result.current.projects.find((project) => project.id === 'ws-remote-late')?.backendConnectionId).toBe('remote-late');
+    expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1', backendEntityId('remote-late', 'ws-remote-late')]);
+    expect(result.current.projects.find((project) => project.id === backendEntityId('remote-late', 'ws-remote-late'))?.backendConnectionId).toBe('remote-late');
   });
 
   it('manual retry wakes the backoff without overlapping an in-flight request', async () => {
@@ -259,14 +358,17 @@ describe('cold-start hydration barrier', () => {
     const { result } = renderHook(() => useHarness());
     await act(async () => { await Promise.resolve(); });
     expect(getRemoteRecoveryIssues()[0].diagnostic.log).toContain('SSH auth expired');
-    await act(async () => { retryRemoteWorkspace('remote-retry'); });
+    await act(async () => { expect(retryRemoteWorkspace('remote-retry')).toBe(true); });
     expect(attempts).toBe(2);
     expect(getRemoteRecoveryIssues()[0].retrying).toBe(true);
-    await act(async () => { retryRemoteWorkspace('remote-retry'); await vi.advanceTimersByTimeAsync(100); });
+    await act(async () => { expect(retryRemoteWorkspace('remote-retry')).toBe(true); await vi.advanceTimersByTimeAsync(100); });
     expect(attempts).toBe(2);
     await act(async () => { pending.resolve([]); });
     expect(getRemoteRecoveryIssues()).toEqual([]);
     expect(result.current.activeProjectId).toBe('ws-1');
+    // Once loaded there is no load left to retry; the gateway owns later recovery.
+    expect(retryRemoteWorkspace('remote-retry')).toBe(false);
+    expect(attempts).toBe(2);
   });
 
   it('clears a removed connection and stops its retry loop', async () => {
@@ -324,8 +426,8 @@ describe('cold-start hydration barrier', () => {
       remote.resolve([remoteWorkspace]);
       await act(async () => { await vi.advanceTimersByTimeAsync(10); });
 
-      expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1', 'ws-remote-slow']);
-      expect(result.current.projects.find((project) => project.id === 'ws-remote-slow')?.backendConnectionId).toBe('remote-slow');
+      expect(result.current.projects.map((project) => project.id)).toEqual(['ws-1', backendEntityId('remote-slow', 'ws-remote-slow')]);
+      expect(result.current.projects.find((project) => project.id === backendEntityId('remote-slow', 'ws-remote-slow'))?.backendConnectionId).toBe('remote-slow');
     });
 
     it('auto-selects a local workspace, then restores the window\'s remote preference once it lands', async () => {
@@ -336,7 +438,7 @@ describe('cold-start hydration barrier', () => {
       ));
 
       // The window was last on the remote workspace.
-      const { result } = renderHook(() => useHarness('ws-remote-slow'));
+      const { result } = renderHook(() => useHarness(backendEntityId('remote-slow', 'ws-remote-slow')));
       await act(async () => { await vi.advanceTimersByTimeAsync(10); });
 
       expect(result.current.hydrated).toBe(true);
@@ -346,7 +448,7 @@ describe('cold-start hydration barrier', () => {
       remote.resolve([remoteWorkspace]);
       await act(async () => { await vi.advanceTimersByTimeAsync(10); });
 
-      expect(result.current.activeProjectId).toBe('ws-remote-slow');
+      expect(result.current.activeProjectId).toBe(backendEntityId('remote-slow', 'ws-remote-slow'));
     });
 
     it('does not override a user navigation made before the remote snapshot lands', async () => {
@@ -402,8 +504,8 @@ describe('cold-start hydration barrier', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(10); });
 
       expect(result.current.hydrated).toBe(true);
-      expect(result.current.projects.map((project) => project.id)).toEqual(['ws-remote-slow']);
-      expect(result.current.activeProjectId).toBe('ws-remote-slow');
+      expect(result.current.projects.map((project) => project.id)).toEqual([backendEntityId('remote-slow', 'ws-remote-slow')]);
+      expect(result.current.activeProjectId).toBe(backendEntityId('remote-slow', 'ws-remote-slow'));
     });
   });
 

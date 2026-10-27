@@ -1,31 +1,25 @@
-import { useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { redactRemoteLog, type RemoteConnectionDiagnostic } from 'michi-shared';
-import type { BackendConnectionSummary } from '../config/backendConnections';
-import { RemoteServiceRecoveryError } from '../services/api/remoteRecovery';
+import { getKnownBackendConnections, type BackendConnectionSummary } from '../config/backendConnections';
+import { recoverRemoteService, RemoteServiceRecoveryError } from '../services/api/remoteRecovery';
 
 export interface RemoteRecoveryIssue {
   connectionId: string;
   name: string;
   attempts: number;
   retrying: boolean;
-  dismissed: boolean;
+  detectedAt: number;
   diagnostic: RemoteConnectionDiagnostic;
   serviceDiagnosticId?: string;
   history?: string;
 }
 
 export const REMOTE_WORKSPACE_RETRY_EVENT = 'michi:retry-remote-workspace';
+export const REMOTE_RECOVERY_GRACE_MS = 5 * 60_000;
 let issues: readonly RemoteRecoveryIssue[] = [];
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach(listener => listener());
 export const getRemoteRecoveryIssues = () => issues;
-
-/** Hide the notice for these incidents without interrupting recovery or losing diagnostics. */
-export function dismissRemoteRecoveryIssues(): void {
-  if (issues.every(issue => issue.dismissed)) return;
-  issues = issues.map(issue => ({ ...issue, dismissed: true }));
-  emit();
-}
 
 export function clearRemoteRecoveryIssue(connectionId: string): void {
   const next = issues.filter(issue => issue.connectionId !== connectionId);
@@ -57,7 +51,7 @@ export function reportRemoteRecoveryFailure(connection: BackendConnectionSummary
     + (serviceReport ? redactRemoteLog(serviceReport.log) : 'No remote service logs were collected for this request.\n');
   const issue: RemoteRecoveryIssue = {
     connectionId: connection.id, name: redactRemoteLog(connection.name), attempts, retrying: false,
-    dismissed: previous?.dismissed ?? false,
+    detectedAt: previous?.detectedAt ?? Date.now(),
     serviceDiagnosticId: serviceReport?.id, history: history?.slice(-32_000),
     diagnostic: {
       id: serviceReport?.id ?? previous?.diagnostic.id ?? 'recovery-' + crypto.randomUUID(),
@@ -81,7 +75,7 @@ export function reportRemoteRecoveryProgress(connection: BackendConnectionSummar
   const log = history + (serviceReport ? redactRemoteLog(serviceReport.log) : 'Waiting for remote startup diagnostics.\n');
   const issue: RemoteRecoveryIssue = {
     connectionId: connection.id, name: redactRemoteLog(connection.name), attempts: previous?.attempts ?? 0,
-    retrying: true, dismissed: previous?.dismissed ?? false, serviceDiagnosticId: serviceReport?.id,
+    retrying: true, detectedAt: previous?.detectedAt ?? Date.now(), serviceDiagnosticId: serviceReport?.id,
     history: history.slice(-32_000),
     diagnostic: {
       ...(serviceReport ?? {}),
@@ -96,8 +90,23 @@ export function reportRemoteRecoveryProgress(connection: BackendConnectionSummar
   emit();
 }
 
-export function retryRemoteWorkspace(connectionId: string): void {
-  window.dispatchEvent(new CustomEvent(REMOTE_WORKSPACE_RETRY_EVENT, { detail: { connectionId } }));
+/** Returns true when a waiting or in-flight workspace load took the retry. */
+export function retryRemoteWorkspace(connectionId: string): boolean {
+  return !window.dispatchEvent(new CustomEvent(REMOTE_WORKSPACE_RETRY_EVENT, { detail: { connectionId }, cancelable: true }));
+}
+
+/**
+ * Retry now. A machine whose workspaces already loaded has no load loop left,
+ * so ask the gateway to restart its SSH recovery; the recovery monitor then
+ * reports progress, failure or readiness.
+ */
+export async function retryRemoteConnection(connectionId: string): Promise<void> {
+  if (retryRemoteWorkspace(connectionId)) return;
+  const connection = getKnownBackendConnections().find(item => item.id === connectionId);
+  if (connection?.transport !== 'ssh') return;
+  markRemoteRecoveryRetrying(connectionId);
+  try { await recoverRemoteService(connectionId); }
+  catch (error) { reportRemoteRecoveryFailure(connection, error); }
 }
 
 export function useRemoteRecoveryIssues(): readonly RemoteRecoveryIssue[] {
@@ -105,4 +114,18 @@ export function useRemoteRecoveryIssues(): readonly RemoteRecoveryIssue[] {
     listeners.add(callback);
     return () => { listeners.delete(callback); };
   }, getRemoteRecoveryIssues, getRemoteRecoveryIssues);
+}
+
+/** Delay presentation only; diagnostics and automatic recovery continue immediately. */
+export function useVisibleRemoteRecoveryIssues(): readonly RemoteRecoveryIssue[] {
+  const issues = useRemoteRecoveryIssues();
+  const [clock, setClock] = useState(Date.now);
+  const now = Date.now();
+  useEffect(() => {
+    const next = Math.min(...issues.map(issue => issue.detectedAt + REMOTE_RECOVERY_GRACE_MS).filter(time => time > now));
+    if (!Number.isFinite(next)) return;
+    const timer = setTimeout(() => setClock(Date.now()), next - now);
+    return () => clearTimeout(timer);
+  }, [issues, clock, now]);
+  return issues.filter(issue => now >= issue.detectedAt + REMOTE_RECOVERY_GRACE_MS);
 }

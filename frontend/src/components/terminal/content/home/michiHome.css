@@ -1,0 +1,544 @@
+/* Home as the Michi. Palette tokens only (--term-*), so Monokai, Bone, Slate
+   and Gruvbox all read without per-theme rules. */
+
+/* ── Hero: eyebrow + headline ────────────────────────────────── */
+.michi-home-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.michi-home-eyebrow,
+.michi-home-caption {
+  color: var(--term-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: var(--ls-caps-wide);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.michi-home-headline {
+  margin: 0;
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+  font-size: var(--fs-4xl);
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: var(--ls-tight);
+  text-wrap: pretty;
+}
+.michi-home-headline__mark {
+  color: var(--term-accent);
+}
+/* Michi's first read: a state, not news. */
+.michi-home-headline[data-kind='reading'] {
+  color: var(--term-mid);
+}
+
+/* ── Body column: agenda, sections, footer ───────────────────── */
+.michi-home-body {
+  width: 100%;
+  margin-top: 26px;
+  display: flex;
+  flex-direction: column;
+}
+.michi-home-agenda {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 0 8px;
+  color: var(--term-mid);
+  font-size: var(--fs-md);
+  min-width: 0;
+}
+.michi-home-agenda__glyph {
+  flex-shrink: 0;
+  color: var(--term-muted);
+}
+.michi-home-agenda__sep {
+  color: var(--term-faint);
+}
+.michi-home-agenda__entry {
+  white-space: nowrap;
+}
+.michi-home-agenda__time {
+  color: var(--term-muted);
+}
+.michi-home-agenda__time--clock {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.michi-home-sections {
+  display: flex;
+  flex-direction: column;
+}
+.michi-home-section {
+  margin-top: 18px;
+}
+.michi-home-agenda + .michi-home-sections > .michi-home-section:first-child {
+  margin-top: 22px;
+}
+.michi-home-section__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--term-line);
+}
+.michi-home-section__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.michi-home-section__empty {
+  margin: 0;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--term-line);
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+}
+
+/* ── Row ─────────────────────────────────────────────────────── */
+/* The title is the row's open button; its ::after covers the row, and the
+   other controls sit above it (position: relative; z-index: 1). Cells are
+   placed explicitly, so the DOM can follow the Tab order (title → actions →
+   second line) while the layout stays glyph | title over its line | trailer.
+
+   A row is "active" while hovered, while anything in it has focus, or while
+   its Continue menu is open. Controls that only show when active are clipped
+   at rest, never display: none / visibility: hidden: focus can only land on
+   an element that is still rendered when the previous one lets go. */
+.michi-home-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  column-gap: 12px;
+  align-items: start;
+  padding: 9px 8px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--term-line);
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+  transition: background var(--t-quick) var(--t-ease);
+}
+/* Active: under the pointer, holding keyboard focus (:has(:focus-visible),
+   so a mouse click doesn't leave the row lit after the pointer leaves), or
+   with its Continue menu open. */
+.michi-home-row:hover,
+.michi-home-row:has(:focus-visible),
+.michi-home-row:has(.michi-continue__caret[aria-expanded='true']) {
+  background: var(--term-hover-bg, var(--term-alt));
+}
+.michi-home-row:has(.michi-home-row__open:focus-visible) {
+  box-shadow: inset 2px 0 0 var(--term-accent);
+}
+.michi-home-row[data-selected='true'] {
+  background: var(--term-accent-f);
+}
+.michi-home-row[data-selected='true']:hover {
+  background: color-mix(in srgb, var(--term-accent-f) 80%, var(--term-alt));
+}
+/* Glyph column: the state dot, with the row's checkbox over it. The box
+   shows on hover or focus, or on every row once any row is selected. */
+.michi-home-row__dot {
+  grid-column: 1;
+  grid-row: 1;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+}
+.michi-home-row__glyph {
+  display: inline-flex;
+}
+.michi-home-row__check {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  accent-color: var(--term-accent);
+  cursor: pointer;
+  opacity: 0;
+}
+.michi-home-row:hover .michi-home-row__check,
+.michi-home-row__check:focus,
+.michi-home-row[data-selecting='true'] .michi-home-row__check {
+  opacity: 1;
+}
+.michi-home-row:hover .michi-home-row__dot:has(.michi-home-row__check) .michi-home-row__glyph,
+.michi-home-row__dot:has(.michi-home-row__check:focus) .michi-home-row__glyph,
+.michi-home-row[data-selecting='true'] .michi-home-row__glyph {
+  visibility: hidden;
+}
+.michi-home-row__open {
+  grid-column: 2;
+  grid-row: 1;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--fs-lg);
+  line-height: 18px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+}
+.michi-home-row__open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+.michi-home-row__project,
+.michi-home-row__confirm,
+.michi-home-row__restore,
+.michi-home-row__actions {
+  position: relative;
+  z-index: 1;
+}
+.michi-home-row__sub {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 3px;
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+  line-height: 18px;
+}
+.michi-home-row__sub-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-home-row__inline-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  max-width: 50%;
+  min-width: 0;
+  white-space: nowrap;
+}
+.michi-home-row__inline-sep {
+  color: var(--term-faint);
+}
+.michi-home-row__inline-age {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.michi-home-row__sub-text--code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.michi-home-row__confirm {
+  flex-shrink: 0;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--term-accent);
+  font-family: var(--ui-font);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-quick) var(--t-ease);
+}
+.michi-home-row__confirm:hover {
+  background: color-mix(in srgb, var(--term-accent) 12%, transparent);
+}
+.michi-home-row__confirm:focus-visible,
+.michi-home-row__project:focus-visible,
+.michi-home-view-all:focus-visible,
+.michi-home-footer__btn:focus-visible {
+  outline: 1px solid var(--term-accent);
+  outline-offset: 1px;
+}
+
+/* Trailer: where it lives, then how long ago. While the row is active the
+   trailer gives way to the actions and where it lives moves into the second
+   line. The trailer holds no controls, so hiding it can't strand focus. */
+.michi-home-row__meta {
+  grid-column: 3;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 1px;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+.michi-home-row__place {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  min-width: 0;
+}
+.michi-home-row__place > svg {
+  flex-shrink: 0;
+}
+.michi-home-row__project {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--t-quick) var(--t-ease);
+}
+.michi-home-row__project:hover {
+  color: var(--term-fg);
+}
+.michi-home-row__project--inline:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.michi-home-row__project-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.michi-home-row__age {
+  min-width: 30px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.michi-home-row__actions {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  align-self: center;
+}
+.michi-home-row__icon {
+  color: var(--term-muted);
+}
+/* Can't be done for this thread (its tooltip says why): faint, and no hover. */
+.michi-home-row__icon[aria-disabled='true'] {
+  color: var(--term-faint);
+  cursor: default;
+}
+.michi-home-row__icon[aria-disabled='true']:hover {
+  background: transparent;
+  color: var(--term-faint);
+}
+
+/* At rest: the actions, the second line's meta, and a second line holding
+   only that meta are clipped to nothing — out of the layout and out of
+   sight, but still focusable, so Tab reaches each one and shows them. */
+.michi-home-row:not(:hover):not(:has(:focus-visible)):not(:has(.michi-continue__caret[aria-expanded='true'])) :is(
+  .michi-home-row__actions,
+  .michi-home-row__inline-meta,
+  .michi-home-row__sub--meta-only
+) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.michi-home-row:hover .michi-home-row__meta:not(.michi-home-row__meta--static),
+.michi-home-row:has(:focus-visible) .michi-home-row__meta:not(.michi-home-row__meta--static),
+.michi-home-row:has(.michi-continue__caret[aria-expanded='true']) .michi-home-row__meta:not(.michi-home-row__meta--static) {
+  display: none;
+}
+
+/* ── View all (beside a caption) / footer / archived shelf ──── */
+.michi-home-view-all,
+.michi-home-footer__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--term-muted);
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  cursor: pointer;
+  transition: color var(--t-quick) var(--t-ease), background var(--t-quick) var(--t-ease);
+}
+.michi-home-view-all {
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.michi-home-view-all:hover:not(:disabled) {
+  color: var(--term-fg);
+}
+.michi-home-view-all:disabled {
+  cursor: progress;
+}
+.michi-home-view-all__count,
+.michi-home-footer__count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.michi-home-footer {
+  display: flex;
+  align-items: center;
+  padding: 14px 8px 0;
+}
+.michi-home-footer__btn {
+  padding: 2px 0;
+}
+.michi-home-footer__btn:hover {
+  color: var(--term-fg);
+}
+.michi-home-footer__all {
+  margin-left: auto;
+}
+.michi-home-archived {
+  display: flex;
+  flex-direction: column;
+}
+.michi-home-archived__glyph {
+  display: inline-flex;
+  color: var(--term-muted);
+}
+.michi-home-archived__all {
+  align-self: flex-end;
+  margin: 10px 8px 0;
+}
+.michi-home-row--archived .michi-home-row__open {
+  color: var(--term-mid);
+}
+
+/* ── Michi has nothing yet: first read · nothing found ─────────── */
+.michi-home-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+  padding: 28px 16px;
+  border: 1px solid var(--term-line);
+  color: var(--term-fg);
+  text-align: center;
+}
+.michi-home-empty__glyph {
+  color: var(--term-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xl);
+  line-height: 1;
+}
+.michi-home-empty__title {
+  font-size: var(--fs-lg);
+}
+.michi-home-empty__progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.michi-home-empty__meter {
+  position: relative;
+  width: 96px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--ui-radius-pill);
+  background: var(--term-alt);
+}
+.michi-home-empty__meter > span {
+  display: block;
+  height: 100%;
+  background: var(--term-accent);
+  transition: width var(--t-enter) var(--t-ease);
+}
+.michi-home-empty__count {
+  color: var(--term-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Selection: live count for screen readers, batch bar pinned to the view ── */
+.michi-home-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* A zero-height sticky anchor at the foot of the column: MichiBatchBar's
+   absolute bar sits 20px above the bottom of whatever part of Home is in view. */
+.michi-home-batch {
+  position: sticky;
+  bottom: 0;
+  height: 0;
+  z-index: var(--z-pane-overlay);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .michi-home-row,
+  .michi-home-row__confirm,
+  .michi-home-row__project,
+  .michi-home-view-all,
+  .michi-home-footer__btn,
+  .michi-home-empty__meter > span {
+    transition: none;
+  }
+}
+
+/* ── Continued in Michi: CW → Michi 3 turns · running ─────────── */
+.michi-home-row__continued {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.michi-home-row__continued-arrow {
+  color: var(--term-faint);
+}
+.michi-home-row__continued-facts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── A write on its way (archive, ignore, bring back, confirm): the row waits ── */
+.michi-home-row[data-pending='true'] {
+  opacity: 0.55;
+  cursor: progress;
+  transition: opacity var(--t-quick) ease;
+}
+.michi-home-row[data-pending='true'] .michi-home-row__actions,
+.michi-home-row[data-pending='true'] .michi-home-row__confirm,
+.michi-home-row[data-pending='true'] .michi-home-row__restore {
+  pointer-events: none;
+}

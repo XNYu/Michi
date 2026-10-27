@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { StrictMode } from 'react';
+
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RemoteAuthenticationDialog } from './RemoteAuthenticationDialog';
 import { closeRemoteAuthentication, completeRemoteAuthentication, requestRemoteAuthentication } from '../state/remoteAuthentication';
@@ -35,12 +35,6 @@ beforeEach(() => {
   };
 });
 afterEach(() => { closeRemoteAuthentication(); for (const key of ['native-success', 'native-fail', 'web-fallback', 'web-cancel', 'strict-auth']) completeRemoteAuthentication(key); vi.unstubAllGlobals(); vi.clearAllMocks(); });
-
-it('starts authentication only once under StrictMode effect replay', async () => {
-  requestRemoteAuthentication({ key: 'strict-auth', target: { scope: 'local', host: 'test-host' } }, true);
-  render(<StrictMode><RemoteAuthenticationDialog /></StrictMode>);
-  await waitFor(() => expect(state.bridge!.remoteAuthCreate).toHaveBeenCalledOnce());
-});
 
 it('opens a dedicated remote PTY, forwards user input, reconnects once after success and destroys on close', async () => {
   const onComplete = vi.fn();

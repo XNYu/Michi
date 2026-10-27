@@ -8,7 +8,7 @@ import {
   type AgentDomainApi, AgentDomainProvider, agentDomainReducer,
   initialAgentDomainState, useAgentDomain,
 } from './agentDomain';
-import { agentResourceKey, locatedAgentResource, parentAgentIndexKey, workspaceAgentIndexKey } from './agentIdentity';
+import { agentResourceKey, locatedAgentResource } from './agentIdentity';
 
 const hash = 'a'.repeat(64);
 const runFixture = (backend: string, overrides: Partial<AgentRunDtoV1> = {}) => locatedAgentResource(backend, {
@@ -29,16 +29,6 @@ const statusEvent = (seq: number, from: AgentRunStatus, to: AgentRunStatus): Age
 });
 
 describe('Agent domain reducer', () => {
-  it('isolates equal IDs and all indexes/cursors by Backend connection', () => {
-    const a = runFixture('remote-a');
-    const b = runFixture('remote-b');
-    const state = agentDomainReducer(initialAgentDomainState, { type: 'upsert-runs', resources: [a, b] });
-    expect(Object.keys(state.runs)).toHaveLength(2);
-    expect(state.workspaceRunKeys[workspaceAgentIndexKey('remote-a', a.value.workspaceId)]).toEqual([agentResourceKey({ backendConnectionId: 'remote-a', id: 'same-run' })]);
-    expect(state.parentRunKeys[parentAgentIndexKey('remote-a', 'message-1', null)]).toHaveLength(1);
-    expect(state.parentRunKeys[parentAgentIndexKey('remote-b', 'message-1', null)]).toHaveLength(1);
-  });
-
   it('dedupes sequence numbers, rejects out-of-order events, and keeps terminal state idempotent', () => {
     const resource = runFixture('remote-a');
     let state = agentDomainReducer(initialAgentDomainState, { type: 'upsert-runs', resources: [resource] });

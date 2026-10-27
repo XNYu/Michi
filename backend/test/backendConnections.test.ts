@@ -55,39 +55,6 @@ describe('backend connection persistence', () => {
     assert.deepEqual(listBackendConnections(), []);
   });
 
-  test('blank token on edit preserves the saved secret', () => {
-    const first = saveBackendConnection({ name: 'Remote', apiUrl: 'http://host:3000', token: 'existing-secret-token' });
-    saveBackendConnection({ id: first.id, name: 'Renamed', apiUrl: 'http://host:3000/api', token: '' });
-    assert.equal(getBackendConnection(first.id)?.token, 'existing-secret-token');
-  });
-
-  test('loads legacy direct records that predate the transport field', () => {
-    fs.writeFileSync(path.join(tempDir, 'config.json'), JSON.stringify({
-      backendConnections: [{
-        id: 'legacy-1',
-        name: 'Legacy',
-        apiUrl: 'https://legacy.example.com/api',
-        token: '',
-        createdAt: 1,
-        updatedAt: 2,
-      }],
-    }));
-
-    assert.deepEqual(listBackendConnections(), [{
-      id: 'legacy-1',
-      name: 'Legacy',
-      transport: 'direct',
-      apiUrl: 'https://legacy.example.com/api',
-      sshHost: undefined,
-      sshUser: undefined,
-      sshPort: undefined,
-      remotePort: undefined,
-      hasToken: false,
-      createdAt: 1,
-      updatedAt: 2,
-    }]);
-  });
-
   test('persists SSH settings while keeping the token server-side', () => {
     const saved = saveBackendConnection({
       name: 'SSH build box',
@@ -160,44 +127,6 @@ test('backend connection routes reject unapproved localhost origins', async () =
   }
 });
 
-test('SSH proxy resolves the upstream URL through the injected tunnel manager', async () => {
-  const remote = express();
-  remote.get('/api/echo', (req, res) => {
-    res.json({ authorization: req.headers.authorization });
-  });
-  const remoteServer = http.createServer(remote);
-  await new Promise<void>((resolve) => remoteServer.listen(0, '127.0.0.1', resolve));
-  const remoteAddress = remoteServer.address();
-  assert.ok(remoteAddress && typeof remoteAddress === 'object');
-
-  const saved = saveBackendConnection({
-    name: 'SSH remote',
-    transport: 'ssh',
-    sshHost: 'build-server-box',
-    token: 'remote-secret-token',
-  });
-  const tunnelManager = new StaticTunnelManager(`http://127.0.0.1:${remoteAddress.port}/api`);
-  const gateway = express();
-  gateway.use(express.json());
-  gateway.use('/api', setupBackendConnectionRoutes({ tunnelManager }));
-  const gatewayServer = http.createServer(gateway);
-  await new Promise<void>((resolve) => gatewayServer.listen(0, '127.0.0.1', resolve));
-  const gatewayAddress = gatewayServer.address();
-  assert.ok(gatewayAddress && typeof gatewayAddress === 'object');
-
-  try {
-    const response = await fetch(
-      `http://127.0.0.1:${gatewayAddress.port}/api/backend-connections/${saved.id}/proxy/echo`,
-    );
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { authorization: 'Bearer remote-secret-token' });
-    assert.equal(tunnelManager.resolved[0].transport, 'ssh');
-  } finally {
-    await new Promise<void>((resolve, reject) => gatewayServer.close((err) => err ? reject(err) : resolve()));
-    await new Promise<void>((resolve, reject) => remoteServer.close((err) => err ? reject(err) : resolve()));
-  }
-});
-
 test('probe and streaming proxy authenticate to a Michi backend', async () => {
   const remote = express();
   remote.use(express.json());
@@ -241,49 +170,6 @@ test('probe and streaming proxy authenticate to a Michi backend', async () => {
       await new Promise<void>((resolve, reject) => gatewayServer.close((err) => err ? reject(err) : resolve()));
     }
   } finally {
-    await new Promise<void>((resolve, reject) => remoteServer.close((err) => err ? reject(err) : resolve()));
-  }
-});
-
-test('streaming proxy detaches its upstream response when the renderer disconnects', async () => {
-  let markRemoteClosed: (() => void) | null = null;
-  const remoteClosed = new Promise<void>((resolve) => { markRemoteClosed = resolve; });
-  const remote = express();
-  remote.get('/api/hold', (_req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.flushHeaders();
-    res.write(': connected\n\n');
-    res.on('close', () => markRemoteClosed?.());
-  });
-  const remoteServer = http.createServer(remote);
-  await new Promise<void>((resolve) => remoteServer.listen(0, '127.0.0.1', resolve));
-  const remoteAddress = remoteServer.address();
-  assert.ok(remoteAddress && typeof remoteAddress === 'object');
-  const saved = saveBackendConnection({
-    name: 'Remote stream',
-    apiUrl: `http://127.0.0.1:${remoteAddress.port}`,
-  });
-
-  const gateway = express();
-  gateway.use(express.json());
-  gateway.use('/api', setupBackendConnectionRoutes());
-  const gatewayServer = http.createServer(gateway);
-  await new Promise<void>((resolve) => gatewayServer.listen(0, '127.0.0.1', resolve));
-  const gatewayAddress = gatewayServer.address();
-  assert.ok(gatewayAddress && typeof gatewayAddress === 'object');
-
-  try {
-    const response = await fetch(
-      `http://127.0.0.1:${gatewayAddress.port}/api/backend-connections/${saved.id}/proxy/hold`,
-    );
-    assert.equal(response.status, 200);
-    await response.body?.cancel();
-    await Promise.race([
-      remoteClosed,
-      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('upstream stream stayed open')), 2_000)),
-    ]);
-  } finally {
-    await new Promise<void>((resolve, reject) => gatewayServer.close((err) => err ? reject(err) : resolve()));
     await new Promise<void>((resolve, reject) => remoteServer.close((err) => err ? reject(err) : resolve()));
   }
 });

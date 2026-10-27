@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR, leaveSettings, selectSettingsSection, settingsMain } from '../fixtures/shell';
 
 const workspace = {
   workspace: { id: 'boot-ws', name: 'Boot workspace', created_at: 1, active_tree_id: 'tree-a' },
@@ -18,6 +19,48 @@ const messages = (id: string) => [{
   id: `message-${id}`, node_id: id, role: 'user', content: `Conversation ${id.toUpperCase()} is ready`,
   seq: 0, created_at: 1,
 }];
+
+test('an open conversation recovers its body after a backend handover without navigation', async ({ page }) => {
+  let otherReads = 0;
+  let failedAt = 0;
+  const writes: string[] = [];
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await installMockApi(page, { workspaces: [workspace], custom: async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() !== 'GET' && /^\/api\/(workspaces|nodes|node-ids)/.test(path)) writes.push(path);
+    const match = path.match(/\/trees\/tree-([ab])\/messages$/);
+    if (!match) return false;
+    if (match[1] === 'b') {
+      otherReads++;
+      if (otherReads === 1) {
+        // Outlive the former one-shot 500ms retry, as a connection dropped
+        // while Electron switches to its background backend can do.
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        failedAt = Date.now();
+        await route.abort('connectionreset');
+        return true;
+      }
+    }
+    await route.fulfill({ json: { messages: messages(match[1]) } });
+    return true;
+  } });
+  await page.addInitScript(() => localStorage.setItem('michi:v1:prefs', JSON.stringify({
+    onboardingCompletedAt: 1, sidebarCollapsed: false, sidebarView: 'structure',
+    sidebarExpanded: { workspaces: { 'boot-ws': true }, threads: {}, branches: {} },
+  })));
+  await page.goto('/');
+  const rowB = page.locator('.terminal-sidebar [data-sidebar-row="b"]');
+  await rowB.click();
+  const pane = page.locator('.terminal-dashboard > [data-node-id="b"]');
+  await expect(pane).toBeVisible();
+  await expect.poll(() => failedAt).toBeGreaterThan(0);
+  writes.length = 0;
+  await expect(pane.getByText('Conversation B is ready', { exact: true })).toBeVisible();
+  expect(otherReads).toBe(2);
+  expect(writes).toEqual([]);
+  expect(errors).toEqual([]);
+});
 
 for (const width of [1280, 390]) {
   test(`shell works before workspace hydration at ${width}px`, async ({ page }, info) => {
@@ -47,16 +90,16 @@ for (const width of [1280, 390]) {
       await expect(page.getByRole('status', { name: 'Loading workspaces' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeDisabled();
       await expect(page.getByPlaceholder('Untitled workspace')).toHaveCount(0);
-      await expect(page.locator('[contenteditable="true"]')).toHaveCount(0);
+      await expect(page.locator(COMPOSER_EDITOR)).toHaveCount(0);
       await page.keyboard.press('Control+,');
-      const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+      const settings = settingsMain(page);
       await expect(settings).toBeVisible();
-      await settings.getByRole('button', { name: 'Model', exact: true }).click();
+      await selectSettingsSection(page, 'Runtime (global)');
       await expect(settings.getByRole('status')).toHaveText('Loading workspaces…');
-      await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
+      await selectSettingsSection(page, 'Appearance');
       await expect(settings.getByRole('status')).toHaveCount(0);
       await page.screenshot({ path: info.outputPath(`shell-first-settings-${width}.png`) });
-      await settings.getByRole('button', { name: 'Close', exact: true }).click();
+      await leaveSettings(page);
       await expect(settings).toHaveCount(0);
       await expect(page.locator('.drawer-shell-panel')).toHaveCount(0);
       await page.evaluate(() => window.dispatchEvent(new CustomEvent('michi:open-new-workspace')));
@@ -68,7 +111,7 @@ for (const width of [1280, 390]) {
       release();
     }
     await expect(page.getByRole('status', { name: 'Loading workspaces' })).toHaveCount(0);
-    await expect(page.locator('[contenteditable="true"]').first()).toBeVisible();
+    await expect(page.locator(COMPOSER_EDITOR).first()).toBeVisible();
     expect(errors).toEqual([]);
   });
 }

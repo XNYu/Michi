@@ -2,6 +2,8 @@
 
 Applies to: local and remote backend data; hosted access is owner-scoped. Source checked: 2026-10-16 against persistence, Trash, export and backup code. Recovery depends on what was actually retained; this is not evidence that your backup has been tested.
 
+Pages-related sections checked against source on 2026-10-26; other topics retain the review scope above.
+
 ## A conversation seems to be missing
 
 Before deleting or resetting anything:
@@ -36,6 +38,10 @@ Conversation deletion and project-file deletion are different operations. Removi
 | Git backup | Tracked project history and pushed commits | Untracked Artifacts/attachments, Michi databases, credentials or every native session |
 
 The current UI's Export is a Markdown flow. There is no general Settings → Backup / Import JSON screen. Do not confuse it with the advanced backup endpoints below.
+
+Native Pages and their change/proposal history, databases, component versions, per-page layout-preference revisions and automatic-maintenance state are retained in the backend's SQLite database. The current conversation Markdown export and portable JSON backup do not include those native records or unpromoted page-helper conversations. Preserve the stopped backend's data directory for a complete backup of that work. Replacing a workspace through the JSON import API removes its existing native Pages and managed jobs as part of replacement; restoring the conversation export does not restore those records.
+
+**Ignore** and **Archive** in a Page block menu have page-local meanings: Ignore retains and protects that block from direct automatic replacement; Archive removes it from the page while keeping its change history. They do not archive or delete the source conversation. Page-tree **Move to trash** is a separate action. See `pages-and-components`.
 
 ## Make a complete backup of your work
 

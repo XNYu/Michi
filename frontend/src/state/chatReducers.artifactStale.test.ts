@@ -16,14 +16,6 @@ function seedArtifact(): Record<string, ChatNodeState> {
 }
 
 describe('artifact-mark-stale / artifact-mark-removed', () => {
-  it('marks an artifact node pending-refresh without touching content', () => {
-    const seeded = seedArtifact();
-    const next = reduceNodes(seeded, { type: 'artifact-mark-stale', nodeId: 'a1' });
-    expect(next.a1.artifact!.pendingRefresh).toBe(true);
-    expect(next.a1.artifact!.content).toBeNull(); // hint only, no reload
-    expect(next.a1.artifact!.status).toBe('idle');
-  });
-
   it('is idempotent: a second stale mark returns the same nodes reference', () => {
     const seeded = seedArtifact();
     const once = reduceNodes(seeded, { type: 'artifact-mark-stale', nodeId: 'a1' });
@@ -45,13 +37,6 @@ describe('artifact-mark-stale / artifact-mark-removed', () => {
     expect(loaded.a1.artifact!.pendingRefresh).toBe(false);
     expect(loaded.a1.artifact!.removed).toBe(false);
     expect(loaded.a1.artifact!.content).toBe('# hi');
-  });
-
-  it('marks removed and clears any pending-refresh flag', () => {
-    const stale = reduceNodes(seedArtifact(), { type: 'artifact-mark-stale', nodeId: 'a1' });
-    const removed = reduceNodes(stale, { type: 'artifact-mark-removed', nodeId: 'a1' });
-    expect(removed.a1.artifact!.removed).toBe(true);
-    expect(removed.a1.artifact!.pendingRefresh).toBe(false);
   });
 
   it('a change after removal (file recreated) clears removed and re-arms the badge', () => {

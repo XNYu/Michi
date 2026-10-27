@@ -77,7 +77,7 @@ describe('Agent Run backup v2', () => {
       initialEvent: { type: AgentRunEventType.RunStatusChanged, payload: { version: 1, from: null, to: AgentRunStatus.Queued } },
     });
     const attempt = runs.createAttempt({ operationId: 'attempt-op', ownerUserId: 'owner-a', runId: run.id,
-      profileIndex: 0, runtimeProfile: effective().runtimeProfile, publicSessionId: 'public-session', recoveryEnvelope: null });
+      profileIndex: 0, runtimeProfile: effective().runtimeProfile, recoveryEnvelope: null });
     getDb().prepare('UPDATE agent_run_attempts SET native_resume_token = ? WHERE id = ?')
       .run(JSON.stringify('private-native-token'), attempt.id);
     runs.createWatch('owner-a', 'ws-source', [run.id], { version: 1, kind: 'all' }, 'notify',
@@ -106,9 +106,11 @@ describe('Agent Run backup v2', () => {
     assert.equal(importedRun.definitionId, null);
     const importedAttempts = new AgentRunsRepository().listAttempts('owner-b', importedRunId);
     assert.equal(importedAttempts[0].status, 'failed');
+    assert.equal(importedAttempts[0].publicSessionId, importedAttempts[0].id);
     assert.equal(importedAttempts[0].error?.category, 'import_interrupted');
-    const stored = getDb().prepare('SELECT native_resume_token, lease_token FROM agent_run_attempts a JOIN agent_runs r ON r.id = a.run_id WHERE r.id = ?')
-      .get(importedRunId) as { native_resume_token: string | null; lease_token: string | null };
+    const stored = getDb().prepare('SELECT public_session_id, native_resume_token, lease_token FROM agent_run_attempts a JOIN agent_runs r ON r.id = a.run_id WHERE r.id = ?')
+      .get(importedRunId) as { public_session_id: string; native_resume_token: string | null; lease_token: string | null };
+    assert.equal(stored.public_session_id, importedAttempts[0].id);
     assert.equal(stored.native_resume_token, null);
     assert.equal(stored.lease_token, null);
     const importedDefinition = new AgentDefinitionsRepository().get(
@@ -147,5 +149,9 @@ describe('Agent Run backup v2', () => {
     const restored = new AgentRunsRepository().getRun('owner-b', imported.runIds.get(run.id)!)!;
     assert.equal(restored.definitionId, null);
     assert.equal(restored.effectiveDefinition.name, 'Ephemeral worker');
+    const [syntheticAttempt] = new AgentRunsRepository().listAttempts('owner-b', restored.id);
+    assert.equal(syntheticAttempt.publicSessionId, syntheticAttempt.id);
+    assert.equal((getDb().prepare('SELECT public_session_id FROM agent_run_attempts WHERE id = ?')
+      .get(syntheticAttempt.id) as { public_session_id: string }).public_session_id, syntheticAttempt.id);
   });
 });

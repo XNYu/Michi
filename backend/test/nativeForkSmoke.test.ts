@@ -28,13 +28,15 @@ for (const runtimeId of ['codex', 'claude']) {
     const config = require('../src/services/agentConfig') as typeof import('../src/services/agentConfig');
     const { McpSlotRegistry, mountMcp } = require('../src/services/mcpServer') as typeof import('../src/services/mcpServer');
     const { tryForkChatSession } = require('../src/services/nativeFork') as typeof import('../src/services/nativeFork');
+    const { claudeTestOptions } = require('./helpers/claudeTestOptions') as typeof import('./helpers/claudeTestOptions');
     closeDb(); initDb();
     configureRuntimeDeps({ historyStore: { getNode: repo.getNode, listMessages: repo.listMessages,
       getWorkspace: repo.getWorkspace, getWorkspaceInstructions: repo.getWorkspaceInstructions,
       hasGrant: repo.hasGrant, grantPermission: repo.grantPermission }, dataDir: directory,
       providerKeys: { getProviderApiKey: () => null },
       agentConfig: { getAgentConfig: config.getAgentConfig, resolveModel: config.resolveModel, resolveReasoning: config.resolveReasoning } });
-    const registry = new McpSlotRegistry();
+    // Read once the server below listens: the port the runtime gets.
+    const registry = new McpSlotRegistry({ mcpPort: () => (server.address() as AddressInfo).port });
     const app = express(); app.use(express.json());
     const router = express.Router(); mountMcp(router, registry); app.use('/api', router);
     const server = app.listen(0, '127.0.0.1');
@@ -62,15 +64,19 @@ for (const runtimeId of ['codex', 'claude']) {
       }
       const port = (server.address() as AddressInfo).port;
       runtime = runtimeId === 'codex'
-        ? new (require('../src/agents/codex/CodexRuntime').CodexRuntime)(bridge, registry, port)
-        : new (require('../src/agents/claude/ClaudeRuntime').ClaudeRuntime)(bridge, registry, port);
+        // The factory's options: the real CLI needs this process's environment (PATH, HOME).
+        ? new (require('michi-runtime/internal/adapters/codex/CodexRuntime').CodexRuntime)({
+          ...(require('../src/agents/runtimeFactories') as typeof import('../src/agents/runtimeFactories')).codexAdapterOptions(
+            { host: (require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost')).michiTestHost() }),
+          bridge, mcpSlots: registry })
+        : new (require('michi-runtime/internal/adapters/claude/ClaudeRuntime').ClaudeRuntime)({ ...claudeTestOptions(), bridge, mcpSlots: registry });
       const parent = await runtime!.newSession({ ...options, sessionId: nodeId });
       const parentReply = await answer(parent, `Do not use tools. Remember this exact test token: ${token}. Reply only ACK.`);
       assert.ok(parentReply.trim());
       assert.ok(parent.nativeSessionId);
       if (runtimeId === 'claude') {
-        const { getClaudeJsonlPath } = require('../src/agents/claude/claudeProjectsPath') as typeof import('../src/agents/claude/claudeProjectsPath');
-        const transcriptPath = getClaudeJsonlPath(directory, parent.nativeSessionId!);
+        const { getClaudeJsonlPath } = require('michi-runtime/internal/adapters/claude/claudeProjectsPath') as typeof import('michi-runtime/internal/adapters/claude/claudeProjectsPath');
+        const transcriptPath = getClaudeJsonlPath(claudeTestOptions(), directory, parent.nativeSessionId!);
         assert.ok(fs.existsSync(transcriptPath), `Claude did not persist its transcript at ${transcriptPath}`);
       }
       repo.updateNodeResumeBinding(nodeId, { acp_session_id: parent.nativeSessionId!, runtime_id: runtimeId,

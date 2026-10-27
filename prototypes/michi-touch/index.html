@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f8f8f5">
+  <title>Michi — 顺着念头走</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23495c47'/%3E%3Cpath d='M12 28V12m0 11c0-10 16-3 16-13M12 18c0 10 16 3 16 13' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <svg class="icon-defs" aria-hidden="true"><defs>
+    <symbol id="i-branch" viewBox="0 0 24 24"><path d="M6 6v12M6 12c0-5 12 1 12-6"/><circle cx="6" cy="4" r="2"/><circle cx="6" cy="20" r="2"/><circle cx="18" cy="4" r="2"/></symbol>
+    <symbol id="i-tree" viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="5" rx="1.5"/><rect x="2" y="16.5" width="6" height="5" rx="1.5"/><rect x="16" y="16.5" width="6" height="5" rx="1.5"/><path d="M12 7.5v4.5M5 16.5V12h14v4.5"/></symbol>
+    <symbol id="i-comment" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-8 8H5l-3 2v-10a9 9 0 0 1 18 0Z"/><path d="M7 9h8M7 13h5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-7 7M10 21H3v-7m0 7 7-7"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V5a2 2 0 0 1 4 0v7-2a2 2 0 0 1 4 0v2-1a2 2 0 0 1 4 0v5c0 4-3 6-6 6-4 0-6-3-9-6a2 2 0 0 1 3-3Z"/></symbol>
+  </defs></svg>
+
+  <header class="lab-header"><a class="wordmark" href="./" aria-label="Michi 原型首页"><span class="brand-symbol">m</span>michi<span class="lab-divider"></span><span class="lab-label">交互实验室</span></a><span class="edition">STUDY 01 <span>·</span> OCT 2026</span></header>
+  <main class="lab">
+    <aside class="intro">
+      <div class="eyebrow"><span class="small-dot"></span> 跟着好奇心走</div>
+      <h1>一个念头，<br>另一条路。</h1>
+      <p class="intro-copy">对话不必是一条直线。<br>让想法分岔，再轻松回到这里。</p>
+      <div class="gesture-guide">
+        <button id="try-tree" class="guide-row"><span class="guide-number">01</span><span><strong>把思路展开</strong><small>点右上角，或向左下方拉开<br>滑动整棵树，轻点切换页面</small></span><svg class="icon"><use href="#i-tree"/></svg></button>
+        <button id="try-press" class="guide-row"><span class="guide-number">02</span><span><strong>从这里，长出分支</strong><small>按住一段内容，停留片刻<br>Branch 开新路，Comment 留想法</small></span><svg class="icon"><use href="#i-hand"/></svg></button>
+      </div>
+      <div class="lab-controls"><button id="toggle-size"><svg class="icon"><use href="#i-expand"/></svg><span>展开画布</span></button><button id="reset"><svg class="icon"><use href="#i-reset"/></svg>重置体验</button></div>
+      <p class="prototype-note">Three.js · 本地交互原型<br>示例对话 · 操作仅保存在此浏览器</p>
+    </aside>
+
+    <section class="device-wrap" aria-label="Michi 交互原型">
+      <div class="device" id="device">
+        <div class="status-bar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg width="16" height="12" viewBox="0 0 16 12"><path d="M1 11V8h2v3zm4 0V6h2v5zm4 0V3h2v8zm4 0V0h2v11z" fill="currentColor"/></svg><svg width="17" height="12" viewBox="0 0 20 14"><path d="M2 4q8-7 16 0M5 7q5-4 10 0M8 10q2-2 4 0" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><circle cx="10" cy="13" r="1" fill="currentColor"/></svg><span class="battery"></span></span></div>
+        <section class="page-surface" id="page-surface">
+          <nav class="app-nav"><button class="icon-button home-button" id="go-root" aria-label="回到主线"><span class="tiny-brand">m</span></button><div class="nav-title"><span id="nav-title">思考的花园</span><small id="nav-subtitle">主线</small></div><button class="tree-trigger" id="tree-trigger" aria-label="展开分支树，可向左下拖拽" aria-expanded="false"><svg class="icon"><use href="#i-tree"/></svg><span id="branch-count">5</span></button></nav>
+          <div class="page-scroll" id="page-scroll"><article id="page-content"></article></div>
+          <footer class="composer-wrap"><form id="composer" class="composer"><input id="message-input" autocomplete="off" aria-label="继续对话" placeholder="沿着这个念头，继续…"><button class="send-button" aria-label="发送示例消息" type="submit"><svg class="icon"><use href="#i-arrow"/></svg></button></form><div class="composer-caption"><span class="small-dot"></span> 留在当下，也可以走向别处</div></footer>
+        </section>
+
+        <section id="tree-panel" class="tree-panel" role="dialog" aria-modal="true" aria-label="思路的全貌" inert>
+          <header class="tree-heading"><div><div class="eyebrow">YOUR THOUGHTS, CONNECTED</div><h2>思路的全貌<span id="tree-count">05</span></h2><p>每一条路，都从一个念头开始。</p></div><button class="icon-button glass-button" id="close-tree" aria-label="收起分支树"><svg class="icon"><use href="#i-close"/></svg></button></header>
+          <div id="tree-viewport" class="tree-viewport" aria-label="分支树，可拖拽平移、双指缩放"><div id="tree-labels"></div></div>
+          <div class="tree-toolbar"><span><i></i> 当前位置</span><div><button id="zoom-out" class="icon-button" aria-label="缩小分支树">−</button><button id="fit-tree" class="icon-button" aria-label="显示整棵树"><svg class="icon"><use href="#i-fit"/></svg></button><button id="zoom-in" class="icon-button" aria-label="放大分支树">+</button></div></div>
+          <div class="tree-bottom" id="tree-switcher"><button id="previous-page" class="icon-button" aria-label="切换到上一条思路"><svg class="icon"><use href="#i-back"/></svg></button><div><strong id="switcher-title">思考的花园</strong><p>左右滑动切换 · 轻点卡片进入</p></div><button id="next-page" class="icon-button" aria-label="切换到下一条思路"><svg class="icon"><use href="#i-back"/></svg></button></div>
+        </section>
+
+        <div class="selection-layer" id="selection-layer" hidden>
+          <button id="selection-scrim" class="selection-scrim" aria-label="取消内容选择"></button>
+          <div id="selection-preview" class="selection-preview"></div>
+          <div id="selection-menu" class="selection-menu" role="dialog" aria-modal="true" aria-label="内容操作"><span id="selection-type">段落</span><div><button id="branch-action"><svg class="icon"><use href="#i-branch"/></svg><span>Branch<small>从这里分支</small></span></button><button id="comment-action"><svg class="icon"><use href="#i-comment"/></svg><span>Comment<small>留下想法</small></span></button></div></div>
+        </div>
+        <div id="sheet-layer" class="sheet-layer" hidden><button id="sheet-scrim" class="sheet-scrim" aria-label="关闭编辑面板"></button><section id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><div class="sheet-handle"></div><div class="sheet-heading"><h2 id="sheet-title">留一个想法</h2><button id="sheet-close" class="icon-button" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div><div id="sheet-body"></div></section></div>
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+        <div class="home-indicator" aria-hidden="true"></div>
+      </div>
+      <div class="device-caption"><span class="live-dot"></span><span id="live-caption">可以点，也可以按住。试试看。</span></div>
+    </section>
+    <aside class="margin-note"><span class="vertical-label">A LITTLE SPACE FOR A NEW THOUGHT</span><div class="margin-dot"></div></aside>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

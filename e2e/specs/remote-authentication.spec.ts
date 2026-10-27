@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { REMOTE_CREDENTIALS, remoteSignInLabel } from 'michi-shared';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { openSettings } from '../fixtures/shell';
 
 const connection = { id: 'remote-auth', name: 'Test remote', transport: 'ssh', sshHost: 'test-host', remotePort: 4444, hasToken: true, createdAt: 1, updatedAt: 1 };
 const localWorkspace = { workspace: { id: 'local-ws', name: 'Local project', created_at: 1 }, nodes: [], trees: [], edges: [], messages: [], artifacts: [] };
@@ -31,9 +32,7 @@ test('expired SSH authentication opens the native sign-in terminal and retries c
     return false;
   } });
   await bootWithWorkspace(page);
-  await page.getByText('Settings', { exact: true }).last().click();
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-  await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+  const settings = await openSettings(page, 'General');
   await settings.getByRole('button', { name: 'Connect remote', exact: true }).click();
   await settings.getByLabel(/\S+ SSH host$/).fill('test-host');
   await settings.getByRole('button', { name: 'Connect', exact: true }).click();

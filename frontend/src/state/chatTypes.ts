@@ -69,9 +69,18 @@ export interface ToolCallState {
   endedAt?: number;
 }
 
+/** Backend-clock ms (shared turnProjection appendText/closeTrailingTextBlock):
+ *  when the block's first frame was observed and when a later block or the
+ *  turn's end closed it. Absent on blocks persisted before the fields existed —
+ *  consumers must degrade like they do for ToolCallState.startedAt/endedAt. */
+interface TextBlockTiming {
+  startedAt?: number;
+  endedAt?: number;
+}
+
 export type AssistantBlock =
-  | { id: string; kind: 'answer'; rawText: string; streaming?: boolean }
-  | { id: string; kind: 'thinking'; rawText: string; streaming?: boolean }
+  | ({ id: string; kind: 'answer'; rawText: string; streaming?: boolean } & TextBlockTiming)
+  | ({ id: string; kind: 'thinking'; rawText: string; streaming?: boolean } & TextBlockTiming)
   | {
       id: string;
       kind: 'tool';
@@ -84,6 +93,7 @@ export type AssistantBlock =
       id: string;
       kind: 'user-input';
       requestId: number;
+      interaction?: import('michi-shared').DurableUserInput;
       section: 'answer';
       rawOffset: number;
     };
@@ -110,6 +120,8 @@ export interface UserSendMeta {
   permissionMode?: import('michi-shared').ChatPermissionMode;
   /** Quoted passage for this turn. Rendered as a chip in the bubble. */
   quotedText?: string;
+  /** Where quotedText came from (ChatMessage.quoteSource), for a retry's framing. */
+  quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
   /** File attachments for this turn. Rendered as decorative pills. */
   attachments?: MessageAttachment[];
   /** Pending reply-to-selection comments for this turn. Rendered as chips. */
@@ -128,6 +140,11 @@ export interface UserSendMeta {
   providerId?: string;
   modelId?: string;
   reasoning?: AgentReasoning | null;
+  /**
+   * The send isn't the composer's (a prompt the ⌘J assistant was asked to
+   * send, a reply to a selection): leave the node's composer draft as it is.
+   */
+  keepDraft?: boolean;
 }
 
 /** Runtime binding fields a send or retry passes through to ensureSession. */
@@ -143,6 +160,8 @@ export interface CreateChildChatOptions {
 }
 
 export interface ChatMessage {
+  usageSummary?: UsageSummary;
+  warnings?: import('michi-shared').RuntimeWarning[];
   id: string;
   role: 'user' | 'assistant';
   /** User-typed body for user messages; legacy assistant body for old data. */
@@ -157,6 +176,8 @@ export interface ChatMessage {
   thought?: string;
   /** Latest plan entries from the agent. Plan events are a full replace, not an append. */
   plan?: PlanEntry[];
+  /** Subagents this assistant turn delegated to; durable, persisted in metadata. */
+  subagents?: SubagentInfo[];
   /** Unix ms when this message was created (user) or when the assistant turn began. Optional - legacy persisted messages lack it. */
   createdAt?: number;
   /**
@@ -166,6 +187,12 @@ export interface ChatMessage {
    * lines and rely on the legacy pre-wrap path.
    */
   quotedText?: string;
+  /**
+   * Where quotedText came from when not a selection from a reply (the ⌘J
+   * assistant's attached context), so a retry frames it the same way. In
+   * memory only: not persisted.
+   */
+  quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
   /**
    * File attachments the user dropped/pasted onto this turn. Decorative in
    * the transcript; the wire payload still carries them via the
@@ -206,25 +233,20 @@ export interface PermissionRequest {
 
 export interface UserInputRequest {
   requestId: number;
+  interactionId?: string;
   questions: UserInputQuestion[];
   answers: UserInputAnswer[];
   resolved?: boolean;
+  interrupted?: boolean;
 }
 
-export interface SubagentInfo {
-  sessionId: string;
-  sessionName: string;
-  agentName: string;
-  initialQuery: string;
-  status: 'working' | 'terminated';
-  statusMessage?: string;
-  group: string;
-  dependsOn: string[];
-  currentTool?: string;
-}
+/** Shared roster contract; folded by `mergeSubagentRoster` / `applySubagentActivity`. */
+export type SubagentInfo = import('michi-shared').SubagentInfo;
+export type SubagentActivity = import('michi-shared').SubagentActivity;
 
 export interface UsageSummary {
   totalCredits?: number;
+  charge?: import('michi-shared').UsageCharge;
   turnDurationMs?: number;
   source?: string;
   totalTokens?: number;
@@ -251,6 +273,7 @@ export interface ComposerDraft {
   mentions: ComposerMention[];
   /** Selection quote the composer is replying to. Attachments are intentionally not persisted. */
   quotedText?: string;
+  quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
 }
 
 /**
@@ -278,6 +301,12 @@ export interface TrimSnapshot {
 }
 
 export interface ChatNodeState {
+  /** Server-owned native Page helper binding. Hydrated for embedding only;
+   * never accepted from workspace sync writes. */
+  pageId?: string | null;
+  /** Server-owned: the Meta agent maintenance job that ran this transcript.
+   * Hydrated read-only, never written back by workspace sync. */
+  maintenanceJobId?: string | null;
   permissionMode?: import('michi-shared').ChatPermissionMode;
   /** Stable id used as the key in the nodes map. */
   nodeId: string;
@@ -386,6 +415,9 @@ export interface ChatNodeState {
    * Undefined for unclassified errors / non-Kiro runtimes. Transient only —
    * not persisted; cleared when a new turn starts. */
   errorKind?: string;
+  /** Original execution identity retained when its durable outcome is unknown. */
+  errorTurnId?: string;
+  errorRecovery?: 'checking' | 'unavailable';
   minimized?: boolean;
   /**
    * Transient - how long (ms) the agent has been silent during the current
@@ -461,6 +493,9 @@ export interface ChatNodeState {
   contextUsagePercentage?: number;
   usageSummary?: UsageSummary;
   mcpServerError?: { serverName: string; error: string } | null;
+  warning?: import('michi-shared').RuntimeWarning | null;
+  errorRecoverable?: boolean;
+  errorCompletedAt?: number;
   /**
    * Persisted composer draft for this node. Lets the user switch threads,
    * workspaces, or panes without losing partially-written text and @mentions.
@@ -524,17 +559,7 @@ export interface PendingComment {
   /** Unix ms when added; kept for UI ordering / potential future sorting. */
   createdAt: number;
   /** When the comment targets an artifact file, carries source metadata. */
-  source?: {
-    type: 'artifact';
-    name?: string;
-    filePath: string;
-    /**
-     * W3C Web Annotation-aligned text selector for precise sub-document
-     * anchoring. Carries prefix/suffix for disambiguation, character offsets,
-     * line numbers, and markdown heading ancestry.
-     */
-    selector?: import('../lib/textSelector').TextSelector;
-  };
+  source?: import('../lib/quoteFormat').QuoteSource;
 }
 
 /**
@@ -558,8 +583,12 @@ export interface PendingQueuedMessage {
   attachments: AttachmentRef[];
   /** Quoted-selection text active at queue time, if any. */
   quotedText?: string;
+  /** Where quotedText came from, when not a selection from a reply (the ⌘J assistant's attached context). */
+  quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
   /** Pre-formatted comment block (from formatCommentsBlock) active at queue time. */
   commentBlock?: string;
+  /** Structured source metadata retained when this queue is flushed. */
+  comments?: PendingComment[];
   /** Wall-clock at queue time. Recorded but unused in v1. */
   queuedAt: number;
 }
@@ -683,6 +712,9 @@ export interface Project {
   /** Per-workspace system-prompt addendum. Edited via the manage page's
    *  Instructions panel. Stored inside workspaces.settings JSON. */
   instructions?: string;
+  /** Set on workspaces Michi itself owns (settings.system, e.g. 'assistant').
+   *  They never appear where workspaces are listed; see state/assistant/systemWorkspace.ts. */
+  system?: string;
 }
 
 export type ChatAction =
@@ -709,15 +741,18 @@ export type ChatAction =
       attachments?: MessageAttachment[];
       comments?: PendingComment[];
       mentions?: Array<{ kind: 'context' | 'node'; refId: string; label: string }>;
+      /** Not a composer send: the composer draft stays (UserSendMeta.keepDraft). */
+      keepDraft?: boolean;
+      quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
     }
-  | { type: 'chunk'; nodeId: string; assistantId: string; text: string }
+  | { type: 'chunk'; nodeId: string; assistantId: string; text: string; observedAt?: number }
   | { type: 'steering-report'; nodeId: string; assistantId: string; reports: SteeringReport[] }
   | { type: 'steer-accepted'; nodeId: string; data: ChatStreamPayloads['steer_accepted'] & ChatStreamEnvelope }
   | { type: 'queue-steering'; nodeId: string; queueId: string; steering: boolean }
-  | { type: 'thought'; nodeId: string; assistantId: string; text: string }
+  | { type: 'thought'; nodeId: string; assistantId: string; text: string; observedAt?: number }
   | { type: 'plan'; nodeId: string; assistantId: string; entries: PlanEntry[] }
-  | { type: 'tool-call'; nodeId: string; assistantId: string; tool: ToolCallState }
-  | { type: 'tool-call-update'; nodeId: string; assistantId: string; tool: ToolCallState }
+  | { type: 'tool-call'; nodeId: string; assistantId: string; tool: ToolCallState; observedAt?: number }
+  | { type: 'tool-call-update'; nodeId: string; assistantId: string; tool: ToolCallState; observedAt?: number }
   | { type: 'image-block'; nodeId: string; assistantId: string; path: string; caption?: string; mimeType: string; size: number }
   | {
       type: 'done';
@@ -728,7 +763,9 @@ export type ChatAction =
        *  finalized as 'interrupted' instead of 'completed'. */
       aborted?: boolean;
     }
-  | { type: 'error'; nodeId: string; assistantId: string; message: string; errorKind?: string }
+  | { type: 'recover-original-result'; nodeId: string; turnId: string; assistantId: string; assistant: ChatMessage; lastSeq: number; cursor: 'foreground' | 'background' }
+  | { type: 'error-recovery'; nodeId: string; state?: 'checking' | 'unavailable' }
+  | { type: 'error'; nodeId: string; assistantId: string; message: string; errorKind?: string; recoverable?: boolean; completedAt?: number; turnId?: string }
   | {
       type: 'observer-turn-start';
       nodeId: string;
@@ -815,16 +852,25 @@ export type ChatAction =
   | { type: 'spawn-prompt-started'; nodeId: string }
   | { type: 'permission-request'; nodeId: string; permission: PermissionRequest }
   | { type: 'permission-resolved'; nodeId: string; requestId?: number }
-  | { type: 'user-input-request'; nodeId: string; userInput: UserInputRequest }
-  | { type: 'user-input-resolved'; nodeId: string; answers?: UserInputAnswer[] }
-  | { type: 'subagent-list-update'; nodeId: string; subagents: SubagentInfo[] }
-  | { type: 'subagent-tool-activity'; nodeId: string; subagentSessionId: string; title: string; status: string }
+  | { type: 'user-input-request'; nodeId: string; assistantId?: string; userInput: UserInputRequest }
+  | { type: 'user-input-resolved'; nodeId: string; requestId?: number; interactionId?: string; answers?: UserInputAnswer[]; outcome?: 'answered' | 'skipped' }
+  /** Roster patch; `assistantId` targets the message that owns the roster. */
+  | { type: 'subagent-list-update'; nodeId: string; assistantId?: string; subagents: import('michi-shared').SubagentPatch[] }
+  | ({ type: 'subagent-tool-activity'; nodeId: string; assistantId?: string } & import('michi-shared').SubagentActivityPayload)
+  /**
+   * Background subagents of a node that ended without a turn reporting
+   * them (their agent process ended first); the backend already stored the
+   * same ends. From the workflow-runs feed of `workspaceId`.
+   */
+  | { type: 'background-subagents-ended'; nodeId: string; workspaceId: string; subagents: import('michi-shared').SubagentEnd[] }
   | { type: 'context-usage'; nodeId: string; contextUsagePercentage: number }
   | {
       type: 'usage-summary';
       nodeId: string;
+      assistantId?: string;
       contextUsagePercentage?: number;
       totalCredits?: number;
+      charge?: import('michi-shared').UsageCharge;
       turnDurationMs?: number;
       source?: string;
       totalTokens?: number;
@@ -838,6 +884,7 @@ export type ChatAction =
   | { type: 'compaction'; nodeId: string; active: boolean }
   | { type: 'runtime-activity'; nodeId: string; assistantId?: string; detail?: string }
   | { type: 'cancel-recovery'; nodeId: string; assistantId: string; state: 'pending' | 'settled' | 'error'; detail?: string }
+  | { type: 'warning'; nodeId: string; assistantId?: string; warning: import('michi-shared').RuntimeWarning }
   | { type: 'mcp-server-error'; nodeId: string; serverName: string; error: string }
   | { type: 'set-composer-draft'; nodeId: string; draft: ComposerDraft | null; preserveExisting?: boolean }
   | { type: 'add-comment'; nodeId: string; comment: PendingComment }
@@ -937,8 +984,10 @@ export interface ChatContextValue {
     text: string,
     meta?: UserSendMeta,
   ) => void;
-  /** Trim from a given message index (or the last turn) and resend the user text for a fresh reply. */
+  /** Inspect the original turn when its outcome is unknown; otherwise trim and resend for a fresh reply. */
   retryLastTurn: (nodeId: string, fromIndex?: number, binding?: SendBindingMeta) => void;
+  /** Explicitly execute again; an uncertain original attempt keeps its existing output and anchors. */
+  rerunLastTurn: (nodeId: string, fromIndex?: number, binding?: SendBindingMeta) => void;
   /** Trim from a given user message index and resend with new (edited) text. */
   editAndResend: (nodeId: string, fromIndex: number, newText: string) => void;
   createChildChat: (
@@ -1063,6 +1112,8 @@ export interface ChatContextValue {
   adoptTerminalPane: (launcherPaneId: string, terminalPaneId: string) => void;
   /** Open a standalone file viewer without inserting it into the chat graph. */
   openFilePane: (filePath: string, options?: { parseSourceLocation?: boolean }) => string;
+  /** Open a workspace-owned native Page beside chat in the active pane slot. */
+  openPagePane: (page: { pageId: string; workspaceId: string; backendConnectionId: string; title?: string }) => string;
   /** Open a workspace-relative working-tree diff. */
   openDiffPane: (filePath: string) => string;
   /** Open a persistent PTY surface rooted at cwd (active workspace cwd by default). */
@@ -1173,7 +1224,7 @@ export interface ChatContextValue {
    * flushes on the next outgoing prompt. `quotedText` is the selected
    * passage, `body` is the user's reply.
    */
-  addPendingComment: (nodeId: string, quotedText: string, body: string, source?: { type: 'artifact'; name?: string; filePath: string; selector?: import('../lib/textSelector').TextSelector }) => void;
+  addPendingComment: (nodeId: string, quotedText: string, body: string, source?: import('../lib/quoteFormat').QuoteSource, context?: import('./fileFeedback').FileFeedbackTarget) => boolean;
   /** Update the body text of a pending comment. No-op if the id is unknown. */
   editPendingComment: (nodeId: string, commentId: string, body: string) => void;
   /** Drop one pending comment by id. No-op if the id is unknown. */
@@ -1251,7 +1302,12 @@ export type ChatPaneValue = Pick<
   | 'focusedPane'
   | 'focusNonce'
   | 'viewMode'
->;
+> & {
+  /** Single-page mode's tabs: every pane in the slot except browser items. */
+  tabPanes?: string[];
+  /** Single-page mode's visible pane ('' otherwise); feeds paneScopeKey. */
+  pagePane?: string;
+};
 
 /** Callback-only slice for hot chat surfaces. It intentionally excludes the
  *  node map so streamed chunks do not wake every pane through React context. */
@@ -1266,6 +1322,7 @@ export type ChatActionsValue = Pick<
   | 'deleteProject'
   | 'sendMessage'
   | 'retryLastTurn'
+  | 'rerunLastTurn'
   | 'editAndResend'
   | 'createChildChat'
   | 'createBlankChild'
@@ -1325,6 +1382,7 @@ export type ChatActionsValue = Pick<
   | 'activateLauncherPane'
   | 'adoptTerminalPane'
   | 'openFilePane'
+  | 'openPagePane'
   | 'openDiffPane'
   | 'openTerminalPane'
   | 'openBrowserPane'

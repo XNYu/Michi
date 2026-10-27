@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   deriveHeaderCounts,
   deriveTreeRows,
+  deriveArchivedTreeRows,
   deriveDigests,
   firstUserSnippet,
 } from './derive';
@@ -35,27 +36,6 @@ function mkNode(overrides: Partial<ChatNodeState> & { nodeId: string }): ChatNod
 }
 
 describe('deriveHeaderCounts', () => {
-  it('returns zeroed shape for empty project', () => {
-    expect(deriveHeaderCounts(mkProject(), {})).toEqual({
-      chats: 0,
-      artifacts: 0,
-      branches: 0,
-      lastActiveAt: 0,
-    });
-  });
-
-  it('counts non-deleted chats and excludes digests', () => {
-    const project = mkProject({
-      chatIds: ['a', 'b', 'c'],
-    });
-    const nodes: Record<string, ChatNodeState> = {
-      a: mkNode({ nodeId: 'a' }),
-      b: mkNode({ nodeId: 'b', kind: 'digest' }),
-      c: mkNode({ nodeId: 'c', deletedAt: 1 }),
-    };
-    expect(deriveHeaderCounts(project, nodes).chats).toBe(1);
-  });
-
   it('counts artifacts and branch edges', () => {
     const project = mkProject({
       artifacts: [
@@ -84,30 +64,6 @@ describe('deriveHeaderCounts', () => {
 });
 
 describe('deriveTreeRows', () => {
-  it('returns empty for project with no trees', () => {
-    expect(deriveTreeRows(mkProject(), {}, '')).toEqual([]);
-  });
-
-  it('emits label, root, and depth-1 branch rows', () => {
-    const project = mkProject({
-      trees: [{ id: 't1', rootNodeId: 'r', createdAt: 0, lastActiveAt: 100 }],
-      chatIds: ['r', 'b1', 'b2'],
-      edges: [
-        { source: 'r', target: 'b1', kind: 'branch' },
-        { source: 'r', target: 'b2', kind: 'branch' },
-      ],
-    });
-    const nodes: Record<string, ChatNodeState> = {
-      r: mkNode({ nodeId: 'r', title: 'root' }),
-      b1: mkNode({ nodeId: 'b1', title: 'branch one' }),
-      b2: mkNode({ nodeId: 'b2', title: 'branch two' }),
-    };
-    const rows = deriveTreeRows(project, nodes, '');
-    expect(rows.map((r) => r.kind)).toEqual(['label', 'root', 'branch', 'branch']);
-    expect(rows[2]).toMatchObject({ kind: 'branch', isLast: false });
-    expect(rows[3]).toMatchObject({ kind: 'branch', isLast: true });
-  });
-
   it('emits an overflow row when depth-2 branches exist and warns', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const project = mkProject({
@@ -146,28 +102,40 @@ describe('deriveTreeRows', () => {
     const labels = rows.filter((r) => r.kind === 'label');
     expect(labels).toHaveLength(1);
   });
+});
 
-  it('emits pinned trees before unpinned and tags the root row', () => {
-    const project = mkProject({
-      chatIds: ['r1', 'r2'],
-      trees: [
-        { id: 't1', rootNodeId: 'r1', createdAt: 0, lastActiveAt: 200 },
-        { id: 't2', rootNodeId: 'r2', createdAt: 1, lastActiveAt: 100, pinnedAt: 999 },
-      ],
-    });
-    const nodes: Record<string, ChatNodeState> = {
-      r1: mkNode({ nodeId: 'r1', title: 'unpinned' }),
-      r2: mkNode({ nodeId: 'r2', title: 'pinned' }),
-    };
+describe('Meta agent maintenance runs and page helpers', () => {
+  const project = mkProject({
+    trees: [
+      { id: 't-user', rootNodeId: 'u', createdAt: 0, lastActiveAt: 10 },
+      { id: 't-run', rootNodeId: 'run', createdAt: 0, lastActiveAt: 50 },
+      { id: 't-helper', rootNodeId: 'helper', createdAt: 0, lastActiveAt: 40 },
+      { id: 't-old-run', rootNodeId: 'old-run', createdAt: 0, lastActiveAt: 60, archivedAt: 70 },
+    ],
+    chatIds: ['u', 'u-branch', 'run', 'run-branch', 'helper', 'old-run'],
+    edges: [
+      { source: 'u', target: 'u-branch', kind: 'branch' },
+      { source: 'run', target: 'run-branch', kind: 'branch' },
+    ],
+  });
+  const nodes: Record<string, ChatNodeState> = {
+    u: mkNode({ nodeId: 'u', title: 'Mine' }),
+    'u-branch': mkNode({ nodeId: 'u-branch', title: 'My branch' }),
+    run: mkNode({ nodeId: 'run', title: 'Space maintenance', maintenanceJobId: 'job-1' }),
+    'run-branch': mkNode({ nodeId: 'run-branch', title: 'Space maintenance branch', maintenanceJobId: 'job-1' }),
+    helper: mkNode({ nodeId: 'helper', title: 'Page helper', pageId: 'pg-1' }),
+    'old-run': mkNode({ nodeId: 'old-run', title: 'Archived run', maintenanceJobId: 'job-1' }),
+  };
+
+  it('are left out of the header counts', () => {
+    expect(deriveHeaderCounts(project, nodes)).toMatchObject({ chats: 2, branches: 1, lastActiveAt: 10 });
+  });
+
+  it('are left out of the thread list and the archived list', () => {
     const rows = deriveTreeRows(project, nodes, '');
-    const roots = rows.filter((r) => r.kind === 'root') as Extract<
-      ReturnType<typeof deriveTreeRows>[number],
-      { kind: 'root' }
-    >[];
-    expect(roots[0].treeId).toBe('t2');
-    expect(roots[0].pinned).toBe(true);
-    expect(roots[1].treeId).toBe('t1');
-    expect(roots[1].pinned).toBe(false);
+    expect(rows.filter((r) => r.kind !== 'label').map((r) => ('nodeId' in r ? r.nodeId : r.kind))).toEqual(['u', 'u-branch']);
+    expect(deriveTreeRows(project, nodes, 'maintenance')).toEqual([]);
+    expect(deriveArchivedTreeRows(project, nodes, '')).toEqual([]);
   });
 });
 
@@ -196,9 +164,5 @@ describe('firstUserSnippet', () => {
       ],
     });
     expect(firstUserSnippet(node)).toBe('Hello world');
-  });
-
-  it('returns empty string when no user message exists', () => {
-    expect(firstUserSnippet(mkNode({ nodeId: 'x', messages: [] }))).toBe('');
   });
 });

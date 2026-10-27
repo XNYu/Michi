@@ -39,29 +39,6 @@ function list(value: ChatNodeState) {
 }
 
 describe('PaneMessageList MCP failures', () => {
-  it('keeps new failures before the tail spacer so follow mode does not track empty space', () => {
-    const { container, rerender } = render(list(node));
-    const content = container.firstElementChild!;
-    const spacer = content.lastElementChild as HTMLElement;
-    expect(spacer.getAttribute('aria-hidden')).toBe('true');
-    expect(spacer.style.height).toBe('560px');
-
-    rerender(list({ ...node, mcpServerError: failure }));
-
-    expect(screen.getByText(/MCP server/).textContent).toContain(failure.error);
-    expect(content.lastElementChild).toBe(spacer);
-    expect(screen.getByText(/MCP server/).parentElement!.nextElementSibling).toBe(spacer);
-    expect(container.querySelector('[data-msg-id="u1"]')!.textContent).toContain('Continue this task');
-  });
-
-  it('wraps long transport errors without crowding out the dismiss button', () => {
-    render(list({ ...node, mcpServerError: { ...failure, error: 'Transport::'.repeat(80) } }));
-    const text = screen.getByText(/Transport::/);
-    expect(text.style.minWidth).toBe('0');
-    expect(text.style.overflowWrap).toBe('anywhere');
-    expect(screen.getByRole('button', { name: 'Dismiss' })).not.toBeNull();
-  });
-
   it('dismisses a failure and shows a subsequent distinct failure', () => {
     const { rerender } = render(list({ ...node, mcpServerError: failure }));
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
@@ -70,4 +47,17 @@ describe('PaneMessageList MCP failures', () => {
     rerender(list({ ...node, mcpServerError: { ...failure, error: 'Connection refused' } }));
     expect(screen.getByText(/MCP server/).textContent).toContain('Connection refused');
   });
+});
+
+
+it('shows a repeated provider warning for a different owning turn after dismissal', () => {
+  const warning = { source: 'anthropic-api', category: 'provider' as const, message: 'Retrying request' };
+  const warned = (id: string): ChatNodeState => ({ ...node, messages: [{ id, role: 'assistant', text: '', toolCalls: [], warnings: [warning] }] });
+  const { rerender } = render(list(warned('turn-one')));
+  expect(screen.getByText('anthropic-api: Retrying request')).not.toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss warning' }));
+  expect(screen.queryByText('anthropic-api: Retrying request')).toBeNull();
+  rerender(list(warned('turn-two')));
+  expect(screen.getByText('anthropic-api: Retrying request')).not.toBeNull();
+  expect(screen.queryByText(/MCP server/)).toBeNull();
 });

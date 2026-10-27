@@ -15,7 +15,7 @@ export function FollowUpRow({
   onContinue,
   onBranch,
   disabled = false,
-}: FollowUpRowProps): JSX.Element {
+}: FollowUpRowProps): React.JSX.Element {
   const ariaContinue = `Continue follow-up in current pane: ${question}. Press B to branch into a new pane.`;
   const ariaBranch = `Branch follow-up into new pane: ${question}`;
 

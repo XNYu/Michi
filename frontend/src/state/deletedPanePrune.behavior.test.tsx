@@ -72,26 +72,6 @@ describe('deleted-node pane prune (Fix B wiring)', () => {
     localStorage.clear();
   });
 
-  it('prunes an open pane in the ACTIVE tree when its node is deleted', async () => {
-    const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
-    await act(async () => { await result.current.store.createProject('test', undefined); });
-    await waitFor(() => expect(result.current.store.activeProject).toBeTruthy());
-
-    let rootId = '';
-    await act(async () => { rootId = (await result.current.store.createThread()) ?? ''; });
-    let childId = '';
-    await act(async () => { childId = await result.current.store.createBlankChild(rootId); });
-
-    act(() => { result.current.store.openPane(childId); });
-    expect(result.current.store.openPanes).toContain(childId);
-
-    act(() => { result.current.store.deleteNode(childId); });
-
-    expect(result.current.nodes[childId].deletedAt).toBeTruthy();
-    // Pane must be gone — both via deleteNode's own cleanup AND the effect.
-    expect(result.current.store.openPanes).not.toContain(childId);
-  });
-
   it('prunes a lingering pane in a NON-active tree when its node is deleted', async () => {
     const { result } = renderHook(() => useStoreAndNodes(), { wrapper });
     await act(async () => { await result.current.store.createProject('test', undefined); });

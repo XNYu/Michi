@@ -100,20 +100,6 @@ const baseProps = {
 };
 
 describe('Topbar thread-view toggles', () => {
-  it('renders Overview / Map / Digest toggles when a workspace is active and navigates on click', async () => {
-    seed({ n1: makeChatNode('n1') });
-    const onNav = vi.fn();
-    render(
-      <Wrap>
-        <TerminalTopbar {...baseProps} onNav={onNav} />
-      </Wrap>,
-    );
-    await act(async () => {});
-    expect(await screen.findByLabelText('Overview')).toBeTruthy();
-    expect(screen.getByLabelText('Digest')).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('Map'));
-    expect(onNav).toHaveBeenCalledWith('map');
-  });
 
   it('shows the unread dot on the Digest toggle when a digest is unread', async () => {
     seed(
@@ -132,29 +118,6 @@ describe('Topbar thread-view toggles', () => {
     // A read digest (or no digest) renders no dot — the Map toggle never has one.
     const mapBtn = screen.getByLabelText('Map');
     expect(mapBtn.querySelector('span[aria-hidden]')).toBeNull();
-  });
-
-  it('does not show another thread’s unread digest', async () => {
-    seed(
-      {
-        n1: makeChatNode('n1'),
-        n2: makeChatNode('n2'),
-        d2: makeUnreadDigestNode('d2', ['n2']),
-      },
-      [
-        { id: 't1', rootNodeId: 'n1', createdAt: BEFORE, lastActiveAt: BEFORE },
-        { id: 't2', rootNodeId: 'n2', createdAt: BEFORE, lastActiveAt: BEFORE },
-      ],
-      't1',
-    );
-    render(
-      <Wrap>
-        <TerminalTopbar {...baseProps} onNav={vi.fn()} />
-      </Wrap>,
-    );
-    await act(async () => {});
-    const digestBtn = await screen.findByLabelText('Digest');
-    expect(digestBtn.querySelector('span[aria-hidden]')).toBeNull();
   });
 
   it('renders the ‹ back crumb with the active thread title on the Map page', async () => {

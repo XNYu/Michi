@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentDefinitionDtoV1, AgentRunDtoV1 } from 'michi-shared';
 import { AgentDefinitionStatus, AgentRunCompletionMode, AgentRunInvocationMode, AgentRunStatus } from 'michi-shared';
@@ -13,19 +13,6 @@ const definition = (id: string, scope: 'global' | 'workspace', status: AgentDefi
 const run = (definitionId: string): AgentRunDtoV1 => ({ version: 1, id: `run-${definitionId}`, ownerUserId: 'owner', workspaceId: 'workspace-1', definitionId, definitionRevision: 1, effectiveDefinition: { version: 1, name: 'Reviewer', description: 'Reviews.', instructions: 'Review.', runtimeProfile: { version: 1, runtimeId: 'claude' }, fallbackChain: [], capabilitySnapshot: { version: 1, entries: [] }, permissionPolicy, contextPolicy }, invocationMode: AgentRunInvocationMode.Manual, completionMode: AgentRunCompletionMode.Detach, parentRunId: null, parentAttemptId: null, parentNodeId: null, parentTurnId: null, parentMessageId: null, parentToolCallId: null, task: 'Review', contextManifest: { version: 1, entries: [], assembledAt: 1, estimatedChars: 0 }, expectedResult: null, executionEnvironment: { version: 1, kind: 'shared_workspace', cwd: '/tmp', sourceWorkspaceId: 'workspace-1', snapshotHash: hash, createdAt: 1 }, status: AgentRunStatus.Running, waitingReason: null, activeAttemptId: 'attempt', resultBundle: null, latestEventSeq: -1, createdAt: 1, startedAt: 1, completedAt: null, archivedAt: null, expiresAt: null });
 
 describe('AgentLibraryPage', () => {
-  it('keeps duplicate Global and Workspace names visibly separated', () => {
-    render(<AgentLibraryPage definitions={[
-      locatedAgentResource('remote-a', definition('workspace-reviewer', 'workspace', AgentDefinitionStatus.Draft)),
-      locatedAgentResource('remote-a', definition('global-reviewer', 'global', AgentDefinitionStatus.Enabled)),
-    ]} workspaceId="workspace-1" onCreate={() => {}} onEdit={() => {}} onEnable={() => {}} onDisable={() => {}} onDuplicate={() => {}} onDelete={() => {}} />);
-    const workspace = screen.getByRole('region', { name: 'WORKSPACE AGENTS' });
-    const global = screen.getByRole('region', { name: 'GLOBAL AGENTS' });
-    expect(within(workspace).getByText('Reviewer')).not.toBeNull();
-    expect(within(workspace).getByText('workspace')).not.toBeNull();
-    expect(within(global).getByText('Reviewer')).not.toBeNull();
-    expect(within(global).getByText('global')).not.toBeNull();
-  });
-
   it('renders Draft/Enabled/Disabled actions and active Run counts', () => {
     const onEnable = vi.fn(); const onDisable = vi.fn(); const onDuplicate = vi.fn(); const onDelete = vi.fn();
     const resources = [

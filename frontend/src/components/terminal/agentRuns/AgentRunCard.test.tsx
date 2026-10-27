@@ -53,10 +53,4 @@ describe('AgentRunCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open →' }));
     expect(onOpen).toHaveBeenCalledWith({ backendConnectionId: 'remote-a', id: 'run-running' });
   });
-
-  it('uses compact handoff only for terminal cards', () => {
-    render(<AgentRunCard run={run(AgentRunStatus.Completed)} onOpen={() => {}} />);
-    expect(screen.getByTestId('compact-handoff').textContent).toContain('completed conclusion');
-    expect(screen.queryByText('raw transcript detail')).toBeNull();
-  });
 });

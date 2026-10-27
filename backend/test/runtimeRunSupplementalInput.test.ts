@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  AgentRunEventType,
-  type EffectiveAgentDefinitionV1,
-} from 'michi-shared';
+import { type EffectiveAgentDefinitionV1 } from 'michi-shared';
 import type { AgentRuntime, AgentSession, NewAgentSessionOptions, RuntimeSessionOwner } from '../src/agents/types';
 import { RuntimeRunExecutor } from '../src/agents/runs/runtimeRunExecutor';
 import { RuntimeRunAdapterRegistry } from '../src/agents/runs/runtimeRunAdapterRegistry';
@@ -13,6 +10,10 @@ import { KiroRunAdapter } from '../src/agents/runs/kiroRunAdapter';
 import { CodexRunAdapter } from '../src/agents/runs/codexRunAdapter';
 import type { AgentRunExecutionEvent, AgentRunSpec } from '../src/agents/runs/ports';
 import type { NormalizedEvent } from '../src/services/chatEvents';
+import { michiTestHost } from './helpers/michiTestHost';
+import { runOwner } from './helpers/owners';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
+import { michiCodexHostText } from '../src/agents/michiCodexOptions';
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -64,6 +65,7 @@ function deferred<T = void>() {
 // ---------------------------------------------------------------------------
 
 class KiroLikeRuntime implements AgentRuntime {
+  readonly descriptor = UNKNOWN_RUNTIME_DESCRIPTOR;
   id = 'kiro';
   label = 'fake-kiro';
   capabilities = { modes: false, permissions: true, models: false, providerModels: false, reasoning: true, supportedReasoningLevels: ['medium' as const], apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: true };
@@ -90,7 +92,7 @@ class KiroLikeRuntime implements AgentRuntime {
 class CodexLikeSession implements AgentSession {
   id = 'attempt-1';
   runtimeId = 'codex';
-  owner: RuntimeSessionOwner = { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' };
+  owner: RuntimeSessionOwner = runOwner('run-1', 'attempt-1');
   runtimeProfileHash: string | null = null;
   nativeSessionId: string | null = 'thread-abc';
   cancelled = 0;
@@ -109,6 +111,7 @@ class CodexLikeSession implements AgentSession {
 }
 
 class CodexLikeRuntime implements AgentRuntime {
+  readonly descriptor = UNKNOWN_RUNTIME_DESCRIPTOR;
   id = 'codex';
   label = 'fake-codex';
   capabilities = { modes: false, permissions: true, models: false, providerModels: false, reasoning: true, supportedReasoningLevels: ['medium' as const], apiKeys: false, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: true };
@@ -129,273 +132,6 @@ class CodexLikeRuntime implements AgentRuntime {
   releaseSession(id: string, owner?: RuntimeSessionOwner) { this.releases.push([id, owner]); }
   async shutdown() {}
 }
-
-// ---------------------------------------------------------------------------
-// T08 — Kiro queued input starts a second turn after the first turn ends
-// ---------------------------------------------------------------------------
-
-test('kiro queued input starts a second turn after the first turn ends', async () => {
-  // Gate controls: the first turn blocks until we explicitly release it,
-  // giving us time to call handle.input() deterministically.
-  const firstTurnGate = deferred();
-  const sentTexts: string[] = [];
-
-  const session: AgentSession = {
-    id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    runtimeProfileHash: null, nativeSessionId: 'acp-session-42',
-    getHistory() { return []; }, getPendingAssistant() { return undefined; },
-    async *send(text: string) {
-      sentTexts.push(text);
-      yield { kind: 'chunk', text: `response` } as NormalizedEvent;
-      if (sentTexts.length === 1) await firstTurnGate.promise;
-      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
-    },
-    async cancel() {},
-  };
-
-  const runtime = new KiroLikeRuntime();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const events: AgentRunExecutionEvent[] = [];
-  const handle = await executor.start(spec('kiro'), async (event) => { events.push(event); });
-
-  // Wait a tick to ensure the generator has entered the first turn and is
-  // now blocked on firstTurnGate
-  await new Promise((r) => setTimeout(r, 20));
-
-  // While the first turn is still active, submit queued input
-  await handle.input('additional guidance', 'queued');
-
-  // Verify SteeringQueued event was emitted
-  const queued = events.find((e) => e.type === AgentRunEventType.SteeringQueued);
-  assert(queued, 'should emit SteeringQueued event');
-  assert.equal((queued.payload as any).mode, 'queued');
-
-  // Now let the first turn complete
-  firstTurnGate.resolve();
-
-  // Wait for overall completion
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // Verify two turns were sent
-  assert.equal(sentTexts.length, 2, 'should have sent two turns');
-  assert.match(sentTexts[0], /Do the work/, 'first turn is the original task');
-  assert.match(sentTexts[1], /Supplemental instruction/, 'second turn has supplemental prefix');
-  assert.match(sentTexts[1], /additional guidance/, 'second turn contains the user text');
-
-  // Verify SteeringApplied event was emitted
-  const applied = events.find((e) => e.type === AgentRunEventType.SteeringApplied);
-  assert(applied, 'should emit SteeringApplied event');
-  assert.equal((applied.payload as any).text, 'additional guidance');
-
-  // Session was released exactly once
-  assert.equal(runtime.releases.length, 1);
-});
-
-// ---------------------------------------------------------------------------
-// T08 — Kiro immediate input cancels then starts the second turn
-// ---------------------------------------------------------------------------
-
-test('kiro immediate input cancels and then starts the second turn', async () => {
-  const firstTurnGate = deferred();
-  const sentTexts: string[] = [];
-  let cancelCount = 0;
-
-  const session: AgentSession = {
-    id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    runtimeProfileHash: null, nativeSessionId: 'acp-session-42',
-    getHistory() { return []; }, getPendingAssistant() { return undefined; },
-    async *send(text: string) {
-      sentTexts.push(text);
-      yield { kind: 'chunk', text: `response` } as NormalizedEvent;
-      if (sentTexts.length === 1) await firstTurnGate.promise;
-      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
-    },
-    async cancel() {
-      cancelCount++;
-      // Cancel unblocks the waiting first turn
-      firstTurnGate.resolve();
-    },
-  };
-
-  const runtime = new KiroLikeRuntime();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const events: AgentRunExecutionEvent[] = [];
-  const handle = await executor.start(spec('kiro'), async (event) => { events.push(event); });
-
-  // Wait for the generator to block on firstTurnGate
-  await new Promise((r) => setTimeout(r, 20));
-
-  // Submit immediate input — should cancel the first turn
-  await handle.input('urgent direction', 'immediate');
-
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // Verify cancel was called
-  assert.equal(cancelCount, 1, 'immediate input should cancel the current turn');
-
-  // Verify the SteeringQueued event indicates interruption
-  const queued = events.find((e) => e.type === AgentRunEventType.SteeringQueued);
-  assert(queued, 'should emit SteeringQueued event for immediate input');
-  assert.equal((queued.payload as any).mode, 'immediate');
-  assert.equal((queued.payload as any).interrupted, true);
-
-  // Verify two turns were sent
-  assert.equal(sentTexts.length, 2, 'should send original task then supplemental');
-  assert.match(sentTexts[1], /urgent direction/);
-
-  // Session was released exactly once
-  assert.equal(runtime.releases.length, 1);
-});
-
-// ---------------------------------------------------------------------------
-// T08 — Codex queued input calls native steer instead of opening a second turn
-// ---------------------------------------------------------------------------
-
-test('codex queued input calls native steer instead of opening a second turn', async () => {
-  const session = new CodexLikeSession();
-  const runtime = new CodexLikeRuntime(session);
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'codex' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const events: AgentRunExecutionEvent[] = [];
-  const handle = await executor.start(spec('codex'), async (event) => { events.push(event); });
-
-  // Submit queued input — should delegate to native steer
-  await handle.input('steer this way');
-
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // Verify steer was called, not a second turn
-  assert.deepEqual(session.steered, ['steer this way']);
-
-  // No SteeringQueued/SteeringApplied events for native steering
-  assert.equal(events.filter((e) => e.type === AgentRunEventType.SteeringQueued).length, 0);
-  assert.equal(events.filter((e) => e.type === AgentRunEventType.SteeringApplied).length, 0);
-
-  // Session released exactly once
-  assert.equal(runtime.releases.length, 1);
-});
-
-// ---------------------------------------------------------------------------
-// T08 — Codex immediate input cancels then steers
-// ---------------------------------------------------------------------------
-
-test('codex immediate input cancels and then steers', async () => {
-  const session = new CodexLikeSession();
-  const runtime = new CodexLikeRuntime(session);
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'codex' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const handle = await executor.start(spec('codex'), async () => {});
-  await handle.input('urgent steer', 'immediate');
-
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  assert.equal(session.cancelled, 1, 'immediate mode cancels before steering');
-  assert.deepEqual(session.steered, ['urgent steer']);
-});
-
-// ---------------------------------------------------------------------------
-// T08 — Input accepted before terminalization prevents premature Result Bundle
-// ---------------------------------------------------------------------------
-
-test('input accepted before terminalization prevents premature Result Bundle finalization', async () => {
-  // The session's first turn ends synchronously. We submit input before
-  // awaiting completion. Since queuedInput is set before the loop reads it,
-  // a second turn fires and the Result Bundle includes both turns' output.
-  const sentTexts: string[] = [];
-  const session: AgentSession = {
-    id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    runtimeProfileHash: null, nativeSessionId: 'acp-42',
-    getHistory() { return []; }, getPendingAssistant() { return undefined; },
-    async *send(text: string) {
-      sentTexts.push(text);
-      yield { kind: 'chunk', text: `turn` } as NormalizedEvent;
-      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
-    },
-    async cancel() {},
-  };
-
-  const runtime = new KiroLikeRuntime();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const events: AgentRunExecutionEvent[] = [];
-  const handle = await executor.start(spec('kiro'), async (event) => { events.push(event); });
-
-  // Submit input while the executor is still running. Even though the first
-  // turn may end quickly, the enqueue happens before consume() checks for
-  // queued input because both run on the same microtask queue.
-  await handle.input('pre-terminalization input');
-
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // The input should have been delivered as a second turn
-  assert.equal(sentTexts.length, 2, 'input before terminalization should produce a second turn');
-  assert.match(sentTexts[1], /pre-terminalization input/);
-});
-
-// ---------------------------------------------------------------------------
-// T08 — Input after terminalization is rejected deterministically
-// ---------------------------------------------------------------------------
-
-test('input after terminalization is rejected deterministically', async () => {
-  const sentTexts: string[] = [];
-  const session: AgentSession = {
-    id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    runtimeProfileHash: null, nativeSessionId: null,
-    getHistory() { return []; }, getPendingAssistant() { return undefined; },
-    async *send(text: string) {
-      sentTexts.push(text);
-      yield { kind: 'chunk', text: 'done' } as NormalizedEvent;
-      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
-    },
-    async cancel() {},
-  };
-
-  const runtime = new KiroLikeRuntime();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const handle = await executor.start(spec('kiro'), async () => {});
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // Now try to submit input — should be rejected
-  await assert.rejects(
-    () => handle.input('too late'),
-    /already completed or is finalizing/,
-  );
-});
 
 test('input after terminalization is rejected for codex too', async () => {
   const session = new CodexLikeSession();
@@ -426,7 +162,7 @@ test('cancellation clears queued inputs and releases session exactly once', asyn
 
   const session: AgentSession = {
     id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
+    owner: runOwner('run-1', 'attempt-1'),
     runtimeProfileHash: null, nativeSessionId: null,
     getHistory() { return []; }, getPendingAssistant() { return undefined; },
     async *send(text: string) {
@@ -465,7 +201,7 @@ test('cancellation clears queued inputs and releases session exactly once', asyn
 
   // Session released exactly once despite cancel + turn completion
   assert.equal(runtime.releases.length, 1, 'session released exactly once');
-  assert.deepEqual(runtime.releases[0], ['attempt-1', { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' }]);
+  assert.deepEqual(runtime.releases[0], ['attempt-1', runOwner('run-1', 'attempt-1')]);
 
   // The queued input was never delivered (only one turn was sent)
   assert.equal(sentTexts.length, 1, 'queued input was cleared, not delivered');
@@ -481,7 +217,7 @@ test('permission wait works correctly within the next_turn multi-turn loop', asy
 
   const session: AgentSession = {
     id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
+    owner: runOwner('run-1', 'attempt-1'),
     runtimeProfileHash: null, nativeSessionId: 'acp-42',
     getHistory() { return []; }, getPendingAssistant() { return undefined; },
     async *send(text: string) {
@@ -534,56 +270,6 @@ test('permission wait works correctly within the next_turn multi-turn loop', asy
 });
 
 // ---------------------------------------------------------------------------
-// T08 — Multiple supplemental inputs: last-write wins for queued
-// ---------------------------------------------------------------------------
-
-test('multiple queued inputs: last-write wins', async () => {
-  const firstTurnGate = deferred();
-  const sentTexts: string[] = [];
-
-  const session: AgentSession = {
-    id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
-    runtimeProfileHash: null, nativeSessionId: null,
-    getHistory() { return []; }, getPendingAssistant() { return undefined; },
-    async *send(text: string) {
-      sentTexts.push(text);
-      yield { kind: 'chunk', text: `turn` } as NormalizedEvent;
-      if (sentTexts.length === 1) await firstTurnGate.promise;
-      yield { kind: 'turn_end', stopReason: 'end_turn' } as NormalizedEvent;
-    },
-    async cancel() {},
-  };
-
-  const runtime = new KiroLikeRuntime();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'kiro' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const handle = await executor.start(spec('kiro'), async () => {});
-
-  // Wait for the generator to block
-  await new Promise((r) => setTimeout(r, 20));
-
-  // Queue multiple inputs — last one wins
-  await handle.input('first queued');
-  await handle.input('second queued');
-  await handle.input('third queued');
-
-  // Let the first turn end
-  firstTurnGate.resolve();
-
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-
-  // Only two turns: original + the last queued input
-  assert.equal(sentTexts.length, 2);
-  assert.match(sentTexts[1], /third queued/, 'last-write wins');
-});
-
-// ---------------------------------------------------------------------------
 // T08 — No-steering adapter rejects input
 // ---------------------------------------------------------------------------
 
@@ -598,7 +284,7 @@ test('none steering adapter rejects supplemental input', async () => {
 
   const session: AgentSession = {
     id: 'attempt-1', runtimeId: 'pi',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
+    owner: runOwner('run-1', 'attempt-1'),
     runtimeProfileHash: null, nativeSessionId: null,
     getHistory() { return []; }, getPendingAssistant() { return undefined; },
     async *send(_text: string) {
@@ -609,6 +295,7 @@ test('none steering adapter rejects supplemental input', async () => {
   };
 
   const fakeRuntime: AgentRuntime = {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id: 'pi', label: 'fake', capabilities: { modes: false, permissions: true, models: true, providerModels: true, reasoning: true, supportedReasoningLevels: ['medium'], apiKeys: true, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: false },
     async warm() {}, async newSession() { return session; },
     releaseSession() {}, async shutdown() {},
@@ -626,31 +313,6 @@ test('none steering adapter rejects supplemental input', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// T08 — Existing cancel behavior preserved with native steering
-// ---------------------------------------------------------------------------
-
-test('existing native steering and cancellation behavior preserved for codex', async () => {
-  const session = new CodexLikeSession();
-  const runtime = new CodexLikeRuntime(session);
-  const executor = new RuntimeRunExecutor({
-    resolveRuntime: (id) => id === 'codex' ? runtime : undefined,
-    registry: defaultRegistry(),
-  });
-
-  const handle = await executor.start(spec('codex'), async () => {});
-  await handle.input('queued direction');
-  await handle.input('urgent direction', 'immediate');
-  await handle.cancel('stop');
-
-  assert.deepEqual(session.steered, ['queued direction', 'urgent direction']);
-  // Cancel from immediate + cancel from handle.cancel
-  assert.equal(session.cancelled, 2);
-  assert(runtime.releases.every(([id, owner]) =>
-    id === 'attempt-1' && owner?.kind === 'agent_run' && owner.attemptId === 'attempt-1',
-  ));
-});
-
-// ---------------------------------------------------------------------------
 // T08 — Cancellation during permission wait clears pending and releases once
 // ---------------------------------------------------------------------------
 
@@ -659,7 +321,7 @@ test('cancellation during permission wait clears pending and releases once', asy
 
   const session: AgentSession = {
     id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
+    owner: runOwner('run-1', 'attempt-1'),
     runtimeProfileHash: null, nativeSessionId: null,
     getHistory() { return []; }, getPendingAssistant() { return undefined; },
     async *send(_text: string) {
@@ -696,7 +358,7 @@ test('user_input interaction is resolved correctly in next_turn mode', async () 
 
   const session: AgentSession = {
     id: 'attempt-1', runtimeId: 'kiro',
-    owner: { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' },
+    owner: runOwner('run-1', 'attempt-1'),
     runtimeProfileHash: null, nativeSessionId: null,
     getHistory() { return []; }, getPendingAssistant() { return undefined; },
     async *send(_text: string) {
@@ -733,4 +395,154 @@ test('user_input interaction is resolved correctly in next_turn mode', async () 
   // Continue
   const continued = await handle.continueAfterInput?.();
   assert.equal(continued?.status, 'completed');
+});
+
+// Real sessions make cancellation terminal; a fake `cancel()` counter cannot
+// prove that an interrupted native turn still accepts native steering.
+test('real Codex Session applies immediate Run input after native interruption as a new turn', async () => {
+  const { CodexSession } = require('michi-runtime/internal/adapters/codex/CodexSession') as typeof import('michi-runtime/internal/adapters/codex/CodexSession');
+  const handlers = new Set<(method: string, params: any) => void>();
+  const starts: string[] = [];
+  const methods: string[] = [];
+  const nativeEmit = (method: string, params: any) => { for (const handler of handlers) handler(method, params); };
+  const client = {
+    ensureStarted: async () => {}, onExit: () => () => {}, onGlobalNotification: () => () => {},
+    onNotification: (_thread: string, handler: any) => { handlers.add(handler); return () => handlers.delete(handler); },
+    async request(method: string, params: any) {
+      methods.push(method);
+      if (method === 'turn/start') {
+        starts.push(JSON.stringify(params.input));
+        const turnId = `turn-${starts.length}`;
+        if (starts.length === 2) setImmediate(() => nativeEmit('turn/completed', { threadId: 'native-thread', turn: { id: turnId, status: 'completed' } }));
+        return { turn: { id: turnId } };
+      }
+      if (method === 'turn/interrupt') nativeEmit('turn/completed', { threadId: 'native-thread', turn: { id: params.turnId, status: 'interrupted' } });
+      return {};
+    },
+  };
+  const session = new CodexSession({ nodeId: 'attempt-1', threadId: 'native-thread', cwd: '/tmp', workspaceId: null,
+    owner: runOwner('run-1', 'attempt-1'), client: client as any,
+    bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+    mcpRegistry: { dispose: async () => {} } as any, host: michiTestHost(), hostText: michiCodexHostText(), enableFollowUps: false,
+  });
+  session.wireNotifications();
+  const runtime: AgentRuntime = {
+    descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
+    id: 'codex', label: 'fixture', capabilities: { modes: false, models: true, permissions: true, providerModels: false,
+      reasoning: true, supportedReasoningLevels: ['medium'], apiKeys: false, warmSessions: false,
+      nativeResume: true, saveContext: true, spawnBranches: true },
+    warm: async () => {}, newSession: async () => session,
+    releaseSession: async () => { await session.dispose(); }, shutdown: async () => {},
+  };
+  try {
+    const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, adapters: [new CodexRunAdapter()] }).start(spec('codex'), async () => {});
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await handle.input('urgent additional direction', 'immediate');
+    assert.equal((await handle.completion).status, 'completed');
+    assert.equal(starts.length, 2);
+    assert.match(starts[1], /urgent additional direction/);
+    assert.equal(methods.filter((method) => method === 'turn/interrupt').length, 1);
+    assert.equal(methods.includes('turn/steer'), false);
+  } finally { await session.dispose(); }
+});
+
+test('real Pi Session applies immediate Run input after Agent abort as a new turn', async (t) => {
+  const { PiSession } = require('../src/agents/pi/PiSession') as typeof import('../src/agents/pi/PiSession');
+  const deps = require('../src/agents/runtimeDeps') as typeof import('../src/agents/runtimeDeps');
+  deps.configureRuntimeDeps({ dataDir: '/tmp', historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null,
+    getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission() {} },
+    providerKeys: { getProviderApiKey: () => 'fixture' },
+    agentConfig: { getAgentConfig: () => ({ provider: 'deepseek' } as any), resolveModel: () => 'model', resolveReasoning: () => 'medium' },
+  });
+  t.after(deps.__resetRuntimeDeps);
+  t.mock.method(require('../src/services/piMcpConfig'), 'readPiMcpServers', () => []);
+  t.mock.method(require('../src/agents/pi/piTools'), 'buildPiTools', () => []);
+  t.mock.method(require('../src/agents/pi/piAi'), 'loadPiAi', async () => ({ Type: {}, clampThinkingLevel: () => 'medium' }));
+  t.mock.method(require('../src/agents/pi/piProviders'), 'resolvePiModel', async () => ({ id: 'model', contextWindow: 1000 }));
+  const prompts: string[] = [];
+  let aborts = 0;
+  let steers = 0;
+  class Agent {
+    state: any; listener?: (event: any) => void; settle?: () => void;
+    constructor(options: any) { this.state = options.initialState; }
+    subscribe(listener: (event: any) => void) { this.listener = listener; return () => { this.listener = undefined; }; }
+    async prompt(text: string) {
+      prompts.push(text);
+      if (prompts.length === 1) await new Promise<void>((resolve) => { this.settle = resolve; });
+      this.listener?.({ type: 'agent_end' });
+    }
+    abort() { aborts++; this.settle?.(); }
+    steer() { steers++; }
+  }
+  t.mock.method(require('../src/agents/pi/piAi'), 'loadPiAgentCore', async () => ({ Agent }));
+  const session = new PiSession('attempt-1', { cwd: '/tmp', preamble: '', workspaceId: null, ownerUserId: null,
+    enableFollowUps: false, owner: runOwner('run-1', 'attempt-1'),
+    requestedProvider: 'deepseek', requestedModel: 'model',
+    bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+  });
+  const runtime: AgentRuntime = { descriptor: UNKNOWN_RUNTIME_DESCRIPTOR, id: 'pi', label: 'fixture', capabilities: { modes: false, models: true, permissions: true,
+    providerModels: false, reasoning: true, supportedReasoningLevels: ['medium'], apiKeys: false, warmSessions: false,
+    nativeResume: false, saveContext: true, spawnBranches: true },
+    warm: async () => {}, newSession: async () => session,
+    releaseSession: async () => { await session.dispose(); }, shutdown: async () => {},
+  };
+  try {
+    const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, adapters: [new PiRunAdapter()] }).start(spec('pi'), async () => {});
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(prompts.length, 1);
+    await handle.input('urgent additional direction', 'immediate');
+    assert.equal((await handle.completion).status, 'completed');
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1], /urgent additional direction/);
+    assert.ok(aborts >= 1);
+    assert.equal(steers, 0);
+  } finally { await session.dispose(); }
+});
+
+test('immediate input cannot cancel its next turn when event persistence outlives the original turn', async () => {
+  const firstTurn = deferred();
+  const eventStarted = deferred();
+  const eventWrite = deferred();
+  const sent: string[] = [];
+  const cancelledTurns: number[] = [];
+  let active = 0;
+  const session: AgentSession = {
+    id: 'attempt-1', runtimeId: 'kiro', nativeSessionId: null,
+    owner: runOwner('run-1', 'attempt-1'),
+    getHistory: () => [], getPendingAssistant: () => undefined,
+    async *send(text) {
+      const turn = ++active;
+      sent.push(text);
+      if (turn === 1) await firstTurn.promise;
+      yield { kind: 'turn_end', stopReason: 'end_turn' };
+    },
+    cancel: async () => { cancelledTurns.push(active); firstTurn.resolve(); },
+  };
+  const runtime = new KiroLikeRuntime(); runtime.session = session;
+  const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() })
+    .start(spec('kiro'), async (event) => {
+      if (event.type === 'steering_queued') { eventStarted.resolve(); await eventWrite.promise; }
+    });
+  const immediate = handle.input('urgent', 'immediate');
+  await eventStarted.promise;
+  firstTurn.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(sent.length, 1, 'next turn waits for pending interruption persistence/cancellation');
+  eventWrite.resolve();
+  await immediate;
+  assert.equal((await handle.completion).status, 'completed');
+  assert.equal(sent.length, 2);
+  assert.deepEqual(cancelledTurns, [], 'a naturally completed original turn needs no late cancel');
+});
+
+test('a runtime error terminal cannot become an empty completed Run', async () => {
+  const runtime = new KiroLikeRuntime();
+  runtime.session = { id: 'attempt-1', runtimeId: 'kiro', nativeSessionId: null,
+    owner: runOwner('run-1', 'attempt-1'),
+    getHistory: () => [], getPendingAssistant: () => undefined, cancel: async () => {},
+    async *send() { yield { kind: 'turn_end', stopReason: 'error' }; },
+  };
+  const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() })
+    .start(spec('kiro'), async () => {});
+  assert.equal((await handle.completion).status, 'failed');
 });

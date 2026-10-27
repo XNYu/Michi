@@ -1,13 +1,20 @@
+import './helpers/claudeSdkFixture';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { claudeTestOptions } from './helpers/claudeTestOptions';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { CodexSession } from '../src/agents/codex/CodexSession';
-import { CodexRuntime } from '../src/agents/codex/CodexRuntime';
-import { ClaudeSession } from '../src/agents/claude/ClaudeSession';
+import { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSession';
+import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
+import { ClaudeSession } from 'michi-runtime/internal/adapters/claude/ClaudeSession';
 import { PiSession } from '../src/agents/pi/PiSession';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import type { NormalizedEvent } from '../src/services/chatEvents';
+import { michiTestHost } from './helpers/michiTestHost';
+import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
+import { runOwner } from './helpers/owners';
+import { codexTestOptions } from './helpers/codexTestOptions';
+import { michiCodexHostText } from '../src/agents/michiCodexOptions';
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const drain = async (events: AsyncIterable<NormalizedEvent>) => {
@@ -41,7 +48,7 @@ function codexClient() {
 }
 
 function codex(client = codexClient(), recover?: (session: CodexSession) => Promise<void>) {
-  const session = new CodexSession({ nodeId: 'node', threadId: 'native', cwd: '/tmp', workspaceId: null, client, bridge, mcpRegistry: mcp, mcpPort: 1, recover, cancelTimeoutMs: 10 });
+  const session = new CodexSession({ nodeId: 'node', threadId: 'native', cwd: '/tmp', workspaceId: null, client, host: michiTestHost(), hostText: michiCodexHostText(), bridge, mcpRegistry: mcp, recover, cancelTimeoutMs: 10 });
   session.wireNotifications();
   return { session, client };
 }
@@ -152,8 +159,8 @@ test('Codex never claims acknowledgement for rejected interrupts and quarantines
 
 test('Codex shared-daemon recovery protects healthy peers and reloads the original thread', async () => {
   const client = codexClient();
-  const runtime = new CodexRuntime(bridge, mcp, 1, { client });
-  const owner = (id: string): any => ({ kind: 'agent_run', runId: id, attemptId: id });
+  const runtime = new CodexRuntime({ ...codexTestOptions(), bridge, mcpSlots: fakeMcpRegistry(mcp, { mcpPort: 1 }) }, { client });
+  const owner = (id: string) => runOwner(id, id);
   const a = await runtime.newSession({ sessionId: 'a', cwd: '/tmp', model: 'model', owner: owner('a') }) as CodexSession;
   const b = await runtime.newSession({ sessionId: 'b', cwd: '/tmp', model: 'model', owner: owner('b') }) as CodexSession;
   const peer = drain(b.send('peer'));
@@ -184,13 +191,14 @@ class Child extends EventEmitter {
 }
 
 function claude(t: any) {
-  const binary = require('../src/agents/claude/claudeBinary');
+  const binary = require('michi-runtime/internal/adapters/claude/claudeBinary');
   const db = require('../src/services/dbRepository');
   const children: Child[] = [], spawns: any[] = [], writes: any[] = [];
   t.mock.method(binary, 'preflightClaudeAuth', () => {});
   t.mock.method(binary, 'spawnClaude', (opts: any) => { spawns.push(opts); const child = new Child(); children.push(child); return child; });
   t.mock.method(db, 'setNodeExternalSessionId', (...args: any[]) => writes.push(args));
-  const session = new ClaudeSession('claude-node', { nodeId: 'claude-node', cwd: '/tmp', workspaceId: null, mcpRegistry: mcp, bridge, mcpPort: 1 });
+  const claudeMcp = { ...mcp, endpoint: (slotId: string) => ({ type: 'http' as const, url: `http://127.0.0.1:3000/api/mcp/${slotId}`, headers: [] }), };
+  const session = new ClaudeSession('claude-node', { options: claudeTestOptions(), nodeId: 'claude-node', cwd: '/tmp', workspaceId: null, mcpRegistry: claudeMcp, bridge });
   return { session, children, spawns, writes };
 }
 

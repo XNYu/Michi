@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR, openSettings } from '../fixtures/shell';
 
 for (const runtimes of [['codex', 'claude'], []]) {
   test(`connects and creates a remote workspace with ${runtimes.length} detected runtimes`, async ({ page }) => {
@@ -73,7 +74,7 @@ for (const runtimes of [['codex', 'claude'], []]) {
     expect(calls).toEqual([{ host: 'build+', install: false }, { host: 'build+', install: true }]);
     expect(navigations).toBe(1);
     if (runtimes.length) {
-      const editor = page.locator('[contenteditable="true"]').first();
+      const editor = page.locator(COMPOSER_EDITOR).first();
       await editor.fill('Draft for the remote workspace');
       await page.getByRole('button', { name: /^Model settings:/ }).click();
       const picker = page.getByRole('dialog', { name: 'Model settings' });
@@ -109,16 +110,14 @@ for (const palette of ['bone', 'gruvbox']) {
       return false;
     } });
     await bootWithWorkspace(page, 'Remote design review');
-    await page.getByText('Settings', { exact: true }).last().click();
-    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-    await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+    const settings = await openSettings(page, 'General');
     await expect(settings.getByText('SSH connected', { exact: true })).toHaveCount(2);
     const add = settings.getByRole('button', { name: 'Connect remote', exact: true });
     await expect(add).toBeVisible();
     await expect(settings.getByText('SSH launch:', { exact: false })).toHaveCount(0);
     await expect.poll(() => settings.locator('.terminal-settings-content').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     // Controls use the shared UI font, including the host input in the expanded form.
-    const font = await settings.locator('h1').evaluate(el => getComputedStyle(el).fontFamily);
+    const font = await settings.getByRole('heading', { level: 1, name: 'General', exact: true }).evaluate(el => getComputedStyle(el).fontFamily);
     expect(await add.evaluate(el => getComputedStyle(el).fontFamily)).toBe(font);
     await page.screenshot({ path: testInfo.outputPath(`settings-${palette}.png`) });
     await add.click();
@@ -177,9 +176,7 @@ for (const hasLocalRuntime of [true, false]) {
     await page.goto('/');
     await expect(page.getByRole('button', { name: 'Remote existing workspace', exact: true }).first()).toBeVisible();
     await page.getByRole('button', { name: 'Remote existing workspace', exact: true }).first().click();
-    await page.getByText('Settings', { exact: true }).last().click();
-    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
-    await settings.getByRole('button', { name: 'Connections', exact: true }).click();
+    const settings = await openSettings(page, 'General');
     await settings.getByRole('button', { name: 'Connect remote', exact: true }).click();
     await settings.getByLabel(/\S+ SSH host$/).fill('build+');
     await settings.getByRole('button', { name: 'Connect', exact: true }).click();

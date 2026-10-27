@@ -1,6 +1,6 @@
 # Find Michi help
 
-Applies to: bundled product documentation served by the current backend. Source checked: 2026-10-16. The general guides were reviewed against current source. The Crew guide records its own dated real-provider/version/platform acceptance; those tests were not rerun for this documentation expansion.
+Applies to: bundled product documentation served by the current backend. Source checked: 2026-10-16. The general guides were reviewed against source on that date; Pages, component-design and maintenance references were checked again on 2026-10-26. Other topics retain their own review dates. The Crew guide records its own dated real-provider/version/platform acceptance; those tests were not rerun for this documentation expansion.
 
 ## Choose a document
 
@@ -11,13 +11,16 @@ Applies to: bundled product documentation served by the current backend. Source 
 | `common-workflows` | Researching alternatives, implementing, reviewing and handing off |
 | `runtimes` | Choosing/configuring Kiro CLI, Crew, Pi, Claude or Codex |
 | `runtime-capabilities` | Comparing supported integration behavior and limits |
+| `pages-and-components` | Pages navigation, Assistant, blocks, grids, Sources, layout preferences, database views and component APIs |
+| `pages-maintenance` | Meta agent runtime, initial Home generation, automatic updates, catch-up and proposals |
+| `page-component-design` | Generated-component design conventions, theme tokens, sandbox limits and preview workflow |
 | `permissions` | Choosing Ask/Trust/YOLO or understanding approval grants |
 | `sessions-and-recovery` | Queueing, steering, Stop, reconnection, resume and fork |
 | `files-and-artifacts` | Finding files, uploading attachments, reusing sources and viewing websites |
 | `data-and-backups` | Recovering history, deletion, export, backup and migration |
 | `configuration` | Settings scope, authentication, CLI paths, environment and updates |
 | `performance-and-usage` | Slow responses, context, reasoning and usage/billing distinctions |
-| `privacy-and-data` | Data locations, external recipients, logs and external recipients |
+| `privacy-and-data` | Data locations, external recipients, logs and access controls |
 | `troubleshooting` | Finding an error/symptom and gathering useful evidence |
 | `custom-agents` | Experimental definitions, Runs, permissions and watches |
 | `crew` | Required Crew App/MCP/sessionApproval setup, Sync and Memory |
@@ -31,6 +34,7 @@ Useful prompts:
 - “Check the documented approval modes, then inspect which mode my chat actually uses.”
 - “My stream returned 410. Consult the docs, check the original task state and avoid duplicating work.”
 - “Read the backup guide and explain what I need to preserve before moving machines.”
+- “Read the Pages and component-design guides, inspect this page’s preferences, and use native blocks before generating a component.”
 
 If the tool is unavailable, open the repository/installation's `docs/user-guide.md`, or the public repository. A source installation keeps canonical Markdown files under `backend/src/docs/`; built backends carry flattened public documents under `backend/dist/docs/`. Crew and remote setup have their own canonical source files; the human guide links them.
 

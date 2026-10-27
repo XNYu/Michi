@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
 import TerminalTrash from './Trash';
-import { buildTrashSections, filterTrashSections, remainingDays, trashItemCount } from './trashModel';
+import { buildTrashSections, remainingDays, trashItemCount } from './trashModel';
 
 const state = vi.hoisted(() => ({
   nodes: {} as Record<string, ChatNodeState>,
@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   restoreDeletion: vi.fn(), restoreProject: vi.fn(), purgeDeletionAsync: vi.fn(),
   emptyTrashAsync: vi.fn(), purgeProject: vi.fn(), selectProject: vi.fn(), openPane: vi.fn(),
   confirm: vi.fn(), success: vi.fn(), fetchWorkspace: vi.fn(),
+  listPageTrash: vi.fn(), restorePage: vi.fn(), purgePage: vi.fn(),
 }));
 vi.mock('../../../state/chatStore', () => ({
   useChatStore: () => state,
@@ -21,6 +22,7 @@ vi.mock('../../../state/chatStore', () => ({
 }));
 vi.mock('../../../state/prefs', () => ({ usePrefs: () => ({ prefs: { trashTTLDays: state.ttl } }) }));
 vi.mock('../../../services/api', () => ({ fetchWorkspace: (...args: unknown[]) => state.fetchWorkspace(...args) }));
+vi.mock('../../../services/api/pages', () => ({ listPageTrash: (...args: unknown[]) => state.listPageTrash(...args), restorePage: (...args: unknown[]) => state.restorePage(...args), purgePage: (...args: unknown[]) => state.purgePage(...args) }));
 vi.mock('../../ui/ConfirmDialog', () => ({ confirmDialog: (...args: unknown[]) => state.confirm(...args) }));
 vi.mock('sonner', () => ({ toast: { success: (...args: unknown[]) => state.success(...args) } }));
 
@@ -55,6 +57,9 @@ beforeEach(() => {
   state.purgeDeletionAsync.mockResolvedValue({ purged: 1 });
   state.emptyTrashAsync.mockResolvedValue({ purged: 3 });
   state.purgeProject.mockResolvedValue(undefined);
+  state.listPageTrash.mockResolvedValue([]);
+  state.restorePage.mockResolvedValue(undefined);
+  state.purgePage.mockResolvedValue(undefined);
   state.restoreDeletion.mockImplementation((id: string) => Object.values(state.nodes).find(node => node.deletionGroupId === id)?.nodeId ?? null);
 });
 
@@ -70,26 +75,22 @@ describe('Trash data projection', () => {
     expect(remainingDays(group, 30, now)).toBe(2);
     expect(remainingDays(group, 0, now)).toBeNull();
   });
-  it('sorts within workspaces and retains a deleted workspace when its nested thread matches', () => {
-    const sections = buildTrashSections(state.projects, state.nodes);
-    const sorted = filterTrashSections(sections, '', true);
-    expect(sorted.find(section => section.project.id === 'm')!.groups.map(group => group.id)).toEqual(['del-b', 'del-a']);
-    expect(filterTrashSections(sections, 'research thread', false).map(section => section.project.id)).toEqual(['dead']);
-    expect(filterTrashSections(sections, '~/projects/michi', false)).toHaveLength(1);
-  });
 });
 
 describe('Trash page', () => {
-  it('renders the grouped list, separate workspaces, totals, and retention', () => {
+  it('lists and restores a native deleted page subtree through its owning backend', async () => {
+    state.listPageTrash.mockResolvedValueOnce([{
+      deletionGroupId: 'del-page', deletedAt: now - day,
+      root: { id: 'page-1', workspaceId: 'm', title: 'Launch plan' },
+      pages: [{ id: 'page-1', title: 'Launch plan' }, { id: 'page-2', title: 'Risks' }],
+      databases: [],
+    }]);
     render(<TerminalTrash />);
-    expect(screen.getByRole('heading', { name: 'Trash', level: 1 })).toBeTruthy();
-    expect(screen.getByLabelText('5 items')).toBeTruthy();
-    expect(document.querySelectorAll('[data-trash-key]')).toHaveLength(5);
-    expect(screen.getByText('Threads are kept for 30 days')).toBeTruthy();
-    expect(screen.queryByText('archived')).toBeNull();
-    expect(screen.getByText('9 messages')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Preview Research thread' })).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Preview Launch plan' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Launch plan' }));
+    await waitFor(() => expect(state.restorePage).toHaveBeenCalledWith('page-1', { backendConnectionId: 'local', workspaceId: 'm', pageId: 'page-1' }));
   });
+
   it('finds collapsed groups, highlights matches, retains collapse state and input identity', () => {
     render(<TerminalTrash />);
     fireEvent.click(screen.getByRole('button', { name: 'michi 2' }));

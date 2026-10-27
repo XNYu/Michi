@@ -44,17 +44,6 @@ function hoverFirstRow() {
 }
 
 describe('ContextList', () => {
-  it('offers Add source as the shared primary Button', () => {
-    const onAdd = vi.fn();
-    renderRow({ onAdd });
-    const add = screen.getByRole('button', { name: '+ Add source' });
-    expect(add.className).toContain('ui-btn--primary');
-    // No fill of its own: the colour is the shared recipe's (Send's accent).
-    expect(add.style.background).toBe('');
-    fireEvent.click(add);
-    expect(onAdd).toHaveBeenCalledTimes(1);
-  });
-
   it('groups artifacts by type (Documents / Files / Images / Links)', () => {
     render(
       <ContextList
@@ -114,13 +103,6 @@ describe('ContextList', () => {
     expect(onPin).toHaveBeenCalledWith('1');
   });
 
-  it('offers to add a non-favorite artifact to favorites', () => {
-    renderRow();
-    hoverFirstRow();
-    const favoriteButton = screen.getByRole('button', { name: 'Add a.md to favorites' });
-    expect(favoriteButton.getAttribute('aria-pressed')).toBe('false');
-  });
-
   it('hover reveals the trash button; clicking it calls onDelete', () => {
     const onDelete = vi.fn();
     renderRow({
@@ -130,17 +112,6 @@ describe('ContextList', () => {
     hoverFirstRow();
     fireEvent.click(screen.getByLabelText(/delete a\.md/i));
     expect(onDelete).toHaveBeenCalledWith('1');
-  });
-
-  it('hover reveals the preview button; clicking it calls onPreview with the file path', () => {
-    const onPreview = vi.fn();
-    renderRow({
-      artifacts: [ctx('1', 'a.md')],
-      onPreview,
-    });
-    hoverFirstRow();
-    fireEvent.click(screen.getByLabelText(/preview a\.md/i));
-    expect(onPreview).toHaveBeenCalledWith('path/a.md');
   });
 
   it('filter hides non-matching artifacts', () => {

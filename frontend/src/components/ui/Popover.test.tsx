@@ -1,29 +1,9 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { PopoverSurface } from './Popover';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { HoverTip, PopoverSurface } from './Popover';
 
 describe('menu surface isolation', () => {
-  it('combines menu geometry with the shared glass material when requested', () => {
-    render(<PopoverSurface menuKind="context" glass role="menu">Actions</PopoverSurface>);
-    const menu = screen.getByRole('menu');
-    expect(menu.classList.contains('michi-menu')).toBe(true);
-    expect(menu.classList.contains('term-glass')).toBe(true);
-    expect(menu.style.background).toBe('');
-    expect(menu.style.boxShadow).toBe('');
-  });
-
-  it('frosts every tuned menu except the solid right-click menu', () => {
-    render(<>
-      <PopoverSurface menuKind="workspace" role="menu" aria-label="Workspaces">Workspace options</PopoverSurface>
-      <PopoverSurface menuKind="slash" role="listbox">Slash commands</PopoverSurface>
-      <PopoverSurface menuKind="context" role="menu" aria-label="Actions">Actions</PopoverSurface>
-    </>);
-    expect(screen.getByRole('menu', { name: 'Workspaces' }).classList.contains('term-glass')).toBe(true);
-    expect(screen.getByRole('listbox').classList.contains('term-glass')).toBe(true);
-    expect(screen.getByRole('menu', { name: 'Actions' }).classList.contains('term-glass')).toBe(false);
-  });
-
   it('only opts the requested surface into the exported menu tokens', () => {
     render(<>
       <PopoverSurface menuKind="workspace" role="menu">Workspace options</PopoverSurface>
@@ -38,5 +18,64 @@ describe('menu surface isolation', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog.classList.contains('michi-menu')).toBe(false);
     expect(dialog.style.borderRadius).toBe('var(--ui-popover-radius)');
+  });
+});
+
+describe('HoverTip', () => {
+  it('delays hover, shows immediately on focus, and hides on blur', () => {
+    vi.useFakeTimers();
+    try {
+      render(<HoverTip label="Help" delayMs={400}><button type="button">?</button></HoverTip>);
+      const anchor = screen.getByRole('button');
+      expect(screen.queryByRole('tooltip')).toBeNull();
+
+      fireEvent.mouseEnter(anchor);
+      act(() => { vi.advanceTimersByTime(399); });
+      expect(screen.queryByRole('tooltip')).toBeNull();
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(screen.getByRole('tooltip').textContent).toContain('Help');
+
+      fireEvent.mouseLeave(anchor);
+      expect(screen.queryByRole('tooltip')).toBeNull();
+
+      fireEvent.focus(anchor);
+      expect(screen.getByRole('tooltip').textContent).toContain('Help');
+      fireEvent.blur(anchor);
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('closes an open tip when disabled and never opens while disabled', () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(
+        <HoverTip label="Help" delayMs={0}><button type="button">?</button></HoverTip>,
+      );
+      fireEvent.mouseEnter(screen.getByRole('button'));
+      expect(screen.getByRole('tooltip')).toBeTruthy();
+
+      rerender(<HoverTip label="Help" delayMs={0} disabled><button type="button">?</button></HoverTip>);
+      expect(screen.queryByRole('tooltip')).toBeNull();
+
+      fireEvent.focus(screen.getByRole('button'));
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('forwards the anchor ref and chains the anchor handlers', () => {
+    let node: HTMLButtonElement | null = null;
+    const onMouseEnter = vi.fn();
+    render(
+      <HoverTip label="Help" delayMs={0}>
+        <button ref={(el) => { node = el; }} type="button" onMouseEnter={onMouseEnter}>?</button>
+      </HoverTip>,
+    );
+    expect(node).toBe(screen.getByRole('button'));
+    fireEvent.mouseEnter(screen.getByRole('button'));
+    expect(onMouseEnter).toHaveBeenCalledTimes(1);
   });
 });

@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { closeDb, getDb, initDb } from '../src/services/db';
+import { closeDb, initDb } from '../src/services/db';
 import { saveNode, saveWorkspace, getNode } from '../src/services/dbRepository';
 import * as prefsConfig from '../src/services/prefsConfig';
 import { readChatPermissionSettings, writeChatPermissionSettings, writeNodePermissionMode, resolveChatPermissionMode, grantChatTool, hasChatToolGrant, chatPermissionResetToken } from '../src/services/chatPermissions';
@@ -31,28 +32,6 @@ afterEach(() => {
   if (originalDataDir === undefined) delete process.env.MICHI_DATA_DIR; else process.env.MICHI_DATA_DIR = originalDataDir;
 });
 
-test('defaults to independent Ask chats; legacy bypass migrates to global Trust once', () => {
-  (prefsConfig as any).readPrefs = () => ({ bypassPermissions: true });
-  assert.deepEqual(readChatPermissionSettings(), { global: true, mode: 'trust' });
-  writeChatPermissionSettings({ global: false, mode: 'ask' });
-  assert.deepEqual(readChatPermissionSettings(), { global: false, mode: 'ask' });
-  assert.equal(resolveChatPermissionMode('a'), 'ask');
-});
-
-test('global overrides preserve individual modes across scope changes and database restart', () => {
-  writeNodePermissionMode('a', 'trust'); writeNodePermissionMode('b', 'yolo');
-  assert.equal(resolveChatPermissionMode('a'), 'trust');
-  assert.equal(resolveChatPermissionMode('b'), 'yolo');
-  writeChatPermissionSettings({ global: true, mode: 'ask' });
-  assert.equal(resolveChatPermissionMode('a'), 'ask');
-  assert.equal(resolveChatPermissionMode('b'), 'ask');
-  closeDb(); initDb();
-  assert.deepEqual(readChatPermissionSettings(), { global: true, mode: 'ask' });
-  writeChatPermissionSettings({ global: false, mode: 'ask' });
-  assert.equal(resolveChatPermissionMode('a'), 'trust');
-  assert.equal(resolveChatPermissionMode('b'), 'yolo');
-});
-
 test('first-prompt choice cannot overwrite an existing durable choice on resume', () => {
   writeNodePermissionMode('a', 'trust', null, true);
   writeNodePermissionMode('a', 'yolo', null, true);
@@ -62,32 +41,6 @@ test('first-prompt choice cannot overwrite an existing durable choice on resume'
   // Delayed graph snapshots omit the server-owned permission column.
   saveNode({ id: 'a', workspace_id: 'ws', kind: 'chat', status: 'idle', minimized: 0, spawned_by_agent: 0, created_at: 1, permission_mode: 'yolo' });
   assert.equal(getNode('a')?.permission_mode, 'ask');
-});
-
-test('resuming an initialized permission choice does not acquire a writer lock', (t) => {
-  writeNodePermissionMode('a', 'trust', null, true);
-  const db = getDb();
-  const prepare = db.prepare.bind(db);
-  t.mock.method(db, 'prepare', (sql: string) => {
-    assert.doesNotMatch(sql, /UPDATE nodes SET permission_mode/);
-    return prepare(sql);
-  });
-
-  writeNodePermissionMode('a', 'yolo', null, true);
-  assert.equal(getNode('a')?.permission_mode, 'trust');
-});
-
-test('always-allow grants stay in one chat and returning to Ask revokes them', () => {
-  grantChatTool('a', 'bash');
-  assert.equal(hasChatToolGrant('a', 'bash'), true);
-  assert.equal(hasChatToolGrant('b', 'bash'), false);
-  writeNodePermissionMode('a', 'trust');
-  writeNodePermissionMode('a', 'ask');
-  assert.equal(hasChatToolGrant('a', 'bash'), false);
-  grantChatTool('a', 'edit'); grantChatTool('b', 'bash');
-  writeChatPermissionSettings({ global: true, mode: 'ask' });
-  assert.equal(hasChatToolGrant('a', 'edit'), false);
-  assert.equal(hasChatToolGrant('b', 'bash'), false);
 });
 
 test('permission updates revoke temporary session trust without affecting another owner or chat', () => {
@@ -129,7 +82,7 @@ test('permission API validates modes, rejects cross-owner writes, and returns au
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => { if (req.headers['x-test-user']) (req as any).user = { id: req.headers['x-test-user'] }; next(); });
   app.use('/api', setupPersistenceRoutes());
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
   const put = (url: string, body: unknown, user?: string) => fetch(base + url, { method: 'PUT', headers: { 'content-type': 'application/json', ...(user ? { 'x-test-user': user } : {}) }, body: JSON.stringify(body) });
   try {

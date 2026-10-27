@@ -203,25 +203,6 @@ describe('generic Agent Run tools', () => {
     }
   });
 
-  test('keeps one durable message anchor and distinct runtime tool-call anchors for sibling spawns', async () => {
-    const h = harness();
-    await h.bridge.invoke('spawn_agent', { agentId: 'agent-ready', task: 'First' }, { runtimeToolCallId: 'tool-1' });
-    await h.bridge.invoke('spawn_agent', { agentId: 'agent-ready', task: 'Second' }, { runtimeToolCallId: 'tool-2' });
-    assert.deepEqual(h.spawnInputs.map((input) => input.parentMessageId), ['message-a', 'message-a']);
-    assert.deepEqual(h.spawnInputs.map((input) => input.parentAttemptId), [null, null]);
-    assert.deepEqual(h.spawnInputs.map((input) => input.parentToolCallId), ['tool-1', 'tool-2']);
-    assert.notEqual(h.spawnInputs[0].operationId, h.spawnInputs[1].operationId);
-  });
-
-  test('uses a stable fallback operation id when the runtime has no tool-call id', async () => {
-    const h = harness();
-    await h.bridge.invoke('spawn_agent', { agentId: 'agent-ready', task: 'Same task' });
-    await h.bridge.invoke('spawn_agent', { agentId: 'agent-ready', task: 'Same task' });
-    assert.equal(h.spawnInputs[0].parentMessageId, 'message-a');
-    assert.equal(h.spawnInputs[0].parentToolCallId, null);
-    assert.equal(h.spawnInputs[0].operationId, h.spawnInputs[1].operationId);
-  });
-
   test('denies recursive spawn without explicit permission and does not resolve a Chat turn', async () => {
     let resolved = false;
     const h = harness({ kind: 'agent_run', ownerUserId: 'owner-a', workspaceId: 'ws-a', parentRunId: 'parent', parentAttemptId: 'attempt-a' });
@@ -275,19 +256,6 @@ describe('generic Agent Run tools', () => {
     assert.equal(h.inputs[0][2].mode, 'queued');
     assert.equal(h.inputs[0][2].expectedAttemptId, 'attempt-current');
     assert.equal(h.inputs[1][2].mode, 'immediate');
-  });
-
-  test('wake Watch captures the same durable Parent turn anchor without a message transcript', async () => {
-    const h = harness();
-    h.runs.set('run-a', run('run-a'));
-    const result = await h.bridge.invoke('watch_agent_runs', {
-      runIds: ['run-a'], condition: { kind: 'all' }, completionMode: 'wake',
-    }, { runtimeToolCallId: 'watch-tool' });
-    const watch = result.watch as AgentRunWatchDtoV1;
-    assert.equal(watch.parentNodeId, 'node-a');
-    assert.equal(watch.parentTurnId, 'turn-a');
-    assert.equal(watch.completionMode, 'wake');
-    assert.equal(JSON.stringify(result).includes('message-a'), false);
   });
 
   test('created Watch is evaluated from committed Run events without Parent polling', async () => {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import {
@@ -199,7 +200,7 @@ describe('AgentRunActionsService', () => {
     const router = express.Router();
     mountAgentRunActionRoutes(router, { actions: actionService, operationId: (req) => req.header('x-idempotency-key') ?? 'route-op' });
     app.use('/api', router);
-    server = app.listen(0);
+    server = app.listen(0, '127.0.0.1'); await once(server, 'listening');
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
     const post = (owner: string, workspaceId: string) => fetch(`${base}/agent-runs/${run.id}/continue-as-branch`, {
       method: 'POST',

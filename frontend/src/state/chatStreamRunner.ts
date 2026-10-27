@@ -5,7 +5,10 @@ import {
   parseInlineFollowUpsSentinel,
 } from './assistantParsing';
 import type { ChatAction } from './chatTypes';
+import { subagentActivityAction, subagentListAction } from './subagentStreamActions';
 import { reportRemoteCredentialError, reportRemoteRuntimeReady } from './remoteAuthentication';
+import { backendConnectionIdForWorkspace } from '../config/backendConnections';
+import { invalidateTurnPageReceipt, parseTurnPageInvalidation } from '../lib/turnPageReceipt';
 
 type Ref<T> = { current: T };
 
@@ -27,6 +30,7 @@ interface RunChatStreamOptions {
   prompt: string;
   nodeId: string;
   assistantId: string;
+  workspaceId?: string;
   dispatch: (action: ChatAction) => void;
   // Kept in the type for backward-compat with the chatStore caller. The
   // runner no longer owns a side buffer; chunk/thought events go straight to
@@ -39,10 +43,11 @@ interface RunChatStreamOptions {
   enableKiroSidecarTitle?: boolean;
   userMetadata?: {
     quotedText?: string;
+    quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
     attachments?: Array<{ name: string; absPath: string }>;
     comments?: Array<Record<string, unknown>>;
   };
-  extraHandlers?: Omit<Partial<StreamHandlers>, 'onTurnStart' | 'onDone' | 'onAborted' | 'onError'>;
+  extraHandlers?: Omit<Partial<StreamHandlers>, 'onTurnStart' | 'onDone' | 'onAborted' | 'onError' | 'onErrorPayload'>;
   /** Fires after finishAsDone completes — safe place for side-effects like notifications. */
   onStreamComplete?: () => void;
   /**
@@ -58,6 +63,7 @@ export function runChatStream({
   prompt,
   nodeId,
   assistantId,
+  workspaceId,
   dispatch,
   cancelFns,
   displayText,
@@ -92,6 +98,22 @@ export function runChatStream({
   let credentialFailed = false;
   const streamedFollowUps: string[] = [];
   const MAX_BRACKET_HOLD = 4096; // safety cap for malformed / unclosed brackets
+  const pageToolStates = new Map<string, { title?: string; status?: string; output?: string }>();
+  const observePageTool = (tool: { toolCallId: string; title?: string; status?: string; output?: string; turnId?: string }) => {
+    if (!workspaceId) return;
+    const turnId = tool.turnId || currentTurnId || currentAssistantId;
+    const key = JSON.stringify([turnId, tool.toolCallId]);
+    const previous = pageToolStates.get(key) ?? {};
+    const complete = { ...previous,
+      ...(tool.title ? { title: tool.title } : {}),
+      ...(tool.status ? { status: tool.status } : {}),
+      ...(tool.output !== undefined ? { output: tool.output } : {}),
+    };
+    pageToolStates.set(key, complete);
+    const backendConnectionId = backendConnectionIdForWorkspace(workspaceId);
+    const receipt = parseTurnPageInvalidation(complete, backendConnectionId);
+    if (receipt) invalidateTurnPageReceipt(receipt, { backendConnectionId, workspaceId, nodeId, turnId }, tool.toolCallId);
+  };
 
   const dispatchFollowUps = () => {
     const followUps = streamedFollowUps
@@ -178,10 +200,10 @@ export function runChatStream({
       dispatch({ type: 'active-turn', nodeId, assistantId: currentAssistantId, turnId: data.turnId });
       trackSeq(env.seq, data.turnId);
     },
-    onChunk: (text, seq, _assistantId, turnId) => {
+    onChunk: (text, seq, _assistantId, turnId, observedAt) => {
       trackSeq(seq, turnId);
       // Forward raw chunk to reducer immediately as block-first assistant data.
-      dispatch({ type: 'chunk', nodeId, assistantId: currentAssistantId, text });
+      dispatch({ type: 'chunk', nodeId, assistantId: currentAssistantId, text, observedAt });
 
       // Walk the raw chunk char-by-char for sentinel side effects only. The
       // text itself is already on its way to the reducer; nothing here
@@ -202,9 +224,9 @@ export function runChatStream({
         }
       }
     },
-    onThought: (text, seq, _assistantId, turnId) => {
+    onThought: (text, seq, _assistantId, turnId, observedAt) => {
       trackSeq(seq, turnId);
-      dispatch({ type: 'thought', nodeId, assistantId: currentAssistantId, text });
+      dispatch({ type: 'thought', nodeId, assistantId: currentAssistantId, text, observedAt });
     },
     onSteerAccepted: (data) => {
       trackSeq(data.seq, data.turnId);
@@ -218,8 +240,10 @@ export function runChatStream({
     onToolCall: (toolCall) => {
       const env = toolCall as typeof toolCall & { seq?: number; turnId?: string };
       trackSeq(env.seq, env.turnId);
+      observePageTool(toolCall);
       dispatch({
         type: 'tool-call',
+        observedAt: toolCall.observedAt,
         nodeId,
         assistantId: currentAssistantId,
         tool: {
@@ -237,6 +261,7 @@ export function runChatStream({
       trackSeq(env.seq, env.turnId);
       dispatch({
         type: 'tool-call-update',
+        observedAt: toolCall.observedAt,
         nodeId,
         assistantId: currentAssistantId,
         tool: {
@@ -245,9 +270,11 @@ export function runChatStream({
           status: toolCall.status,
           kind: toolCall.kind,
           detail: toolCall.detail,
+          inputJson: toolCall.inputJson,
           output: toolCall.output,
         },
       });
+      observePageTool(toolCall);
     },
     onImage: (data) => {
       // Must use currentAssistantId (not the outer `assistantId`): onTurnStart
@@ -275,18 +302,18 @@ export function runChatStream({
       dispatch({ type: 'follow-ups-status', nodeId, status }),
     onSessionState: (state) => dispatch({ type: 'session-state', nodeId, state }),
     onCommands: (commands) => dispatch({ type: 'set-commands', nodeId, commands }),
-    onSubagentListUpdate: (data) =>
-      dispatch({ type: 'subagent-list-update', nodeId, subagents: data.subagents }),
-    onSubagentToolActivity: (data) =>
-      dispatch({ type: 'subagent-tool-activity', nodeId, subagentSessionId: data.subagentSessionId, title: data.title, status: data.status }),
+    onSubagentListUpdate: (data) => dispatch(subagentListAction(nodeId, currentAssistantId, data)),
+    onSubagentToolActivity: (data) => dispatch(subagentActivityAction(nodeId, currentAssistantId, data)),
     onContextUsage: (data) =>
       dispatch({ type: 'context-usage', nodeId, contextUsagePercentage: data.contextUsagePercentage }),
     onUsageSummary: (data) =>
       dispatch({
         type: 'usage-summary',
         nodeId,
+        assistantId: currentAssistantId,
         contextUsagePercentage: data.contextUsagePercentage,
         totalCredits: data.totalCredits,
+        charge: data.charge,
         turnDurationMs: data.turnDurationMs,
         source: data.source,
         totalTokens: data.totalTokens,
@@ -302,6 +329,10 @@ export function runChatStream({
       dispatch({ type: 'runtime-activity', nodeId, assistantId: currentAssistantId, detail: data.detail ?? 'Reconnecting' });
     },
     onRetryEnd: () => dispatch({ type: 'runtime-activity', nodeId, assistantId: currentAssistantId }),
+    onWarning: (data) => {
+      dispatch({ type: 'warning', nodeId, assistantId: currentAssistantId, warning: data });
+      credentialFailed = reportRemoteCredentialError(nodeId, data.message) || credentialFailed;
+    },
     onMcpServerError: (data) => {
       dispatch({ type: 'mcp-server-error', nodeId, serverName: data.serverName, error: data.error });
       credentialFailed = reportRemoteCredentialError(nodeId, data.error) || credentialFailed;
@@ -314,6 +345,7 @@ export function runChatStream({
           nodeId,
           assistantId: currentAssistantId,
           message: 'The turn finished but the backend did not confirm durable persistence.',
+          errorKind: 'turn_persistence_failed', turnId: currentTurnId,
         });
         cleanup();
         onTurnEnd?.('error', nodeId);
@@ -325,6 +357,7 @@ export function runChatStream({
           nodeId,
           assistantId: currentAssistantId,
           message: 'Agent process exited before completing the turn.',
+          errorKind: 'turn_outcome_unknown', turnId: currentTurnId,
         });
         cleanup();
         onTurnEnd?.('error', nodeId);
@@ -347,19 +380,24 @@ export function runChatStream({
     onCancelRecovery: (status) => dispatch({
       type: 'cancel-recovery', nodeId, assistantId: currentAssistantId, ...status,
     }),
-    onError: (message, _assistantId, turnId, code) => {
+    onErrorPayload: (data) => {
+      handleError(data.message, data.turnId, data.code, data.recoverable, data.completedAt);
+    },
+    onError: (message, _assistantId, turnId, code) => handleError(message, turnId, code),
+    ...extraHandlers,
+  };
+
+  function handleError(message: string, turnId?: string, code?: string, recoverable?: boolean, completedAt?: number) {
       credentialFailed = reportRemoteCredentialError(nodeId, message) || credentialFailed;
       if (turnId) currentTurnId = turnId;
-      dispatch({ type: 'error', nodeId, assistantId: currentAssistantId, message, errorKind: code });
+      dispatch({ type: 'error', nodeId, assistantId: currentAssistantId, message, errorKind: code, recoverable, completedAt, turnId: currentTurnId || undefined });
       if (code === 'turn_active' && rejectedDraft) {
         dispatch({ type: 'set-composer-draft', nodeId, draft: rejectedDraft, preserveExisting: true });
         onRejected?.();
       }
       cleanup();
       onTurnEnd?.('error', nodeId);
-    },
-    ...extraHandlers,
-  };
+  }
 
   const cancelTransport = streamMessage(nodeId, prompt, handlers, {
     displayText,

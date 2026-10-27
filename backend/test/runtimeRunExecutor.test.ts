@@ -4,22 +4,19 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import {
-  AgentPolicyCategory,
-  AgentPolicyDecision,
-  AgentRunEventType,
-  type EffectiveAgentDefinitionV1,
-} from 'michi-shared';
+import { AgentPolicyCategory, AgentPolicyDecision, AgentRunEventType, type EffectiveAgentDefinitionV1, type JsonValue } from 'michi-shared';
 import type { AgentRuntime, AgentSession, NewAgentSessionOptions, RuntimeSessionOwner } from '../src/agents/types';
-import { RuntimeRunExecutor, classifyRuntimeRunError } from '../src/agents/runs/runtimeRunExecutor';
+import { RuntimeRunExecutor, classifyRuntimeRunError, decisionToOptionId } from '../src/agents/runs/runtimeRunExecutor';
 import { RuntimeRunAdapterRegistry } from '../src/agents/runs/runtimeRunAdapterRegistry';
 import { PiRunAdapter } from '../src/agents/runs/piRunAdapter';
 import { ClaudeRunAdapter } from '../src/agents/runs/claudeRunAdapter';
 import { KiroRunAdapter } from '../src/agents/runs/kiroRunAdapter';
 import { CodexRunAdapter } from '../src/agents/runs/codexRunAdapter';
-import type { AgentRunSpec } from '../src/agents/runs/ports';
+import type { AgentRunExecutionEvent, AgentRunSpec } from '../src/agents/runs/ports';
 import { FileRunContextSnapshotStore } from '../src/agents/runs/runContextSnapshotStore';
 import type { NormalizedEvent } from '../src/services/chatEvents';
+import { runOwner, sameHostOwner } from './helpers/owners';
+import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 /** Default four-adapter registry used by tests. */
 function defaultRegistry(): RuntimeRunAdapterRegistry {
@@ -50,7 +47,7 @@ function spec(runtimeId = 'pi'): AgentRunSpec {
 }
 
 class FakeSession implements AgentSession {
-  id = 'attempt-1'; runtimeId = 'pi'; owner: RuntimeSessionOwner = { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' };
+  id = 'attempt-1'; runtimeId = 'pi'; owner: RuntimeSessionOwner = runOwner('run-1', 'attempt-1');
   runtimeProfileHash: string | null = null; nativeSessionId: string | null = null;
   cancelled = 0; steered: string[] = [];
   getHistory() { return []; } getPendingAssistant() { return undefined; }
@@ -60,6 +57,7 @@ class FakeSession implements AgentSession {
 }
 
 class FakeRuntime implements AgentRuntime {
+  readonly descriptor = UNKNOWN_RUNTIME_DESCRIPTOR;
   id = 'pi'; label = 'fake'; capabilities = { modes: false, permissions: true, models: true, providerModels: true, reasoning: true, supportedReasoningLevels: ['medium' as const], apiKeys: true, warmSessions: false, saveContext: false, spawnBranches: false, nativeResume: false };
   session = new FakeSession(); options: NewAgentSessionOptions | null = null; releases: Array<[string, RuntimeSessionOwner | undefined]> = [];
   async warm() {} async newSession(options: NewAgentSessionOptions) { this.options = options; this.session.runtimeProfileHash = options.profileHash ?? null; return this.session; }
@@ -67,28 +65,9 @@ class FakeRuntime implements AgentRuntime {
   async shutdown() {}
 }
 
-test('runtime executor maps one ordered stream and binds exact Run session inputs', async () => {
-  const runtime = new FakeRuntime();
-  const executor = new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() });
-  const events: Array<{ type: AgentRunEventType }> = [];
-  const handle = await executor.start(spec(), async (event) => { events.push(event); });
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-  assert.deepEqual(events.map((event) => event.type), [AgentRunEventType.Assistant, AgentRunEventType.Thought, AgentRunEventType.ToolCall, AgentRunEventType.Usage, AgentRunEventType.ResultBundleUpdated]);
-  assert.equal(runtime.options?.sessionId, 'attempt-1');
-  assert.deepEqual(runtime.options?.owner, { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' });
-  assert.equal(runtime.options?.cwd, '/tmp/worktree');
-  assert.equal(runtime.options?.parentChatId, undefined);
-  assert.equal(runtime.options?.enableFollowUps, false);
-  assert.match(runtime.options?.bootstrapInstructions ?? '', /Follow the exact worker instructions/);
-  assert.match(runtime.options?.bootstrapInstructions ?? '', /only this context/);
-  assert.match(runtime.options?.bootstrapInstructions ?? '', /Return evidence/);
-  assert.equal(runtime.options?.toolProfile?.allowedToolNames?.includes('submit_agent_result'), true);
-  assert.deepEqual(runtime.releases, [['attempt-1', { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' }]]);
-});
-
 test('runtime permission broker preserves allow, ask, and deny policy decisions', async () => {
-  const decisionFor = async (policyDecision: AgentPolicyDecision, toolName = 'Write') => {
+  // Adapters send canonical tool names; see permissionToolNames.test.ts.
+  const decisionFor = async (policyDecision: AgentPolicyDecision, toolName = 'write') => {
     const runtime = new FakeRuntime();
     const run = spec();
     run.effectiveDefinition = {
@@ -102,7 +81,7 @@ test('runtime permission broker preserves allow, ask, and deny policy decisions'
     const broker = runtime.options?.permissionBroker;
     assert(broker, 'runtime must receive the durable Run permission broker');
     const decision = await broker.requestPermission({
-      owner: { kind: 'agent_run', runId: run.runId, attemptId: run.attemptId },
+      owner: runOwner(run.runId, run.attemptId),
       ownerUserId: run.ownerUserId,
       workspaceId: run.workspaceId,
       toolName,
@@ -116,6 +95,7 @@ test('runtime permission broker preserves allow, ask, and deny policy decisions'
   assert.equal(await decisionFor(AgentPolicyDecision.Ask), 'ask');
   assert.equal(await decisionFor(AgentPolicyDecision.Deny), 'deny');
   assert.equal(await decisionFor(AgentPolicyDecision.Deny, 'submit_agent_result'), 'allow_once');
+  assert.equal(await decisionFor(AgentPolicyDecision.Allow, 'Write'), 'deny', 'a runtime-native name is an external action');
 });
 
 test('steering and cancellation stay scoped to the active Attempt', async () => {
@@ -125,9 +105,9 @@ test('steering and cancellation stay scoped to the active Attempt', async () => 
   await handle.input('queued direction');
   await handle.input('urgent direction', 'immediate');
   await handle.cancel('stop');
-  assert.deepEqual(runtime.session.steered, ['queued direction', 'urgent direction']);
+  assert.deepEqual(runtime.session.steered, ['queued direction']);
   assert.equal(runtime.session.cancelled, 2);
-  assert(runtime.releases.every(([id, owner]) => id === 'attempt-1' && owner?.kind === 'agent_run' && owner.attemptId === 'attempt-1'));
+  assert(runtime.releases.every(([id, owner]) => id === 'attempt-1' && owner !== undefined && sameHostOwner(owner, runOwner('run-1', 'attempt-1'))));
 });
 
 test('runtime permission requests produce a waiting outcome and input targets that request', async () => {
@@ -151,8 +131,214 @@ test('runtime permission requests produce a waiting outcome and input targets th
   assert.deepEqual(response, [7, 'allow_once']);
   const continued = await handle.continueAfterInput?.();
   assert.equal(continued?.status, 'completed');
-  assert.deepEqual(runtime.releases, [['attempt-1', { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' }]]);
+  assert.deepEqual(runtime.releases, [['attempt-1', runOwner('run-1', 'attempt-1')]]);
 });
+
+class RecordingPermissionSession extends FakeSession {
+  responses: Array<[number, string]> = [];
+  failNext: Error | null = null;
+  override async *send(_text: string): AsyncGenerator<NormalizedEvent, void, unknown> {
+    yield { kind: 'permission_request', requestId: 7, title: 'Approve write?', options: [] };
+    yield { kind: 'turn_end', stopReason: 'end_turn' };
+  }
+  respondToPermission(requestId: number, optionId: string) {
+    if (this.failNext) { const error = this.failNext; this.failNext = null; throw error; }
+    this.responses.push([requestId, optionId]);
+  }
+}
+
+async function waitingPermissionAttempt() {
+  const session = new RecordingPermissionSession();
+  const runtime = new FakeRuntime();
+  runtime.session = session;
+  const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() }).start(spec(), async () => {});
+  const outcome = await handle.completion;
+  assert.equal(outcome.status, 'waiting');
+  return { session, handle };
+}
+
+test('Run permission decisions map onto runtime option ids', () => {
+  assert.equal(decisionToOptionId('deny'), 'reject_once');
+  assert.equal(decisionToOptionId('allow_once'), 'allow_once');
+  assert.equal(decisionToOptionId('allow_always'), 'allow_always');
+});
+
+for (const [text, expected] of [
+  ['deny', 'reject_once'], ['no', 'reject_once'], ['reject', 'reject_once'],
+  ['allow', 'allow_once'], ['allow_always', 'allow_always'],
+] as const) {
+  test(`Run permission input '${text}' answers the runtime with the ${expected} option`, async () => {
+    const { session, handle } = await waitingPermissionAttempt();
+    await handle.input(text);
+    assert.deepEqual(session.responses, [[7, expected]]);
+    assert.equal((await handle.continueAfterInput?.())?.status, 'completed');
+  });
+}
+
+test('a failed permission answer surfaces to the caller and keeps the interaction pending', async () => {
+  const { session, handle } = await waitingPermissionAttempt();
+  session.failNext = new Error('Invalid permission option');
+  await assert.rejects(handle.input('deny'), /Invalid permission option/);
+  assert.deepEqual(session.responses, []);
+  assert.throws(() => handle.continueAfterInput?.(), /has not been answered/);
+  await handle.input('allow');
+  assert.deepEqual(session.responses, [[7, 'allow_once']]);
+  assert.equal((await handle.continueAfterInput?.())?.status, 'completed');
+});
+
+test('a failed user-input answer surfaces to the caller and keeps the interaction pending', async () => {
+  class UserInputSession extends FakeSession {
+    answered: Array<[number, Array<{ question: string; answer: string }>]> = [];
+    failNext: Error | null = new Error('runtime rejected the answer');
+    override async *send(_text: string): AsyncGenerator<NormalizedEvent, void, unknown> {
+      yield { kind: 'user_input_request', requestId: 11, questions: [{ id: 'q1', question: 'Which file?', options: [], multiSelect: false }] };
+      yield { kind: 'turn_end', stopReason: 'end_turn' };
+    }
+    respondToUserInput(requestId: number, answers: Array<{ question: string; answer: string }>) {
+      if (this.failNext) { const error = this.failNext; this.failNext = null; throw error; }
+      this.answered.push([requestId, answers]);
+    }
+  }
+  const session = new UserInputSession();
+  const runtime = new FakeRuntime();
+  runtime.session = session;
+  const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() }).start(spec(), async () => {});
+  const waiting = await handle.completion;
+  assert.equal(waiting.status === 'waiting' && waiting.kind, 'user_input');
+  await assert.rejects(handle.input('src/a.ts'), /runtime rejected the answer/);
+  assert.deepEqual(session.answered, []);
+  assert.throws(() => handle.continueAfterInput?.(), /has not been answered/);
+  await handle.input('src/b.ts');
+  assert.deepEqual(session.answered, [[11, [{ id: 'q1', question: 'Which file?', answer: 'src/b.ts' }]]]);
+  assert.equal((await handle.continueAfterInput?.())?.status, 'completed');
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+/** Claude-like session: the native id may only be learned during the first turn (system/init). */
+class LateNativeIdSession extends FakeSession {
+  override runtimeId = 'claude';
+  turns = 0;
+  readonly firstTurnStarted = deferred();
+  readonly releaseFirstTurn = deferred();
+  getNativeResumeToken?: () => JsonValue;
+  constructor(private readonly learnedId: string, initialId: string | null, withResumeToken: boolean) {
+    super();
+    this.nativeSessionId = initialId;
+    if (withResumeToken) this.getNativeResumeToken = () => ({ engine: 'sdk', sessionId: this.nativeSessionId });
+  }
+  override async *send(_text: string): AsyncGenerator<NormalizedEvent, void, unknown> {
+    this.turns += 1;
+    if (this.turns === 1) {
+      this.nativeSessionId = this.learnedId;
+      yield { kind: 'chunk', text: 'first turn' };
+      this.firstTurnStarted.resolve();
+      await this.releaseFirstTurn.promise;
+    } else {
+      yield { kind: 'chunk', text: 'second turn' };
+    }
+    yield { kind: 'turn_end', stopReason: 'end_turn' };
+  }
+}
+
+/** Run two turns (task + one queued supplemental input) and return the emitted events. */
+async function runTwoTurnClaudeAttempt(session: LateNativeIdSession) {
+  const runtime = new FakeRuntime();
+  runtime.id = 'claude';
+  runtime.capabilities.nativeResume = true;
+  runtime.session = session;
+  const events: AgentRunExecutionEvent[] = [];
+  const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() })
+    .start(spec('claude'), async (event) => { events.push(event); });
+  await session.firstTurnStarted.promise;
+  await handle.input('more direction');
+  session.releaseFirstTurn.resolve();
+  assert.equal((await handle.completion).status, 'completed');
+  assert.equal(session.turns, 2);
+  return events;
+}
+
+for (const withResumeToken of [false, true]) {
+  test(`a fresh Attempt checkpoints the native id learned during its first turn (getNativeResumeToken: ${withResumeToken})`, async () => {
+    const session = new LateNativeIdSession('native-late', null, withResumeToken);
+    const events = await runTwoTurnClaudeAttempt(session);
+    const checkpoints = events.filter((event) => event.type === AgentRunEventType.Checkpoint);
+    assert.equal(checkpoints.length, 1, 'exactly one checkpoint; the unchanged id in turn two is not re-emitted');
+    assert.deepEqual(checkpoints[0], { type: AgentRunEventType.Checkpoint, payload: { version: 1, runtimeId: 'claude' },
+      nativeResumeToken: withResumeToken ? { engine: 'sdk', sessionId: 'native-late' } : 'native-late' });
+    const index = (predicate: (event: AgentRunExecutionEvent) => boolean) => events.findIndex(predicate);
+    const checkpointAt = index((event) => event.type === AgentRunEventType.Checkpoint);
+    assert(checkpointAt > index((event) => event.type === AgentRunEventType.Assistant), 'checkpoint follows the first turn');
+    assert(checkpointAt < index((event) => event.type === AgentRunEventType.SteeringApplied), 'checkpoint precedes the second turn');
+  });
+}
+
+test('a native id known before the first turn is checkpointed up front and not repeated', async () => {
+  const session = new LateNativeIdSession('native-known', 'native-known', true);
+  const events = await runTwoTurnClaudeAttempt(session);
+  const checkpoints = events.filter((event) => event.type === AgentRunEventType.Checkpoint);
+  assert.equal(checkpoints.length, 1);
+  assert.deepEqual(events[0], { type: AgentRunEventType.Checkpoint, payload: { version: 1, runtimeId: 'claude' },
+    nativeResumeToken: { engine: 'sdk', sessionId: 'native-known' } });
+});
+
+/** Claude-like session that learns its native id mid-turn and then pauses on an approval in `pauseTurn`. */
+class PausingNativeIdSession extends FakeSession {
+  override runtimeId = 'claude';
+  turns = 0;
+  responses: Array<[number, string]> = [];
+  readonly firstTurnStarted = deferred();
+  readonly releaseFirstTurn = deferred();
+  constructor(private readonly pauseTurn: 1 | 2) { super(); }
+  override async *send(_text: string): AsyncGenerator<NormalizedEvent, void, unknown> {
+    this.turns += 1;
+    if (this.turns === 1) {
+      this.firstTurnStarted.resolve();
+      await this.releaseFirstTurn.promise;
+    }
+    if (this.turns === this.pauseTurn) {
+      this.nativeSessionId = 'native-paused';
+      yield { kind: 'permission_request', requestId: 9, title: 'Approve write?', options: [] };
+    }
+    yield { kind: 'chunk', text: `turn ${this.turns}` };
+    yield { kind: 'turn_end', stopReason: 'end_turn' };
+  }
+  respondToPermission(requestId: number, optionId: string) { this.responses.push([requestId, optionId]); }
+}
+
+for (const pauseTurn of [1, 2] as const) {
+  test(`an Attempt checkpoints a newly learned native id before pausing on an approval (turn ${pauseTurn})`, async () => {
+    const session = new PausingNativeIdSession(pauseTurn);
+    const runtime = new FakeRuntime();
+    runtime.id = 'claude';
+    runtime.capabilities.nativeResume = true;
+    runtime.session = session;
+    const events: AgentRunExecutionEvent[] = [];
+    const checkpoints = () => events.filter((event) => event.type === AgentRunEventType.Checkpoint);
+    const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() })
+      .start(spec('claude'), async (event) => { events.push(event); });
+    await session.firstTurnStarted.promise;
+    if (pauseTurn === 2) await handle.input('more direction');
+    session.releaseFirstTurn.resolve();
+
+    const waiting = await handle.completion;
+    assert.equal(waiting.status, 'waiting');
+    assert.equal(session.turns, pauseTurn);
+    assert.deepEqual(checkpoints(), [{ type: AgentRunEventType.Checkpoint, payload: { version: 1, runtimeId: 'claude' },
+      nativeResumeToken: 'native-paused' }], 'the paused Attempt is already resumable while it waits');
+    assert(events.findIndex((event) => event.type === AgentRunEventType.Checkpoint)
+      > events.findIndex((event) => event.type === AgentRunEventType.InteractionRequested));
+
+    await handle.input('allow');
+    assert.deepEqual(session.responses, [[9, 'allow_once']]);
+    assert.equal((await handle.continueAfterInput?.())?.status, 'completed');
+    assert.equal(checkpoints().length, 1, 'the unchanged id is not re-emitted when the turn ends');
+  });
+}
 
 test('unsupported runtimes and common runtime failures receive structured classifications', async () => {
   const unsupported = new RuntimeRunExecutor({ resolveRuntime: () => undefined, registry: new RuntimeRunAdapterRegistry() });
@@ -169,68 +355,51 @@ test('unsupported runtimes and common runtime failures receive structured classi
   assert.equal(classifyRuntimeRunError(new Error('process timed out')).category, 'transient');
 });
 
-test('kiro adapter is accepted when both runtime and adapter exist', async () => {
-  class FakeKiroRuntime extends FakeRuntime {
-    override id = 'kiro';
-    override capabilities = { ...new FakeRuntime().capabilities, apiKeys: false, providerModels: false, models: false, nativeResume: true };
+test('reported artifacts persist in their original Run payload form and reach the Result Bundle', async () => {
+  class ArtifactSession extends FakeSession {
+    override async *send(_text: string): AsyncGenerator<NormalizedEvent, void, unknown> {
+      yield { kind: 'host_event', type: 'artifact_saved', payload: { contextId: 'ctx-1', name: 'notes', filePath: '.contexts/notes.md', size: 10 } };
+      yield { kind: 'host_event', type: 'artifact_updated', payload: { name: 'notes', filePath: '.contexts/notes.md' } };
+      yield { kind: 'host_event', type: 'spawn_branches', payload: { topics: [] } };
+      yield { kind: 'host_event', type: 'image', payload: { path: 'chart.png', mimeType: 'image/png', size: 16 } };
+      yield { kind: 'turn_end', stopReason: 'end_turn' };
+    }
   }
-  class KiroSession extends FakeSession {
-    override id = 'attempt-1';
-    override runtimeId = 'kiro';
-    override nativeSessionId = 'acp-session-42';
-  }
-  const runtime = new FakeKiroRuntime();
-  const session = new KiroSession();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({ resolveRuntime: (id) => id === 'kiro' ? runtime : undefined, registry: defaultRegistry() });
-  const events: Array<{ type: AgentRunEventType }> = [];
-  const handle = await executor.start(spec('kiro'), async (event) => { events.push(event); });
+  const runtime = new FakeRuntime();
+  runtime.session = new ArtifactSession();
+  const events: AgentRunExecutionEvent[] = [];
+  const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() })
+    .start(spec(), async (event) => { events.push(event); });
   const outcome = await handle.completion;
   assert.equal(outcome.status, 'completed');
-  assert.equal(runtime.options?.sessionId, 'attempt-1');
-  assert.deepEqual(runtime.options?.owner, { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' });
-  // Kiro checkpoint should emit the native ACP session id
-  const checkpoint = events.find((event) => event.type === AgentRunEventType.Checkpoint);
-  assert(checkpoint, 'Kiro session with nativeSessionId should emit a checkpoint');
+
+  // The bytes Agent Run storage has always held for these events: the artifact event, kind first.
+  assert.deepEqual(events.map((event) => JSON.stringify(event)), [
+    '{"type":"result_bundle_updated","payload":{"version":1,"artifact":{"kind":"artifact_saved","contextId":"ctx-1","name":"notes","filePath":".contexts/notes.md","size":10}}}',
+    '{"type":"result_bundle_updated","payload":{"version":1,"artifact":{"kind":"artifact_updated","name":"notes","filePath":".contexts/notes.md"}}}',
+    JSON.stringify({ type: AgentRunEventType.ResultBundleUpdated, payload: outcome.status === 'completed' ? outcome.resultBundle : null }),
+  ]);
+  assert.deepEqual(outcome.status === 'completed' ? outcome.resultBundle.artifacts : null, [
+    { id: 'ctx-1', name: 'notes', kind: 'runtime_artifact', uri: '.contexts/notes.md', sha256: null, size: 10 },
+    { id: 'attempt-1:notes', name: 'notes', kind: 'runtime_artifact', uri: '.contexts/notes.md', sha256: null, size: null },
+  ]);
 });
 
-test('codex adapter is accepted when both runtime and adapter exist', async () => {
-  class FakeCodexRuntime extends FakeRuntime {
-    override id = 'codex';
-    override capabilities = { ...new FakeRuntime().capabilities, apiKeys: false, providerModels: false, models: false, nativeResume: true };
+test('the retryable a runtime_error event carries reaches the Run error', async () => {
+  class FailingSession extends FakeSession {
+    constructor(private readonly failure: NormalizedEvent) { super(); }
+    override async *send(_text: string): AsyncGenerator<NormalizedEvent, void, unknown> { yield this.failure; }
   }
-  class CodexSession extends FakeSession {
-    override id = 'attempt-1';
-    override runtimeId = 'codex';
-    override nativeSessionId = 'thread-abc123';
-  }
-  const runtime = new FakeCodexRuntime();
-  const session = new CodexSession();
-  runtime.session = session;
-  const executor = new RuntimeRunExecutor({ resolveRuntime: (id) => id === 'codex' ? runtime : undefined, registry: defaultRegistry() });
-  const events: Array<{ type: AgentRunEventType }> = [];
-  const handle = await executor.start(spec('codex'), async (event) => { events.push(event); });
-  const outcome = await handle.completion;
-  assert.equal(outcome.status, 'completed');
-  assert.equal(runtime.options?.sessionId, 'attempt-1');
-  assert.deepEqual(runtime.options?.owner, { kind: 'agent_run', runId: 'run-1', attemptId: 'attempt-1' });
-  const checkpoint = events.find((event) => event.type === AgentRunEventType.Checkpoint);
-  assert(checkpoint, 'Codex session with nativeSessionId should emit a checkpoint');
-});
-
-test('kiro fails with missing adapter when adapter not in registry', async () => {
-  class FakeKiroRuntime extends FakeRuntime { override id = 'kiro'; }
-  const runtime = new FakeKiroRuntime();
-  // Registry with only Pi and Claude — no Kiro adapter
-  const piClaudeOnly = new RuntimeRunAdapterRegistry([new PiRunAdapter(), new ClaudeRunAdapter()]);
-  const executor = new RuntimeRunExecutor({ resolveRuntime: (id) => id === 'kiro' ? runtime : undefined, registry: piClaudeOnly });
-  const outcome = await (await executor.start(spec('kiro'), async () => {})).completion;
-  assert.equal(outcome.status, 'failed');
-  if (outcome.status === 'failed') {
-    assert.equal(outcome.error.category, 'incompatible');
-    assert.match(outcome.error.message, /kiro/);
-    assert.match(outcome.error.message, /pi, claude/);
-  }
+  const outcome = async (failure: NormalizedEvent) => {
+    const runtime = new FakeRuntime();
+    runtime.session = new FailingSession(failure);
+    const executor = new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() });
+    return (await executor.start(spec(), async () => {})).completion;
+  };
+  const failed = (retryable: boolean) => ({ status: 'failed', recoveryEnvelope: null,
+    error: { version: 1, code: 'runtime_terminal', category: 'terminal', message: 'Model failed', retryable } });
+  assert.deepEqual(await outcome({ kind: 'runtime_error', error: 'Model failed', code: 'generic', retryable: true }), failed(true));
+  assert.deepEqual(await outcome({ kind: 'runtime_error', error: 'Model failed' }), failed(false));
 });
 
 test('codex fails with missing runtime even when adapter exists', async () => {
@@ -240,33 +409,6 @@ test('codex fails with missing runtime even when adapter exists', async () => {
   if (outcome.status === 'failed') {
     assert.equal(outcome.error.category, 'incompatible');
     assert.match(outcome.error.message, /not registered/);
-  }
-});
-
-test('kiro adapter rejects incompatible runtime missing nativeResume', async () => {
-  class NoResumeKiro extends FakeRuntime {
-    override id = 'kiro';
-    override capabilities = { ...new FakeRuntime().capabilities, nativeResume: false };
-  }
-  const runtime = new NoResumeKiro();
-  const executor = new RuntimeRunExecutor({ resolveRuntime: (id) => id === 'kiro' ? runtime : undefined, registry: defaultRegistry() });
-  const outcome = await (await executor.start(spec('kiro'), async () => {})).completion;
-  assert.equal(outcome.status, 'failed');
-  if (outcome.status === 'failed') {
-    assert.equal(outcome.error.category, 'incompatible');
-    assert.match(outcome.error.message, /incompatible.*native-resume/);
-  }
-});
-
-test('dynamic error message enumerates all registered adapter runtimes', async () => {
-  const executor = new RuntimeRunExecutor({ resolveRuntime: () => undefined, registry: defaultRegistry() });
-  const outcome = await (await executor.start(spec('nonexistent'), async () => {})).completion;
-  assert.equal(outcome.status, 'failed');
-  if (outcome.status === 'failed') {
-    assert.match(outcome.error.message, /pi/);
-    assert.match(outcome.error.message, /claude/);
-    assert.match(outcome.error.message, /kiro/);
-    assert.match(outcome.error.message, /codex/);
   }
 });
 
@@ -289,3 +431,30 @@ test('file context snapshots are immutable, verified, owner-bound, and symlink-s
     await store.cleanup('run-1'); await store.cleanup('run-1');
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+for (const scenario of ['provider-disabled', 'model-disabled', 'level-unsupported', 'locked-model', 'catalog-failure'] as const) {
+  test(`Run profile validates model/provider capabilities before session creation: ${scenario}`, async () => {
+    const runtime = new FakeRuntime();
+    runtime.capabilities.supportedReasoningLevels = ['medium'];
+    Object.assign(runtime, {
+      listProviders: async () => [{ id: 'provider', label: 'Provider', defaultModel: scenario === 'locked-model' ? 'required-model' : 'model',
+        ...(scenario === 'locked-model' ? { modelLocked: true } : {}),
+        ...(scenario === 'provider-disabled' ? { supportsReasoning: false } : {}),
+      }],
+      verifyProviderKey: async () => ({ ok: true }),
+      listModels: async () => {
+        if (scenario === 'catalog-failure') throw new Error('offline');
+        return [{ id: 'model', ...(scenario === 'model-disabled' ? { supportsReasoning: false } : {}),
+          ...(scenario === 'level-unsupported' ? { supportedReasoningLevels: ['low'] } : {}) }];
+      },
+    });
+    const handle = await new RuntimeRunExecutor({ resolveRuntime: () => runtime, registry: defaultRegistry() }).start(spec(), async () => {});
+    const outcome = await handle.completion;
+    assert.equal(outcome.status, 'failed');
+    if (outcome.status === 'failed') {
+      assert.equal(outcome.error.code, scenario === 'locked-model' ? 'model_unsupported'
+        : scenario === 'catalog-failure' ? 'model_capabilities_unavailable' : 'reasoning_unsupported');
+    }
+    assert.equal(runtime.options, null, 'invalid/unverifiable settings never allocate a session or silently clamp');
+  });
+}

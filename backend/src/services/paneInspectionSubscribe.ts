@@ -620,6 +620,8 @@ export class PaneFeed {
   // -------------------------------------------------------------------------
 
   private armWatcher(caller: PaneInspectionCaller, paneId: string, emitter: PaneFeedEmitter): void {
+    // A transport may synchronously stop us while emitting the initial snapshot/replay.
+    if (this.stopped || !this.states.has(paneId)) return;
     const target = safeResolveTarget(paneId);
 
     if (target?.kind === 'agent_run' && this.agentRunEvents) {
@@ -645,6 +647,7 @@ export class PaneFeed {
 
     if (target?.kind === 'node') {
       this.armChatWatcher(caller, paneId, target.nodeId, emitter);
+      if (this.stopped || !this.states.has(paneId)) return;
       // A coarser poll fallback still runs alongside the ChatHub subscription and the
       // per-workspace metadata watcher. This is deliberate, not a half-finished migration: the
       // ChatHub subscription only fires on a ChatHub-originated event for the resolved chatId
@@ -707,6 +710,7 @@ export class PaneFeed {
       close: () => {}, // ChatHub calls close() on eviction; this feed's own stop()/unsubscribe() is what tears the listener down from this side — nothing to react to here.
     };
     const unsubscribe = this.chatHub.subscribe(chatId, sub);
+    if (this.stopped || !this.states.has(paneId)) { unsubscribe(); return; }
     this.chatHubUnsubscribes.set(paneId, unsubscribe);
 
     const state = this.states.get(paneId);

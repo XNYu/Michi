@@ -1,21 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import { isPaneItem, normalizeBrowserUrl, singletonPaneId, uniquePaneId } from './paneItems';
+import { describe, expect, it } from 'vitest';
+import { isPaneItem, normalizeBrowserUrl, pagePaneId } from './paneItems';
 
 describe('pane items', () => {
-  it('creates stable singleton ids scoped by project and path', () => {
-    expect(singletonPaneId('file', 'p1', 'docs/a.md')).toBe(singletonPaneId('file', 'p1', 'docs/a.md'));
-    expect(singletonPaneId('file', 'p1', 'docs/a.md')).not.toBe(singletonPaneId('diff', 'p1', 'docs/a.md'));
-    expect(singletonPaneId('file', 'p1', 'docs/a.md')).not.toBe(singletonPaneId('file', 'p2', 'docs/a.md'));
-  });
-
-  it('creates a fresh id for runtime-backed surfaces', () => {
-    const randomUUID = vi.spyOn(crypto, 'randomUUID')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000001')
-      .mockReturnValueOnce('00000000-0000-4000-8000-000000000002');
-    expect(uniquePaneId('terminal')).not.toBe(uniquePaneId('terminal'));
-    randomUUID.mockRestore();
-  });
-
   it('accepts only complete serializable descriptors', () => {
     expect(isPaneItem({
       id: 'pane:launcher:1', kind: 'launcher', projectId: 'p1', treeId: 't1', title: 'New pane', createdAt: 1,
@@ -42,4 +28,26 @@ describe('pane items', () => {
     expect(normalizeBrowserUrl('file:///etc/passwd')).toBeNull();
     expect(normalizeBrowserUrl('javascript:alert(1)')).toBeNull();
   });
+
+  it('validates page owner identity separately from the required host slot and scopes stable identity', () => {
+    const item = {
+      id: pagePaneId('backend-a', 'owner-ws', 'page-1'), kind: 'page',
+      projectId: 'host-ws', treeId: 'host-tree', title: 'Roadmap', createdAt: 1,
+      backendConnectionId: 'backend-a', workspaceId: 'owner-ws', pageId: 'page-1',
+    } as const;
+    expect(isPaneItem(item)).toBe(true);
+    expect(isPaneItem({ ...item, projectId: undefined })).toBe(false);
+    expect(isPaneItem({ ...item, workspaceId: undefined })).toBe(false);
+    expect(isPaneItem({ ...item, id: 'pane:page:other' })).toBe(false);
+    expect(pagePaneId('backend-a', 'owner-ws', 'page-1')).not.toBe(pagePaneId('backend-b', 'owner-ws', 'page-1'));
+    expect(pagePaneId('backend-a', 'owner-ws', 'page-1')).not.toBe(pagePaneId('backend-a', 'other-ws', 'page-1'));
+    expect(pagePaneId('backend-a', 'owner-ws', 'page-1')).not.toBe(pagePaneId('backend-a', 'owner-ws', 'page-2'));
+  });
+});
+
+it('restores legacy file descriptors and validates optional origin chats', () => {
+  const item = { id: 'file', kind: 'file', projectId: 'p', treeId: 't', title: 'a', createdAt: 1, filePath: 'a', viewMode: 'source' };
+  expect(isPaneItem(item)).toBe(true);
+  expect(isPaneItem({ ...item, originChatNodeId: 'n' })).toBe(true);
+  expect(isPaneItem({ ...item, originChatNodeId: 3 })).toBe(false);
 });

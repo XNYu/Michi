@@ -35,6 +35,26 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   };
 }
 
+// jsdom does not implement matchMedia. Mantine's provider (the Desk page's
+// blocks) reads it on mount; a query that never matches is what a test
+// without its own stub expects anyway. Tests that stub it still replace this.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string): MediaQueryList => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
 // jsdom lacks several layout APIs that ProseMirror/TipTap call during mount and
 // coordinate mapping (the MentionEditor composer). Without these, mounting the
 // editor throws `elementFromPoint is not a function` (TipTap's Placeholder

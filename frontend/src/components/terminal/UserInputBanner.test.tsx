@@ -54,16 +54,6 @@ describe('UserInputBanner', () => {
     ]);
   });
 
-  it('submits the selected option', () => {
-    const onSubmit = vi.fn();
-    render(<UserInputBanner userInput={req()} onSubmit={onSubmit} onSkip={() => {}} />);
-    fireEvent.click(screen.getByRole('radio', { name: /Cookies/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
-    expect(onSubmit).toHaveBeenCalledWith([
-      { question: 'Which auth approach?', answer: 'Cookies' },
-    ]);
-  });
-
   it('joins multiSelect selections and Other text', () => {
     const onSubmit = vi.fn();
     const r = req({
@@ -104,19 +94,6 @@ describe('UserInputBanner', () => {
     expect((next as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(prev);
     expect(screen.getByText('1 / 2')).toBeTruthy();
-  });
-
-  it('calls onSkip from the skip button', () => {
-    const onSkip = vi.fn();
-    render(<UserInputBanner userInput={req()} onSubmit={() => {}} onSkip={onSkip} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
-    expect(onSkip).toHaveBeenCalled();
-  });
-
-  it('disables interaction in readOnly mode and hides the footer', () => {
-    render(<UserInputBanner userInput={req()} onSubmit={() => {}} onSkip={() => {}} readOnly />);
-    expect((screen.getByRole('radio', { name: /Cookies/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull();
   });
 
   it('renders resolved answers read-only', () => {

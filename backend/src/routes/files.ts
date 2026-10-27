@@ -1,14 +1,9 @@
 import express, { Request, Response } from "express";
 import * as fs from "node:fs";
-import os from "node:os";
 import * as path from "node:path";
-import {
-    deriveSandboxCwd,
-    resolveWithinCwd,
-    NotFoundError,
-} from "../agents/tools/pathSandbox";
-import { SHOW_IMAGE_MAX_BYTES } from "../agents/claude/showImage";
-import { getWorkspace } from "../services/dbRepository";
+import { NotFoundError } from "../agents/tools/pathSandbox";
+import { SHOW_IMAGE_MAX_BYTES } from "michi-runtime/internal/core/showImage";
+import { resolveWorkspaceFileRoot, resolveWorkspaceRegularFile, WORKSPACE_FILE_ID_RE } from "../services/workspaceFiles";
 
 /**
  * GET /files/:workspaceId/*rest  (mounted under /api → /api/files/...)
@@ -21,7 +16,7 @@ import { getWorkspace } from "../services/dbRepository";
  * Security (all mandatory):
  *   - workspaceId must match /^[a-zA-Z0-9_-]{1,64}$/  (else 404)
  *   - the request rel-path is resolved INSIDE the workspace cwd via
- *     resolveWithinCwd (throws PathSandboxError on `..` escape → 404)
+ *     resolveHttpWorkspacePath (rejects `..` escape → 404)
  *   - the resolved path is realpath'd and re-asserted inside realpath(root)
  *     to defeat symlink escape (404 otherwise)
  *   - must be a regular file (no directory listing)
@@ -41,58 +36,6 @@ const IMAGE_MIME_BY_EXT: Record<string, string> = {
     ".webp": "image/webp",
 };
 
-const WORKSPACE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
-
-// Desktop workspace-root resolution. This is a faithful copy of the logic in
-// routes/uploads.ts (`pickDesktopRoot` + `<root>/<workspaceId>`) so that the
-// serve-root is byte-for-byte the same directory uploads land in and that the
-// "web-cwd" ClaudeSession runs in on desktop. Kept inline (not extracted) to
-// keep this security-sensitive route self-contained and avoid touching the
-// already-merged uploads route.
-const SHARED_ROOT = "/shared/michi/files";
-
-function desktopUploadRoot(): string {
-    try {
-        const parent = path.dirname(SHARED_ROOT);
-        const s = fs.statSync(parent);
-        if (s.isDirectory()) return SHARED_ROOT;
-    } catch {
-        // /shared not present (typical dev / Docker) — fall through to tmp.
-    }
-    return path.join(os.tmpdir(), "michi", "files");
-}
-
-/**
- * Desktop workspace cwd for `workspaceId`.
- *
- * Resolution order:
- *   1. The persisted `workspaces.cwd` (the canonical session cwd). The frontend
- *      persists `project.cwd` via an explicit workspace command, so an
- *      Electron workspace opened against a user-picked folder has its real
- *      absolute cwd here — the SAME dir POST /chats runs the ClaudeSession in.
- *      This is what lets show_image files in a picked folder actually serve.
- *   2. Fallback: the web/local upload root `<uploadRoot>/<workspaceId>` (matches
- *      uploads.ts) for "web-cwd" workspaces that have no stored cwd.
- *
- * No ownership check here: desktop is single-user (owner_user_id is null,
- * MICHI_CLOUD !== '1'). Cloud never reaches this path — it uses
- * deriveSandboxCwd, which both derives the cwd AND verifies ownership.
- */
-function pickDesktopRoot(workspaceId: string): string {
-    const stored = getWorkspace(workspaceId)?.cwd;
-    if (typeof stored === "string" && stored.trim() !== "") {
-        return stored;
-    }
-    const root = desktopUploadRoot();
-    const cwd = path.join(root, workspaceId);
-    // Defense-in-depth: workspaceId is already regex-validated by the caller,
-    // but re-assert the join can't escape the upload root.
-    if (cwd !== root && !cwd.startsWith(root + path.sep)) {
-        throw new NotFoundError(workspaceId);
-    }
-    return cwd;
-}
-
 export interface FilesRouteDeps {
     /**
      * Test seam + prod resolver. Returns the absolute workspace cwd for
@@ -102,26 +45,16 @@ export interface FilesRouteDeps {
     resolveRoot?: (req: Request, workspaceId: string) => string;
 }
 
-function defaultResolveRoot(req: Request, workspaceId: string): string {
-    if (process.env.MICHI_CLOUD === "1") {
-        // Verifies ownership and returns the per-user sandbox dir — the SAME
-        // cwd deriveSandboxCwd hands to /chats, uploads, and import-file, so
-        // serve-root == session-cwd in cloud. Throws NotFoundError → 404.
-        return deriveSandboxCwd(req.user!.id, workspaceId);
-    }
-    return pickDesktopRoot(workspaceId);
-}
-
 export function setupFilesRoutes(deps: FilesRouteDeps = {}): express.Router {
     const router = express.Router();
-    const resolveRoot = deps.resolveRoot ?? defaultResolveRoot;
+    const resolveRoot = deps.resolveRoot ?? resolveWorkspaceFileRoot;
 
     // Express 5 (path-to-regexp 8) requires a NAMED wildcard: a bare "*"
     // throws at registration time. `req.params.rest` is an array of the
     // already-URL-decoded path segments (e.g. ["sub","dir","a.png"]).
     router.get("/files/:workspaceId/*rest", (req: Request, res: Response) => {
         const workspaceId = req.params.workspaceId;
-        if (typeof workspaceId !== "string" || !WORKSPACE_ID_RE.test(workspaceId)) {
+        if (typeof workspaceId !== "string" || !WORKSPACE_FILE_ID_RE.test(workspaceId)) {
             return res.status(404).end();
         }
 
@@ -135,24 +68,7 @@ export function setupFilesRoutes(deps: FilesRouteDeps = {}): express.Router {
               ? [rawRest]
               : [];
 
-        // Reject hostile segments BEFORE they reach resolveWithinCwd, which
-        // runs expandPath (tilde + leading-@ expansion designed for LLM-typed
-        // paths). We never want untrusted HTTP input interpreted as $HOME or a
-        // mention token. An empty segment means a leading/double slash (e.g.
-        // //etc/passwd → absolute escape). Today assertWithinCwd would still
-        // catch all of these, but the route's safety must NOT silently depend
-        // on that helper's semantics — reject up front, keep the
-        // resolveWithinCwd + realpath layers below as defense in depth.
-        for (const seg of segments) {
-            if (seg === "" || seg.startsWith("~") || seg.startsWith("@")) {
-                return res.status(404).end();
-            }
-        }
-
         const relPath = segments.join("/");
-        if (relPath === "") {
-            return res.status(404).end();
-        }
 
         // 1. Resolve workspaceId → the workspace cwd (cloud: ownership-checked).
         let root: string;
@@ -163,39 +79,13 @@ export function setupFilesRoutes(deps: FilesRouteDeps = {}): express.Router {
             return res.status(500).end();
         }
 
-        // 2. Resolve the rel-path inside cwd; `..` escape → PathSandboxError → 404.
-        //    ANY resolution failure (sandbox escape or otherwise) returns a
-        //    bare 404 — keeping a single uniform reject shape so the route never
-        //    leaks which check tripped (a 400 here would be a faint oracle).
-        let abs: string;
-        try {
-            abs = resolveWithinCwd(relPath, root);
-        } catch {
-            return res.status(404).end();
-        }
-
-        // 3. Defeat symlink escape: realpath the target AND the root, then
-        //    re-assert the real target is still inside the real root.
         let real: string;
-        let realRoot: string;
-        try {
-            real = fs.realpathSync(abs);
-            realRoot = fs.realpathSync(root);
-        } catch {
-            return res.status(404).end();
-        }
-        if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
-            return res.status(404).end();
-        }
-
-        // 4. Regular file only — no directory listing.
         let stat: fs.Stats;
         try {
-            stat = fs.statSync(real);
+            ({ realPath: real, stat } = resolveWorkspaceRegularFile(relPath, root));
         } catch {
             return res.status(404).end();
         }
-        if (!stat.isFile()) return res.status(404).end();
 
         // 4b. Size cap — bound what we stream (matches show_image's display
         //     limit). Over-cap → bare 404 like every other reject (no oracle).

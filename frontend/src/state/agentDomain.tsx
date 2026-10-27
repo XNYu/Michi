@@ -225,8 +225,12 @@ export function AgentDomainProvider({ children, api = defaultApi }: { children: 
   return <AgentDomainContext.Provider value={value}>{children}</AgentDomainContext.Provider>;
 }
 
+export function useOptionalAgentDomain(): AgentDomainContextValue | null {
+  return useContext(AgentDomainContext);
+}
+
 export function useAgentDomain(): AgentDomainContextValue {
-  const value = useContext(AgentDomainContext);
+  const value = useOptionalAgentDomain();
   if (!value) throw new Error('useAgentDomain must be used within AgentDomainProvider');
   return value;
 }

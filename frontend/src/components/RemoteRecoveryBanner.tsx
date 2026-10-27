@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, ServerOff, X } from 'lucide-react';
-import { dismissRemoteRecoveryIssues, retryRemoteWorkspace, useRemoteRecoveryIssues, type RemoteRecoveryIssue } from '../state/remoteRecovery';
+import { ServerOff } from 'lucide-react';
+import { retryRemoteConnection, useVisibleRemoteRecoveryIssues, type RemoteRecoveryIssue } from '../state/remoteRecovery';
 import { RemoteDiagnostics } from './RemoteDiagnostics';
 import { Button } from './ui/controls';
 import { DrawerShell, type DrawerShellProps } from './ui/DrawerShell';
@@ -11,34 +11,16 @@ function recoveryLabel(issues: readonly RemoteRecoveryIssue[]) {
 }
 
 export function RemoteRecoveryIndicator({ onOpenDetails }: { onOpenDetails: () => void }) {
-  const issues = useRemoteRecoveryIssues();
+  const issues = useVisibleRemoteRecoveryIssues();
   if (!issues.length) return null;
   return <Button variant="ghost" size="sm" className="remote-recovery-indicator" onClick={onOpenDetails}
     aria-label={`Remote connection details: ${recoveryLabel(issues)}`} aria-haspopup="dialog" title={recoveryLabel(issues)}>
     <ServerOff size={14} aria-hidden="true" />
-    <span aria-hidden="true">{issues.length}</span>
   </Button>;
 }
 
-export function RemoteRecoveryBanner({ onOpenDetails }: { onOpenDetails: () => void }) {
-  const issues = useRemoteRecoveryIssues();
-  if (!issues.some(issue => !issue.dismissed)) return null;
-  return <div className="remote-recovery-notice" role="region" aria-label="Remote connection issues">
-    <ServerOff className="remote-recovery-notice__icon" size={14} aria-hidden="true" />
-    <p className="remote-recovery-notice__summary" role="status" title={issues.map(issue => issue.name).join(', ')}>
-      <strong>{recoveryLabel(issues)}</strong>
-      <span className="remote-recovery-notice__status">Reconnecting automatically</span>
-    </p>
-    <Button variant="ghost" size="sm" onClick={onOpenDetails} aria-haspopup="dialog">Details <ChevronRight size={12} aria-hidden="true" /></Button>
-    <Button variant="ghost" size="sm" className="remote-recovery-notice__dismiss" onClick={dismissRemoteRecoveryIssues}
-      aria-label="Dismiss remote connection notice" title="Hide notice; reconnection continues">
-      <X size={14} aria-hidden="true" />
-    </Button>
-  </div>;
-}
-
 export function RemoteRecoveryDrawer({ open, onClose, motion, onPresenceChange }: Pick<DrawerShellProps, 'open' | 'onClose' | 'motion' | 'onPresenceChange'>) {
-  const issues = useRemoteRecoveryIssues();
+  const issues = useVisibleRemoteRecoveryIssues();
   useEffect(() => {
     if (open && !issues.length) onClose();
   }, [open, issues.length, onClose]);
@@ -60,7 +42,7 @@ function RemoteRecoveryMachine({ issue }: { issue: RemoteRecoveryIssue }) {
     <div className="remote-recovery-machine__heading">
       <ServerOff size={16} aria-hidden="true" />
       <h3>{issue.name}</h3>
-      <Button size="sm" disabled={issue.retrying} onClick={() => retryRemoteWorkspace(issue.connectionId)}>{issue.retrying ? 'Trying…' : 'Try again'}</Button>
+      <Button size="sm" disabled={issue.retrying} onClick={() => { void retryRemoteConnection(issue.connectionId); }}>{issue.retrying ? 'Trying…' : 'Try again'}</Button>
     </div>
     <p className="remote-recovery-machine__status" role="status">{issue.retrying ? issue.diagnostic.severity === 'info' ? issue.diagnostic.message : 'Reconnecting now…' : 'Waiting to reconnect automatically'}</p>
     <details className="remote-recovery-machine__diagnostics" onToggle={event => setExpanded(event.currentTarget.open)}>

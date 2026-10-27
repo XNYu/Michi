@@ -1,5 +1,6 @@
 import { backendApiBase } from '../config/backendConnections';
 import { fetchStream } from './api/streamTransport';
+import { readSseStream } from './api/sseParser';
 
 export interface DigestGenerationPayload {
   workspace: { name: string; cwd?: string; createdAt: number };
@@ -44,47 +45,28 @@ export async function streamDigest(
     throw new Error(err.error || `digest failed: ${res.status}`);
   }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
   let finalMarkdown: string | null = null;
   let errorMessage: string | null = null;
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let idx: number;
-    while ((idx = buffer.indexOf('\n\n')) >= 0) {
-      const block = buffer.slice(0, idx);
-      buffer = buffer.slice(idx + 2);
-      let event = 'message';
-      let dataLine = '';
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event: ')) event = line.slice(7).trim();
-        else if (line.startsWith('data: ')) dataLine += line.slice(6);
-      }
-      if (!dataLine) continue;
-      let parsed: any;
-      try {
-        parsed = JSON.parse(dataLine);
-      } catch {
-        continue;
-      }
-      if (event === 'chunk' && typeof parsed?.text === 'string') {
-        onChunk(parsed.text);
-      } else if (event === 'thought' && typeof parsed?.text === 'string') {
-        onThought?.(parsed.text);
-      } else if (event === 'status' && typeof parsed?.text === 'string') {
-        onStatus?.(parsed.text);
-      } else if (event === 'done' && typeof parsed?.markdown === 'string') {
-        finalMarkdown = parsed.markdown;
-      } else if (event === 'error') {
-        errorMessage = parsed?.message || 'digest streaming failed';
-      }
+  await readSseStream(res.body.getReader(), (event, data) => {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      return;
     }
-  }
+    if (event === 'chunk' && typeof parsed?.text === 'string') {
+      onChunk(parsed.text);
+    } else if (event === 'thought' && typeof parsed?.text === 'string') {
+      onThought?.(parsed.text);
+    } else if (event === 'status' && typeof parsed?.text === 'string') {
+      onStatus?.(parsed.text);
+    } else if (event === 'done' && typeof parsed?.markdown === 'string') {
+      finalMarkdown = parsed.markdown;
+    } else if (event === 'error') {
+      errorMessage = parsed?.message || 'digest streaming failed';
+    }
+  });
 
   if (errorMessage) throw new Error(errorMessage);
   if (finalMarkdown === null) throw new Error('digest stream ended without final markdown');

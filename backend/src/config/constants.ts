@@ -1,4 +1,5 @@
-export const HEARTBEAT_INTERVAL_MS = 10_000;
+// Owned by the runtime package (EventQueue heartbeats); re-exported for app code.
+export { HEARTBEAT_INTERVAL_MS } from 'michi-runtime/internal/core/constants';
 
 /**
  * After cancel is requested, if the streaming generator has not ended within

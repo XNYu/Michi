@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  isNodeUnread,
-  selectUnreadTotal,
-  treeHasUnread,
-  workspaceHasUnread,
-} from './sidebarSelectors';
+import { selectUnreadTotal, treeHasUnread } from './sidebarSelectors';
 import type { ChatNodeState, Project, Tree, ProjectEdge } from './chatTypes';
 
 function n(over: Partial<ChatNodeState>): ChatNodeState {
@@ -20,28 +15,6 @@ function n(over: Partial<ChatNodeState>): ChatNodeState {
   };
 }
 
-describe('isNodeUnread', () => {
-  it('false when neither timestamp set', () => {
-    expect(isNodeUnread(n({}), null)).toBe(false);
-  });
-  it('true when lastAssistantAt > viewedAt', () => {
-    expect(isNodeUnread(n({ lastAssistantAt: 200, viewedAt: 100 }), null)).toBe(true);
-  });
-  it('false when viewedAt >= lastAssistantAt', () => {
-    expect(isNodeUnread(n({ lastAssistantAt: 200, viewedAt: 200 }), null)).toBe(false);
-  });
-  it('false when node is the focused node (suppresses self-flash)', () => {
-    expect(
-      isNodeUnread(n({ nodeId: 'a', lastAssistantAt: 200, viewedAt: 100 }), 'a'),
-    ).toBe(false);
-  });
-  it('false for digest nodes (excluded from thread unread)', () => {
-    expect(
-      isNodeUnread(n({ kind: 'digest', lastAssistantAt: 200, viewedAt: 100 }), null),
-    ).toBe(false);
-  });
-});
-
 describe('selectUnreadTotal', () => {
   it('counts only chat nodes that are unread and not focused', () => {
     const nodes = {
@@ -52,6 +25,25 @@ describe('selectUnreadTotal', () => {
     };
     expect(selectUnreadTotal(nodes, null)).toBe(2);
     expect(selectUnreadTotal(nodes, 'a')).toBe(1);
+  });
+
+  it('leaves out nodes of the hidden workspaces (the assistant\'s)', () => {
+    const nodes = {
+      a: n({ nodeId: 'a', lastAssistantAt: 5, viewedAt: 1 }),
+      s: n({ nodeId: 's', projectId: 'sys', lastAssistantAt: 5, viewedAt: 1 }),
+    };
+    expect(selectUnreadTotal(nodes, null)).toBe(2);
+    expect(selectUnreadTotal(nodes, null, new Set(['sys']))).toBe(1);
+  });
+
+  it('leaves out Meta agent maintenance runs, which no conversation list shows', () => {
+    const nodes = {
+      a: n({ nodeId: 'a', lastAssistantAt: 5, viewedAt: 1 }),
+      run: n({ nodeId: 'run', lastAssistantAt: 5, viewedAt: 1, maintenanceJobId: 'job-maint' }),
+      run2: n({ nodeId: 'run2', lastAssistantAt: 6, viewedAt: 1, maintenanceJobId: 'job-maint' }),
+    };
+    expect(selectUnreadTotal(nodes, null)).toBe(1);
+    expect(treeHasUnread({ rootNodeId: 'run' }, [{ source: 'run', target: 'run2', kind: 'branch' } as ProjectEdge], nodes, null)).toBe(false);
   });
 });
 
@@ -71,13 +63,5 @@ describe('treeHasUnread / workspaceHasUnread', () => {
       b: n({ nodeId: 'b', projectId: 'p1', lastAssistantAt: 5, viewedAt: 1 }),
     };
     expect(treeHasUnread(tree, edges, nodes, null)).toBe(true);
-  });
-  it('workspaceHasUnread iterates chatIds', () => {
-    const nodes = {
-      a: n({ nodeId: 'a', projectId: 'p1' }),
-      b: n({ nodeId: 'b', projectId: 'p1' }),
-      x: n({ nodeId: 'x', projectId: 'p1', lastAssistantAt: 5, viewedAt: 0 }),
-    };
-    expect(workspaceHasUnread(proj, nodes, null)).toBe(true);
   });
 });

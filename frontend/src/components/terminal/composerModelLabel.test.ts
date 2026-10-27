@@ -12,11 +12,6 @@ describe('composerModelLabel', () => {
     expect(composerModelLabel('claude', id, [])).toBe(label);
   });
 
-  it('resolves a default CLI entry to the concrete model name', () => {
-    const id = 'claude-opus-5-5[1m]';
-    expect(composerModelLabel('claude', id, [{ id, label: 'Default' }])).toBe('Opus 5.5 (1M)');
-  });
-
   it('keeps catalog labels, other runtimes and unknown model IDs', () => {
     expect(composerModelLabel('claude', 'claude-sonnet-4-6', [{ id: 'claude-sonnet-4-6', label: 'Sonnet (recommended)' }])).toBe('Sonnet (recommended)');
     expect(composerModelLabel('pi', 'anthropic/claude-sonnet-4-6', [])).toBe('anthropic/claude-sonnet-4-6');

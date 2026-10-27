@@ -14,7 +14,7 @@ import type { SpawnedBranch } from "../toolBridge";
  * michi expects:
  *   chunk / thought (assistant text/reasoning streamed)
  *   tool_call / tool_call_update (chips for tool calls)
- *   spawn_branches / artifact_saved / artifact_updated (tool side effects with payload)
+ *   host events spawn_branches / artifact_saved / artifact_updated (tool side effects with payload)
  *   context_usage / usage_summary (one-shot at run end)
  *   turn_end (closes SSE)
  *
@@ -104,27 +104,33 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
             // Side-effect events that carry tool payload.
             if (name === "spawn_branches" && !isError) {
                 const created: SpawnedBranch[] = result?.details?.created ?? [];
-                yield { kind: "spawn_branches", topics: created };
+                yield { kind: "host_event", type: "spawn_branches", payload: { topics: created } };
             } else if (name === "save_artifact" && !isError) {
                 const d = result?.details;
                 if (d?.name && d?.filePath) {
                     yield {
-                        kind: "artifact_saved",
-                        contextId: typeof d.id === "string" ? d.id : undefined,
-                        name: d.name,
-                        filePath: d.filePath,
-                        size: d.size,
+                        kind: "host_event",
+                        type: "artifact_saved",
+                        payload: {
+                            contextId: typeof d.id === "string" ? d.id : undefined,
+                            name: d.name,
+                            filePath: d.filePath,
+                            size: d.size,
+                        },
                     };
                 }
             } else if (name === "update_artifact" && !isError) {
                 const d = result?.details;
                 if (d?.name && d?.filePath) {
                     yield {
-                        kind: "artifact_updated",
-                        contextId: typeof d.id === "string" ? d.id : undefined,
-                        name: d.name,
-                        filePath: d.filePath,
-                        size: d.size,
+                        kind: "host_event",
+                        type: "artifact_updated",
+                        payload: {
+                            contextId: typeof d.id === "string" ? d.id : undefined,
+                            name: d.name,
+                            filePath: d.filePath,
+                            size: d.size,
+                        },
                     };
                 }
             }
@@ -149,9 +155,12 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
             yield {
                 kind: "usage_summary",
                 contextUsagePercentage: ctxPct,
-                totalCredits: ctx.cumulative.totalCost,
+                inputTokens: ctx.cumulative.inputTokens,
+                outputTokens: ctx.cumulative.outputTokens,
+                totalTokens: ctx.cumulative.inputTokens + ctx.cumulative.outputTokens,
+                charge: { amount: ctx.cumulative.totalCost, unit: "USD", provenance: "sdk_estimate" },
                 turnDurationMs: Date.now() - ctx.runStartMs,
-                source: "native",
+                source: "estimated",
             };
             if (ctx.terminalError) {
                 yield { kind: "runtime_error", error: ctx.terminalError };

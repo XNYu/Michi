@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { installMockApi } from '../fixtures/mockApi';
+import { COMPOSER_EDITOR } from '../fixtures/shell';
 
 async function bootMenus(page: Page, palette: 'bone' | 'monokai', extraPrefs: Record<string, unknown> = {}) {
   await installMockApi(page, { streamEvents: [
@@ -68,7 +69,7 @@ async function bootMenus(page: Page, palette: 'bone' | 'monokai', extraPrefs: Re
     sessionStorage.setItem('michi:panes:focus', JSON.stringify({ 'menu-ws::tree': null }));
   }, { terminalPalette: palette, extraPrefs });
   await page.goto('/');
-  await expect(page.locator('[contenteditable="true"]').first()).toBeVisible();
+  await expect(page.locator(COMPOSER_EDITOR).first()).toBeVisible();
 }
 
 type Material = Awaited<ReturnType<typeof materialOf>>;
@@ -179,7 +180,7 @@ for (const palette of ['bone', 'monokai'] as const) {
 
     const sidebar = page.locator('.terminal-sidebar');
     await sidebar.getByText('root conversation', { exact: true }).first().click();
-    const editor = page.locator('[contenteditable="true"]').first();
+    const editor = page.locator(COMPOSER_EDITOR).first();
     await editor.fill('@');
     const mentions = page.getByRole('listbox', { name: 'Mentions', exact: true });
     await assertSurface(mentions, 420, 1280, paletteMaterial);
@@ -255,6 +256,23 @@ for (const palette of ['bone', 'monokai'] as const) {
     const usage = page.locator('[data-menu="usage"]');
     await assertSurface(usage, 288, 1280, paletteMaterial);
     await expect(usage).toContainText('79.5K tokens');
+    // The usage hover hugs its widest line instead of taking the menu column width.
+    const slack = await usage.evaluate((element) => {
+      const px = (value: string) => parseFloat(value) || 0;
+      const content = Math.max(...Array.from(element.children, (row) => {
+        const range = document.createRange();
+        range.selectNodeContents(row);
+        const css = getComputedStyle(row);
+        return range.getBoundingClientRect().width + px(css.paddingLeft) + px(css.paddingRight);
+      }));
+      const css = getComputedStyle(element);
+      const chrome = px(css.paddingLeft) + px(css.paddingRight) + px(css.borderLeftWidth) + px(css.borderRightWidth);
+      return element.getBoundingClientRect().width - chrome - content;
+    });
+    expect(slack).toBeLessThanOrEqual(2);
+    const meterBox = (await page.getByRole('meter').boundingBox())!;
+    const usageBox = (await usage.boundingBox())!;
+    expect(usageBox.y + usageBox.height).toBeLessThanOrEqual(meterBox.y);
     await usage.screenshot({ path: info.outputPath('usage.png') });
 
     await page.getByRole('button', { name: 'Search', exact: true }).hover();
@@ -277,7 +295,7 @@ test('autocomplete stays within a narrow viewport and reduced motion skips the b
   // The sidebar is responsive; navigate before collapsing it on small screens.
   await page.locator('.terminal-sidebar').getByText('root conversation', { exact: true }).first().click();
   await page.setViewportSize({ width: 390, height: 844 });
-  const editor = page.locator('[contenteditable="true"]').first();
+  const editor = page.locator(COMPOSER_EDITOR).first();
   for (const [query, name, width] of [['@', 'Mentions', 420], ['/', 'Slash commands', 480]] as const) {
     await editor.fill(query);
     const menu = page.getByRole('listbox', { name, exact: true });

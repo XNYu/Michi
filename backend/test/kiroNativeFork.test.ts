@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AcpClient } from '../src/services/acpClient';
-import { KiroRuntime } from '../src/agents/kiro/KiroRuntime';
+import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
+import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import { closeDb, initDb } from '../src/services/db';
+import { michiTestHost } from './helpers/michiTestHost';
 
 for (const supported of [true, false]) {
   test(`v3 cold fork negotiates the child worker before checking fork support (${supported})`, async (t) => {
@@ -28,9 +29,9 @@ for (const supported of [true, false]) {
     t.mock.method(AcpClient.prototype, 'loadSession', async () => ({}));
     t.mock.method(AcpClient.prototype, 'forkSession', async () => { forks++; return 'native-child'; });
     t.mock.method(AcpClient.prototype, 'shutdown', async () => {});
-    const runtime = new KiroRuntime({} as AgentToolBridge, undefined, 0, directory, undefined, { engine: 'v3' });
+    const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, defaultCwd: directory, host: michiTestHost(), engine: 'v3' });
     try {
-      assert.equal(runtime.capabilityDescriptor.sessionFork.availability, 'invisible');
+      assert.equal(runtime.descriptor.harness.sessionFork.availability, 'invisible');
       const pending = runtime.forkSession({ sessionId: 'child', sourceNativeSessionId: 'parent-native', cwd: directory });
       if (supported) {
         const child = await pending;
