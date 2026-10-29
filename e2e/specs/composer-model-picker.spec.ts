@@ -186,6 +186,8 @@ test('stays inside a narrow viewport and supports reduced motion', async ({ page
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await installComposerModels(page);
   await bootWithWorkspace(page);
+  // Home's composer stays open on a phone; its toolbar is visible at rest.
+  await page.locator(COMPOSER_EDITOR).first().click();
   const trigger = page.getByRole('button', { name: /^Model settings:/ });
   await trigger.click();
   const picker = page.getByRole('dialog', { name: 'Model settings' });
@@ -339,6 +341,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 
     await page.setViewportSize(viewport);
     await installComposerModels(page);
     await bootWithWorkspace(page);
+    await page.locator(COMPOSER_EDITOR).first().click();
     await page.getByRole('button', { name: /^Model settings:/ }).click();
     const picker = page.getByRole('dialog', { name: 'Model settings' });
     await picker.getByRole('button', { name: /Select runtime:/ }).click();

@@ -4,7 +4,6 @@ vi.mock('../services/api', () => ({
   __esModule: true,
   listAgentModes: () => Promise.resolve({ availableModes: [], defaultModeId: null }),
   fetchAgentStatus: () => Promise.resolve(null),
-  listModels: () => Promise.resolve({ models: [], defaultModel: null }),
   fetchPrefs: () => Promise.resolve(null),
   savePrefs: () => Promise.resolve(),
   deleteWorkspace: () => Promise.resolve({ ok: true }),

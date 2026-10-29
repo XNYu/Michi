@@ -4,7 +4,7 @@ import {
 } from 'michi-runtime/internal/core/approvals';
 import { getRuntimeDeps } from './runtimeDeps';
 import {
-    grantChatPermission, resolveChatPolicy, permissionOwnerUserId, permissionNodeId, michiGrantKey, chatPermissionMode,
+    grantChatPermission, resolveChatPolicy, permissionOwnerUserId, permissionNodeId, michiGrantKey, chatPermissionMode, chatApproveForMe,
 } from './permissionPolicy';
 
 // Michi's side of the package ApprovalCoordinator: its permission policy as
@@ -16,6 +16,7 @@ import {
  */
 export const michiPermissionPolicy: PermissionPolicyPort = {
     mode: (...args) => chatPermissionMode(...args),
+    approveForMe: (...args) => chatApproveForMe(...args),
     resolveOwnerUserId: (...args) => permissionOwnerUserId(...args),
     decide: (request) => resolveChatPolicy(request.owner, request.ownerUserId, request.toolName, request.nativeRequest, request.mode),
     grant: (request) => grantChatPermission(request.owner, request.toolName, request.ownerUserId),

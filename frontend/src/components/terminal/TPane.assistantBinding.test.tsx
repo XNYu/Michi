@@ -1,8 +1,8 @@
 /**
- * The ⌘J assistant runs on its own settings (Settings → Assistant), which
- * the backend pins on every session path. Its composer never sends the
- * global runtime defaults of the user's chats, and its model chip shows
- * what the conversation runs on, not those defaults.
+ * The ⌘J assistant runs on what the backend pins on every session path: the
+ * conversation's own pick, else the global settings. Its composer never
+ * sends a runtime of its own; its model chip shows what the conversation
+ * runs on, and a pick there is saved for that conversation alone.
  */
 import React from 'react';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -31,7 +31,11 @@ vi.mock('../../services/api', async (importOriginal) => ({
   allocateNodeIdsLocal: (() => { let i = 0; return (count = 1) => Array.from({ length: count }, () => `n-ab-${++i}`); })(),
   listAgentModes: () => Promise.resolve({ availableModes: [], defaultModeId: null }),
   fetchAgentStatus: () => Promise.resolve(GLOBAL_STATUS),
-  listModels: () => Promise.resolve({ models: [], defaultModel: null }),
+  fetchRuntimeCatalog: () => Promise.resolve({
+    models: [{ id: 'gpt-6-mini', label: 'GPT 6 mini', isDefault: true }],
+    providers: [],
+    capabilities: GLOBAL_STATUS.capabilities,
+  }),
   fetchPrefs: () => Promise.resolve(null),
   savePrefs: () => Promise.resolve(),
   warmCwd: () => Promise.resolve({ ok: true }),
@@ -46,6 +50,11 @@ vi.mock('../../services/api', async (importOriginal) => ({
   streamMessage: vi.fn(() => () => {}),
 }));
 vi.mock('../../services/notifications', () => ({ notify: vi.fn() }));
+vi.mock('../../services/api/assistant', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/api/assistant')>()),
+  updateAssistantSettings: vi.fn(),
+  fetchAssistant: vi.fn(),
+}));
 vi.mock('../SelectionActions', () => ({ default: () => null }));
 vi.mock('../MentionEditor', () => ({
   default: React.forwardRef((_props: unknown, _ref: unknown) => <textarea data-testid="composer" />),
@@ -57,6 +66,7 @@ vi.mock('../MarkdownContent', () => ({ default: ({ text }: { text: string }) => 
 
 import TPane from './TPane';
 import * as api from '../../services/api';
+import { fetchAssistant, updateAssistantSettings } from '../../services/api/assistant';
 import { ChatProvider, useChatActions, useChatStore, useChatNodesSnapshot } from '../../state/chatStore';
 import { PrefsProvider } from '../../state/prefs';
 import { resetAssistantStoreForTests } from '../../state/assistant/assistantStore';
@@ -105,9 +115,10 @@ afterAll(() => {
   act(() => resetAssistantStoreForTests());
 });
 
-describe('TPane — the assistant runs on its own settings', () => {
+describe('TPane — the assistant runs on its conversation\'s own settings', () => {
   it('sends none of the global runtime defaults and shows the conversation\'s model', async () => {
     localStorage.clear();
+    vi.mocked(fetchAssistant).mockResolvedValue(INFO);
     const view = render(<PrefsProvider><ChatProvider><Harness /></ChatProvider></PrefsProvider>);
     await waitFor(() => expect(store.hydrated).toBe(true));
     await waitFor(() => expect(store.agentStatus?.model).toBe('gpt-6-astra'));
@@ -119,12 +130,26 @@ describe('TPane — the assistant runs on its own settings', () => {
     shown = 'n-sys';
     view.rerender(<PrefsProvider><ChatProvider><Harness /></ChatProvider></PrefsProvider>);
 
-    // Nothing to set here, so it says what it is, not "Model settings".
-    const chip = await screen.findByRole('button', { name: /^Model: / });
+    // What the conversation runs on (the backend's answer), not the global chat defaults.
+    const chip = await screen.findByRole('button', { name: /^Model settings: / });
     expect(chip.textContent).not.toContain('gpt-6-astra');
     expect(chip.textContent).toContain('Default model');
-    // Settings → Assistant owns these: the chip opens no picker.
-    expect((chip as HTMLButtonElement).disabled).toBe(true);
+    expect((chip as HTMLButtonElement).disabled).toBe(false);
+
+    // Following global, it reads the settings again when they may have changed (here: opening the picker).
+    vi.mocked(fetchAssistant).mockResolvedValue({ ...INFO, conversation: { ...INFO.conversation, modelId: 'gpt-6-mini' } });
+    fireEvent.click(chip);
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Model settings: / }).textContent).toContain('GPT 6 mini'));
+    vi.mocked(fetchAssistant).mockResolvedValue(INFO);
+
+    // A pick in the composer is saved for this conversation, never as the global or Meta agent settings.
+    const saved = { ...INFO, conversation: { ...INFO.conversation, reasoning: 'high' as const }, conversationFollowsGlobal: false };
+    vi.mocked(updateAssistantSettings).mockResolvedValue(saved);
+    const effort = await screen.findByRole('slider', { name: 'Thinking effort' });
+    fireEvent.change(effort, { target: { value: '2' } });
+    await waitFor(() => expect(updateAssistantSettings).toHaveBeenCalledWith({ reasoning: 'high', nodeId: 'n-sys' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Model settings: / }).textContent).toContain('High'));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
 
     const ensure = vi.mocked(api.ensureSession);
     ensure.mockClear();
@@ -133,7 +158,7 @@ describe('TPane — the assistant runs on its own settings', () => {
     await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(send);
     await waitFor(() => expect(ensure).toHaveBeenCalledTimes(1));
-    // Nothing of the composer's own: the backend pins the assistant settings.
+    // Nothing of the composer's own: the backend pins what the conversation runs on.
     const request = ensure.mock.calls[0][0];
     expect(request.runtimeId ?? null).toBeNull();
     expect(request.providerId ?? null).toBeNull();

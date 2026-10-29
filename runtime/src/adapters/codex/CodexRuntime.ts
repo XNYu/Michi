@@ -16,6 +16,7 @@ import type {
   RuntimeId,
   RuntimeResumeBinding,
   RuntimeSessionOwner,
+  SessionMode,
 } from '../../contract/types';
 import { assertReleaseOwnership } from '../../core/release';
 import { assertOwner, interactiveOwner } from '../../contract/types';
@@ -27,13 +28,16 @@ import type { McpSlotProvider } from '../../contract/mcp';
 import { ownerMode, type FollowUpsExperimentMode, type RuntimeHost } from '../../contract/host';
 import { assertHostPorts } from '../../core/defaultHost';
 import { CodexAppServerClient, CodexRpcError } from './CodexAppServerClient';
-import type { CodexModel } from './codexProtocol';
-import { buildCodexMcpConfig, CODEX_SERVER_REQUESTS } from './codexProtocol';
+import type { CodexCollaborationModeMask, CodexModel } from './codexProtocol';
+import {
+  buildCodexMcpConfig, CODEX_COLLABORATION_MODE_LIST, CODEX_SERVER_REQUESTS, CODEX_THREAD_FEATURES_OFF,
+  codexAccountLoginMissing, codexConfiguredMcpServers, codexDisableMcpServers, codexOpenUserMcpServers, isCodexModeKind,
+} from './codexProtocol';
 import { CodexSession } from './CodexSession';
 import {
   CODEX_RESTRICTED_TURN_POLICY, codexRestrictedMcpCheck, codexRestrictedThreadConfig, codexThreadSandbox,
 } from './codexRestrictedProfile';
-import { findCodexBinary, preflightCodexAuth } from './codexBinary';
+import { CodexAuthMissingError, findCodexBinary, preflightCodexAuth } from './codexBinary';
 import { NativeResumeUnavailableError } from '../../contract/errors';
 import type { RuntimeModelCache } from '../../core/runtimeModelCache';
 import {
@@ -60,7 +64,8 @@ export class CodexSessionNotResumableError extends NativeResumeUnavailableError 
 // ---- Capabilities ------------------------------------------------------------
 
 const CODEX_CAPABILITIES: AgentCapabilities = {
-  modes: false,
+  // Codex collaboration modes (Default, Plan), from collaborationMode/list.
+  modes: true,
   permissions: true,
   models: true,
   providerModels: false,
@@ -96,6 +101,19 @@ export const CODEX_BACKGROUND_IDLE_TTL_MS = 2 * 60 * 60_000;
 /** …or this long after its own last use, whatever they do (matches Claude's reclaim protection). */
 export const CODEX_BACKGROUND_IDLE_CAP_MS = 6 * 60 * 60_000;
 const RECOVERY_TIMEOUT_MESSAGE = 'Codex native recovery exceeded 20 seconds. Original thread retained; please retry.';
+
+/** What the agent menu says about each Codex collaboration mode (collaborationMode/list names them only). */
+const CODEX_MODE_DESCRIPTIONS: Record<string, string> = {
+  default: 'Codex works on the request directly.',
+  plan: 'Codex explores and proposes a plan instead of changing files.',
+};
+
+/** A restricted thread config without its sub-agent thread limit, for app-servers that reject the table. */
+function restrictedConfig(config: Record<string, unknown>, subagentLimit: boolean): Record<string, unknown> {
+  if (subagentLimit) return config;
+  const features = config.features && typeof config.features === 'object' ? config.features as Record<string, unknown> : {};
+  return { ...config, features: { ...features, multi_agent_v2: false } };
+}
 
 /** A session's public id: a headless owner's key, else the chat's own id. */
 function publicSessionId(owner: RuntimeSessionOwner, chatId: string): string {
@@ -171,6 +189,10 @@ export interface CodexRuntimeTestSeams {
   client?: CodexAppServerClient;
   /** Overrides whether `followUpsHook` is on, without the isolated home. */
   followUpsHookPocEnabled?: boolean;
+  /** As if the Codex home had no auth.json: sessions ask app-server (account/read) first. */
+  authFileMissing?: string;
+  /** false: restricted threads omit the sub-agent thread limit, leaving only the session's spawn guard. */
+  restrictedSubagentLimit?: boolean;
   followUpsExperimentMode?: FollowUpsExperimentMode;
 }
 
@@ -207,15 +229,21 @@ export class CodexRuntime implements AgentRuntime {
   private daemonDisconnected = false;
 
   private readonly modelCatalog: RuntimeModelCatalog<Record<string, unknown>>;
-  /** Auth pre-flight failure from construction, surfaced by checkAvailability. */
+  /** No auth.json in the Codex home: whether Codex has credentials is asked of app-server. */
+  private readonly authFileMissing: string | undefined;
+  /** The running app-server answered account/read for this process. */
+  private nativeAuthChecked = false;
+  /** app-server reported a missing login (account/read), surfaced by checkAvailability. */
   private authError: string | undefined;
+  private modeCatalog: SessionMode[] | null = null;
+  private readonly restrictedSubagentLimit: boolean;
 
   /**
-   * Codex already had the most complete probe of the four (binary lookup, an
-   * auth.json existence check, and the only `--version` semver check in the
-   * tree) — all of it discarded at the status layer. Reported here instead.
-   * findCodexBinary caches, and the version probe already ran at construction,
-   * so this is filesystem-only per call.
+   * Binary lookup, plus the login state app-server last reported. A missing
+   * auth.json alone does not make Codex unavailable (a provider such as
+   * Amazon Bedrock manages its own credentials); the first session asks
+   * app-server and a missing login is reported from then on.
+   * findCodexBinary caches, so this is filesystem-only per call.
    */
   checkAvailability(): RuntimeAvailability {
     try {
@@ -254,16 +282,15 @@ export class CodexRuntime implements AgentRuntime {
     this.followUpsExperimentMode =
       testSeams?.followUpsExperimentMode ?? this.host.prompt.followUpsExperimentMode();
 
+    let authFileMissing = testSeams?.authFileMissing;
     if (testSeams?.client) {
       this.client = testSeams.client;
     } else {
-      // Pre-flight auth check at construction — fail fast if credentials are absent.
-      // Retained (not just logged) so checkAvailability can report it.
+      // No auth.json is only a hint: app-server is asked before the first thread.
       try {
         preflightCodexAuth(options.codexHome);
       } catch (err) {
-        this.authError = (err as Error).message;
-        console.warn('[CodexRuntime] Auth pre-flight warning:', this.authError);
+        authFileMissing = (err as Error).message;
       }
       let spawnEnv: NodeJS.ProcessEnv = { ...options.spawnEnv?.() };
       if (followUpsHookPocEnabled) {
@@ -287,12 +314,13 @@ export class CodexRuntime implements AgentRuntime {
       this.client = new CodexAppServerClient({
         spawnEnv,
         binaryPath: options.binaryPath,
-        codexHome: options.codexHome,
         rpcTimeoutMs: options.rpcTimeoutMs,
         initTimeoutMs: options.initTimeoutMs,
       });
     }
     this.followUpsHookPocEnabled = followUpsHookPocEnabled;
+    this.authFileMissing = authFileMissing;
+    this.restrictedSubagentLimit = testSeams?.restrictedSubagentLimit !== false;
     this.modelCatalog = new RuntimeModelCatalog({
       initial: options.modelCache?.load(this.id),
       probe: async () => {
@@ -353,6 +381,7 @@ export class CodexRuntime implements AgentRuntime {
     // When daemon exits unexpectedly, crash all live sessions.
     this.client.onExit(() => {
       this.daemonDisconnected = true;
+      this.nativeAuthChecked = false;
       for (const session of this.sessions.values()) {
         session.markCrashed('codex app-server exited unexpectedly');
       }
@@ -369,6 +398,61 @@ export class CodexRuntime implements AgentRuntime {
     } catch {
       // Ignore — warm is best-effort
     }
+  }
+
+  /**
+   * Starts app-server and, when the Codex home has no auth.json, asks it
+   * whether the configured provider still needs a login (once per process).
+   * Throws CodexAuthMissingError before any thread is opened when it does.
+   */
+  private async startClient(timeoutMs?: number): Promise<void> {
+    await this.client.ensureStarted(timeoutMs);
+    if (!this.authFileMissing || this.nativeAuthChecked) return;
+    let result: unknown;
+    try {
+      result = await this.client.request('account/read', { refreshToken: false }, timeoutMs);
+    } catch (err) {
+      // Older app-servers may not answer; the thread itself will report a real auth failure.
+      this.host.observability.log('warn', 'chat', 'codex account/read failed; continuing without an auth check', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.nativeAuthChecked = true;
+      return;
+    }
+    this.nativeAuthChecked = true;
+    if (codexAccountLoginMissing(result)) {
+      this.authError = `Codex needs a login for its configured provider (${this.authFileMissing}). Run \`codex login\`, or set CODEX_HOME if your credentials are stored elsewhere.`;
+      throw new CodexAuthMissingError(this.authError);
+    }
+    this.authError = undefined;
+  }
+
+  // ---- modes ---------------------------------------------------------------
+
+  /**
+   * Codex collaboration modes (collaborationMode/list, experimental API),
+   * the same for every session. Empty when this app-server has none.
+   */
+  async listModes(_sessionId: string): Promise<SessionMode[]> {
+    if (this.modeCatalog) return this.modeCatalog;
+    await this.client.ensureStarted();
+    let result: { data?: unknown } | undefined;
+    try {
+      result = await this.client.request(CODEX_COLLABORATION_MODE_LIST, {}) as { data?: unknown } | undefined;
+    } catch (err) {
+      this.host.observability.log('warn', 'chat', 'codex collaborationMode/list failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }
+    const masks = Array.isArray(result?.data) ? result.data as CodexCollaborationModeMask[] : [];
+    const modes = masks.filter((mask) => isCodexModeKind(mask?.mode)).map((mask): SessionMode => ({
+      id: mask.mode!,
+      label: typeof mask.name === 'string' && mask.name ? mask.name : mask.mode!,
+      description: CODEX_MODE_DESCRIPTIONS[mask.mode!],
+    }));
+    this.modeCatalog = modes;
+    return modes;
   }
 
   // ---- newSession ----------------------------------------------------------
@@ -435,7 +519,7 @@ export class CodexRuntime implements AgentRuntime {
     const existing = this.sessions.get(publicId);
     if (existing) return existing;
 
-    await this.client.ensureStarted();
+    await this.startClient();
 
     // Resolve model — fall back to isDefault from model/list if empty
     let modelId = opts.model ?? this.host.config.defaultModel(this.id);
@@ -516,6 +600,13 @@ export class CodexRuntime implements AgentRuntime {
       permissionBroker: opts.permissionBroker,
       recover: (s) => this.recoverSession(s),
     });
+
+    // A native fork copies the parent's history, and with it the mode Codex
+    // keeps for the thread; carry the live parent's mode so its turns say so.
+    if (forkFrom && opts.parentChatId) {
+      const parentMode = this.host.sessions.getSession(opts.parentChatId)?.currentModeId;
+      if (isCodexModeKind(parentMode)) session.currentModeId = parentMode;
+    }
 
     const slotId = session.createMcpSlot();
 
@@ -609,7 +700,7 @@ export class CodexRuntime implements AgentRuntime {
       }
     }
 
-    await this.client.ensureStarted();
+    await this.startClient();
 
     let modelId = opts.model ?? this.host.config.defaultModel(this.id);
     if (!modelId) {
@@ -666,6 +757,9 @@ export class CodexRuntime implements AgentRuntime {
         if (echoedThreadId !== threadId) throw new Error('Codex native resume returned a different thread identity');
         // Rebind in case the threadId came back different (treat original as canonical)
         (session as any).threadId = threadId;
+        // Codex keeps a thread's last collaboration mode; a resumed Plan thread stays in Plan.
+        const resumedMode = (resumeResult['collaborationMode'] as { mode?: unknown } | null | undefined)?.mode;
+        if (resumedMode === 'plan') session.currentModeId = resumedMode;
       });
     } catch (err) {
       const msg = (err as Error).message ?? '';
@@ -718,7 +812,7 @@ export class CodexRuntime implements AgentRuntime {
         for (const peer of this.sessions.values()) peer.requiresRestart = false;
         replacedDaemon = true;
       }
-      await this.client.ensureStarted(remaining());
+      await this.startClient(remaining());
       remaining();
       if (replacedDaemon) {
         for (const peer of this.sessions.values()) {
@@ -758,7 +852,7 @@ export class CodexRuntime implements AgentRuntime {
         enableFollowUps,
       );
     }
-    const assistant = this.host.profile.isRestricted(toolProfile);
+    const assistant = this.host.profile.isRestricted(toolProfile) || toolProfile?.assistant === true;
     const metadataMode = codexMetadataOutputMode(
       this.followUpsHookPocEnabled,
       this.followUpsExperimentMode,
@@ -772,23 +866,30 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   private buildThreadConfig(slotId: string, followUpsHooks: boolean): Record<string, unknown> {
+    const hooks: Record<string, unknown> = followUpsHooks
+      ? buildCodexFollowUpsHookPocConfig(slotId, this.mcpRegistry.hookEndpoint(slotId, 'stop'), {
+        runnerPath: this.followUpsHook?.runnerPath,
+        nodePath: this.followUpsHook?.nodePath,
+      })
+      : {};
+    const hookFeatures = hooks.features && typeof hooks.features === 'object' ? hooks.features as Record<string, unknown> : {};
     return {
       ...buildCodexMcpConfig(this.mcpRegistry.endpoint(slotId)),
-      ...(followUpsHooks
-        ? buildCodexFollowUpsHookPocConfig(slotId, this.mcpRegistry.hookEndpoint(slotId, 'stop'), {
-          runnerPath: this.followUpsHook?.runnerPath,
-          nodePath: this.followUpsHook?.nodePath,
-        })
-        : {}),
+      ...hooks,
+      features: { ...hookFeatures, ...CODEX_THREAD_FEATURES_OFF },
     };
   }
 
   /**
    * Starts or resumes a thread through `open`, with this session's thread
-   * config, and has `bind` check the answer and bind the thread id. For a
-   * restricted session (the Michi assistant) the thread config turns off
-   * Codex's shell, plugins and other tools and disables every MCP server in
-   * the user's effective config but the host's (codexRestrictedThreadConfig);
+   * config, and has `bind` check the answer and bind the thread id. Every
+   * thread disables the MCP servers of the user's effective config
+   * (config/read for the cwd) by name, keeping only the host's; spec §2
+   * meant `-c mcp_servers={}` to do this, but codex 0.165 merges that empty
+   * table instead. For an ordinary session this is best effort: a server
+   * still open afterwards (mcpServerStatus/list) is logged, not refused.
+   * A restricted session (the Michi assistant) also turns off Codex's
+   * shell, plugins, sub-agents and other tools (codexRestrictedThreadConfig);
    * then the thread's own MCP server list must show only the host's enabled
    * (codexRestrictedMcpCheck). A server config/read did not report is
    * disabled on one more try (a new open); anything else fails closed.
@@ -804,21 +905,31 @@ export class CodexRuntime implements AgentRuntime {
     const profile = session.metaAgentToolProfile;
     const toolset = this.host.profile.toolset?.(profile) ?? 'restricted';
     if (!session.isAssistant) {
-      bind(await open(base));
+      await this.openIsolatedThread(session, cwd, base, open, bind);
       return;
     }
-    const read = await this.client.request('config/read', { cwd }) as { config?: { mcp_servers?: unknown } } | undefined;
-    const servers = read?.config?.mcp_servers;
-    const disable = servers && typeof servers === 'object' && !Array.isArray(servers) ? Object.keys(servers) : [];
+    const disable = codexConfiguredMcpServers(await this.client.request('config/read', { cwd }));
+    session.userMcpServers = [...disable];
     const refused = (stillOpen: string[], detail: string) => guardError(this.host, {
       runtimeId: this.id, toolset, unexpectedTools: stillOpen.map((name) => `mcp_server:${name}`), detail,
     });
     let retried: string[] = [];
+    let subagentLimit = this.restrictedSubagentLimit;
     for (let attempt = 1; ; attempt += 1) {
       let opened: T;
       try {
-        opened = await open(codexRestrictedThreadConfig(base, disable));
+        opened = await open(restrictedConfig(codexRestrictedThreadConfig(base, disable), subagentLimit));
       } catch (error) {
+        // An app-server that rejects the multi_agent_v2 table gets the plain
+        // switch; CodexSession still stops any child that starts.
+        if (subagentLimit && error instanceof CodexRpcError && /multi_agent_v2/.test(error.rpcMessage)) {
+          this.host.observability.log('warn', 'chat', 'codex rejected the restricted sub-agent limit; relying on the session\'s spawn guard', {
+            nodeId: session.id, error: error.rpcMessage,
+          });
+          subagentLimit = false;
+          attempt -= 1;
+          continue;
+        }
         // Codex turns off only servers its config defines (one a plugin adds has no transport to name).
         if (retried.length === 0) throw error;
         throw refused(retried, `Codex would not turn off ${retried.join(', ')}: ${error instanceof Error ? error.message : String(error)}`);
@@ -837,7 +948,58 @@ export class CodexRuntime implements AgentRuntime {
       // Let this thread go; the next open disables those servers too.
       await this.client.request('thread/unsubscribe', { threadId: session.threadId }, 2_000).catch(() => {});
       disable.push(...fresh);
+      session.userMcpServers = [...disable];
       retried = fresh;
+    }
+  }
+
+  /**
+   * An ordinary session's open: the user's MCP servers disabled by name. Each
+   * step only warns when it fails. Codex refusing that configuration (a
+   * definite JSON-RPC configuration error, never a timeout) opens the thread
+   * without it.
+   */
+  private async openIsolatedThread<T>(
+    session: CodexSession,
+    cwd: string,
+    base: Record<string, unknown>,
+    open: (config: Record<string, unknown>) => Promise<T>,
+    bind: (result: T) => void,
+  ): Promise<void> {
+    const warn = (msg: string, data: Record<string, unknown>) =>
+      this.host.observability.log('warn', 'chat', msg, { nodeId: session.id, cwd, ...data });
+    let disable: string[] = [];
+    try {
+      disable = codexConfiguredMcpServers(await this.client.request('config/read', { cwd }));
+    } catch (error) {
+      warn('codex config/read failed; the user\'s MCP servers stay enabled in this thread', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    let opened: T;
+    try {
+      opened = await open(codexDisableMcpServers(base, disable));
+    } catch (error) {
+      if (!(error instanceof CodexRpcError) || !/configuration|mcp_servers/i.test(error.rpcMessage)
+        || codexDisableMcpServers(base, disable) === base) throw error;
+      warn('codex refused the thread config that disables the user\'s MCP servers; opening the thread with them', {
+        servers: disable, error: error.rpcMessage,
+      });
+      disable = [];
+      opened = await open(base);
+    }
+    bind(opened);
+    session.userMcpServers = disable;
+    try {
+      const statuses = await this.threadMcpServers(session.threadId);
+      const stillOpen = statuses ? codexOpenUserMcpServers(statuses) : [];
+      if (stillOpen.length > 0) {
+        warn('codex thread still runs MCP servers outside Michi', { threadId: session.threadId, servers: stillOpen });
+      }
+    } catch (error) {
+      warn('codex mcpServerStatus/list failed; could not check the thread\'s MCP servers', {
+        threadId: session.threadId, error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

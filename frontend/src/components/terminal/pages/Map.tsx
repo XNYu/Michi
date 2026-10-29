@@ -451,7 +451,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
 
   // ELK layout (async). Only runs when layoutEngine === 'elk'.
   const elkResult = useElkLayout({
-    enabled: layoutEngine === 'elk',
+    enabled: view === 'graph' && layoutEngine === 'elk',
     trees: layoutTrees,
     activeTree,
     edges,
@@ -471,7 +471,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
   })();
 
   const orbitResult = useOrbitLayout({
-    enabled: layoutEngine === 'orbit',
+    enabled: view === 'graph' && layoutEngine === 'orbit',
     trees: layoutTrees,
     activeTree,
     edges,

@@ -224,3 +224,57 @@ describe('CrewTurn subagents', () => {
         assert.equal(roster.find((s: any) => s.sessionId === 'b').error, 'turn_limit:30');
     });
 });
+
+describe('CrewTurn on official Gateway 0.11.0.1 (captured App-socket payloads)', () => {
+    it('folds a real spawn_sub_agents run into one completed roster entry', async () => {
+        const { mergeSubagentRoster, parseSubagentRoster } = await import('michi-shared');
+        const emitted: any[] = [];
+        const slot = 'probe-subagents-1793249957976';
+        const turn = new CrewTurn(slot, { getSlot: async () => ({ messages: [] }) } as any, (update) => emitted.push(update), () => 'id');
+        // .probe/crew/logs/03-subagents-dashboard-owner.jsonl (subagent_queued/_status are not forwarded by CrewEventStream).
+        turn.event({ type: 'subagent_spawn', data: { id: 'ffdeb7b3e8048b45', slot, task: 'Reply with exactly the word PONG and nothing else.',
+            agent: 'kirocrew', label: '', model: '', requested_model: 'auto', child_session: 'subagent:ffdeb7b3e8048b45' } });
+        turn.event({ type: 'subagent_done', data: { id: 'ffdeb7b3e8048b45', slot, elapsed: 9.125636577606201, credits: 0.11524875373134326,
+            error: null, stopped: false, outcome: 'completed', task: 'Reply with exactly the word PONG and nothing else.', agent: '', label: '',
+            child_session: 'subagent:ffdeb7b3e8048b45', model: '', requested_model: 'auto', result: 'PONG', stop_reason: 'end_turn', partial: false } });
+        const roster = emitted.filter((u) => u.sessionUpdate === 'subagent_list_update')
+            .reduce((acc, u) => mergeSubagentRoster(acc, parseSubagentRoster(u.subagents)), [] as any[]);
+        assert.equal(roster.length, 1);
+        assert.equal(roster[0].sessionId, 'ffdeb7b3e8048b45');
+        assert.equal(roster[0].status, 'terminated');
+        assert.equal(roster[0].outcome, 'completed');
+        assert.equal(roster[0].result, 'PONG');
+        assert.equal(roster[0].usage?.durationMs, 9126);
+        assert.equal(roster[0].source, 'crew');
+    });
+
+    it('reports the turn\'s Gateway credits as Kiro v2 usage once, after this turn\'s user row only', async () => {
+        const messages: any[] = [
+            { role: 'user', content: 'earlier' },
+            { role: 'assistant', content: 'earlier answer', meta: { turn_stats: { elapsed_ms: 900, credits: 9.9 } } },
+            { role: 'user', content: 'Call the spawn_sub_agents tool…', meta: { turnActor: 'app' } },
+            { role: 'assistant', content: 'PONG', meta: { mid: 'm', turn_stats: { elapsed_ms: 23170, credits: 0.321, model: 'claude-sonnet-4.6', ttft_ms: 14587 } } },
+        ];
+        const updates: any[] = [];
+        const turn = new CrewTurn('own', { getSlot: async () => ({ key: 'own', messages, context_pct: 2.9, context_stale: false }) } as any,
+            (update) => updates.push(update), () => '1');
+        await turn.finish(false);
+        assert.deepEqual(updates.filter((u) => u.sessionUpdate === 'usage_summary'), [{ sessionUpdate: 'usage_summary', contextUsagePercentage: 2.9,
+            meteringUsage: [{ value: 0.321, unit: 'credit', unitPlural: 'credits' }], turnDurationMs: 23170 }]);
+    });
+
+    it('invents no usage: no credits, a cancelled turn, or no context reading send nothing', async () => {
+        const cases: Array<[any[], Record<string, unknown>, boolean]> = [
+            [[{ role: 'user' }, { role: 'assistant', meta: { turn_stats: { elapsed_ms: 6229, model: 'claude-sonnet-4.6' } } }], { context_pct: 0, context_stale: false }, false],
+            [[{ role: 'user' }, { role: 'assistant', meta: { turn_stats: { elapsed_ms: 100, credits: 0.5 } } }], { context_pct: 1, context_stale: false }, true],
+            [[{ role: 'user' }, { role: 'assistant', meta: { turn_stats: { elapsed_ms: 100, credits: 0.5 } } }], { context_stale: true }, false],
+        ];
+        for (const [messages, extra, cancelled] of cases) {
+            const updates: any[] = [];
+            const turn = new CrewTurn('own', { getSlot: async () => ({ key: 'own', messages, ...extra }) } as any, (u) => updates.push(u), () => '1');
+            if (cancelled) await turn.reconcile();
+            await turn.finish(cancelled);
+            assert.equal(updates.some((u) => u.sessionUpdate === 'usage_summary'), false, JSON.stringify(messages));
+        }
+    });
+});

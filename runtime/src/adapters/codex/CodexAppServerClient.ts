@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawnAgentProcess, killProcessTree } from '../../core/processTree';
 import { withDeadline } from '../../core/runtimeLifecycle';
-import { findCodexBinary, preflightCodexAuth, warnIfCodexVersionBelowMinimum } from './codexBinary';
+import { findCodexBinary, warnIfCodexVersionBelowMinimum } from './codexBinary';
 import type { CodexIncoming, CodexRpcId } from './codexProtocol';
 
 export class CodexRpcTimeoutError extends Error {
@@ -47,9 +47,8 @@ export interface CodexAppServerClientDeps {
   spawnEnv?: NodeJS.ProcessEnv;
   rpcTimeoutMs?: number;
   initTimeoutMs?: number;
-  /** The host's Codex CLI override (findCodexBinary) and Codex home (preflightCodexAuth). */
+  /** The host's Codex CLI override (findCodexBinary). */
   binaryPath?: string;
-  codexHome?: string;
 }
 
 interface Pending {
@@ -62,11 +61,14 @@ interface Pending {
 
 /**
  * Singleton owner of the `codex app-server` daemon. JSONL JSON-RPC over
- * stdio. Spawned hermetically with `-c 'mcp_servers={}'` so the user's
- * personal MCP fleet never starts for Michi threads (spec §2); everything
- * else (auth, custom model providers) still loads from ~/.codex, and the
- * child gets the environment the host hands over (Michi: the backend's whole
- * environment, for provider env_keys).
+ * stdio. Spawned with `-c 'mcp_servers={}'`, meant to keep the user's
+ * personal MCP fleet out of Michi threads (spec §2); codex 0.165 merges that
+ * empty table into the user's config instead of replacing it, so
+ * CodexRuntime disables their servers by name in every thread. Everything
+ * else (auth, custom model providers) loads from ~/.codex, and the child gets
+ * the environment the host hands over (Michi: the backend's whole
+ * environment, for provider env_keys). Auth is not checked here: a provider
+ * may manage its own credentials, so CodexRuntime asks app-server.
  */
 export class CodexAppServerClient {
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -94,7 +96,6 @@ export class CodexAppServerClient {
     this.spawnFn =
       deps.spawnFn ??
       (() => {
-        preflightCodexAuth(deps.codexHome);
         warnIfCodexVersionBelowMinimum(deps.binaryPath);
         return spawnAgentProcess(findCodexBinary(deps.binaryPath), ['app-server', '-c', 'mcp_servers={}'], {
           env: spawnEnv,

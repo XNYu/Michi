@@ -1,6 +1,25 @@
 import { isCrewMemoryMode } from 'michi-shared';
 import type { KiroFlavor, KiroSessionMemory } from '../kiro/kiroFlavor';
 import { rewindPoints } from '../kiro/kiroProtocol';
+import type { AcpClient } from '../kiro/acpClient';
+import type { CancelAck } from '../../contract/types';
+
+/** Longer than the adapter's 10 s stop grace, inside its 15 s ACP cancel limit. */
+const CANCEL_STATUS_TIMEOUT_MS = 12_000;
+
+/**
+ * The Gateway's record of the stop the adapter sent for the cancelled prompt
+ * (its `stop_event` row, read through the adapter's `cancel_status`
+ * command). `stopped` and `stop_failed_reset` confirm it; anything else,
+ * including no record in time, leaves the dispatch as an inferred ack.
+ */
+async function crewCancelAck(client: AcpClient, sid: string): Promise<CancelAck | undefined> {
+    const result = await client.executeCommand(sid, 'cancel_status', {}, CANCEL_STATUS_TIMEOUT_MS);
+    const report = result.data as { confirmed?: unknown; state?: unknown; outcome?: unknown } | undefined;
+    if (!result.success || report?.confirmed !== true) return undefined;
+    const state = typeof report.state === 'string' ? report.state : 'stopped';
+    return { acknowledged: true, source: 'native', confidence: 'native', nativeMethod: `Crew stop_event ${state}` };
+}
 
 /**
  * A Crew chat's memory mode: the caller's, else the one the chat pinned,
@@ -26,7 +45,10 @@ const CREW_MEMORY: KiroSessionMemory = {
  * session titles. A Gateway session may hold a private memory identity or a
  * restricted memory mode, so a lost one is never silently rebuilt. Its
  * adapter's rewind points carry the Gateway message id it forks at, so that
- * id is the fork anchor. Crew sessions keep one MCP slot each.
+ * id is the fork anchor. Crew sessions keep one MCP slot each. A new
+ * session names its Michi workspace, so the adapter can file it in the
+ * Crew sidebar folder of that workspace. A cancel is acknowledged by the
+ * Gateway's own stop record when one arrives.
  */
 export const CREW_KIRO_FLAVOR: KiroFlavor = {
     hostPorts: ['bindings.crewMemory'],
@@ -42,4 +64,9 @@ export const CREW_KIRO_FLAVOR: KiroFlavor = {
     },
     sessionAnchors: false,
     memory: CREW_MEMORY,
+    cancelAck: { kind: 'agent-record', confirm: crewCancelAck },
+    sessionMetadata(host, opts) {
+        const name = opts.workspaceId ? host.bindings.workspace(opts.workspaceId)?.name?.trim() : undefined;
+        return name ? { crew: { workspaceName: name } } : undefined;
+    },
 };

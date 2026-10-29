@@ -38,6 +38,8 @@ export const CODEX_RUNTIME_DESCRIPTOR: RuntimeDescriptor = {
     // __michi_internal__ points at the session's /api/mcp/<slot>.
     toolDelivery: ['mcp-http'],
     historyReplay: 'preamble',
+    // Codex starts turns on its own only to pursue a thread goal; every Michi
+    // thread turns goals off (CODEX_THREAD_FEATURES_OFF).
     backgroundTurns: false,
     // A title thread runs beside the first chat turn; its result joins the turn's events.
     titles: 'in-stream',

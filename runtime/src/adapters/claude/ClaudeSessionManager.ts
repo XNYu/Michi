@@ -223,7 +223,7 @@ export class ClaudeSessionManager {
           model: opts.model ?? undefined,
           // The assistant has no AskUserQuestion, nor the ordinary chat tools
           // the stable prompt advertises; it gets its own short tool note.
-          systemPromptAppend: this.host.profile.isRestricted(opts.toolProfile)
+          systemPromptAppend: (this.host.profile.isRestricted(opts.toolProfile) || opts.toolProfile?.assistant === true)
             ? this.host.prompt.stableSystemPrompt(this.metadataOutputMode, false, false, true, opts.toolProfile)
             : this.host.prompt.stableSystemPrompt(this.metadataOutputMode, true, true),
           mcpRegistry: this.deps.mcpRegistry,

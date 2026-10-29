@@ -19,7 +19,6 @@ vi.mock('../../../state/chatStore', () => ({
 vi.mock('../../../services/auth', () => ({ useAuthSession: () => null }));
 vi.mock('./settings/AppearancePane', () => ({ AppearancePane: () => <div>Appearance pane</div> }));
 vi.mock('./settings/ModelPane', () => ({ ModelPane: () => <div>Model pane</div> }));
-vi.mock('./settings/assistant/MichiAssistantSettings', () => ({ MichiAssistantSettings: () => <div>Native assistant settings</div> }));
 vi.mock('./settings/ConnectionsPane', () => ({ ConnectionsPane: () => <div>Connections pane</div> }));
 vi.mock('./settings/NotificationsPane', () => ({ NotificationsPane: () => <div>Notifications pane</div> }));
 vi.mock('./settings/ShortcutsPane', () => ({ ShortcutsPane: () => <div>Shortcuts pane</div> }));
@@ -50,6 +49,5 @@ it('keeps native settings available without an external service category', () =>
   expect(screen.getByRole('button', { name: 'Model' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Connections' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Desk' })).toBeNull();
-  fireEvent.click(screen.getByRole('button', { name: 'Assistant' }));
-  expect(screen.getByText('Native assistant settings')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Assistant' })).toBeNull();
 });

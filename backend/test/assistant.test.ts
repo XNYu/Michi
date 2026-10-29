@@ -26,17 +26,22 @@ import { clearAllSessions } from '../src/agents/sessionRegistry';
 import { closeDb, getDb, getDbPath, initDb } from '../src/services/db';
 import { dbWorker, initDbWorker, shutdownDbWorker } from '../src/services/dbWorkerClient';
 import { getNode, getWorkspace, listMessages, listWorkspaces, loadFullWorkspace, saveMessage, saveWorkspace } from '../src/services/dbRepository';
-import { updateAgentConfig } from '../src/services/agentConfig';
-import { updateMetaAgentSettings } from '../src/services/metaAgent/settings';
+import { resolveModel, updateAgentConfig } from '../src/services/agentConfig';
+import { getMetaAgentSettings, updateMetaAgentSettings } from '../src/services/metaAgent/settings';
 import { applyWorkspaceCommands } from '../src/services/domainCommands';
 import { ChatManager, PrimaryAgentBindingError, primaryAgentSessionOptions } from '../src/services/chatManager';
 import { LOCAL_AGENT_OWNER_ID } from '../src/services/agentOwner';
 import { setupMichiRoutes } from '../src/routes/michi';
+import { createRemoteAccessMiddleware } from '../src/services/remoteAccess';
 import { setupAssistantRoutes } from '../src/routes/assistant';
 import { createLocalOriginGuard } from '../src/routes/middleware/localControl';
 import { setupBackupRoutes } from '../src/routes/backup';
-import { assistantCwd, assistantCwdFor, ensureAssistant, isAssistantNode, isAssistantWorkspace } from '../src/assistant/store';
-import { ASSISTANT_ALLOWED_TOOL_NAMES, ASSISTANT_INSTRUCTIONS } from '../src/assistant/policy';
+import {
+  activateAssistantConversation, assistantCwd, assistantCwdFor, assistantPurposeOf, ensureAssistant, ensureAssistantFor, isAssistantNode, isAssistantWorkspace,
+  resetAssistant, updateAssistantSettings,
+} from '../src/assistant/store';
+import { ASSISTANT_ALLOWED_TOOL_NAMES, ASSISTANT_INSTRUCTIONS, SCHEDULE_ASSISTANT_INSTRUCTIONS } from '../src/assistant/policy';
+import { createHash } from 'node:crypto';
 import { ChatHub, chatHub } from '../src/agents/chatHub';
 
 let captured: Array<NewAgentSessionOptions & { runtimeId: string }> = [];
@@ -129,6 +134,7 @@ describe('Michi assistant', () => {
     setGlobal('claude');
     const app = express();
     app.use(express.json());
+    app.use('/api', createRemoteAccessMiddleware());
     app.use('/api', setupAssistantRoutes());
     app.use('/api', setupMichiRoutes(new ChatManager(undefined, tmpDir)));
     server = app.listen(0, '127.0.0.1');
@@ -178,9 +184,10 @@ describe('Michi assistant', () => {
     assert.equal(first.status, 200);
     const info = first.body as MichiAssistantInfo;
     assert.deepEqual(info.supportedRuntimes, ['claude', 'codex', 'pi', 'kiro'], 'Crew cannot host the assistant');
-    assert.deepEqual(info.settings, { runtimeId: 'claude', modelId: null, reasoning: null });
-    assert.deepEqual(info.conversation, { runtimeId: 'claude', modelId: 'claude-model', reasoning: 'high' },
-      'the next message runs on the global settings the Meta agent record follows');
+    assert.deepEqual(info.settings, { runtimeId: 'claude', providerId: null, modelId: 'claude-model', reasoning: 'high' },
+      'new conversations run on the global settings');
+    assert.deepEqual(info.conversation, info.settings, 'and so does one with no pick of its own');
+    assert.equal(info.conversationFollowsGlobal, true);
     assert.deepEqual(info.runtimeSwitches, []);
 
     const workspace = getWorkspace(info.workspaceId)!;
@@ -215,7 +222,7 @@ describe('Michi assistant', () => {
     assert.equal(nodes.n, 1);
   });
 
-  test('settings: validated, persisted, and a runtime switch drops the old model', async () => {
+  test('a pick in a conversation: validated, kept for it alone, and a runtime switch starts from that runtime\'s global settings', async () => {
     await get();
     assert.equal((await raw('PUT', '/api/assistant/settings', { runtimeId: 'gemini' })).status, 400, 'only registered runtimes');
     assert.equal((await raw('PUT', '/api/assistant/settings', { runtimeId: null })).status, 400);
@@ -223,44 +230,62 @@ describe('Michi assistant', () => {
     for (const runtimeId of ['kiro', 'crew', 'claude']) {
       const answer = await raw('PUT', '/api/assistant/settings', { runtimeId });
       assert.equal(answer.status, 200, runtimeId);
-      assert.equal(answer.body.settings.runtimeId, runtimeId);
+      assert.equal(answer.body.conversation.runtimeId, runtimeId);
+      assert.equal(answer.body.settings.runtimeId, 'claude', 'the global settings stay as they are');
     }
     assert.equal((await raw('PUT', '/api/assistant/settings', { reasoning: 'loud' })).status, 400);
     assert.equal((await raw('PUT', '/api/assistant/settings', { modelId: '' })).status, 400);
     assert.equal((await raw('PUT', '/api/assistant/settings', { modelId: '--dangerously-skip-permissions' })).status, 400, 'a model id never reads as a CLI flag');
     assert.equal((await raw('PUT', '/api/assistant/settings', { modelId: 'opus; rm -rf /' })).status, 400);
     assert.equal((await raw('PUT', '/api/assistant/settings', { runtimeId: 'claude', extra: 1 })).status, 400);
+    assert.equal((await raw('PUT', '/api/assistant/settings', { providerId: '--x' })).status, 400);
+    seedWorkspace('ws-plain');
+    getDb().prepare(`INSERT INTO nodes (id,workspace_id,kind,status,minimized,spawned_by_agent,created_at)
+      VALUES ('n-plain','ws-plain','chat','idle',0,0,1)`).run();
+    assert.equal((await raw('PUT', '/api/assistant/settings', { nodeId: 'n-plain', modelId: 'opus' })).status, 400, 'only the assistant\'s own conversations');
+    assert.equal((await raw('PUT', '/api/assistant/settings', { nodeId: 7 })).status, 400);
     for (const modelId of ['claude-sonnet-4-5', 'global.anthropic.claude-opus-5-5[1m]', 'openai/gpt-5', 'arn:aws:bedrock:us-east-1:1:inference-profile/x']) {
       assert.equal((await raw('PUT', '/api/assistant/settings', { modelId })).status, 200, modelId);
     }
 
-    const model = await raw('PUT', '/api/assistant/settings', { modelId: 'opus', reasoning: 'high' });
+    const model = await raw('PUT', '/api/assistant/settings', { modelId: 'opus', reasoning: 'low' });
     assert.equal(model.status, 200);
-    assert.deepEqual(model.body.settings, { runtimeId: 'claude', modelId: 'opus', reasoning: 'high' });
+    assert.deepEqual(model.body.conversation, { runtimeId: 'claude', providerId: null, modelId: 'opus', reasoning: 'low' });
+    assert.equal(model.body.conversationFollowsGlobal, false);
 
     const switched = await raw('PUT', '/api/assistant/settings', { runtimeId: 'codex' });
-    assert.deepEqual(switched.body.settings, { runtimeId: 'codex', modelId: null, reasoning: 'high' });
-    assert.deepEqual((await get()).body.settings, switched.body.settings);
+    assert.deepEqual(switched.body.conversation, { runtimeId: 'codex', providerId: null, modelId: null, reasoning: 'xhigh' },
+      'Codex\'s own global settings, not Claude\'s model or reasoning');
+    assert.deepEqual((await get()).body.conversation, switched.body.conversation);
+
+    // Global changes reach new conversations, never a picked one.
+    setGlobal('kiro', 'kiro-model');
+    const later = (await get()).body as MichiAssistantInfo;
+    assert.deepEqual(later.conversation, switched.body.conversation);
+    assert.equal(later.settings.runtimeId, 'kiro');
   });
 
-  test('an existing assistant\'s own settings move into the Meta agent record once', async () => {
+  test('an existing assistant\'s own settings move into the Meta agent record once; the assistant follows global', async () => {
     saveWorkspace({ id: 'p-assistant-old', name: 'Michi assistant', cwd: tmpDir, created_at: 1, updated_at: 1, settings: null });
     getDb().prepare('UPDATE workspaces SET settings = ? WHERE id = ?').run(JSON.stringify({
       system: 'assistant', assistant: { nodeId: null, runtimeId: 'codex', modelId: 'gpt-x', reasoning: null },
     }), 'p-assistant-old');
     const info = (await get()).body as MichiAssistantInfo;
     assert.equal(info.workspaceId, 'p-assistant-old');
-    assert.deepEqual(info.settings, { runtimeId: 'codex', modelId: 'gpt-x', reasoning: null });
-    assert.equal(info.conversation.runtimeId, 'codex');
+    const record = getMetaAgentSettings();
+    assert.deepEqual({ runtimeId: record.runtimeId, modelId: record.modelId }, { runtimeId: 'codex', modelId: 'gpt-x' });
+    assert.equal(info.conversation.runtimeId, 'claude', 'the assistant itself runs on the global settings');
     assert.deepEqual(JSON.parse(getWorkspace(info.workspaceId)!.settings!).assistant, { nodeId: info.nodeId });
 
-    // The compatibility route writes the record; the old keys never come back.
+    // A pick lives outside the workspace row; the old keys never come back.
     const changed = (await raw('PUT', '/api/assistant/settings', { runtimeId: 'pi' })).body as MichiAssistantInfo;
-    assert.deepEqual(changed.settings, { runtimeId: 'pi', modelId: null, reasoning: null });
+    assert.equal(changed.conversation.runtimeId, 'pi');
+    assert.deepEqual(JSON.parse(getWorkspace(info.workspaceId)!.settings!).assistant, { nodeId: info.nodeId });
+    assert.equal(getMetaAgentSettings().runtimeId, 'codex', 'nor does it change the Meta agent record');
     assert.deepEqual((await get()).body, changed);
   });
 
-  test('reset archives the conversation and starts a fresh one with the same settings', async () => {
+  test('reset archives the conversation and starts a fresh one on the global settings', async () => {
     const before = (await raw('PUT', '/api/assistant/settings', { runtimeId: 'pi' })).body as MichiAssistantInfo;
     saveMessage({ id: 'before-new-conversation', node_id: before.nodeId, role: 'user', content: 'Keep the previous conversation', seq: 0, created_at: 1 });
     const reset = await raw('POST', '/api/assistant/reset');
@@ -269,7 +294,9 @@ describe('Michi assistant', () => {
     assert.notEqual(after.nodeId, before.nodeId);
     assert.notEqual(after.treeId, before.treeId);
     assert.equal(after.workspaceId, before.workspaceId);
-    assert.equal(after.settings.runtimeId, 'pi');
+    assert.equal(before.conversation.runtimeId, 'pi');
+    assert.equal(after.conversation.runtimeId, 'claude', 'a pick stays with its conversation');
+    assert.equal(after.conversationFollowsGlobal, true);
     const oldTree = getDb().prepare('SELECT archived_at FROM trees WHERE id = ?').get(before.treeId) as any;
     assert.ok(oldTree.archived_at, 'old conversation is archived, not deleted');
     assert.equal(listMessages(before.nodeId)[0].content, 'Keep the previous conversation');
@@ -345,6 +372,79 @@ describe('Michi assistant', () => {
     }
   });
 
+  test('the Scheduled window has its own conversation: own pointer, reset, instructions and hash, never in Spaces history', async () => {
+    const spaces = (await get()).body as MichiAssistantInfo;
+    const activeTree = getWorkspace(spaces.workspaceId)!.active_tree_id;
+    const opened = await raw('GET', '/api/assistant/schedule');
+    assert.equal(opened.status, 200);
+    const first = opened.body as MichiAssistantInfo;
+    assert.equal(first.workspaceId, spaces.workspaceId, 'one hidden workspace: Pages Home keeps its home');
+    assert.equal(assistantWorkspaces().length, 1);
+    assert.notEqual(first.nodeId, spaces.nodeId);
+    assert.deepEqual((await raw('GET', '/api/assistant/schedule')).body, first, 'idempotent');
+    assert.equal((await get()).body.nodeId, spaces.nodeId, 'the Spaces conversation stays current');
+    assert.equal(getWorkspace(spaces.workspaceId)!.active_tree_id, activeTree, 'the active tree stays the Spaces one');
+    assert.equal(assistantPurposeOf(first.nodeId), 'schedule');
+    assert.equal(assistantPurposeOf(spaces.nodeId), 'spaces');
+    assert.ok(isAssistantNode(first.nodeId), 'it runs as the assistant, never as a worker');
+
+    const manager = new ChatManager(undefined, tmpDir);
+    const bindingOf = async (nodeId: string) => (await manager.resolvePrimaryAgentBinding({ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: first.workspaceId, nodeId }))!;
+    const scheduleBinding = await bindingOf(first.nodeId);
+    const spacesBinding = await bindingOf(spaces.nodeId);
+    assert.equal(primaryAgentSessionOptions(scheduleBinding).bootstrapInstructions, SCHEDULE_ASSISTANT_INSTRUCTIONS);
+    assert.ok(SCHEDULE_ASSISTANT_INSTRUCTIONS.startsWith(MICHI_ASSISTANT_MARKER), 'opens with the marker Michi filtering relies on');
+    assert.equal(primaryAgentSessionOptions(spacesBinding).bootstrapInstructions, ASSISTANT_INSTRUCTIONS);
+    assert.notEqual(scheduleBinding.profileHash, spacesBinding.profileHash, 'its sessions are its own');
+    assert.equal(spacesBinding.profileHash, createHash('sha256').update(JSON.stringify({
+      assistant: 2, instructions: ASSISTANT_INSTRUCTIONS, tools: ASSISTANT_ALLOWED_TOOL_NAMES,
+      runtimeProfile: spacesBinding.effectiveDefinition.runtimeProfile,
+    })).digest('hex'), 'the Spaces hash is unchanged, so its live sessions are kept');
+
+    // A composer pick in the Scheduled window answers with that window's conversation.
+    const picked = await raw('PUT', '/api/assistant/settings', { nodeId: first.nodeId, runtimeId: 'pi' });
+    assert.equal(picked.status, 200, JSON.stringify(picked.body));
+    assert.equal(picked.body.nodeId, first.nodeId);
+    assert.equal(picked.body.conversation.runtimeId, 'pi');
+    assert.equal((await get()).body.conversation.runtimeId, 'claude');
+
+    // Starting over touches only its own window.
+    saveMessage({ id: 'schedule-q', node_id: first.nodeId, role: 'user', content: 'Every weekday at nine', seq: 0, created_at: 50 });
+    saveMessage({ id: 'spaces-q', node_id: spaces.nodeId, role: 'user', content: 'What changed today', seq: 0, created_at: 40 });
+    const stale = await raw('POST', '/api/assistant/schedule/reset', { nodeId: spaces.nodeId });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.code, 'assistant_changed');
+    assert.equal(stale.body.current.nodeId, first.nodeId);
+    const reset = await raw('POST', '/api/assistant/schedule/reset', { nodeId: first.nodeId });
+    assert.equal(reset.status, 200);
+    const second = reset.body as MichiAssistantInfo;
+    assert.notEqual(second.nodeId, first.nodeId);
+    assert.equal(assistantPurposeOf(second.nodeId), 'schedule');
+    assert.ok((getDb().prepare('SELECT archived_at FROM trees WHERE id = ?').get(first.treeId) as any).archived_at);
+    assert.equal((await get()).body.nodeId, spaces.nodeId);
+    const spacesReset = await raw('POST', '/api/assistant/reset', { nodeId: spaces.nodeId });
+    assert.equal(spacesReset.status, 200);
+    assert.equal((await raw('GET', '/api/assistant/schedule')).body.nodeId, second.nodeId);
+
+    // History and switching belong to the Spaces window.
+    const history = (await raw('GET', '/api/assistant/conversations?limit=50')).body.items.map((item: any) => item.nodeId);
+    assert.deepEqual(history, [spaces.nodeId]);
+    const refused = await raw('POST', `/api/assistant/conversations/${first.nodeId}/activate`, { currentNodeId: spacesReset.body.nodeId });
+    assert.equal(refused.status, 400);
+    assert.equal((await get()).body.nodeId, spacesReset.body.nodeId);
+  });
+
+  test('a Scheduled conversation made first leaves the Spaces one its own pointer and active tree', () => {
+    const schedule = ensureAssistantFor('schedule');
+    const spaces = ensureAssistant();
+    assert.equal(spaces.workspaceId, schedule.workspaceId);
+    assert.notEqual(spaces.nodeId, schedule.nodeId);
+    assert.equal(ensureAssistantFor('schedule').nodeId, schedule.nodeId);
+    assert.equal(ensureAssistant().nodeId, spaces.nodeId);
+    assert.equal(getWorkspace(spaces.workspaceId)!.active_tree_id, spaces.treeId);
+    assert.equal(assistantWorkspaces().length, 1);
+  });
+
   test('ChatHub hands uploaded text and native images to the assistant without changing ordinary chat attachments', async () => {
     const info = (await get()).body as MichiAssistantInfo;
     const dir = path.join(assistantCwd(), '.attachments'); fs.mkdirSync(dir);
@@ -367,6 +467,34 @@ describe('Michi assistant', () => {
     const ordinary = await hub.startTurn({ chatId: 'ordinary', nodeId: 'ordinary', text: 'Review', userMetadata: { attachments }, session });
     await ordinary.done;
     assert.deepEqual(received[1], { text: 'Review', attachments });
+  });
+
+  test('authenticated remote owners can open, configure and switch assistant conversations', async () => {
+    const priorRemote = process.env.MICHI_REMOTE_ACCESS;
+    const priorToken = process.env.MICHI_REMOTE_TOKEN;
+    process.env.MICHI_REMOTE_ACCESS = '1';
+    process.env.MICHI_REMOTE_TOKEN = 'assistant-test-owner-token';
+    const headers = { host: 'michi.example', origin: 'https://michi.example', authorization: 'Bearer assistant-test-owner-token' };
+    try {
+      for (const authorization of ['', 'Bearer wrong']) {
+        assert.equal((await raw('GET', '/api/assistant', undefined, { ...headers, authorization })).status, 401);
+        assert.equal((await raw('POST', '/api/assistant/reset', {}, { ...headers, authorization })).status, 401);
+      }
+      const initial = await raw('GET', '/api/assistant', undefined, headers);
+      assert.equal(initial.status, 200);
+      assert.ok(initial.body.nodeId);
+      assert.equal((await raw('PUT', '/api/assistant/settings', { modelId: 'opus' }, headers)).status, 200);
+      assert.equal((await raw('GET', '/api/assistant/conversations', undefined, headers)).status, 200);
+      const reset = await raw('POST', '/api/assistant/reset', { nodeId: initial.body.nodeId }, headers);
+      assert.equal(reset.status, 200);
+      assert.notEqual(reset.body.nodeId, initial.body.nodeId);
+      const activated = await raw('POST', '/api/assistant/conversations/' + initial.body.nodeId + '/activate', { currentNodeId: reset.body.nodeId }, headers);
+      assert.equal(activated.status, 200);
+      assert.equal(activated.body.nodeId, initial.body.nodeId);
+    } finally {
+      if (priorRemote === undefined) delete process.env.MICHI_REMOTE_ACCESS; else process.env.MICHI_REMOTE_ACCESS = priorRemote;
+      if (priorToken === undefined) delete process.env.MICHI_REMOTE_TOKEN; else process.env.MICHI_REMOTE_TOKEN = priorToken;
+    }
   });
 
   test('routes are local-only', async (t) => {
@@ -408,8 +536,8 @@ describe('Michi assistant', () => {
     });
     const settings = JSON.parse(getWorkspace(info.workspaceId)!.settings!);
     assert.equal(settings.system, 'assistant');
-    assert.deepEqual(settings.assistant, { nodeId: info.nodeId }, 'the runtime settings live in the Meta agent record');
-    assert.equal(info.settings.modelId, 'opus');
+    assert.deepEqual(settings.assistant, { nodeId: info.nodeId }, 'a conversation\'s pick lives outside the workspace row');
+    assert.equal(info.conversation.modelId, 'opus');
     assert.equal(settings.aiGlobalContext, false, 'the client\'s own keys are kept');
     saveWorkspace({ id: info.workspaceId, name: 'Michi assistant', created_at: 1, updated_at: 2, settings: null });
     assert.ok(isAssistantWorkspace(info.workspaceId));
@@ -496,8 +624,8 @@ describe('Michi assistant', () => {
     assert.equal(binding.effectiveDefinition.runtimeProfile.runtimeId, 'claude');
     const options = primaryAgentSessionOptions(binding);
     assert.equal(options.bootstrapInstructions, ASSISTANT_INSTRUCTIONS);
-    assert.equal(options.toolProfile?.restricted, true);
-    assert.deepEqual(options.toolProfile?.allowedToolNames, ASSISTANT_ALLOWED_TOOL_NAMES);
+    assert.equal(options.toolProfile?.restricted, undefined);
+    assert.deepEqual(options.toolProfile?.allowedToolNames, undefined);
     assert.equal(options.profileHash, binding.profileHash);
     // ensure-session ignores a pane asking for another runtime, provider,
     // model, reasoning, Agent or folder.
@@ -513,7 +641,7 @@ describe('Michi assistant', () => {
     assert.equal(ensured.body.reasoning, 'low');
     assert.equal(captured.length, 1);
     assert.equal(captured[0].runtimeId, 'claude');
-    assert.equal(captured[0].toolProfile?.restricted, true);
+    assert.equal(captured[0].toolProfile?.restricted, undefined);
     assert.equal(captured[0].bootstrapInstructions, ASSISTANT_INSTRUCTIONS);
     assert.equal(captured[0].cwd, assistantDir, 'the assistant never runs in the folder a client names');
 
@@ -529,7 +657,7 @@ describe('Michi assistant', () => {
     assert.equal(captured[0].runtimeId, 'claude');
     assert.equal(captured[0].model, 'claude-model');
     assert.equal(captured[0].reasoning, 'low');
-    assert.equal(captured[0].toolProfile?.restricted, true);
+    assert.equal(captured[0].toolProfile?.restricted, undefined);
     assert.equal(captured[0].cwd, assistantDir);
 
     // ChatManager.ensureParentSession (Watch delivery, thread messages) binds the same.
@@ -537,7 +665,7 @@ describe('Michi assistant', () => {
     captured = [];
     const restored = await manager.ensureParentSession({ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: info.workspaceId, nodeId: info.nodeId });
     assert.ok(restored);
-    assert.equal(captured[0].toolProfile?.restricted, true);
+    assert.equal(captured[0].toolProfile?.restricted, undefined);
     assert.equal(captured[0].cwd, assistantDir);
 
     // Ordinary chats are untouched.
@@ -547,7 +675,7 @@ describe('Michi assistant', () => {
     assert.equal(await manager.resolvePrimaryAgentBinding({ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: 'ws-a', nodeId: 'n-plain' }), null);
   });
 
-  test('every message runs on the Meta agent settings resolved when its session binds', async () => {
+  test('every message runs on the conversation\'s pick, else the global settings resolved when its session binds', async () => {
     const info = ensureAssistant();
     const manager = new ChatManager(undefined, tmpDir);
     const profile = async () => (await manager.resolvePrimaryAgentBinding({
@@ -565,22 +693,62 @@ describe('Michi assistant', () => {
       'a conversation with messages follows a global change too');
     assert.notEqual(await hash(), firstHash, 'a different runtime profile rebuilds the live session');
 
+    // The Meta agent's own runtime is for background maintenance only.
     updateMetaAgentSettings({ runtimeId: 'codex', modelId: 'gpt-x', reasoning: 'medium' });
+    assert.equal((await profile()).runtimeId, 'kiro');
+
+    // Global runtimes the assistant cannot run on give the first one it can.
+    setGlobal('crew');
+    assert.equal((await profile()).runtimeId, 'claude');
+
+    updateAssistantSettings({ runtimeId: 'codex', modelId: 'gpt-x', reasoning: 'medium' });
     setGlobal('pi');
     const answer = (await get()).body as MichiAssistantInfo;
-    assert.deepEqual(answer.settings, { runtimeId: 'codex', modelId: 'gpt-x', reasoning: 'medium' });
-    assert.deepEqual(answer.conversation, answer.settings, 'an explicit choice is not affected by global');
-    assert.equal((await profile()).runtimeId, 'codex');
+    assert.deepEqual(answer.conversation, { runtimeId: 'codex', providerId: null, modelId: 'gpt-x', reasoning: 'medium' });
+    assert.equal(answer.settings.runtimeId, 'pi');
+    assert.equal((await profile()).runtimeId, 'codex', 'a pick is not affected by global');
 
-    // A new conversation after reset starts on the same record.
+    // A new conversation after reset follows the global settings again.
     const fresh = (await raw('POST', '/api/assistant/reset')).body as MichiAssistantInfo;
-    assert.equal(fresh.conversation.runtimeId, 'codex');
+    assert.equal(fresh.conversation.runtimeId, 'pi');
+    assert.equal(fresh.conversationFollowsGlobal, true);
+  });
+
+  test('a runtime pick starts from that runtime\'s global settings, whatever the conversation ran on', async () => {
+    ensureAssistant();
+    setGlobal('codex');
+    // A composer whose chips still showed Claude picks Codex, the runtime it already resolves to.
+    const picked = updateAssistantSettings({ runtimeId: 'codex', providerId: null, modelId: null, reasoning: null });
+    assert.deepEqual(picked.conversation, { runtimeId: 'codex', providerId: null, modelId: null, reasoning: 'xhigh' });
+    assert.equal(picked.conversationFollowsGlobal, false);
+  });
+
+  test('another provider without a model named starts on its own model', async () => {
+    ensureAssistant();
+    updateAssistantSettings({ runtimeId: 'pi' });
+    const openai = updateAssistantSettings({ providerId: 'openai', modelId: null });
+    assert.equal(openai.conversation.providerId, 'openai');
+    assert.equal(openai.conversation.modelId, 'gpt-5.5', 'not the global provider\'s model');
+    const back = updateAssistantSettings({ providerId: 'anthropic' });
+    assert.equal(back.conversation.modelId, resolveModel('pi'), 'the global provider brings back the global model');
+    assert.equal(updateAssistantSettings({ providerId: 'openai', modelId: 'gpt-x' }).conversation.modelId, 'gpt-x');
+  });
+
+  test('a conversation reopened from history keeps its pick', async () => {
+    const first = ensureAssistant();
+    updateAssistantSettings({ runtimeId: 'codex', modelId: 'gpt-x' });
+    saveMessage({ id: 'h-1', node_id: first.nodeId, role: 'user', content: 'Keep this one', seq: 0, created_at: 1 });
+    const second = resetAssistant().info;
+    assert.equal(second.conversation.runtimeId, 'claude');
+    const reopened = activateAssistantConversation(first.nodeId);
+    assert.equal(reopened.nodeId, first.nodeId);
+    assert.deepEqual(reopened.conversation, { runtimeId: 'codex', providerId: null, modelId: 'gpt-x', reasoning: 'xhigh' });
   });
 
   test('a runtime change continues the conversation in a new native session that carries its history', async () => {
     const info = (await get()).body as MichiAssistantInfo;
     const ensure = () => raw('POST', `/api/nodes/${info.nodeId}/ensure-session`, { workspaceId: info.workspaceId });
-    updateMetaAgentSettings({ runtimeId: 'codex' });
+    setGlobal('codex');
     const first = await ensure();
     assert.equal(first.status, 200, JSON.stringify(first.body));
     assert.equal(first.body.runtimeId, 'codex');
@@ -589,7 +757,7 @@ describe('Michi assistant', () => {
     assert.equal((await ensure()).body.resumeStrategy, 'live', 'no change, no new session');
     assert.equal(captured.length, 1);
 
-    updateMetaAgentSettings({ runtimeId: 'pi' });
+    setGlobal('pi');
     const switched = await ensure();
     assert.equal(switched.status, 200, JSON.stringify(switched.body));
     assert.equal(switched.body.runtimeId, 'pi');
@@ -610,11 +778,10 @@ describe('Michi assistant', () => {
     assert.equal(captured.length, 2);
     assert.equal(((await get()).body as MichiAssistantInfo).runtimeSwitches?.length, 1, 'staying on a runtime records nothing');
 
-    // Following a global change, through the path Watch delivery and thread messages
+    // A pick in the composer, through the path Watch delivery and thread messages
     // use; other runtimes get the visible history as a prior-context block.
     saveMessage({ id: 'm-3', node_id: info.nodeId, role: 'user', content: 'And Borealis?', seq: 3, created_at: 3 });
-    updateMetaAgentSettings({ runtimeId: null });
-    setGlobal('claude');
+    updateAssistantSettings({ runtimeId: 'claude' });
     const manager = new ChatManager(undefined, tmpDir);
     const restored = await manager.ensureParentSession({ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: info.workspaceId, nodeId: info.nodeId });
     assert.equal(restored?.runtimeId, 'claude');
@@ -631,14 +798,14 @@ describe('Michi assistant', () => {
 
   test('reloading after a runtime change continues on the new runtime with the history, as a send does', async () => {
     const info = (await get()).body as MichiAssistantInfo;
-    updateMetaAgentSettings({ runtimeId: 'codex' });
+    setGlobal('codex');
     assert.equal((await raw('POST', `/api/nodes/${info.nodeId}/ensure-session`, { workspaceId: info.workspaceId })).body.runtimeId, 'codex');
     saveMessage({ id: 'm-1', node_id: info.nodeId, role: 'user', content: 'What changed in Atlas?', seq: 1, created_at: 1 });
     saveMessage({ id: 'm-2', node_id: info.nodeId, role: 'assistant', content: 'Atlas moved to the new scheduler.', seq: 2, created_at: 2 });
 
     clearAllSessions();
     captured = [];
-    updateMetaAgentSettings({ runtimeId: 'claude' });
+    updateAssistantSettings({ runtimeId: 'claude' });
     const loaded = await raw('POST', `/api/chats/${info.nodeId}/load`, { cwd: tmpDir, nodeId: info.nodeId });
     assert.equal(loaded.status, 200, JSON.stringify(loaded.body));
     assert.equal(loaded.body.runtimeId, 'claude');
@@ -668,13 +835,13 @@ describe('Michi assistant', () => {
     const ensure = () => raw('POST', `/api/nodes/${info.nodeId}/ensure-session`, { workspaceId: info.workspaceId });
     await ensure();
     saveMessage({ id: 'm-1', node_id: info.nodeId, role: 'user', content: 'hello', seq: 1, created_at: 1 });
-    updateMetaAgentSettings({ runtimeId: 'codex' });
+    updateAssistantSettings({ runtimeId: 'codex' });
     await ensure();
-    updateMetaAgentSettings({ runtimeId: 'claude' });
+    updateAssistantSettings({ runtimeId: 'claude' });
     await ensure();
     assert.equal(getNode(info.nodeId)?.runtime_id, 'claude');
     assert.deepEqual(((await get()).body as MichiAssistantInfo).runtimeSwitches, []);
-    updateMetaAgentSettings({ runtimeId: 'pi' });
+    updateAssistantSettings({ runtimeId: 'pi' });
     await ensure();
     assert.deepEqual(((await get()).body as MichiAssistantInfo).runtimeSwitches?.map((change) => change.runtimeId), ['pi']);
   });
@@ -693,12 +860,12 @@ describe('Michi assistant', () => {
     const manager = new ChatManager(undefined, tmpDir);
     const bind = () => manager.resolvePrimaryAgentBinding({ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: info.workspaceId, nodeId: info.nodeId });
     getDb().prepare('UPDATE workspaces SET deleted_at = 5 WHERE id = ?').run(info.workspaceId);
-    assert.equal(primaryAgentSessionOptions(await bind()).toolProfile?.restricted, true);
+    assert.equal(primaryAgentSessionOptions(await bind()).toolProfile?.restricted, undefined);
     getDb().prepare('UPDATE workspaces SET purged_at = 6 WHERE id = ?').run(info.workspaceId);
     assert.equal(getWorkspace(info.workspaceId), null, 'hidden from ordinary reads');
     const purged = await bind();
     assert.ok(purged, 'not an unbound (worker) chat');
-    assert.equal(primaryAgentSessionOptions(purged).toolProfile?.restricted, true);
+    assert.equal(primaryAgentSessionOptions(purged).toolProfile?.restricted, undefined);
   });
 
   test('a cloud backend refuses to bind an assistant conversation', async () => {
@@ -717,9 +884,9 @@ describe('Michi assistant', () => {
 
   test('the local-only guard answers in the assistant\'s own words', async () => {
     const refused = await raw('GET', '/api/assistant', undefined, { host: 'evil.example' });
-    assert.deepEqual(refused.body, { error: 'The Michi assistant is local-only' });
+    assert.deepEqual(refused.body, { error: 'The Michi assistant requires local or authenticated remote access' });
     const control = await raw('GET', '/api/assistant', undefined, { origin: 'https://evil.example' });
-    assert.deepEqual(control.body, { error: 'The Michi assistant is local-only' });
+    assert.deepEqual(control.body, { error: 'The Michi assistant requires local or authenticated remote access' });
   });
 
   test('backups neither export nor import the assistant\'s workspace', async () => {

@@ -503,7 +503,7 @@ describe('Meta agent overview', () => {
       setMetaAgentPaused({ scheduler: jobs, ownerUserId: LOCAL, paused: false, clock: () => now });
       assert.equal(jobs.getJob(a).autoPaused, false);
       assert.equal(jobs.getJob(a).enabled, true);
-      assert.notEqual(jobs.getJob(a).nextRunAt, null);
+      assert.equal(jobs.getJob(a).nextRunAt, null, 'the coordinator owns wakeups');
       assert.equal(getMaintenanceConfig('ws-a', LOCAL)!.revision, revision, 'the maintenance config is unchanged');
       const result = overview();
       assert.equal(result.state, 'running');
@@ -511,14 +511,14 @@ describe('Meta agent overview', () => {
     });
   });
 
-  test('pause and resume change every workspace through the maintenance service', () => {
+  test('global pause and resume preserve workspace settings and cursors', () => {
     const jobs = scheduler();
     const a = maintained(jobs, 'ws-a', 'A', 1);
     const b = maintained(jobs, 'ws-b', 'B', 2);
     setMetaAgentPaused({ scheduler: jobs, ownerUserId: LOCAL, paused: true, clock: () => now });
     for (const [ws, job] of [['ws-a', a], ['ws-b', b]]) {
-      assert.equal(getMaintenanceConfig(ws, LOCAL)!.paused, true);
-      assert.equal(jobs.getJob(job).enabled, false);
+      assert.equal(getMaintenanceConfig(ws, LOCAL)!.paused, false);
+      assert.equal(jobs.getJob(job).enabled, true);
     }
     assert.equal(metaAgentOverview({ ownerUserId: LOCAL, now, dayStart: DAY }).state, 'paused');
     const revision = getMaintenanceConfig('ws-a', LOCAL)!.revision;

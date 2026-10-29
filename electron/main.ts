@@ -38,7 +38,7 @@ import {
   stopService,
   writeServiceState,
 } from './backgroundService';
-import { describeNotice, ScheduledNotificationFeed, type ScheduledRunNotice } from './scheduledNotifications';
+import { planNoticeDelivery, ScheduledNotificationFeed, type ScheduledRunNotice } from './scheduledNotifications';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -1145,22 +1145,18 @@ function openScheduledRun(target: ScheduledRunTarget): void {
 }
 
 function handleScheduledNotice(notice: ScheduledRunNotice): void {
-  if (notice.phase === 'started') return;
-  const content = describeNotice(notice);
-  if (!content) {
-    notificationFeed.acknowledge(notice.runId);
-    return;
-  }
-  const target = targetOf(notice);
   const focused = BrowserWindow.getFocusedWindow();
-  if (focused && windows.has(focused) && !focused.isDestroyed()) {
-    // The user is looking at Michi: an in-app toast, not an OS banner.
-    sendDesktopEvent(focused.webContents, 'scheduled:notice', { ...content, target });
-    notificationFeed.acknowledge(notice.runId);
-    return;
-  }
-  if (ElectronNotification.isSupported()) {
-    const notification = new ElectronNotification({ title: content.title, subtitle: content.subtitle, body: content.body });
+  const focusedWindow = focused && windows.has(focused) && !focused.isDestroyed() ? focused : null;
+  const plan = planNoticeDelivery(notice, {
+    hasFocusedWindow: focusedWindow !== null,
+    osNotificationsSupported: ElectronNotification.isSupported(),
+  });
+  const target = targetOf(notice);
+  if (plan.kind === 'toast' && focusedWindow) {
+    sendDesktopEvent(focusedWindow.webContents, 'scheduled:notice', { ...plan.content, target });
+  } else if (plan.kind === 'banner') {
+    const { title, subtitle, body } = plan.content;
+    const notification = new ElectronNotification({ title, subtitle, body });
     // Hold a reference until the user acts on it, or its click handler can be collected.
     liveNotifications.add(notification);
     notification.on('click', () => {
@@ -1170,8 +1166,8 @@ function handleScheduledNotice(notice: ScheduledRunNotice): void {
     notification.on('close', () => liveNotifications.delete(notification));
     notification.show();
   }
-  notificationFeed.acknowledge(notice.runId);
-  armBackgroundIdleQuit();
+  if (plan.ack) notificationFeed.acknowledge(notice.runId);
+  if (plan.kind === 'banner' || plan.kind === 'defer') armBackgroundIdleQuit();
 }
 
 handleDesktopInvoke('service:getStatus', () => backgroundServiceStatus());
@@ -1285,7 +1281,9 @@ async function createWindow(
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      // The preload needs only contextBridge, ipcRenderer and webUtils;
+      // scripts/electron-preload-contract.test.mjs keeps it sandbox-safe.
+      sandbox: true,
       // Streaming output should keep draining even when the app is behind
       // another window; otherwise Chromium pauses rAF/timers and the UI
       // replays a stale typewriter backlog when the window returns.
@@ -1804,21 +1802,4 @@ app.on('before-quit', async (ev) => {
     await stopBackend();
     app.quit();
   }
-});
-
-// Reveal the log directory in Finder so the user can attach files when
-// reporting a "michi didn't start" issue. Kept synchronous so the renderer
-// can call it from a menu item without round-tripping data.
-ipcMain.handle('app:openLogFolder', async () => {
-  await shell.openPath(LOG_DIR);
-  return { path: LOG_DIR };
-});
-
-ipcMain.handle('app:getLogPaths', async () => {
-  return {
-    logDir: LOG_DIR,
-    electronLog: ELECTRON_LOG,
-    backendLog: path.join(LOG_DIR, 'backend.log'),
-    kiroCliLog: path.join(LOG_DIR, 'kiro-cli.log'),
-  };
 });

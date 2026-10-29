@@ -16,6 +16,8 @@ import { CommandIconGlyph } from './commandIcons';
 import { isSystemWorkspace, systemWorkspaceIds, withoutSystemWorkspaces } from '../../state/assistant/systemWorkspace';
 import { openAssistantPanel, useAssistantSnapshot } from '../../state/assistant/assistantStore';
 import { requestAllTasks } from '../../state/pages/allTasksNav';
+import { useBackendConnections } from '../../state/useBackendConnections';
+import { workspaceRemoteNote } from '../WorkspaceLocation';
 
 function renderSnippetWithMark(text: string, range: [number, number]) {
   const [s, e] = range;
@@ -273,12 +275,13 @@ export default function CommandPalette({
 
   // Live workspaces offered as direct jump targets — exclude deleted/archived
   // and the currently-active one (jumping to where you already are is a no-op).
+  const connections = useBackendConnections();
   const workspaces = useMemo(
     () =>
       userProjects
         .filter((p) => !p.deletedAt && !p.archivedAt && p.id !== activeProject?.id)
-        .map((p) => ({ id: p.id, name: p.name })),
-    [userProjects, activeProject],
+        .map((p) => ({ id: p.id, name: p.name, remoteNote: workspaceRemoteNote(p.backendConnectionId, connections) })),
+    [userProjects, activeProject, connections],
   );
   const openAssistant = useMemo(
     () => (assistant.status === 'unsupported' ? undefined : () => { onClose(); openAssistantPanel(); }),
@@ -523,7 +526,10 @@ export default function CommandPalette({
                       onClick={() => { c.run(); onClose(); }}
                     >
                       <span className="michi-menu-glyph" aria-hidden="true"><CommandIconGlyph name={c.icon} /></span>
-                      <span className="michi-menu-label">{c.label}</span>
+                      <span className="michi-menu-label">
+                        {c.label}
+                        {c.meta ? <span className="michi-menu-caption michi-menu-sublabel">{c.meta}</span> : null}
+                      </span>
                       {keys ? <span className="michi-menu-keys">{keys}</span> : null}
                     </MenuItem>
                   );

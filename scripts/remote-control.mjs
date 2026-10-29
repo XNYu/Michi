@@ -6,11 +6,14 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import http from 'node:http';
@@ -38,7 +41,7 @@ Usage:
 
 Options:
   --service             Register/start a systemd user service
-  --no-setup            Skip npm install + backend build
+  --no-setup            Skip npm install + web/backend build
   --public              Bind 0.0.0.0 instead of 127.0.0.1
   --bind-host HOST      Explicit bind host
   --port PORT           Backend port (default: 3000)
@@ -384,7 +387,7 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function probeHealth(config) {
+function readHealth(config) {
   return new Promise((resolve) => {
     const request = http.request({
       host: healthHostForBind(config.bindHost),
@@ -394,13 +397,26 @@ function probeHealth(config) {
       headers: { Authorization: `Bearer ${config.token}` },
       timeout: 1_000,
     }, (response) => {
-      response.resume();
-      response.on('end', () => resolve(response.statusCode === 200));
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => {
+        if (response.statusCode !== 200) return resolve(null);
+        try {
+          resolve(JSON.parse(body));
+        } catch {
+          resolve({});
+        }
+      });
     });
     request.on('timeout', () => request.destroy());
-    request.on('error', () => resolve(false));
+    request.on('error', () => resolve(null));
     request.end();
   });
+}
+
+async function probeHealth(config) {
+  return (await readHealth(config)) !== null;
 }
 
 async function waitForHealth(config, timeoutMs = HEALTH_TIMEOUT_MS) {
@@ -530,8 +546,29 @@ function removeService() {
   return true;
 }
 
+// Keeps one `michi` on PATH across releases: it follows the build serving the
+// default data directory. `michi --data-dir` reaches other installations.
+function linkLauncher(config, homeDir = os.homedir()) {
+  const target = path.join(config.repoRoot, 'bin', 'michi');
+  const link = path.join(homeDir, '.local', 'bin', 'michi');
+  const real = (file) => { try { return realpathSync(file); } catch { return path.resolve(file); } };
+  if (real(config.dataDir) !== real(path.join(homeDir, '.michi')) || !existsSync(target)) return false;
+  try {
+    if (!lstatSync(link).isSymbolicLink()) return false;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  mkdirSync(path.dirname(link), { recursive: true });
+  const temporary = `${link}.tmp-${process.pid}`;
+  rmSync(temporary, { force: true });
+  symlinkSync(target, temporary);
+  renameSync(temporary, link);
+  return true;
+}
+
 function printConnection(config, mode, extra = {}) {
   writeSecureFile(path.join(config.dataDir, 'remote-installation.json'), `${JSON.stringify({ serverPath: config.serverPath })}\n`);
+  if (process.platform === 'linux') linkLauncher(config);
   console.log('');
   console.log('Michi remote backend is running.');
   console.log(`Mode: ${mode}`);
@@ -589,17 +626,24 @@ async function stop(options) {
   console.log(stopped ? 'Michi remote backend stopped.' : 'Michi remote backend is not running.');
 }
 
-function status(options) {
+async function printRevision(config) {
+  const revision = (await readHealth(config))?.build?.revision;
+  if (revision) console.log(`revision: ${revision}`);
+}
+
+async function status(options) {
   const config = resolveRemoteConfig(options);
   if (hasSystemdUnit() && isServiceActive()) {
     console.log(`running: systemd user service (${REMOTE_SERVICE_NAME})`);
     console.log(`config: ${config.envFile}`);
+    await printRevision(config);
     return;
   }
   const record = activeBackgroundRecord(config);
   if (record) {
     console.log(`running: background pid ${record.pid}`);
     console.log(`log: ${config.logFile}`);
+    await printRevision(config);
     return;
   }
   console.log('stopped');

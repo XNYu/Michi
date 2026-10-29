@@ -2,19 +2,23 @@
 # bench-startup-comparison.sh — Before/after cold-start benchmark
 #
 # Requires a macOS GUI terminal (Electron needs WindowServer access).
-# Run from the repo root:
-#   ./scripts/bench-startup-comparison.sh
+#   ./scripts/bench-startup-comparison.sh [both|before|after] [base-ref]
 #
 # What it does:
-#   1. Stashes the P0/P1/P2 optimizations
-#   2. Builds and runs Electron with startup trace → logs/startup-before.jsonl
-#   3. Pops the stash (restores optimizations)
-#   4. Rebuilds and runs Electron with startup trace → logs/startup-after.jsonl
-#   5. Prints a side-by-side comparison
+#   1. Checks out <base-ref> (default HEAD) into a temporary detached git
+#      worktree and runs `npm ci` there
+#   2. Runs scripts/bench-startup.sh on that checkout
+#      → logs/startup-before.jsonl
+#   3. Runs scripts/bench-startup.sh on this checkout, uncommitted changes
+#      included → logs/startup-after.jsonl
+#   4. Prints a side-by-side comparison
+#   5. Removes the temporary worktree, also on failure or Ctrl-C
+#
+# This checkout's files, index and stashes are never modified.
 #
 # To run just one half:
-#   ./scripts/bench-startup-comparison.sh before   # only baseline
-#   ./scripts/bench-startup-comparison.sh after    # only optimized
+#   ./scripts/bench-startup-comparison.sh before origin/main   # only baseline
+#   ./scripts/bench-startup-comparison.sh after               # only this checkout
 set -euo pipefail
 
 export NVM_DIR="$HOME/.nvm"
@@ -22,78 +26,50 @@ export NVM_DIR="$HOME/.nvm"
 nvm use 22 2>/dev/null || true
 
 DURATION="${BENCH_DURATION:-30}"
-export MICHI_DATA_DIR="${MICHI_DATA_DIR:-$HOME/.michi-dev}"
-export MICHI_STARTUP_TRACE=1
-export MICHI_METRICS=0
 
 PHASE="${1:-both}"
-mkdir -p logs
+BASE_REF="${2:-HEAD}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOG_DIR="$ROOT/logs"
+mkdir -p "$LOG_DIR"
 
+BASE_PARENT=""
+BASE_DIR=""
+cleanup() {
+  if [[ -n "$BASE_DIR" && -d "$BASE_DIR" ]]; then
+    # Stop dev processes still running from the base checkout before removing it.
+    (cd "$BASE_DIR" && node scripts/kill-stale-dev.mjs >/dev/null 2>&1) || true
+    git -C "$ROOT" worktree remove --force "$BASE_DIR" ||
+      echo "[bench] could not remove $BASE_DIR; remove it with: git worktree remove --force $BASE_DIR" >&2
+  fi
+  git -C "$ROOT" worktree prune 2>/dev/null || true
+  if [[ -n "$BASE_PARENT" ]]; then
+    rmdir "$BASE_PARENT" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+# One capture with this checkout's bench-startup.sh, which owns the launch
+# command and electron:dev's environment, against the given checkout.
 run_bench() {
-  local LABEL="$1"
-  local LOG="logs/startup-${LABEL}.jsonl"
-  export MICHI_STARTUP_RUN_ID="${LABEL}-$(date +%H%M%S)"
-  > "$LOG"
-
-  echo ""
-  echo "========================================"
-  echo "  Running: $LABEL  (${DURATION}s capture)"
-  echo "========================================"
-
-  node scripts/kill-stale-dev.mjs 2>/dev/null || true
-  npm run shared:build 2>/dev/null
-  npm run electron:build-main 2>/dev/null
-
-  local RENDERER_PORT
-  RENDERER_PORT=$(node scripts/find-open-port.mjs "${MICHI_RENDERER_PORT:-3001}")
-  export MICHI_RENDERER_PORT="$RENDERER_PORT"
-  export MICHI_RENDERER_URL="http://127.0.0.1:$RENDERER_PORT"
-
-  (
-    npx concurrently \
-      "cd backend && MICHI_REMOTE_ACCESS=0 MICHI_BIND_HOST=127.0.0.1 npm run dev:raw" \
-      "cd frontend && npm run dev:raw -- --host 127.0.0.1 --port $RENDERER_PORT" \
-      "npx wait-on $MICHI_RENDERER_URL && NODE_OPTIONS= ELECTRON_DEV=1 ./node_modules/.bin/electron electron/dist/main.js" \
-      2>&1
-  ) | tee "$LOG" &
-  local PID=$!
-
-  sleep "$DURATION"
-
-  kill "$PID" 2>/dev/null || true
-  pkill -P "$PID" 2>/dev/null || true
-  sleep 1
-  node scripts/kill-stale-dev.mjs 2>/dev/null || true
-  sleep 2
-
-  echo ""
-  echo "--- $LABEL results ---"
-  node scripts/analyze-startup.mjs "$LOG" 2>&1 || echo "(analysis failed)"
+  BENCH_DURATION="$DURATION" bash "$ROOT/scripts/bench-startup.sh" "$@"
 }
 
 if [[ "$PHASE" == "before" || "$PHASE" == "both" ]]; then
-  # Stash optimizations to get baseline
-  STASHED=false
-  if git diff --name-only | grep -q .; then
-    git stash push -m "bench-before-stash" \
-      -- backend/src/services/dbRepository.ts \
-         electron/main.ts \
-         frontend/src/components/terminal/TPane.tsx \
-         frontend/src/components/terminal/manage/ManageComposer.test.tsx \
-         frontend/src/components/terminal/manage/ManageComposer.tsx \
-         frontend/src/index.css \
-         frontend/viteChunks.ts 2>/dev/null && STASHED=true
-  fi
-
-  run_bench "before"
-
-  if $STASHED; then
-    git stash pop 2>/dev/null || true
-  fi
+  # Baseline from a separate checkout of BASE_REF, not from this working tree.
+  BASE_PARENT="$(mktemp -d "${TMPDIR:-/tmp}/michi-bench-base.XXXXXX")"
+  BASE_DIR="$BASE_PARENT/michi"
+  echo "[bench] checking out $BASE_REF into $BASE_DIR"
+  git -C "$ROOT" worktree add --detach "$BASE_DIR" "$BASE_REF"
+  (cd "$BASE_DIR" && npm ci --no-audit --no-fund)
+  # The base checkout's path changes every run; a fixed instance keeps one
+  # Electron profile for it instead of a new one per run.
+  MICHI_DEV_INSTANCE_ID="${MICHI_DEV_INSTANCE_ID:-bench-base}" run_bench "before" "$BASE_DIR"
 fi
 
 if [[ "$PHASE" == "after" || "$PHASE" == "both" ]]; then
-  run_bench "after"
+  run_bench "after" "$ROOT"
 fi
 
 if [[ "$PHASE" == "both" ]]; then
@@ -103,8 +79,8 @@ if [[ "$PHASE" == "both" ]]; then
   echo "============================================"
   echo ""
   echo "--- BEFORE ---"
-  node scripts/analyze-startup.mjs logs/startup-before.jsonl 2>&1 | head -30
+  node "$ROOT/scripts/analyze-startup.mjs" "$LOG_DIR/startup-before.jsonl" 2>&1 | head -30
   echo ""
   echo "--- AFTER ---"
-  node scripts/analyze-startup.mjs logs/startup-after.jsonl 2>&1 | head -30
+  node "$ROOT/scripts/analyze-startup.mjs" "$LOG_DIR/startup-after.jsonl" 2>&1 | head -30
 fi

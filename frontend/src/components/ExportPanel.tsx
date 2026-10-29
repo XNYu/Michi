@@ -5,7 +5,6 @@ import { Button } from './ui/controls';
 
 export type ExportPanelState =
   | { kind: 'idle' }
-  | { kind: 'running'; projectName: string; exportTitle: string }
   | { kind: 'done'; projectName: string; exportTitle: string; markdown: string; suggestedFilename: string }
   | { kind: 'error'; projectName: string; exportTitle: string; error: string };
 
@@ -13,7 +12,6 @@ interface ExportPanelProps {
   open: boolean;
   state: ExportPanelState;
   onClose(): void;
-  onAbort(): void;
   onSave(): void;
 }
 
@@ -25,16 +23,11 @@ const PANEL_PROSE =
   '[&_strong]:text-(--term-fg) [&_a]:text-(--term-accent) ' +
   '[&_code]:text-(--term-fg) [&_code]:bg-(--term-alt) [&_code]:px-1 [&_code]:rounded-(--ui-radius-sm)';
 
-export default function ExportPanel({ open, state, onClose, onAbort, onSave }: ExportPanelProps) {
+export default function ExportPanel({ open, state, onClose, onSave }: ExportPanelProps) {
   const headerTitle = state.kind === 'idle' ? 'Export' : `Export · ${state.exportTitle}`;
 
-  // Dismissing (Escape / scrim click) while an export is in flight should abort
-  // it, not leave the controller running behind a closed drawer (which would
-  // later flip state to done/error and show a stale result on next open).
-  const dismiss = state.kind === 'running' ? onAbort : onClose;
-
   return (
-    <DrawerShell open={open} onClose={dismiss} title={headerTitle}>
+    <DrawerShell open={open} onClose={onClose} title={headerTitle}>
       {/* body */}
       <div
         className="term-scrollbar"
@@ -55,46 +48,6 @@ export default function ExportPanel({ open, state, onClose, onAbort, onSave }: E
             }}
           >
             No export yet. Trigger Export from a thread menu.
-          </div>
-        )}
-
-        {state.kind === 'running' && (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 12,
-              padding: '40px 18px',
-            }}
-          >
-            <div
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 0' }}
-              aria-label="loading"
-              role="status"
-            >
-              {['0s', '.15s', '.3s'].map((delay) => (
-                <span
-                  key={delay}
-                  className="typing-dot"
-                  style={{ animationDelay: delay }}
-                />
-              ))}
-            </div>
-            <div style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)' }}>
-              Preparing export…
-            </div>
-            <div
-              style={{
-                fontSize: 'var(--fs-sm)',
-                color: 'var(--term-muted)',
-                textAlign: 'center',
-                maxWidth: 320,
-                lineHeight: 1.5,
-              }}
-            >
-              Michi is preparing the original transcript.
-            </div>
           </div>
         )}
 
@@ -142,15 +95,9 @@ export default function ExportPanel({ open, state, onClose, onAbort, onSave }: E
           flexShrink: 0,
         }}
       >
-        {state.kind === 'running' ? (
-          <Button variant="secondary" onClick={onAbort}>
-            Abort
-          </Button>
-        ) : (
-          <Button variant="secondary" onClick={onClose}>
-            Close
-          </Button>
-        )}
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
         <Button variant="primary" onClick={onSave} disabled={state.kind !== 'done'}>
           Save as…
         </Button>

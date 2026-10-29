@@ -13,12 +13,11 @@ import { setWorkspaceHomeHidden } from '../../../services/api/spacesHome';
 import { useSpacesHomeWorkspaces } from '../../../state/pages/useSpacesHome';
 import { sortLiveProjects } from '../../../state/sidebarSelectors';
 import type { SpacesHomeTarget } from '../../../state/shellArea';
-import { firstRunActive, refreshSpacesFirstRun, useSpacesFirstRun, useWorkspaceHomesOpenedVersion } from '../../../state/metaAgent/spacesFirstRun';
+import { firstRunActive, refreshSpacesFirstRun, useSpacesFirstRun } from '../../../state/metaAgent/spacesFirstRun';
 import { clearHeldWorkspaceHome } from '../../../state/pages/workspaceHomeNav';
 import { spacesSupportsConnection } from '../../../state/metaAgent/remoteSpaces';
 import type { OpenNativePageRoute } from './SpacesPage';
 import { WorkspaceFirstRunBadge } from './home/MetaAgentSidebarStatus';
-import { homeWorkspaceCounts, useSpacesHomeSections } from './home/homeCounts';
 import ContextMenu from '../../ContextMenu';
 import { RowKebab } from '../primitives';
 import '../rail/rail.css';
@@ -28,7 +27,7 @@ import { pageIsWithin, usePageActions } from './usePageActions';
 
 export type SpacesSidebarCurrent = SpacesHomeTarget | ({ kind: 'page' } & OpenNativePageRoute);
 type WorkspaceTarget = { workspaceId: string; backendConnectionId: string };
-type Tone = 'waiting' | 'stalled' | 'calm';
+type Tone = 'calm' | 'pending';
 
 const EXPANDED_KEY = 'michi.spaces-sidebar.expanded';
 
@@ -53,9 +52,10 @@ function useExpandedWorkspaces(): [ReadonlySet<string>, (key: string) => void] {
   return [expanded, toggle];
 }
 
-export function SpacesSidebar({ current, waitingCount, onOpenHome, onOpenWorkspace, onOpenPage, onOpenAssistant, onOpenAllTasks, onNewSpace, onOpenSettings, settingsOpen, assistantOpen }: {
+export function SpacesSidebar({ current, onOpenHome, onOpenWorkspace, onOpenPage, onOpenAssistant, onOpenAllTasks, onNewSpace, onOpenSettings, settingsOpen, assistantOpen }: {
   current: SpacesSidebarCurrent;
-  waitingCount: number;
+  /** Reminder counts are temporarily hidden in Pages navigation. */
+  waitingCount?: number;
   onOpenHome: () => void;
   onOpenWorkspace: (target: WorkspaceTarget) => void;
   onOpenPage: (route: OpenNativePageRoute) => void;
@@ -101,9 +101,7 @@ export function SpacesSidebar({ current, waitingCount, onOpenHome, onOpenWorkspa
         <div className="area-side__row is-strong is-nav" role="button" tabIndex={0} aria-current={homeCurrent ? 'page' : undefined} onClick={openHome} onKeyDown={keys(openHome)}>
           <Home size={15} strokeWidth={1.5} aria-hidden="true" />
           <span className="area-side__label">Home</span>
-          {homeReading
-            ? <span className="agent-spinner" role="img" aria-label="Meta agent is reading" />
-            : waitingCount > 0 && <span className="area-side__count" data-tone="accent" aria-label={`${waitingCount} waiting`}>{waitingCount}</span>}
+          {homeReading && <span className="agent-spinner" role="img" aria-label="Meta agent is reading" />}
         </div>
         <div className="area-side__row is-strong is-nav" role="button" tabIndex={0} onClick={onOpenAssistant} onKeyDown={keys(onOpenAssistant)}>
           <Sparkles size={15} strokeWidth={1.5} aria-hidden="true" />
@@ -157,8 +155,6 @@ function ConnectionWorkspaces({ connectionId, workspaces, current, expanded, onT
   const { spaces } = useSpaces(connectionId);
   const firstRun = useSpacesFirstRun(connectionId);
   const workspaceHomes = useSpacesHomeWorkspaces(connectionId);
-  const sections = useSpacesHomeSections(connectionId).data;
-  useWorkspaceHomesOpenedVersion();
   const homes = useMemo(() => {
     const result = new Map<string, WorkspaceHomeSummaryDto>((workspaceHomes.data ?? firstRun.data?.workspaces ?? []).map((home) => [home.workspaceId, home]));
     // A first read can finish between the ordinary summary polls. Its newer
@@ -180,9 +176,7 @@ function ConnectionWorkspaces({ connectionId, workspaces, current, expanded, onT
     const home = homes.get(workspace.id);
     const run = home?.firstRun ?? null;
     const written = !run || run.state === 'done';
-    const counts = homeWorkspaceCounts(sections, workspace.id);
-    const waiting = counts.waiting > 0 || own.some((space) => space.pendingProposals > 0) || (home?.pendingProposals ?? 0) > 0;
-    const tone: Tone | 'pending' = !written ? 'pending' : waiting ? 'waiting' : counts.stalled > 0 ? 'stalled' : 'calm';
+    const tone: Tone = written ? 'calm' : 'pending';
     return (
       <WorkspaceRow key={key} workspace={workspace} connectionId={connectionId} spaces={own} tone={tone} open={expanded.has(key)} run={run}
         hidden={hidden} current={current} onToggle={() => onToggle(key)} onOpenWorkspace={onOpenWorkspace} onOpenPage={onOpenPage}
@@ -215,7 +209,7 @@ function WorkspaceRow({ workspace, connectionId, spaces, tone, open, run, hidden
   workspace: Project;
   connectionId: string;
   spaces: SpaceSummaryDto[];
-  tone: Tone | 'pending';
+  tone: Tone;
   open: boolean;
   /** The workspace home's first read, while the Meta agent writes it. */
   run: FirstRunProgressDto | null;
@@ -244,7 +238,7 @@ function WorkspaceRow({ workspace, connectionId, spaces, tone, open, run, hidden
       <button type="button" className="area-side__main" onClick={() => onOpenWorkspace({ workspaceId: workspace.id, backendConnectionId: connectionId })}>
         <span className="area-side__dot" data-tone={tone} aria-hidden="true" />
         <span className="area-side__label">{workspace.name}</span>
-        <WorkspaceFirstRunBadge connectionId={connectionId} workspaceId={workspace.id} run={run} />
+        <WorkspaceFirstRunBadge run={run} />
       </button>
       <RowKebab open={!!menu} onOpen={setMenu} ariaLabel={`Actions for ${workspace.name}`} />
     </div>
@@ -296,7 +290,6 @@ function WorkspacePages({ workspaceId, connectionId, spaces, current, onOpenPage
           <button type="button" className="area-side__main" aria-current={isCurrent ? 'page' : undefined} onClick={open}>
             <FileText size={14} strokeWidth={1.5} aria-hidden="true" />
             <span className="area-side__label">{page.title || 'Untitled page'}</span>
-            {page.pendingProposals > 0 && <span className="area-side__count" data-tone="accent" aria-label={`${page.pendingProposals} waiting`}>{page.pendingProposals}</span>}
           </button>
           <RowKebab open={menu?.page.id === page.id} onOpen={point => setMenu({ page, ...point })} ariaLabel={`Actions for ${page.title || 'Untitled page'}`} />
         </div>

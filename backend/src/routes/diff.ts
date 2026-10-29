@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { NotFoundError } from "../agents/tools/pathSandbox";
+import { NotFoundError } from "../services/workspaceSandbox";
 import { resolveWorkspaceFileRoot, resolveHttpWorkspacePath, assertWorkspaceRealpath, WORKSPACE_FILE_ID_RE } from "../services/workspaceFiles";
 
 const pexec = promisify(execFile);

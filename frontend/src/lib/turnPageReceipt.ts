@@ -2,7 +2,7 @@ import { blockShowsTaskBoard } from 'michi-shared';
 import { backendEntityId } from '../config/backendIdentity';
 import { notifyPageChanged } from '../state/pages/pageEvents';
 
-const PAGE_TOOLS = ['edit_page', 'edit_database', 'create_page', 'configure_database_view'] as const;
+const PAGE_TOOLS = ['edit_page', 'edit_database', 'create_page', 'create_database', 'configure_database', 'configure_database_view'] as const;
 export type PageWriteTool = typeof PAGE_TOOLS[number];
 
 export interface TurnPageInvalidation {

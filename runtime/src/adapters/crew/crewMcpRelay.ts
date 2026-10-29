@@ -3,7 +3,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolRequest, type ListToolsResult, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { Readable, Writable } from 'node:stream';
 import { resolveCrewMcpEndpoint } from './crewMcpBinding';
+import { JSON_BODY_LIMIT_BYTES } from '../../core/constants';
 import { abortable, withDeadline } from '../../core/runtimeLifecycle';
 
 const MCP_SETUP_TIMEOUT_MS = 30_000;
@@ -87,6 +89,15 @@ export function createCrewMcpHandlers(directory?: string, lifecycle: {
     };
 }
 
+/**
+ * The broker's stdio, read up to Michi's JSON body limit: the SDK's default
+ * of 10 MiB would close the transport, and with it every Michi tool of the
+ * session, on a tool call the host behind the relay accepts.
+ */
+export function createCrewStdioTransport(stdin?: Readable, stdout?: Writable): StdioServerTransport {
+    return new StdioServerTransport(stdin, stdout, { maxBufferSize: JSON_BODY_LIMIT_BYTES });
+}
+
 export async function runCrewMcpRelay(): Promise<void> {
-    await createCrewMcpRelay().connect(new StdioServerTransport());
+    await createCrewMcpRelay().connect(createCrewStdioTransport());
 }

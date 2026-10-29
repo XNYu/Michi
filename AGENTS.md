@@ -23,8 +23,6 @@ until that link exists.
   unless set, to ~/.michi-dev; use an isolated directory for disposable data.
 - `npm run build`: builds frontend with Vite, then backend with TypeScript
   checking and esbuild. Workspace build scripts build shared code first.
-- `npm run build:artifact`: runs build, then copies frontend/build into
-  backend/dist/frontend for artifact collection. Plain build does not copy it.
 - `npm start`: runs the bundled backend with --experimental-sqlite. It also
   serves frontend/build when present.
 - `npm run typecheck -w frontend`: checks frontend TypeScript including tests;
@@ -47,12 +45,24 @@ until that link exists.
   (backend/test/runtimeBoundary.test.ts).
   `npm run typecheck -w michi-runtime` builds shared code, then checks src
   and tests.
+- `npm test -w michi-shared`: runs node --test through ts-node on
+  shared/test/*.test.ts against shared source; no shared:build needed. Parity
+  and integration tests of shared code stay with their consumers.
 - `npm run test:e2e`: builds shared code and runs Playwright against the web UI.
   The mock API fixture intercepts backend requests; this suite does not require
   a real backend, SQLite, credentials or an agent CLI. Preserve that isolation.
   Use `npm run test:e2e -- e2e/specs/chat-stream.spec.ts` for a focused spec,
   or `npm run test:e2e:ui` for UI mode. Set E2E_PORT to an unused port to
   isolate a checkout; this disables reuse of an existing server.
+- `npm run check`: runs `test:contracts` (root scripts/*.test.mjs contract
+  tests no other test:* script runs), the shared tests, `check:knip` and
+  `check:deps`. check:knip (scripts/knip-baseline.mjs) and check:deps
+  (backend/scripts/dependencyRules.cjs: agents/** -> services/db or chatHub,
+  routes/** -> services/db, frontend state/** -> components/**) fail only on
+  findings missing from scripts/knip-baseline.json and
+  backend/test/fixtures/dependencyRules/edges.txt. Do not add entries to pass;
+  fix knip.json for a false positive, and run the script with `--write` after
+  removing code so the baseline shrinks.
 
 predev and preelectron:dev run scripts/kill-stale-dev.mjs. Development launchers
 and packaging are not side-effect-free test commands.

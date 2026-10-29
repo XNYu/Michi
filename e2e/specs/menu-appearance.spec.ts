@@ -387,6 +387,9 @@ test('the corner radius preference reshapes menus, modals, rows and controls tog
 
 test('workspace list scrolls without losing search or New on small viewports', async ({ page }, info) => {
   await bootMenus(page, 'monokai');
+  // Open it at phone width: narrowing Home moves the chip into the tray
+  // under the composer, which closes a menu already open.
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.getByTitle('Switch workspace', { exact: true }).click();
   const workspace = page.getByRole('menu', { name: 'Workspaces', exact: true });
   for (const height of [844, 240]) {

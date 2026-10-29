@@ -97,6 +97,16 @@ export function kiroChildToolActivity(subagentSessionId: string, update: Raw): S
   };
 }
 
+/**
+ * Title of an approval: a V2 subagent's request (AcpClient forwards it to
+ * the parent's turn with `subagentSessionId`) names the subagent asking.
+ */
+export function subagentPermissionTitle(update: Raw, title: string): string {
+  if (!str(update.subagentSessionId)) return title;
+  const name = str(update.subagentName);
+  return `${title} (subagent${name ? ` ${oneLine(name, 80)}` : ''})`;
+}
+
 /** V2: the subagent's `summary` tool carries its final report. */
 export function kiroV2SummaryResult(update: Raw): string | undefined {
   if (update.status !== 'completed') return undefined;
@@ -108,11 +118,17 @@ export function kiroV2SummaryResult(update: Raw): string | undefined {
   return result;
 }
 
-/** V2 roster entry → shared contract (merge-safe patch). */
+/**
+ * V2 roster entry → shared contract (merge-safe patch). Kiro 2.35.1's
+ * statuses are `working`, `awaitingInstruction` (a persistent session
+ * idle between tasks: alive, but not running) and `terminated`.
+ */
 export function kiroV2RosterEntry(raw: Raw, parentToolCallId?: string): SubagentInfo {
   const initialQuery = String(raw.initialQuery ?? '');
   const statusType = String(raw.status?.type ?? '');
   const working = statusType === 'working';
+  const message = raw.status?.message ? String(raw.status.message)
+    : statusType === 'awaitingInstruction' ? 'Waiting for instructions' : undefined;
   const entry: SubagentInfo = {
     sessionId: String(raw.sessionId ?? ''),
     sessionName: String(raw.sessionName ?? ''),
@@ -125,13 +141,29 @@ export function kiroV2RosterEntry(raw: Raw, parentToolCallId?: string): Subagent
   };
   const prompt = clampSubagentText(initialQuery || undefined, SUBAGENT_LIMITS.prompt);
   if (prompt) entry.prompt = prompt;
-  if (raw.status?.message) entry.statusMessage = oneLine(String(raw.status.message), SUBAGENT_LIMITS.statusMessage);
+  if (message) entry.statusMessage = oneLine(message, SUBAGENT_LIMITS.statusMessage);
   if (statusType === 'failed' || statusType === 'error') entry.outcome = 'failed';
   else if (statusType === 'cancelled') entry.outcome = 'cancelled';
   if (entry.outcome && raw.status?.message) entry.error = clampSubagentText(String(raw.status.message), SUBAGENT_LIMITS.error);
   if (typeof raw.createdAtMs === 'number') entry.startedAt = raw.createdAtMs;
   if (parentToolCallId) entry.parentToolCallId = parentToolCallId;
   return entry;
+}
+
+/** Why a V2 stage stopped when its tool approval was cancelled (kiro-cli then ends it). */
+export const SUBAGENT_APPROVAL_CANCELLED_ERROR = 'Stopped: its tool approval was cancelled.';
+
+/**
+ * Roster patch, in the shared contract (`michi: true`), for a V2 stage
+ * whose approval was cancelled: kiro-cli ends the stage with a bare
+ * `terminated`, so this records it as stopped and why.
+ */
+export function kiroV2ApprovalCancelledUpdate(subagentSessionId: string): Raw {
+  return {
+    sessionUpdate: 'subagent_list_update',
+    michi: true,
+    subagents: [{ sessionId: subagentSessionId, status: 'terminated', outcome: 'cancelled', error: SUBAGENT_APPROVAL_CANCELLED_ERROR, source: 'kiro' }],
+  };
 }
 
 /** V2 result patch: the `summary` tool is the stage's final report. */

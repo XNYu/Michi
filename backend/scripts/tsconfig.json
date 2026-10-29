@@ -1,0 +1,13 @@
+{
+  // Type-checks the probe scripts against the backend sources they drive:
+  // npm run typecheck:scripts -w backend. src is included for its ambient
+  // declarations (for example the Express Request augmentation). rootDir is
+  // the repository root because two Kiro probes read SSE with
+  // frontend/src/services/api/sseParser.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../.."
+  },
+  "include": ["../src/**/*", "./**/*.ts"]
+}

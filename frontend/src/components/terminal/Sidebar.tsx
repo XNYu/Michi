@@ -23,6 +23,7 @@ import { AREA_RAIL_WIDTH } from './rail/AreaRail';
 const MIN_SIDEBAR_WIDTH = 280 - AREA_RAIL_WIDTH;
 const MAX_SIDEBAR_WIDTH = 400;
 const DEFAULT_SIDEBAR_WIDTH = 252;
+const OVERLAY_WIDTH = 'min(85vw, 340px)';
 
 /** Sidebar scrollbars appear on pointer/focus entry, then linger this long. */
 const SCROLLBAR_LINGER_MS = 2000;
@@ -52,6 +53,7 @@ export default function TerminalSidebar({
   narrowMode = false,
   narrowOverlayOpen = false,
   onCloseOverlay,
+  overlayHeader,
 }: {
   activePage: PageId;
   workspaceReady?: boolean;
@@ -66,6 +68,8 @@ export default function TerminalSidebar({
   narrowMode?: boolean;
   narrowOverlayOpen?: boolean;
   onCloseOverlay?: () => void;
+  /** First row of the narrow overlay; narrow windows have no area rail. */
+  overlayHeader?: React.ReactNode;
 }) {
   const { prefs, setPref } = usePrefs();
   const asideRef = useRef<HTMLElement>(null);
@@ -204,7 +208,8 @@ export default function TerminalSidebar({
       data-collapsed={collapsed || undefined}
       style={{
         ...densityVars,
-        width: overlayMode ? effectiveWidth : (collapsed ? 0 : effectiveWidth),
+        // A phone drawer is a share of the screen, not the desktop column width.
+        width: overlayMode ? OVERLAY_WIDTH : (collapsed ? 0 : effectiveWidth),
         flexShrink: 0,
         background: 'var(--term-sidebar-body-bg, var(--term-sidebar-bg, var(--term-surface)))',
         border: 'var(--term-sidebar-outline, none)',
@@ -217,7 +222,7 @@ export default function TerminalSidebar({
         fontFamily: 'var(--ui-font)',
         color: 'var(--term-fg)',
         position: overlayMode ? 'absolute' : 'relative',
-        left: overlayMode ? AREA_RAIL_WIDTH : undefined,
+        left: overlayMode ? 0 : undefined,
         top: overlayMode ? 0 : undefined,
         bottom: overlayMode ? 0 : undefined,
         // z-index 1 in non-overlay mode lifts the sidebar (and its right-edge
@@ -254,7 +259,7 @@ export default function TerminalSidebar({
         inert={collapsed}
         style={{
           // Only the shell changes width during a toggle; rows never squeeze.
-          width: effectiveWidth,
+          width: overlayMode ? '100%' : effectiveWidth,
           flex: '1 0 0',
           minHeight: 0,
           display: 'flex',
@@ -262,6 +267,7 @@ export default function TerminalSidebar({
           overflow: 'hidden',
         }}
       >
+        {overlayMode && overlayHeader}
         <SidebarContentPrefsProvider>{contents}</SidebarContentPrefsProvider>
       </div>
       {!collapsed && !overlayMode && (

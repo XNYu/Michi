@@ -5,6 +5,8 @@ import { ChatCommandResult } from './ChatCommandResult';
 import { usePermissionPreferences } from '../../hooks/usePermissionPreferences';
 import { backendConnectionIdForWorkspace, workspaceBackendApiBase } from '../../config/backendConnections';
 import { ComposerPermissionControl } from './ComposerPermissionControl';
+import { chatPermissionChoice } from 'michi-shared';
+import { approveForMeRuntimeIds } from '../../lib/chatPermissionModes';
 import { mergeContextQuote } from '../../state/assistant/assistantContext';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useChatActions, useChatNode, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
@@ -25,10 +27,8 @@ import { formatCommentsBlock, joinMessageParts } from '../../lib/commentFormat';
 import { getElectron } from '../../lib/electronBridge';
 import { getWebUploadCwd, importWorkspaceFile, importWorkspaceFileUpload, copyWorkspaceFile, type UploadProgress } from '../../services/api';
 import { toast } from 'sonner';
-import { fetchAssistant } from '../../services/api/assistant';
+import { fetchAssistant, updateAssistantSettings, type AssistantSettingsPatch } from '../../services/api/assistant';
 import { adoptAssistantInfo, getAssistantSnapshot } from '../../state/assistant/assistantStore';
-import { readMetaAgent, saveMetaAgentSettings } from '../../state/metaAgent/useMetaAgent';
-import type { MetaAgentSettingsPatch } from 'michi-shared';
 import { appendAttachmentsSentinel } from '../../lib/composerAttachments';
 import { checkRuntimeHealth } from '../../services/api';
 import { shouldSteerInsteadOfQueue } from 'michi-shared';
@@ -40,6 +40,7 @@ import PermissionBanner from './PermissionBanner';
 import MergeBanner from './MergeBanner';
 import PaneFind from './PaneFind';
 import { ComposerShell, type ComposerShellHandle } from './ComposerShell';
+import { usePhoneLayout } from '../../hooks/usePhoneLayout';
 import { PaneMessageList } from './PaneMessageList';
 import { PaneComposerPreBlocks, type PanePendingAttachment } from './PaneComposerPreBlocks';
 import { PaneComposerActions, type PaneComposerSendMode } from './PaneComposerActions';
@@ -61,6 +62,7 @@ import {
 import { isSystemWorkspace } from '../../state/assistant/systemWorkspace';
 import { assistantComposerBinding } from '../../state/assistant/assistantBinding';
 import { useAssistantInfo } from '../../state/assistant/assistantStore';
+import type { AssistantConversationSource } from '../../state/assistant/assistantSource';
 import { navigateToNode } from '../../state/navigateToNode';
 import * as perf from '../../services/perf';
 
@@ -342,7 +344,7 @@ export interface SelectedPageBlockContext {
   content: string;
 }
 
-function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachments = false, selectedPageContext = null, draftRequest = null, onDraftRequestApplied, composerPreBlocks, composerFocusToken = 0, composerDisabled = false, spacesAssistant = false }: {
+function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachments = false, selectedPageContext = null, draftRequest = null, onDraftRequestApplied, composerPreBlocks, composerFocusToken = 0, composerDisabled = false, spacesAssistant = false, assistantSource }: {
   nodeId: string;
   contentMaxWidth?: number | null;
   /** Rendered outside the pane grid (the ⌘J assistant panel): clicks and
@@ -355,11 +357,16 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   /** Explicit user-authorized draft request; populates the composer without submitting. */
   draftRequest?: { id: number; text: string } | null;
   onDraftRequestApplied?: (requestId: number) => void;
-  composerPreBlocks?: React.ReactNode;
+  composerPreBlocks?: React.ReactNode | ((draftHasText: boolean) => React.ReactNode);
   composerFocusToken?: number;
   composerDisabled?: boolean;
   /** Spaces reuses the complete chat composer; its model picker updates the Meta agent settings. */
   spacesAssistant?: boolean;
+  /**
+   * Where this window's assistant conversation lives (the Scheduled window);
+   * the global assistant store when absent (Spaces, the ⌘J panel).
+   */
+  assistantSource?: AssistantConversationSource;
 }) {
   const renderStartedAt = perf.enabled() ? perf.now() : 0;
   const {
@@ -426,7 +433,10 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   const selectedPageBlockQuote = useMemo(() => selectedPageContext
     ? `Selected page block: ${selectedPageContext.title}\nPage: ${selectedPageContext.pageTitle} (pageId: ${selectedPageContext.pageId})\nBlock ID: ${selectedPageContext.blockId}\n\n${selectedPageContext.content}`
     : null, [selectedPageContext]);
-  const assistantInfo = useAssistantInfo();
+  const globalAssistantInfo = useAssistantInfo();
+  const assistantInfo = assistantSource ? assistantSource.info : globalAssistantInfo;
+  const assistantSourceRef = useRef(assistantSource);
+  assistantSourceRef.current = assistantSource;
   const availableModes = sessionModeCatalog(n?.sessionState, defaultAvailableModes, agentStatus?.runtime);
   const permissionPreferences = usePermissionPreferences(n ? workspaceBackendApiBase(n.projectId) : undefined);
   // Latest node state for callbacks that outlive their render closure — the
@@ -533,24 +543,45 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   const [pendingBindingOverride, setPendingBindingOverride] = useState<PendingNodeBindingOverride | null>(null);
   // A node continued from Michi asks for the attached session's runtime on its first send.
   // While a Michi continue is attaching this node's session, sending would race it.
-  // The assistant runs on its own settings, which the backend pins: its
-  // composer shows those and never the global defaults of the user's chats.
-  const assistantBinding = isAssistantConversation ? spacesAssistant && assistantInfo?.nodeId === nodeId
-    ? { runtime: assistantInfo.conversation?.runtimeId ?? assistantInfo.settings.runtimeId, provider: readMetaAgent().info?.resolved.providerId ?? undefined, model: assistantInfo.conversation?.modelId ?? undefined,
-      reasoning: assistantInfo.conversation?.reasoning ?? undefined, source: 'node' as const }
+  // The backend pins the assistant's runtime: what the user picked in the
+  // conversation, else the global settings. The current conversation's chips
+  // show that and save a pick for it alone; an older one shows what it ran on.
+  const currentAssistant = isAssistantConversation && !!assistantInfo && assistantInfo.nodeId === nodeId;
+  const assistantRuns = currentAssistant ? assistantInfo.conversation ?? assistantInfo.settings : null;
+  const assistantBinding = isAssistantConversation ? assistantRuns
+    ? { runtime: assistantRuns.runtimeId, provider: assistantRuns.providerId ?? undefined, model: assistantRuns.modelId ?? undefined,
+      reasoning: assistantRuns.reasoning ?? undefined, source: 'node' as const }
     : assistantComposerBinding(n, assistantInfo, agentStatus) : null;
   const [savingAssistantModel, setSavingAssistantModel] = useState(false);
   const assistantModelSave = useRef(false);
-  const saveAssistantModel = async (patch: MetaAgentSettingsPatch) => {
+  const saveAssistantModel = async (patch: AssistantSettingsPatch) => {
     if (assistantModelSave.current) return;
     assistantModelSave.current = true; setSavingAssistantModel(true);
     try {
-      await saveMetaAgentSettings({ runtimeId: assistantBinding?.runtime, ...patch });
-      const info = await fetchAssistant();
-      if (getAssistantSnapshot().info?.nodeId === info.nodeId) adoptAssistantInfo(info);
+      const info = await updateAssistantSettings({ ...patch, nodeId });
+      const source = assistantSourceRef.current;
+      if (source) { if (source.current()?.nodeId === info.nodeId) source.adopt(info); }
+      else if (getAssistantSnapshot().info?.nodeId === info.nodeId) adoptAssistantInfo(info);
     } catch (cause) { toast.error(cause instanceof Error ? cause.message : 'Could not update the assistant model'); }
     finally { assistantModelSave.current = false; setSavingAssistantModel(false); }
   };
+  // Without a pick of its own the conversation follows the global settings,
+  // which change under it (Settings, the model another chat last used): read
+  // them again when they may have, so the chips show what the next message runs on.
+  const assistantFollowsGlobal = currentAssistant && assistantInfo.conversationFollowsGlobal !== false;
+  const assistantNodeStatus = n?.status;
+  const modelMenuOpen = !!modelMenu;
+  useEffect(() => {
+    if (!assistantFollowsGlobal) return undefined;
+    let live = true;
+    const source = assistantSourceRef.current;
+    (source ? source.refetch() : fetchAssistant()).then((info) => {
+      if (!live) return;
+      if (source) { if (source.current()?.nodeId === info.nodeId) source.adopt(info); }
+      else if (getAssistantSnapshot().info?.nodeId === info.nodeId) adoptAssistantInfo(info);
+    }, () => {});
+    return () => { live = false; };
+  }, [assistantFollowsGlobal, agentStatus, assistantNodeStatus, modelMenuOpen]);
   const requestedBinding = assistantBinding ?? resolveNodeBinding(n, agentStatus, pendingBindingOverride);
 
   // Load catalog for the *resolved* runtime (which may differ from the global active runtime).
@@ -976,6 +1007,13 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   // (markdown blocks forming, spacer removal, browser scroll anchoring). Only
   // leave follow mode when that upward scroll is tied to recent user input.
   const userScrollIntentUntilRef = useRef<number>(0);
+  // A click in the transcript that changes its height (Show more on a long
+  // user message, opening a thinking or tool card) is the reader asking to
+  // see that content, not new output to tail. Follow mode used to pin the
+  // grown transcript to its tail, so expanding a message near the 30% anchor
+  // threw the viewport to the bottom. The click records the transcript
+  // height for two frames; a pin that finds it changed leaves follow mode.
+  const userClickLayoutRef = useRef<{ scrollHeight: number } | null>(null);
   // Latest pin function — set inside the streaming-follow effect so the
   // ResizeObserver/animation-end pin can run the same anchor-vs-tail
   // logic without recapturing message state in its `[]` deps closure.
@@ -1414,17 +1452,28 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     const el = composerToolbarRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const tierFor = (w: number): 0 | 1 | 2 => (w < 260 ? 2 : w < 360 ? 1 : 0);
+    // The toolbar's content width. A phone composer at rest folds the
+    // toolbar into its one row (display: contents, no box); the chips are
+    // then sized for the open toolbar, which spans the composer, so they are
+    // ready, at their final size, when it opens.
+    const contentWidth = () => {
+      const style = getComputedStyle(el);
+      const padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+      const width = style.display === 'contents' ? el.parentElement?.clientWidth ?? 0 : el.clientWidth;
+      return width > 0 ? width - padding : 0;
+    };
     const measure = () => {
-      const next = tierFor(el.offsetWidth);
+      const width = contentWidth();
+      if (width <= 0) return;
+      const next = tierFor(width);
       setToolbarTier((prev) => (prev === next ? prev : next));
     };
-    const ro = new ResizeObserver((entries) => {
+    const ro = new ResizeObserver(() => {
       if (sidebarAnimatingRef.current) return;
-      const w = entries[0]?.contentRect.width ?? el.offsetWidth;
-      const next = tierFor(w);
-      setToolbarTier((prev) => (prev === next ? prev : next));
+      measure();
     });
     ro.observe(el);
+    if (el.parentElement) ro.observe(el.parentElement);
     animationEndCallbacks.add(measure);
     return () => {
       ro.disconnect();
@@ -1593,6 +1642,12 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     // anchor, tail-tracking takes over.
     const pinFollow = () => {
       if (!followRef.current) return;
+      const click = userClickLayoutRef.current;
+      if (click && el.scrollHeight !== click.scrollHeight) {
+        userClickLayoutRef.current = null;
+        followRef.current = false;
+        return;
+      }
       if (performance.now() < userMsgPinUntilRef.current) return;
       const lu = latestUser
         ? (el.querySelector(`[data-msg-id="${latestUser.id}"]`) as HTMLElement | null)
@@ -1786,6 +1841,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   const prevFocusedRef = useRef(isFocused);
   const wasStreamingRef = useRef(streaming);
   const lastQuoteRef = useRef(quotedText);
+  const phone = usePhoneLayout();
   useEffect(() => {
     const becameFocused = !prevFocusedRef.current && isFocused;
     const justFinishedStreaming = wasStreamingRef.current && !streaming;
@@ -1796,6 +1852,10 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
 
     if (!isFocused) return;
     if (!becameFocused && !justFinishedStreaming && !quoteJustAdded) return;
+    // A phone composer rests as one row until it is tapped. Focusing it here
+    // would open it after every reply (on iOS without the keyboard), so only
+    // a new quote, which the user is about to answer, still focuses it.
+    if (phone && !quoteJustAdded) return;
 
     const active = document.activeElement as HTMLElement | null;
     if (active) {
@@ -1807,7 +1867,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     // Dashboard owns horizontal reveal; focus fallback must not scroll it again.
     const frame = requestAnimationFrame(() => inputRef.current?.editor?.commands.focus(undefined, { scrollIntoView: false }));
     return () => cancelAnimationFrame(frame);
-  }, [isFocused, streaming, quotedText]);
+  }, [isFocused, streaming, quotedText, phone]);
 
   // A jump from a page's source: scroll to the cited message once, then put the
   // cursor in the composer (Continue) or keep it out (Open full chat).
@@ -2095,6 +2155,8 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     // allowed.
     if (!raw && pending.length === 0 && pendingAttachments.length === 0) return;
     clearComposerDraft();
+    // A phone composer rests as one row again once the message is on its way.
+    composerHandle.current?.settle();
     const attachmentsForSend = pendingAttachments.map(p => ({ name: p.name, absPath: p.absPath, relPath: p.relPath }));
     // Attachments stay scoped to this turn — the agent reads them via the
     // [Attached files: …] sentinel appended below. We deliberately do NOT
@@ -2346,6 +2408,15 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
         }}
         onTouchMove={markUserScrollIntent}
         onPointerDown={markUserScrollIntent}
+        onClickCapture={(e) => {
+          // Capture runs before the toggle's own handler (which may stop
+          // propagation), so this is the height before the click's change.
+          const record = { scrollHeight: e.currentTarget.scrollHeight };
+          userClickLayoutRef.current = record;
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (userClickLayoutRef.current === record) userClickLayoutRef.current = null;
+          }));
+        }}
         onKeyDown={markUserScrollIntentFromKey}
         onScroll={(e) => {
           // Keep the persisted anchor fresh so a refresh (which skips React
@@ -2368,7 +2439,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
           }
           prevScrollTopRef.current = cur;
         }}
-        className="term-scrollbar"
+        className="term-scrollbar terminal-pane__transcript"
         style={{
           flex: 1,
           overflowY: 'auto',
@@ -2454,6 +2525,10 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
         contentMaxWidth={contentMaxWidth ?? null}
         dragHover={dragHover}
         toolbarRef={composerToolbarRef}
+        collapsible
+        hasContent={draftHasText}
+        holdOpen={!!agentMenu || !!modelMenu}
+        collapsedHint="Reply…"
         onDragEnter={(e) => {
           // Always preventDefault so the browser doesn't navigate to a
           // dropped file in pure-browser dev mode.
@@ -2483,7 +2558,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
         }}
         preBlocks={
           <>
-            {composerPreBlocks}
+            {typeof composerPreBlocks === 'function' ? composerPreBlocks(draftHasText) : composerPreBlocks}
             {n.commandResult && <ChatCommandResult result={n.commandResult} />}
             <UploadProgressBar progress={uploadProgress} />
             <PaneComposerPreBlocks
@@ -2569,8 +2644,9 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
         }
         toolbarRight={
           <>
-          {!permissionPreferences.global && <ComposerPermissionControl apiBase={workspaceBackendApiBase(n.projectId)} mode={n.permissionMode ?? 'ask'}
-            runtimeIds={[resolvedBinding.runtime]}
+          {!permissionPreferences.global && <ComposerPermissionControl apiBase={workspaceBackendApiBase(n.projectId)}
+            mode={chatPermissionChoice(n.permissionMode ?? 'ask', n.permissionApproveForMe)}
+            runtimeIds={[resolvedBinding.runtime]} approveForMeRuntimeIds={approveForMeRuntimeIds(agentStatus)}
             compact={toolbarTier > 0} disabled={streaming || permissionPreferences.loading}
             yoloRestartHint={claudeWorkflowRunning ? 'Claude restarts on your next message, which stops the running workflow.' : undefined}
             onChange={(mode) => setChatPermissionMode(nodeId, mode)} />}
@@ -2582,7 +2658,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
             providerModels={providerModels}
             providers={catalogProviders}
             isStreaming={streaming}
-            locked={isAssistantConversation && !spacesAssistant}
+            locked={isAssistantConversation && !currentAssistant}
             modelMenuOpen={!!modelMenu && !streaming}
             onOpenModelMenu={openModelMenu}
             switchHint={claudeWorkflowRunning ? 'Switching the model also stops the running workflow.' : undefined}
@@ -2648,7 +2724,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
         agentModesError={agentModesError}
         onRetryAgentModes={retryAgentModes}
         currentModeId={n.currentModeId ?? undefined}
-        agentStatus={spacesAssistant && agentStatus ? { ...agentStatus, availableRuntimes: agentStatus.availableRuntimes?.filter(runtime => assistantInfo?.supportedRuntimes.includes(runtime.id)) } : agentStatus}
+        agentStatus={currentAssistant && agentStatus ? { ...agentStatus, availableRuntimes: agentStatus.availableRuntimes?.filter(runtime => assistantInfo?.supportedRuntimes.includes(runtime.id)) } : agentStatus}
         resolvedBinding={resolvedBinding}
         catalogCapabilities={catalogCapabilities}
         providerModels={providerModels}
@@ -2659,19 +2735,19 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
         defaultModeId={defaultModeId}
         runtimeId={agentStatus?.runtime}
         onSwitchAgent={(modeId) => void switchAgent(nodeId, modeId)}
-        onSwitchRuntime={(runtimeId) => spacesAssistant ? saveAssistantModel({ runtimeId, providerId: null, modelId: null, reasoning: null }) : setPendingBindingOverride({ runtime: runtimeId })}
+        onSwitchRuntime={(runtimeId) => currentAssistant ? saveAssistantModel({ runtimeId, providerId: null, modelId: null, reasoning: null }) : setPendingBindingOverride({ runtime: runtimeId })}
         onSaveProvider={(provider) => {
-          if (spacesAssistant) return saveAssistantModel({ providerId: provider, modelId: null });
+          if (currentAssistant) return saveAssistantModel({ providerId: provider, modelId: null });
           // Provider change invalidates the pending model (models are
           // provider-scoped); resolution re-derives a valid one.
           setPendingBindingOverride((prev) => ({ ...prev, provider, model: undefined }));
         }}
         onSaveModel={(model) => {
-          if (spacesAssistant) return saveAssistantModel({ modelId: model });
+          if (currentAssistant) return saveAssistantModel({ modelId: model });
           setPendingBindingOverride((prev) => ({ ...prev, model }));
         }}
         onSaveReasoning={(reasoning) => {
-          if (spacesAssistant) return saveAssistantModel({ reasoning });
+          if (currentAssistant) return saveAssistantModel({ reasoning });
           setPendingBindingOverride((prev) => ({ ...prev, reasoning }));
         }}
         onRetryModels={retryModels}

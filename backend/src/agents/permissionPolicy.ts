@@ -26,6 +26,15 @@ export function chatPermissionMode(owner: RuntimeSessionOwner | undefined, owner
     return deps.chatPermissions?.getMode(nodeId, userId) ?? 'ask';
 }
 
+/** Approve for me is on for this chat's turn: Ask, with the runtime's trust classifier. */
+export function chatApproveForMe(owner: RuntimeSessionOwner | undefined, ownerUserId?: string | null): boolean {
+    const nodeId = permissionNodeId(owner);
+    if (nodeId === undefined) return false;
+    const deps = permissionDeps();
+    if (!deps?.chatPermissions?.getApproveForMe) return false;
+    return deps.chatPermissions.getApproveForMe(nodeId, permissionOwnerUserId(owner!, ownerUserId)) === true;
+}
+
 export function permissionOwnerUserId(owner: RuntimeSessionOwner, ownerUserId?: string | null): string | null | undefined {
     const nodeId = permissionNodeId(owner);
     if (ownerUserId || nodeId === undefined) return ownerUserId;

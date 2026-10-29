@@ -165,7 +165,7 @@ describe('Meta agent run-now', () => {
     ]);
     assert.equal(result.workspaces[1].runId, null);
     assert.equal(result.workspaces[1].reason, 'Starts when a run slot frees up');
-    assert.ok((jobs.getJob(second).nextRunAt ?? Infinity) <= now, 'the queued workspace is due now');
+    assert.equal(jobs.getJob(second).nextRunAt, null, 'pending work is discovered globally, without a per-workspace schedule');
     assert.deepEqual(metaAgentRoundStatus({ scheduler: jobs, ownerUserId: LOCAL, now }).workspaces.map((row) => row.running), [true, true]);
 
     const again = runMetaAgentRoundNow({ scheduler: jobs, ownerUserId: LOCAL });
@@ -178,9 +178,9 @@ describe('Meta agent run-now', () => {
 
   test('queued work counts as something to read', () => {
     const jobs = scheduler();
-    maintained(jobs, 'ws-a', 4);
+    const jobId = maintained(jobs, 'ws-a', 4);
     getDb().prepare(`INSERT INTO page_maintenance_plans(id,workspace_id,owner_user_id,job_id,run_id,config_revision,generation,after_seq,through_seq,state,created_at,updated_at)
-      VALUES('plan-1','ws-a',?,?,NULL,1,1,3,4,'routing',?,?)`).run(LOCAL, jobs.listJobs()[0].id, now, now);
+      VALUES('plan-1','ws-a',?,?,NULL,1,1,3,4,'routing',?,?)`).run(LOCAL, jobId, now, now);
     assert.deepEqual(outcomes(runMetaAgentRoundNow({ scheduler: jobs, ownerUserId: LOCAL })), [{ workspaceId: 'ws-a', outcome: 'started' }]);
   });
 
@@ -232,7 +232,7 @@ describe('Meta agent run-now', () => {
       assert.equal((await call('POST', '/api/meta-agent/run-now', { origin: 'https://evil.example' }, '{}')).status, 403);
     });
 
-    test('an authenticated remote connection reaches it while the settings routes stay local-only', async () => {
+    test('an authenticated remote owner can run maintenance and read its settings', async () => {
       const jobs = scheduler();
       maintained(jobs, 'ws-a', 2);
       await listen(jobs, true);
@@ -240,7 +240,7 @@ describe('Meta agent run-now', () => {
       const run = await call('POST', '/api/meta-agent/run-now', remoteHost, '{}');
       assert.equal(run.status, 200, JSON.stringify(run.body));
       assert.deepEqual(run.body.workspaces.map((row: { outcome: string }) => row.outcome), ['no_new']);
-      assert.equal((await call('GET', '/api/meta-agent', remoteHost)).status, 403);
+      assert.equal((await call('GET', '/api/meta-agent', remoteHost)).status, 200);
     });
 
     test('without scheduled jobs it answers 503', async () => {

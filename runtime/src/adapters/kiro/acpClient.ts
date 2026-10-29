@@ -5,6 +5,7 @@ import { KiroSessionSnapshots } from './sessionSnapshots';
 import { nativeSessionExists } from "./nativeSessionLookup";
 import type { RuntimeObservability } from "../../contract/host";
 import { AcpAgentTurns, type AcpAgentTurnHandler } from "./acpAgentTurns";
+import { kiroV2ApprovalCancelledUpdate } from "./kiroSubagents";
 
 export type { AcpAgentTurnHandler } from "./acpAgentTurns";
 import {
@@ -13,7 +14,7 @@ import {
     type AcpSessionOptions, type AcpConfigOption,
 } from './kiroProtocol';
 import {
-    ACPError, ACPNativeSessionMissingError, ACPProcessExitedError,
+    ACPError, ACPNativeSessionMissingError, ACPProcessExitedError, ACPRequestNotSentError,
     ACPSessionRecoveryRequiredError, ACPUnsupportedMethodError,
 } from "../acp/errors";
 import type { AcpIncomingMessage, AcpIncomingNotification, AcpUpdate } from "../acp/types";
@@ -141,6 +142,12 @@ export class AcpClient extends AcpCoreClient {
     private readonly lastUserMessageId = new Map<string, string>();
     private readonly snapshots: KiroSessionSnapshots;
     private readonly steeredSessions = new Set<string>();
+    /** V3 policy presets each session was last opened with (`session/new`, `session/load`). */
+    private readonly sessionPolicyPresets = new Map<string, readonly string[]>();
+    /** What each session was last opened with, so reopenWithPolicyPresets can open it again. */
+    private readonly sessionOpenings = new Map<string, { cwd: string; mcpServers: AcpMcpServer[]; options: AcpSessionOptions }>();
+    /** Sessions this process closed and is loading again: they exist without a catalog entry. */
+    private readonly reopeningSessions = new Set<string>();
     private readonly steerRequests = new Map<string, Set<Promise<unknown>>>();
     private readonly compactions = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
     private readonly compactingSessions = new Set<string>();
@@ -170,6 +177,20 @@ export class AcpClient extends AcpCoreClient {
     private subagentOwnerOrder = new Map<string, number>(); // toolCallId → seq
     /** Maps subagent sessionId → parent sessionId for tool activity forwarding. */
     private subagentParentMap = new Map<string, string>();
+    /** V2 subagent stage names (roster `sessionName`), for their approval prompts. */
+    private readonly subagentNames = new Map<string, string>();
+    /**
+     * V2 subagent approvals shown in the parent's turn, by requestId: a
+     * child session has no queue of its own, and an unanswered request
+     * leaves the child stopped and a blocking crew waiting for it.
+     */
+    private readonly forwardedPermissions = new Map<number, string>();
+    /**
+     * Subagent approvals waiting until the parent's shown one is answered,
+     * oldest first: a chat shows one approval at a time, and a newer one
+     * would hide an older one that still blocks its agent.
+     */
+    private readonly heldPermissions = new Map<string, AcpUpdate[]>();
     /** Workflow traffic (`_kiro/workflow/*`, step notifications, step
      *  sessions and their approvals); routed out of band, never into a turn
      *  queue. One router per client (KiroRuntime's workflow bridge). */
@@ -231,6 +252,11 @@ export class AcpClient extends AcpCoreClient {
             if (seq > bestSeq) { bestSeq = seq; best = toolCallId; }
         }
         return best;
+    }
+
+    private forgetSubagent(subagentSessionId: string): void {
+        this.subagentParentMap.delete(subagentSessionId);
+        this.subagentNames.delete(subagentSessionId);
     }
 
     constructor(
@@ -342,7 +368,123 @@ export class AcpClient extends AcpCoreClient {
             this.respondToPermissionKind(requestId, 'reject_once');
             return true;
         }
-        return this.routeWorkflowPermission(sessionId, requestId, toolCall, options);
+        return this.routeWorkflowPermission(sessionId, requestId, toolCall, options)
+            || this.routeSubagentPermission(sessionId, requestId, toolCall, options);
+    }
+
+    /**
+     * A V2 subagent's approval goes to the turn of the session that spawned
+     * it (the roster maps the child; it arrives before the child's first
+     * tool call), labelled with the child. False when no running turn of
+     * that parent can answer it: it is cancelled, as before.
+     */
+    private routeSubagentPermission(sessionId: unknown, requestId: number, toolCall: unknown, options: unknown): boolean {
+        if (typeof sessionId !== 'string') return false;
+        const parentSid = this.subagentParentMap.get(sessionId);
+        if (!parentSid || !this.activePrompts.has(parentSid) || !this.sessionQueues.has(parentSid)) return false;
+        const raw = Array.isArray(options) ? options : [];
+        const update: AcpUpdate = {
+            sessionUpdate: 'permission_request',
+            requestId,
+            toolCall,
+            options: this.profile.mapPermissionOptions ? this.profile.mapPermissionOptions(raw) : raw,
+            _meta: this.pendingPermissions.get(requestId)?.meta,
+            subagentSessionId: sessionId,
+            ...(this.subagentNames.get(sessionId) ? { subagentName: this.subagentNames.get(sessionId) } : {}),
+        };
+        this.forwardedPermissions.set(requestId, parentSid);
+        const held = this.heldPermissions.get(parentSid) ?? [];
+        this.heldPermissions.set(parentSid, [...held, update]);
+        this.releaseHeldPermissions(parentSid);
+        return true;
+    }
+
+    /** An approval of the parent's (its own or a subagent's) is waiting for an answer and not held. */
+    private hasShownPermission(parentSid: string): boolean {
+        const held = new Set((this.heldPermissions.get(parentSid) ?? []).map((update) => update.requestId));
+        for (const [requestId, entry] of this.pendingPermissions) {
+            if (held.has(requestId)) continue;
+            if (entry.sessionId === parentSid || this.forwardedPermissions.get(requestId) === parentSid) return true;
+        }
+        return false;
+    }
+
+    /** Show the parent's oldest held subagent approval once nothing else waits; without a running turn, cancel them. */
+    private releaseHeldPermissions(parentSid: string): void {
+        const held = this.heldPermissions.get(parentSid);
+        if (!held) return;
+        const queue = this.activePrompts.has(parentSid) ? this.sessionQueues.get(parentSid) : undefined;
+        if (!queue) {
+            this.dropHeldPermissions(parentSid);
+            return;
+        }
+        while (held.length > 0 && !this.hasShownPermission(parentSid)) {
+            const next = held.shift()!;
+            if (this.pendingPermissions.has(next.requestId)) queue.push({ update: next });
+            else this.forwardedPermissions.delete(next.requestId);
+        }
+        if (held.length === 0) this.heldPermissions.delete(parentSid);
+    }
+
+    private dropHeldPermissions(parentSid: string): void {
+        const held = this.heldPermissions.get(parentSid) ?? [];
+        this.heldPermissions.delete(parentSid);
+        for (const update of held) this.cancelPermission(update.requestId);
+    }
+
+    /** The session whose turn shows this approval: a subagent's parent, else the requester. */
+    private permissionOwner(requestId: number): string | undefined {
+        return this.forwardedPermissions.get(requestId) ?? this.pendingPermissions.get(requestId)?.sessionId;
+    }
+
+    override respondToPermission(requestId: number, optionId: string): void {
+        const owner = this.permissionOwner(requestId);
+        super.respondToPermission(requestId, optionId);
+        this.afterPermissionSettled(requestId, owner);
+    }
+
+    override cancelPermission(requestId: number): void {
+        const owner = this.permissionOwner(requestId);
+        const requester = this.pendingPermissions.get(requestId)?.sessionId;
+        super.cancelPermission(requestId);
+        if (requester && !this.pendingPermissions.has(requestId)) this.recordCancelledSubagentApproval(requester);
+        this.afterPermissionSettled(requestId, owner);
+    }
+
+    /**
+     * kiro-cli ends a V2 stage whose approval is cancelled, with a bare
+     * `terminated`; tell its parent's running turn why it stopped. Never
+     * into an idle queue, whose next prompt it would join.
+     */
+    private recordCancelledSubagentApproval(subagentSessionId: string): void {
+        const parentSid = this.subagentParentMap.get(subagentSessionId);
+        if (!parentSid || !this.activePrompts.has(parentSid)) return;
+        this.sessionQueues.get(parentSid)?.push({ update: kiroV2ApprovalCancelledUpdate(subagentSessionId) });
+    }
+
+    private afterPermissionSettled(requestId: number, owner: string | undefined): void {
+        if (this.pendingPermissions.has(requestId)) return;
+        this.forwardedPermissions.delete(requestId);
+        if (!owner) return;
+        const held = this.heldPermissions.get(owner);
+        if (held?.some((update) => update.requestId === requestId)) {
+            this.heldPermissions.set(owner, held.filter((update) => update.requestId !== requestId));
+        }
+        this.releaseHeldPermissions(owner);
+    }
+
+    /** A session's own approvals, and its subagents' shown or held ones. */
+    override cancelPermissionsForSession(sessionId: string): void {
+        this.cancelSubagentPermissions(sessionId);
+        super.cancelPermissionsForSession(sessionId);
+    }
+
+    /** The subagent approvals shown or held in this parent's turn. */
+    private cancelSubagentPermissions(parentSid: string): void {
+        this.dropHeldPermissions(parentSid);
+        for (const [requestId, owner] of this.forwardedPermissions) {
+            if (owner === parentSid) this.cancelPermission(requestId);
+        }
     }
 
     protected override claimSessionUpdate(sid: string, update: AcpUpdate, msg: AcpIncomingNotification): boolean {
@@ -482,7 +624,7 @@ export class AcpClient extends AcpCoreClient {
                 // Only clear parent mappings that belong to this owner.
                 // Other concurrent sessions keep their own subagent→parent entries.
                 for (const [subSid, parentSid] of this.subagentParentMap) {
-                    if (parentSid === sid) this.subagentParentMap.delete(subSid);
+                    if (parentSid === sid) this.forgetSubagent(subSid);
                 }
             }
         }
@@ -589,6 +731,9 @@ export class AcpClient extends AcpCoreClient {
                     const mapped = sa?.sessionId ? this.subagentParentMap.get(sa.sessionId) : undefined;
                     const parentSid = mapped ?? owner.sessionId;
                     if (!mapped && sa?.sessionId) this.subagentParentMap.set(sa.sessionId, parentSid);
+                    const name = typeof sa?.sessionName === 'string' && sa.sessionName ? sa.sessionName
+                        : typeof sa?.agentName === 'string' ? sa.agentName : '';
+                    if (sa?.sessionId && name) this.subagentNames.set(sa.sessionId, name);
                     const group = groups.get(parentSid) ?? { entries: [], guessed: false };
                     group.entries.push(sa);
                     if (!mapped && ambiguous) group.guessed = true;
@@ -611,7 +756,7 @@ export class AcpClient extends AcpCoreClient {
             // When roster empties, clear ONLY the resolved owner's entries
             if (subagents.length === 0 && targetSid) {
                 for (const [subSid, parentSid] of this.subagentParentMap) {
-                    if (parentSid === targetSid) this.subagentParentMap.delete(subSid);
+                    if (parentSid === targetSid) this.forgetSubagent(subSid);
                 }
             }
         }
@@ -727,20 +872,83 @@ export class AcpClient extends AcpCoreClient {
         for (const compaction of this.compactions.values()) compaction.reject(err);
     }
 
-    /** The core's, with Kiro's session options (workflowsEnabled) and MCP entries. */
-    override newSession(mcpServers: AcpMcpServer[] = [], options: AcpSessionOptions = {}): Promise<AcpSessionInfo & { sessionId: string }> {
-        return super.newSession(mcpServers, options);
+    /** The core's, with Kiro's session options (workflowsEnabled, policyPresets) and MCP entries. */
+    override async newSession(mcpServers: AcpMcpServer[] = [], options: AcpSessionOptions = {}): Promise<AcpSessionInfo & { sessionId: string }> {
+        const result = await super.newSession(mcpServers, options);
+        this.rememberOpening(result.sessionId, this.cwd, mcpServers, options);
+        return result;
     }
 
     /** The core's, with Kiro's session options and MCP entries. */
-    override loadSession(
+    override async loadSession(
         sessionId: string,
         cwd: string,
         mcpServers: AcpMcpServer[] = [],
         timeoutMs?: number,
         options: AcpSessionOptions = {},
     ): Promise<AcpSessionInfo> {
-        return super.loadSession(sessionId, cwd, mcpServers, timeoutMs, options);
+        const result = await super.loadSession(sessionId, cwd, mcpServers, timeoutMs, options);
+        this.rememberOpening(sessionId, cwd, mcpServers, options);
+        return result;
+    }
+
+    private rememberOpening(sessionId: string, cwd: string, mcpServers: AcpMcpServer[], options: AcpSessionOptions): void {
+        this.sessionOpenings.set(sessionId, { cwd, mcpServers, options });
+        // v2 has no policy presets: it ignores the field.
+        this.sessionPolicyPresets.set(sessionId, this.engine === 'v3' ? [...new Set(options.policyPresets ?? [])].sort() : []);
+    }
+
+    /** The policy presets a session was opened with here; undefined for one this process has not opened. */
+    policyPresets(sessionId: string): readonly string[] | undefined {
+        return this.sessionPolicyPresets.get(sessionId);
+    }
+
+    /**
+     * Open an idle V3 session again with `presets`. Kiro seeds presets only at
+     * session/new and session/load, and loading a session it holds keeps its
+     * policy, so this closes the session first. The session keeps its MCP
+     * servers and other options; config options (model, effort, mode) that
+     * the load reset are set back. A failed load leaves the session closed:
+     * it is quarantined, so the next turn recovers it.
+     */
+    async reopenWithPolicyPresets(sessionId: string, presets: readonly string[], timeoutMs?: number): Promise<void> {
+        if (this.engine !== 'v3') throw new ACPError('Policy presets require Kiro v3');
+        const opening = this.sessionOpenings.get(sessionId);
+        if (!opening) throw new ACPError('This Kiro process has not opened the session');
+        if (!this.capabilities?.sessionCapabilities?.close) throw new ACPError('Kiro did not advertise session/close');
+        const busy = () => this.activePrompts.has(sessionId) || this.agentTurns.has(sessionId) || this.compactingSessions.has(sessionId);
+        // Closing would end a turn Kiro runs on its own (a workflow wake).
+        if (busy()) throw new ACPError('Cannot reopen an active Kiro session');
+        // As a prompt does: wait for the session's previous turn to let go.
+        const previous = this.sessionInFlight.get(sessionId);
+        const release = this.reserveSession(sessionId);
+        this.reopeningSessions.add(sessionId);
+        try {
+            if (previous) await previous;
+            if (busy()) throw new ACPError('Cannot reopen an active Kiro session');
+            const before = this.sessionInfo.get(sessionId)?.configOptions ?? [];
+            const options: AcpSessionOptions = { ...opening.options, policyPresets: [...presets] };
+            try {
+                await this.send('session/close', { sessionId }, timeoutMs ?? this.idleTimeoutMs, sessionId);
+                this.sessionPolicyPresets.delete(sessionId);
+                await super.loadSession(sessionId, opening.cwd, opening.mcpServers, timeoutMs, options);
+            } catch (error) {
+                // Unsent, the session is as it was; otherwise it may be closed.
+                if (!(error instanceof ACPRequestNotSentError) || !this.sessionPolicyPresets.has(sessionId)) this.quarantine(sessionId);
+                throw error;
+            }
+            this.rememberOpening(sessionId, opening.cwd, opening.mcpServers, options);
+            const after = this.sessionInfo.get(sessionId)?.configOptions ?? [];
+            for (const option of before) {
+                const now = after.find((candidate) => candidate.id === option.id);
+                if (now && option.currentValue !== undefined && now.currentValue !== option.currentValue) {
+                    await this.setConfigOption(sessionId, option.id, option.currentValue, timeoutMs);
+                }
+            }
+        } finally {
+            this.reopeningSessions.delete(sessionId);
+            release();
+        }
     }
 
     override async setModel(sessionId: string, modelId: string, timeoutMs?: number): Promise<void> {
@@ -1033,6 +1241,9 @@ export class AcpClient extends AcpCoreClient {
      */
     protected override onPromptSettled(sessionId: string): void {
         this.promptTurnEnded.delete(sessionId);
+        // No turn is left to show a subagent's approval: answer it, so the
+        // stage does not wait forever (it is cancelled, as before).
+        this.cancelSubagentPermissions(sessionId);
         if (this.wakeCandidates.delete(sessionId) && this.sessionQueues.has(sessionId)
             && !this.exitError && !this.stopped && !this.needsSessionRecovery(sessionId)) {
             this.agentTurns.start(sessionId);
@@ -1065,8 +1276,13 @@ export class AcpClient extends AcpCoreClient {
         this.publishSessionState(sessionId);
     }
 
-    /** v3 loads only a session its catalog proves exists (nativeSessionLookup). */
+    /**
+     * v3 loads only a session its catalog proves exists (nativeSessionLookup),
+     * except one this process just closed to reopen: a session without a
+     * prompt yet is not in the catalog.
+     */
     protected override beforeLoadSession(sessionId: string, cwd: string, timeoutMs: number | undefined): Promise<void> | undefined {
+        if (this.reopeningSessions.has(sessionId)) return undefined;
         return this.engine === 'v3' ? this.verifyNativeSession(sessionId, cwd, timeoutMs) : undefined;
     }
 
@@ -1182,9 +1398,13 @@ export class AcpClient extends AcpCoreClient {
         this.lastUserMessageId.delete(sessionId);
         this.snapshots.delete(sessionId);
         this.steeredSessions.delete(sessionId);
+        this.sessionPolicyPresets.delete(sessionId);
+        this.sessionOpenings.delete(sessionId);
     }
 
     protected override onProcessExit(): void {
+        this.forwardedPermissions.clear();
+        this.heldPermissions.clear();
         this.agentTurns.exited();
     }
 }

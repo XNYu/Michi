@@ -69,7 +69,9 @@ test('opening Spaces starts the first run once and later calls change nothing', 
   assert.ok(jobId, 'the workspace is enrolled in managed maintenance');
   const again = await (await post('/spaces-home/first-run', {})).json() as typeof status;
   assert.deepEqual(again, status);
-  assert.equal(sched.listJobs().length, 1);
+  assert.equal(sched.listJobs().length, 0, 'maintenance is not an ordinary scheduled job');
+  assert.equal(sched.getJob(jobId).nextRunAt, null);
+  assert.equal(new ScheduledJobsRepository().listMaintenanceExecutions().length, 1);
 });
 
 test('retry validates its body and the routes need the scheduler', async () => {

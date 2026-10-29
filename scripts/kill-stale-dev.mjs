@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Kill any prior `npm run dev` / `npm run electron:dev` instances of THIS repo
 // before starting a fresh one. Prevents the multi-backend split-brain where
-// two Electron windows share ~/.michi/data.db but each has its own
-// localStorage / in-memory project list.
+// two Electron windows share the development database (~/.michi-dev/data.db
+// by default) but each has its own localStorage / in-memory project list.
 //
 // Matches by command line containing the repo's absolute path, so other
 // projects' Vite / nodemon / Electron processes are not touched.
@@ -172,23 +172,18 @@ const deadline = Date.now() + 1500;
 function stillAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
-(function waitLoop() {
-  const remaining = targets.filter((t) => stillAlive(t.pid));
-  if (remaining.length === 0) return;
-  if (Date.now() >= deadline) {
-    for (const { pid } of remaining) {
-      console.log(`[kill-stale-dev] SIGKILL pid=${pid}`);
-      try {
-        if (IS_WIN) {
-          execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
-        } else {
-          process.kill(pid, 'SIGKILL');
-        }
-      } catch { /* */ }
+// Poll every 100ms until all targets exit or the deadline passes.
+let remaining = targets;
+while ((remaining = remaining.filter((t) => stillAlive(t.pid))).length > 0 && Date.now() < deadline) {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+for (const { pid } of remaining) {
+  console.log(`[kill-stale-dev] SIGKILL pid=${pid}`);
+  try {
+    if (IS_WIN) {
+      execFileSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
+    } else {
+      process.kill(pid, 'SIGKILL');
     }
-    return;
-  }
-  const until = Date.now() + 100;
-  while (Date.now() < until) { /* tight wait */ }
-  waitLoop();
-})();
+  } catch { /* */ }
+}

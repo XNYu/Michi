@@ -10,8 +10,7 @@ function configure(modes: Record<string, ChatPermissionMode>) {
   const grants = new Set<string>();
   configureRuntimeDeps({
     dataDir: '/tmp/michi-permission-runtime-tests',
-    historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null,
-      hasGrant: () => { throw new Error('Ordinary chats must not consult workspace grants'); }, grantPermission: () => { throw new Error('Workspace grants must not be written'); } },
+    historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null },
     agentConfig: { getAgentConfig: () => ({ runtime: 'pi', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined },
     chatPermissions: { getMode: (id) => modes[id] ?? 'ask', hasGrant: (id, tool) => grants.has(`${id}:${tool}`), grant: (id, tool) => { grants.add(`${id}:${tool}`); } },
   });

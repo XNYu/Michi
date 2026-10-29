@@ -165,7 +165,7 @@ test('Pi forwards optional approval and delivers routine coordination without an
     dataDir: directory,
     historyStore: {
       getNode: () => null, listMessages: () => [], getWorkspace: () => null,
-      getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {},
+      getWorkspaceInstructions: () => null,
     },
     agentConfig: {
       getAgentConfig: () => ({ runtime: 'pi', provider: 'test', modelByRuntime: {}, reasoningByRuntime: {} }),

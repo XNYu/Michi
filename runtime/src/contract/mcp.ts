@@ -101,7 +101,7 @@ export interface McpSlot {
     topics: Array<{ title: string; prompt: string }>,
   ) => Promise<Array<{ title: string; prompt: string; chatId: string }>>;
   /** Host tool extension: save_artifact is offered only when it is present. */
-  onSaveArtifact?: (name: string, body: string) => BridgeContextResult | null;
+  onSaveArtifact?: (name: string, body: string | undefined, path?: string) => BridgeContextResult | null;
   /** Host tool extension: update_artifact is offered only when it is present. */
   onUpdateArtifact?: (name: string, body: string) => BridgeContextResult | null;
   /** Host tool extension: show_image is offered only when it is present. */

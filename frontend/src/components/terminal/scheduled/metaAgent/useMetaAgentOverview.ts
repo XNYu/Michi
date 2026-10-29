@@ -78,8 +78,13 @@ function startPolling(): () => void {
   };
 }
 
+/** Observe navigation validity without keeping background polling mounted. */
+export function useMetaAgentOverviewSnapshot(): MetaAgentOverviewLoad {
+  return useSyncExternalStore(subscribe, () => load, () => load);
+}
+
 export function useMetaAgentOverview(): MetaAgentOverviewLoad {
-  const current = useSyncExternalStore(subscribe, () => load, () => load);
+  const current = useMetaAgentOverviewSnapshot();
   useEffect(() => {
     void refreshMetaAgentOverview();
     return startPolling();

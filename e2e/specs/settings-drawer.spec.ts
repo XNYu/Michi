@@ -47,7 +47,9 @@ for (const palette of ['bone', 'monokai']) test(`global Settings stays a drawer 
 
   await page.setViewportSize({ width: 390, height: 844 });
   await openSettings(page, 'Meta agent');
-  await expect(drawer.getByRole('navigation', { name: 'Settings sections' })).toBeVisible();
+  // A phone shows the chosen section alone; its header Back returns to the list.
+  await expect(drawer.getByRole('heading', { level: 1, name: 'Meta agent', exact: true })).toBeVisible();
+  await expect(drawer.getByRole('navigation', { name: 'Settings sections' })).toBeHidden();
   await expect(drawer.getByRole('button', { name: 'Open sidebar', exact: true })).toHaveCount(0);
   const narrow = await drawer.boundingBox();
   expect(narrow!.width).toBe(390);
@@ -63,4 +65,32 @@ for (const palette of ['bone', 'monokai']) test(`global Settings stays a drawer 
   await leaveSettings(page);
   await expect(page.locator('.terminal-topbar')).toHaveAttribute('data-page', 'trash');
   expect(errors).toEqual([]);
+});
+
+test('a stalled settings category does not block Appearance or category navigation', async ({ page }) => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  let requested = false;
+  await page.route(/\/(?:pages\/settings\/GeneralPane\.tsx|assets\/GeneralPane-[^/]+\.js)(?:\?.*)?$/, async route => {
+    requested = true;
+    await pending;
+    await route.continue();
+  });
+  try {
+    await installMockApi(page);
+    await bootWithWorkspace(page, 'Settings loading');
+    await openSettings(page, 'Appearance');
+    const drawer = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await expect(drawer.getByText('Palette', { exact: true })).toBeVisible();
+    expect(requested).toBe(false);
+    await selectSettingsSection(page, 'General');
+    await expect.poll(() => requested).toBe(true);
+    await expect(drawer.getByRole('status')).toHaveText('Loading settings…');
+    await selectSettingsSection(page, 'Appearance');
+    await expect(drawer.getByText('Palette', { exact: true })).toBeVisible();
+    await expect(drawer.getByRole('status')).toHaveCount(0);
+  } finally {
+    release();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
 });

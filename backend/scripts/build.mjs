@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,7 +61,11 @@ function copyAssets() {
   // Keep Agent help available offline in source installs and packaged Electron.
   const docs = JSON.parse(readFileSync(resolve(root, "src/docs/catalog.json"), "utf8"));
   for (const doc of docs) {
-    copyTree(resolve(root, "src", doc.source), resolve(dist, "docs", `${doc.id}.md`));
+    const source = resolve(root, "src", doc.source);
+    if (!existsSync(source)) {
+      throw new Error(`Help doc "${doc.id}" in src/docs/catalog.json has no source file: ${source} (in Docker builds, check .dockerignore)`);
+    }
+    copyTree(source, resolve(dist, "docs", `${doc.id}.md`));
   }
   // The official Crew launcher uses the same Node that built this installation.
   writeFileSync(resolve(dist, "crew-node.json"), JSON.stringify({ schemaVersion: 1, node: process.execPath, nodeVersion: process.versions.node }) + "\n");
@@ -112,6 +116,12 @@ const workerBuildOptions = {
   external: [
     "node:*",
   ],
+};
+
+const metricsWorkerBuildOptions = {
+  ...workerBuildOptions,
+  entryPoints: [resolve(root, "src/services/metaAgentMetricsWorker.ts")],
+  outfile: resolve(dist, "metaAgentMetricsWorker.js"),
 };
 
 // Crew ACP adapter — its own process, launched by the `crew` runtime as
@@ -241,6 +251,8 @@ if (WATCH) {
   await ctx.watch();
   // Worker thread bundle: rebuild alongside the main server but no restart
   // trigger — the main server's Worker constructor loads the fresh file.
+  const metricsWorkerCtx = await context(metricsWorkerBuildOptions);
+  await metricsWorkerCtx.watch();
   const workerCtx = await context(workerBuildOptions);
   await workerCtx.watch();
   // Crew ACP adapter: same as the worker, picked up on the next adapter spawn.
@@ -254,12 +266,13 @@ if (WATCH) {
     if (shuttingDown) return;
     shuttingDown = true;
     void stopChild()
-      .then(() => Promise.all([ctx.dispose(), workerCtx.dispose(), crewAcpCtx.dispose(), crewMcpCtx.dispose(), crewMcpHostCtx.dispose()]))
+      .then(() => Promise.all([ctx.dispose(), metricsWorkerCtx.dispose(), workerCtx.dispose(), crewAcpCtx.dispose(), crewMcpCtx.dispose(), crewMcpHostCtx.dispose()]))
       .finally(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 } else {
+  await build(metricsWorkerBuildOptions);
   await build(workerBuildOptions);
   await build(crewAcpBuildOptions);
   await build(crewMcpBuildOptions);

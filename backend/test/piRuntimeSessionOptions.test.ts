@@ -17,7 +17,7 @@ test('Pi fresh and loaded sessions honor follow-up options without mutating an a
     dataDir,
     historyStore: {
       getNode: () => null, listMessages: () => [], getWorkspace: () => null,
-      getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {},
+      getWorkspaceInstructions: () => null,
     },
     agentConfig: {
       getAgentConfig: () => ({ runtime: 'pi', provider: 'test', modelByRuntime: {}, reasoningByRuntime: {} }),

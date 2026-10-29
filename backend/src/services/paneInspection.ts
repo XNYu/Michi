@@ -231,8 +231,8 @@ export function assertPaneInspectionCaller(caller: PaneInspectionCaller, operati
 
 /**
  * The workspace a pane target lives in, when `ownerUserId` owns it; null when
- * it does not exist. Only the Michi assistant's tool layer uses this, to scope
- * each of its calls to the target's own workspace before the normal checks.
+ * it does not exist or another owner holds it (cloud mode). Callers scope
+ * through `resolveCallerForTarget` before the normal checks.
  */
 export function paneTargetWorkspaceId(ownerUserId: string, target: PaneTarget): string | null {
   if (target.kind === 'node') {
@@ -242,6 +242,21 @@ export function paneTargetWorkspaceId(ownerUserId: string, target: PaneTarget): 
   if (target.kind === 'agent_run') return runsRepository.getRun(ownerUserId, target.runId)?.workspaceId ?? null;
   const surface = panePresenceRegistry.getSurfaceRegistrationInfo(target.registrationId);
   return surface ? getWorkspace(surface.workspaceId, ownerUserId)?.id ?? null : null;
+}
+
+/**
+ * The caller scoped to the workspace the located target lives in. `base` carries the
+ * server-derived identity (HTTP session or tool binding); the workspace comes only from the
+ * target, owner-scoped by `paneTargetWorkspaceId`, so a target another owner holds resolves to
+ * null in cloud mode. The HTTP routes and the assistant's tools both scope through this; null
+ * means NOT_FOUND. `authorizeCaller` still checks the target against the returned caller.
+ */
+export function resolveCallerForTarget(
+  base: Omit<PaneInspectionCaller, 'workspaceId'>,
+  locator: PaneLocator,
+): PaneInspectionCaller | null {
+  const workspaceId = paneTargetWorkspaceId(base.ownerUserId, resolvePaneTarget(locator));
+  return workspaceId ? { ...base, workspaceId } : null;
 }
 
 function authorizeTarget(caller: PaneInspectionCaller, target: PaneTarget): AuthorizedTarget {

@@ -5,13 +5,21 @@ import type {
     RuntimeTitleSource,
     RuntimeToolDelivery,
 } from '../../contract/descriptor';
+import { KIRO_FLAVOR, type KiroFlavor } from './kiroFlavor';
 import type { KiroEngine } from './kiroProtocol';
 
-/** Kiro v2. On v3, compaction, fork and steering depend on what the clients negotiated. */
+/**
+ * kiro-cli v2. On v3, compaction, fork and steering depend on what the
+ * clients negotiated. The cancel ack and usage slots follow the flavor
+ * (KiroFlavor.cancelAck, metersUsage): an agent that confirms or meters
+ * neither keeps them unconfirmed.
+ */
 export const KIRO_HARNESS: CapabilityDescriptor = {
     steer: slot('native', 'native', '_session/steer; queued for the next agent boundary'),
     followUp: invisibleSlot(),
-    interruptAck: slot('inferred', 'unknown', 'session/cancel notify — dispatch, not an agent ack'),
+    // kiro-cli 2.35.1 settles the pending session/prompt with stopReason
+    // "cancelled" within ~30 ms of session/cancel on both engines.
+    interruptAck: slot('native', 'native', 'session/cancel; the pending session/prompt settles with stopReason cancelled'),
     // KiroSession.compact() now drives the ACP compact command, so this is a
     // real, invocable capability rather than "you can watch compaction happen".
     compact: slot('native', 'native', '_kiro.dev/commands/execute compact'),
@@ -19,10 +27,17 @@ export const KIRO_HARNESS: CapabilityDescriptor = {
     sessionFork: slot('native', 'native', 'Kiro rewind for compatible idle conversation parents'),
     nativeResume: slot('native', 'native', 'loadSession'),
     permissions: slot('native', 'native', 'acp_permission'),
+    // kiro-cli 2.35.1 reports no sandbox over ACP (docs/kiro-acp-validation.md).
     sandbox: invisibleSlot(),
-    subagents: slot('experimental', 'unknown', '_session/terminate / subagent list'),
-    usage: invisibleSlot(),
+    subagents: slot('experimental', 'unknown', 'Roster: v2 _kiro.dev/subagent/list_update, v3 delegation tool calls. Control (v2 _session/spawn, _kiro.dev/session/terminate): native_unwired'),
+    usage: slot('native', 'native', 'Kiro metering: credits and context %, no token counts or cost'),
 };
+
+/** A cancel the agent does not confirm: Michi only knows it was dispatched. */
+const UNCONFIRMED_CANCEL = slot('inferred', 'unknown', 'session/cancel notify — dispatch, not an agent ack');
+
+/** A cancel confirmed by the agent's own record of the stop (an `agent-record` flavor). */
+const RECORDED_CANCEL = slot('native', 'native', "session/cancel, then the agent's record of the stop; inferred when none arrives");
 
 /**
  * Agent Runs use Kiro's own tools plus the session's MCP slot tools,
@@ -73,13 +88,25 @@ export interface KiroDescriptorInput {
     mcpSlots: 'none' | 'per-session' | 'chat-groups';
     /** A sidecar title generator exists. */
     sidecarTitles: boolean;
+    /**
+     * What the agent confirms on its own (cancel acknowledgement, metering).
+     * Absent: neither, as for an ACP agent that only speaks Kiro's protocol.
+     */
+    flavor?: Pick<KiroFlavor, 'cancelAck' | 'metersUsage'>;
     override?: KiroDescriptorOverride;
 }
 
 export function kiroDescriptor(input: KiroDescriptorInput): RuntimeDescriptor {
     const { engine, clients, override } = input;
-    const harness: CapabilityDescriptor = engine === 'v2' ? { ...KIRO_HARNESS, ...override?.harness } : {
+    const cancelAck = input.flavor?.cancelAck?.kind;
+    // What the agent itself is known to report.
+    const agent: Partial<CapabilityDescriptor> = {
+        ...(cancelAck === 'prompt-settlement' ? {} : { interruptAck: cancelAck === 'agent-record' ? RECORDED_CANCEL : UNCONFIRMED_CANCEL }),
+        ...(input.flavor?.metersUsage === true ? {} : { usage: invisibleSlot() }),
+    };
+    const harness: CapabilityDescriptor = engine === 'v2' ? { ...KIRO_HARNESS, ...agent, ...override?.harness } : {
         ...KIRO_HARNESS,
+        ...agent,
         compact: clients.length && clients.every((client) => client.supportsExtension('_kiro/session/compact'))
             ? slot('native', 'native', '_kiro/session/compact') : invisibleSlot('Kiro has not negotiated compaction'),
         sessionFork: clients.length && clients.every((client) => client.capabilities?.sessionCapabilities?.fork)
@@ -97,8 +124,11 @@ export function kiroDescriptor(input: KiroDescriptorInput): RuntimeDescriptor {
         topology: {
             // session/new returns the ACP session id.
             identityTiming: 'on-open',
-            // session/cancel is a notification; a watchdog fences only the stuck session.
-            cancel: 'inferred-keep-session',
+            // A flavor's cancel ack (the prompt's settlement for kiro-cli, the
+            // Gateway's stop record for Kiro Crew) makes it a native ack.
+            // Otherwise session/cancel is only a notification. Either way a
+            // watchdog fences only the stuck session.
+            cancel: cancelAck ? 'native-ack' : 'inferred-keep-session',
             toolDelivery,
             historyReplay: 'preamble',
             // v3 wakes a chat's session when a workflow it launched finishes.
@@ -115,7 +145,13 @@ export function kiroDescriptor(input: KiroDescriptorInput): RuntimeDescriptor {
     };
 }
 
-/** Without an instance (no engine, no clients): the v2 shape with Michi's tools and sidecar titles. */
+/**
+ * Without an instance (no engine, no clients): the v2 shape of kiro-cli with
+ * Michi's tools and sidecar titles. It stays the compatibility table
+ * (describeRuntimeCapabilities) although Michi now starts v3 by default, whose
+ * capabilities depend on what a process negotiates; an instance reports those
+ * itself.
+ */
 export const KIRO_STATIC_DESCRIPTOR: RuntimeDescriptor = kiroDescriptor({
-    engine: 'v2', clients: [], mcpSlots: 'per-session', sidecarTitles: true,
+    engine: 'v2', clients: [], mcpSlots: 'per-session', sidecarTitles: true, flavor: KIRO_FLAVOR,
 });

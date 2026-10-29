@@ -141,4 +141,12 @@ describe('maintenance context prompt', () => {
     assert.equal(maintenancePromptPrefix(context([])), '');
     assert.equal(maintenancePromptPrefix(undefined), '');
   });
+
+  test('a batch puts page preferences before block shapes and lets a block be reshaped', () => {
+    const prefix = maintenancePromptPrefix(context([{ sourceTurnId: 't1', evidence: { nodeId: 'n1', turnId: 't1', assistantId: 'a1' } }]));
+    assert.match(prefix, /they come before the block-shape guidance in this prompt, and only program-applied sectionLimit rules override them/);
+    assert.match(prefix, /a summary callout stays at most two sentences/);
+    assert.match(prefix, /an update keeps the block type, so delete it and insert one of a fitting type/);
+    assert.match(prefix, /Replace only blocks no person edited/);
+  });
 });

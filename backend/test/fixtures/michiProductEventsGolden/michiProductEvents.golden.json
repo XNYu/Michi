@@ -71,6 +71,8 @@
       "event: spawn_branches\ndata: {\"topics\":[]}\n\n",
       "event: artifact_saved\ndata: {\"contextId\":\"kiro-ctx-1\",\"name\":\"notes\",\"filePath\":\".contexts/notes.md\",\"size\":10}\n\n",
       "event: artifact_updated\ndata: {\"name\":\"notes\",\"filePath\":\".contexts/notes.md\",\"size\":12}\n\n",
+      "event: image\ndata: {\"path\":\"chart.png\",\"caption\":\"Quarterly chart\",\"mimeType\":\"image/png\",\"size\":16}\n\n",
+      "event: image\ndata: {\"path\":\"chart.png\",\"mimeType\":\"image/png\",\"size\":16}\n\n",
       "event: branch_overview\ndata: {\"overview\":\"Explored alpha and beta.\"}\n\n",
       "event: follow_ups\ndata: {\"followUps\":[\"First?\",\"Second?\",\"Third?\"]}\n\n"
     ],

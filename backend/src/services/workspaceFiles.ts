@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Request } from 'express';
-import { deriveSandboxCwd, NotFoundError, PathSandboxError } from '../agents/tools/pathSandbox';
+import { PathSandboxError } from '../agents/tools/pathSandbox';
+import { deriveSandboxCwd, NotFoundError } from './workspaceSandbox';
 import { getWorkspace } from './dbRepository';
 
 export const WORKSPACE_FILE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;

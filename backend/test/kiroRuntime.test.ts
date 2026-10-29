@@ -278,6 +278,29 @@ describe('Kiro host events', () => {
 
     assert.deepEqual(events.filter((event) => event.kind === 'host_event'), [saved]);
   });
+
+  test("show_image resolves the image in the slot's cwd and refuses a slot with no session", (t) => {
+    const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'michi-kiro-show-image-')));
+    t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(cwd, 'shots'));
+    fs.writeFileSync(path.join(cwd, 'shots', 'chart.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+    const slots: Record<string, { parentChatId: string; cwd: string }> = {
+      'slot-bound': { parentChatId: 'kiro-session-a', cwd },
+      'slot-warm': { parentChatId: '__pending__', cwd },
+    };
+    const registry = { get: (slotId: string) => slots[slotId] } as any;
+    const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/default', host: michiTestHost() });
+    const rt = runtime as any;
+
+    const bound = rt.makeSlotCallbacks(() => 'slot-bound');
+    assert.deepEqual(bound.onShowImage('shots/chart.png'), { relPath: path.join('shots', 'chart.png'), mimeType: 'image/png', size: 8 });
+    assert.deepEqual(bound.onShowImage(path.join(cwd, 'shots', 'chart.png')).relPath, path.join('shots', 'chart.png'));
+    assert.match(bound.onShowImage('../outside.png').error, /outside the workspace/);
+    assert.match(bound.onShowImage('shots/missing.png').error, /file not found/);
+
+    assert.match(rt.makeSlotCallbacks(() => 'slot-warm').onShowImage('shots/chart.png').error, /no conversation/);
+    assert.match(rt.makeSlotCallbacks(() => undefined).onShowImage('shots/chart.png').error, /no conversation/);
+  });
 });
 
 describe('KiroRuntime default agent discovery', () => {

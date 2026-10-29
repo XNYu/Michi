@@ -3,7 +3,7 @@ export { KiroRuntime, KiroConcurrencyError, KiroProcessCapError } from './KiroRu
 export type { KiroAdapterOptions, KiroRuntimeOptions } from './KiroRuntime';
 export { resolveKiroEngine, type KiroEngine } from './kiroProtocol';
 export { KIRO_STATIC_DESCRIPTOR, type KiroDescriptorOverride } from './kiroDescriptor';
-export { KIRO_FLAVOR, type KiroFlavor, type KiroNewSessionMemory, type KiroSessionMemory } from './kiroFlavor';
+export { KIRO_FLAVOR, type KiroCancelAck, type KiroFlavor, type KiroNewSessionMemory, type KiroSessionMemory } from './kiroFlavor';
 export type { AcpLaunch } from './kiroAcpProfile';
 export type { AcpClient as KiroAcpClient, AcpProcessOptions } from './acpClient';
 // What KiroAcpClient's constructor and methods take and return. Kiro's own

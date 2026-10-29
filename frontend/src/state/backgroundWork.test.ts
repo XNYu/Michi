@@ -10,7 +10,9 @@ import {
   foldSubagentCopies,
   isSubagentActive,
   resetPendingSightingsForTest,
+  sameBackgroundWorkIndicator,
   selectBackgroundWork,
+  selectBackgroundWorkIndicator,
   threadConversationIds,
   workflowMessageResolver,
 } from './backgroundWork';
@@ -605,5 +607,44 @@ describe('threadConversationIds', () => {
     ];
     expect(threadConversationIds('root', edges, nodes)).toEqual(['root', 'a', 'a-child']);
     expect(threadConversationIds(null, edges, nodes)).toEqual([]);
+  });
+});
+
+describe('selectBackgroundWorkIndicator', () => {
+  const at = (nodeId: string, messages: ChatMessage[], patch: Partial<ChatNodeState> = {}) => chat(messages, { nodeId, ...patch });
+
+  it('speaks for the focused conversation while the drawer lists anything for it', () => {
+    const nodes = {
+      n1: at('n1', [user('u'), assistant('a', { subagents: [done('x'), done('y')] })]),
+      n2: at('n2', [user('u'), assistant('b', { subagents: [subagent({ sessionId: 'z' })] })], { status: 'streaming' }),
+    };
+    expect(selectBackgroundWorkIndicator(nodes, ['n1', 'n2'], 'n1', [])).toEqual({
+      nodeId: 'n1', running: { subagents: 0, workflows: 0 }, total: 2, waiting: false,
+    });
+    // Its latest turn started nothing: another pane's running work speaks instead.
+    const quiet = { ...nodes, n1: at('n1', [user('u'), assistant('a', { subagents: [done('x')] }), user('u2'), assistant('c')]) };
+    expect(selectBackgroundWorkIndicator(quiet, ['n1', 'n2'], 'n1', [])).toMatchObject({ nodeId: 'n2', running: { subagents: 1 } });
+  });
+
+  it('counts workflow runs, flags a waiting approval while work runs, and skips non-chat panes', () => {
+    const nodes = {
+      n1: at('n1', [user('u'), assistant('a')], { pendingPermission: { requestId: 1, title: 'Approve', options: [] } }),
+      d1: at('d1', [user('u'), assistant('d', { subagents: [subagent({ sessionId: 'q' })] })], { kind: 'digest', status: 'streaming' } as Partial<ChatNodeState>),
+    };
+    const runs = [run({ id: 'wf', status: 'running' })];
+    expect(selectBackgroundWorkIndicator(nodes, ['d1', 'n1'], 'd1', runs)).toEqual({
+      nodeId: 'n1', running: { subagents: 0, workflows: 1 }, total: 1, waiting: true,
+    });
+    expect(selectBackgroundWorkIndicator(nodes, ['d1', 'n1'], 'd1', [])).toBeNull();
+    // A pane that is not open never speaks.
+    expect(selectBackgroundWorkIndicator(nodes, ['d1'], 'n1', runs)).toBeNull();
+  });
+
+  it('compares by value', () => {
+    const a = { nodeId: 'n1', running: { subagents: 1, workflows: 0 }, total: 2, waiting: false };
+    expect(sameBackgroundWorkIndicator(a, { ...a, running: { ...a.running } })).toBe(true);
+    expect(sameBackgroundWorkIndicator(a, { ...a, waiting: true })).toBe(false);
+    expect(sameBackgroundWorkIndicator(a, null)).toBe(false);
+    expect(sameBackgroundWorkIndicator(null, null)).toBe(true);
   });
 });

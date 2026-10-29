@@ -252,7 +252,7 @@ test('sessionEndpoint() and hookEndpoint() reach mountMcp routes', async (t) => 
     const { registry, connect } = await startMcpApp(t);
     const saved: string[] = [];
     const slot = registry.create('chat-a', '/tmp', null, callbacks({
-        onSaveArtifact: (name, body) => { saved.push(name); return { name, filePath: `/tmp/${name}`, size: body.length }; },
+        onSaveArtifact: (name, body = '') => { saved.push(name); return { name, filePath: `/tmp/${name}`, size: body.length }; },
         onValidateFollowUps: () => ({ decision: 'block', reason: 'Call set_follow_ups first.' }),
     }), { nodeId: 'node-a' });
     const groupId = registry.createSessionGroup(slot);
@@ -293,7 +293,7 @@ test("create() hands the session's sink to the slot's tools, which report after 
             if (topics[0]?.title === 'fail') throw new Error('spawn failed');
             return spawned;
         },
-        onSaveArtifact: (name, body) => {
+        onSaveArtifact: (name, body = '') => {
             steps.push('callback save_artifact');
             return name === 'missing' ? null : { id: 'ctx-1', name, filePath: `.contexts/${name}.md`, size: body.length };
         },
@@ -361,7 +361,7 @@ test("each slot's tools report only to its own session's sink, directly and thro
     const reports: Record<'a' | 'b', string[]> = { a: [], b: [] };
     const make = (key: 'a' | 'b') => registry.create(`chat-${key}`, '/tmp', 'user-1', {
         sink: { emit: (event) => { reports[key].push(`${event.type} ${(event.payload as { name: string }).name}`); } },
-        onSaveArtifact: (name, body) => ({ id: `ctx-${key}`, name, filePath: `.contexts/${name}.md`, size: body.length }),
+        onSaveArtifact: (name, body = '') => ({ id: `ctx-${key}`, name, filePath: `.contexts/${name}.md`, size: body.length }),
     }, { nodeId: `node-${key}` });
     const a = make('a');
     const b = make('b');
@@ -400,7 +400,7 @@ test("a Kiro slot's tool events reach only its own ACP session, directly and thr
     const runtime = new KiroRuntime({
         bridge: {
             spawnBranches: async () => [],
-            saveContext: ({ chatId, name, body }) => ({ id: `ctx-${chatId}`, name, filePath: `.contexts/${name}.md`, size: body.length }),
+            saveContext: ({ chatId, name, body = '' }) => ({ id: `ctx-${chatId}`, name, filePath: `.contexts/${name}.md`, size: body.length }),
             updateContext: () => null,
         },
         mcpSlots: registry, defaultCwd: cwd, host: michiTestHost(),
@@ -488,7 +488,7 @@ test("public ACP tool events and output backfills reach only its own ACP session
     const cwd = '/tmp/michi-acp-sink';
     const runtime = new CursorRuntime({
         spawnBranches: async () => [],
-        saveContext: ({ chatId, name, body }) => ({ id: `ctx-${chatId}`, name, filePath: `.contexts/${name}.md`, size: body.length }),
+        saveContext: ({ chatId, name, body = '' }) => ({ id: `ctx-${chatId}`, name, filePath: `.contexts/${name}.md`, size: body.length }),
         updateContext: () => null,
     }, registry, 3000, cwd);
     const rt = runtime as any;

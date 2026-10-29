@@ -4,7 +4,7 @@ import { PageWriteError, pagesTransaction, invalidatePages, newPageId, requirePa
 import { isAssistantWorkspaceSettings, isSystemWorkspaceSettings } from 'michi-shared';
 import type { PagesWorkspace } from './core';
 import {
-  parsePageBlock, type PageBlock, type PageBlockInput,
+  parsePageBlock, pageViewProblem, type PageBlock, type PageBlockInput,
   containsTaskView, databaseRoleProblem, TASK_DATABASE_ROLE, type PageDatabaseRole,
   taskThreadIds, TASK_COLUMN, TASK_LIMITS,
   applyPageDatabaseOps, parsePageDatabaseOps, type PageDatabase, type PageDatabaseRow,
@@ -48,7 +48,11 @@ export interface DatabaseCreateInput {
 export interface PageMetadataPatch {
   title?: string; color?: string | null; parentId?: string | null; position?: number;
 }
-export interface SavePageContentOptions { source: ChangeSource; now: number; expectedRevision?: number }
+export interface SavePageContentOptions {
+  source: ChangeSource; now: number; expectedRevision?: number;
+  /** History batches only: the enclosing transaction must validate the final view graph before committing. */
+  deferViewValidation?: boolean;
+}
 export interface SaveDatabaseOptions {
   now?: number;
   actor?: 'user' | 'agent';
@@ -381,10 +385,10 @@ function validateBlockList(blocks: unknown): PageBlock[] {
   return result;
 }
 
-export function replacePageDatabaseRefs(pageId: string, ownerUserId: string, blocks: readonly PageBlockInput[] | readonly PageBlock[], now = Date.now()): string[] {
+export function replacePageDatabaseRefs(pageId: string, ownerUserId: string, blocks: readonly PageBlockInput[] | readonly PageBlock[], now = Date.now(), checkViews = true): string[] {
   const page = accessiblePage(pageId, ownerUserId, false, true);
   const valid = validateBlockList(blocks);
-  validatePageReferences(page.workspace_id, ownerUserId, valid);
+  validatePageReferences(page.workspace_id, ownerUserId, valid, checkViews);
   // A task board names no database: it shows the workspace's task database, wherever it sits on the page.
   const taskDatabaseId = containsTaskView(valid) ? liveTaskDatabaseId(page.workspace_id, ownerUserId) : null;
   const databaseIds = [...new Set([
@@ -402,8 +406,10 @@ export function replacePageDatabaseRefs(pageId: string, ownerUserId: string, blo
 }
 
 /** Validate prospective page/database references without mutating the reference index. */
-export function validatePageReferences(workspaceId: string, ownerUserId: string, blocks: readonly PageBlock[]): void {
+export function validatePageReferences(workspaceId: string, ownerUserId: string, blocks: readonly PageBlock[], checkViews = true): void {
   const workspace = requirePagesWorkspace(workspaceId, ownerUserId);
+  const viewProblem = checkViews ? pageViewProblem(blocks) : null;
+  if (viewProblem) throw new PageWriteError(400, 'invalid', viewProblem);
   for (const block of blocks) {
     if (block.type === 'database-ref') {
       const target = accessibleDatabase(block.databaseId, ownerUserId);
@@ -603,7 +609,7 @@ export function savePageContent(pageId: string, ownerUserId: string, snapshot: P
   const revision = snapshot.revision;
   if (!Number.isSafeInteger(revision) || revision <= page.revision) throw new PageWriteError(400, 'invalid', 'New page revision must increase');
   assertNoNewTaskBoardOnHome(page.workspace_id, ownerUserId, blocks, stored);
-  validatePageReferences(page.workspace_id, ownerUserId, blocks);
+  validatePageReferences(page.workspace_id, ownerUserId, blocks, !options.deferViewValidation);
   // Edits and agent writes check what they name as they make it; an accepted, reverted or redone version is checked here.
   validateConversationReferences(page.workspace_id, blocks, pageConversationIds(stored));
   const actor = options.source.kind === 'user' ? 'user' : 'agent';
@@ -611,7 +617,7 @@ export function savePageContent(pageId: string, ownerUserId: string, snapshot: P
     .run(snapshot.title, snapshot.color, snapshot.position, json(blocks), revision, now, actor, pageId, ownerUserId);
   const updated = getPage(pageId, ownerUserId);
   saveRevision(updated, options.source ?? { kind: 'user' }, now);
-  replacePageDatabaseRefs(pageId, ownerUserId, blocks, now);
+  replacePageDatabaseRefs(pageId, ownerUserId, blocks, now, !options.deferViewValidation);
   savePageComponentReferences({ pageId, workspaceId: page.workspace_id, ownerUserId, revision, now, source: options.source, blocks });
   return getPage(pageId, ownerUserId);
 }

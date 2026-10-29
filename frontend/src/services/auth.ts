@@ -45,7 +45,9 @@ export async function fetchAuthConfig(): Promise<AuthConfig> {
     const apiBase = import.meta.env.VITE_API_URL || "/api";
     try {
         const res = await fetch(`${apiBase}/auth-config`, {
-            credentials: "omit",
+            // Phone ingress needs its paired session even for this public API
+            // probe. Keep cross-origin development probes credential-free.
+            credentials: "same-origin",
         });
         if (!res.ok) return { requireAuth: false };
         const body = await res.json();

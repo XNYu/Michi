@@ -2,8 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createCrewMcpRelay, CREW_MCP_HANDLER_API, type CrewMcpHandlers } from './crewMcpRelay';
+import { createCrewMcpRelay, createCrewStdioTransport, CREW_MCP_HANDLER_API, type CrewMcpHandlers } from './crewMcpRelay';
 
 /**
  * Keep the approved broker transport alive while replacing stateless handlers.
@@ -48,7 +47,7 @@ export function createCrewMcpLoader(bundle: string, directory?: string): () => P
 export async function runCrewMcpHost(): Promise<void> {
     const load = createCrewMcpLoader(path.join(__dirname, 'crewMcp.js'));
     await load();
-    await createCrewMcpRelay(undefined, load).connect(new StdioServerTransport());
+    await createCrewMcpRelay(undefined, load).connect(createCrewStdioTransport());
 }
 
 if (require.main === module) void runCrewMcpHost().catch(() => {

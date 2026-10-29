@@ -14,6 +14,8 @@ export interface PaneMenuAnchor {
   x: number;
   y: number;
   anchorBottom?: number;
+  /** The trigger sits under the composer: open below it (ContextMenu). */
+  preferBelow?: boolean;
   align?: 'start' | 'end';
   trigger?: HTMLButtonElement;
   keyboard?: boolean;
@@ -66,7 +68,7 @@ export function PaneComposerToolbarLeft({
       {contextTools && (
         <>
           <span
-            className="t-toolbar-chip"
+            className="t-toolbar-chip composer-attach"
             title={canAttach ? 'Attach file' : 'Open a workspace to attach files'}
             aria-disabled={!canAttach || undefined}
             onClick={(e) => {
@@ -79,7 +81,7 @@ export function PaneComposerToolbarLeft({
           </span>
 
           <span
-            className="t-toolbar-chip"
+            className="t-toolbar-chip composer-mention"
             title="Mention context or node"
             onClick={onInsertMentionTrigger}
             style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}

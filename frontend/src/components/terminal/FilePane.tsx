@@ -25,6 +25,7 @@ type LoadState =
   | {
       phase: 'loaded';
       content: string;
+      imageMime?: string;
       size: number;
       modifiedAt: number;
       extension: string;
@@ -68,6 +69,10 @@ const fileProseVars: React.CSSProperties = {
   '--tw-prose-counters': 'var(--term-mid)',
   '--tw-prose-bullets': 'var(--term-mid)',
 } as React.CSSProperties;
+
+function getSelectionSourceLabel(context: unknown): string | undefined {
+  return (context as CapturedFileSelection | null)?.source.name;
+}
 
 export default function FilePane({ item }: { item: FilePaneItem }) {
   const { projects } = useChatProjects();
@@ -206,25 +211,24 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
     const previousVersion = state.phase !== 'loaded' || state.snapshot.contentHash !== snapshot.contentHash
       || state.snapshot.backendConnectionId !== snapshot.backendConnectionId;
     return (
-      <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--sel-bar-fg)', display: 'grid', gap: 5, padding: '6px 0' }}>
-        <span title={snapshot.contentHash}>Read version {snapshot.contentHash.slice(0, 8)}{previousVersion ? ' · previously read content' : ''}</span>
-        <details>
-          <summary style={{ cursor: 'pointer' }}>Selected passage</summary>
-          <div style={{ maxHeight: 100, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{selection.source.selector?.exact}</div>
-        </details>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          Send to
-          <select aria-label="File feedback thread" value={selectedAvailable ? selection.target!.nodeId : ''}
-            style={{ minWidth: 0, maxWidth: 210, background: 'var(--sel-bar-bg)', color: 'var(--sel-bar-fg)', border: '1px solid var(--sel-bar-line)' }}
-            onChange={(event) => {
-              const nodeId = event.target.value;
-              setFeedbackError(null);
-              replace({ ...selection, target: options.find(option => option.node.nodeId === nodeId)?.target ?? null });
-            }}>
-            <option value="">Choose a thread</option>
-            {options.map(({node}) => <option key={node.nodeId} value={node.nodeId}>{node.title || 'Untitled thread'}</option>)}
-          </select>
+      <div className="file-selection-context">
+        <label className="file-selection-target">
+          <span>Send to</span>
+          <span className="file-selection-picker">
+            <select aria-label="File feedback thread" value={selectedAvailable ? selection.target!.nodeId : ''}
+              title={selectedAvailable ? nodes[selection.target!.nodeId].title || 'Untitled thread' : 'Choose a thread'}
+              onChange={(event) => {
+                const nodeId = event.target.value;
+                setFeedbackError(null);
+                replace({ ...selection, target: options.find(option => option.node.nodeId === nodeId)?.target ?? null });
+              }}>
+              <option value="">Choose a thread</option>
+              {options.map(({node}) => <option key={node.nodeId} value={node.nodeId}>{node.title || 'Untitled thread'}</option>)}
+            </select>
+            <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m4 6 4 4 4-4" /></svg>
+          </span>
         </label>
+        {previousVersion && <span role="status">File changed since this selection.</span>}
         {feedbackError ? <span role="status">{feedbackError}</span> : null}
       </div>
     );
@@ -244,7 +248,7 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
     const key = JSON.stringify([backendConnectionId, item.projectId, item.treeId, item.filePath, item.sourceReferencePath, reloadKey]);
     const loadPath = async (targetPath: string): Promise<Extract<LoadState, { phase: 'loaded' }>> => {
       const electron = getElectron();
-      if (isAbsoluteFilePath(targetPath) && electron?.readFile && !project?.backendConnectionId) {
+      if (!/\.(png|jpe?g|gif|webp)$/i.test(targetPath) && isAbsoluteFilePath(targetPath) && electron?.readFile && !project?.backendConnectionId) {
         const stat = await electron.statFile?.(targetPath);
         if (stat && stat.size > MAX_FILE_BYTES) {
           throw new Error(`File is too large (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
@@ -265,10 +269,11 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
           }),
         };
       }
-      const result = await fetchArtifactContent(item.projectId, targetPath);
+      const result = await fetchArtifactContent(item.projectId, targetPath, true);
       return {
         phase: 'loaded',
         content: result.content,
+        imageMime: result.imageMime,
         size: result.size,
         modifiedAt: result.modifiedAt,
         extension: result.extension.toLowerCase(),
@@ -424,13 +429,17 @@ export default function FilePane({ item }: { item: FilePaneItem }) {
           onComment={handleComment}
           captureSelectionContext={captureSelectionContext}
           renderSelectionContext={renderSelectionContext}
+          getSelectionSourceLabel={getSelectionSourceLabel}
         />
         {state.phase === 'loading' ? <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)' }}>loading {basename(item.filePath)}…</div> : null}
         {state.phase === 'error' ? <div style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)' }}>⚠ {state.message}</div> : null}
         {state.phase === 'loaded' && isMarkdown && item.viewMode === 'rendered' ? (
           <MarkdownContent text={state.content} className={`prose prose-sm max-w-none wrap-break-word${isDark ? ' prose-invert' : ''}`} style={fileProseVars} />
         ) : null}
-        {state.phase === 'loaded' && (!isMarkdown || item.viewMode === 'source') ? (
+        {state.phase === 'loaded' && state.imageMime ? (
+          <img src={state.content} alt={basename(resolvedFilePath)} style={{ maxWidth: '100%', height: 'auto', objectFit: 'contain' }} />
+        ) : null}
+        {state.phase === 'loaded' && !state.imageMime && (!isMarkdown || item.viewMode === 'source') ? (
           // eslint-disable-next-line no-restricted-syntax -- = --fs-md; measuredLineHeight reads it back from computed style
           <pre ref={sourcePreRef} style={{ margin: 0, minWidth: 'max-content', whiteSpace: 'pre', fontFamily: 'var(--message-code-font, monospace)', fontSize: 12, lineHeight: 1.6, color: 'var(--term-mid)', tabSize: 2 }}>
             {state.content}

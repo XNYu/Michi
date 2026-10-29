@@ -49,6 +49,7 @@ export function runTime(row: MetaAgentRecentRun, now: number): string {
 
 export const CURSOR_STATE_LABELS: Record<MetaAgentCursorRow['state'], string> = {
   synced: 'Up to date',
+  paused: 'Paused in this workspace',
   next: 'Next round',
   'no-new': 'No new conversations',
   error: 'Error',

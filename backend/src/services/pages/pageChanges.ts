@@ -1,4 +1,4 @@
-import { parsePageBlockInput, parsePageDatabaseOps, retainUserPageSegmentSources } from 'michi-shared';
+import { parsePageBlockInput, parsePageDatabaseOps, retainUserPageSegmentSources, pageViewProblem } from 'michi-shared';
 import type { PageBlock, PageBlockInput, PageDatabase, PageDatabaseRow, PageDatabaseView } from 'michi-shared';
 import type {
   BlockLocation, ChangeTarget, PageChangeDto, RowLocation, TargetMutation, TargetSnapshot,
@@ -111,7 +111,7 @@ function ensureBlockLocation(blocks: readonly PageBlock[], id: string, expected:
 }
 
 function writePageMutation(target: Extract<SafeTarget, {kind:'block'}>, owner: string, mutation: TargetMutation,
-  expected: TargetSnapshot | null, now: number): void {
+  expected: TargetSnapshot | null, now: number, deferViewValidation = false): void {
   const page = getPage(target.pageId, owner, { write: true });
   const current = readCurrent(target, owner).snapshot;
   assertExpected(current, expected);
@@ -130,8 +130,10 @@ function writePageMutation(target: Extract<SafeTarget, {kind:'block'}>, owner: s
     if (index >= 0) blocks.splice(index, 1);
     blocks.splice(at, 0, changed);
   }
+  const viewProblem = deferViewValidation ? null : pageViewProblem(blocks);
+  if (viewProblem) throw conflict(viewProblem);
   savePageContent(page.id, owner, { ...page, blocks, revision: page.revision + 1 }, {
-    source: { kind: 'user' }, now, expectedRevision: page.revision,
+    source: { kind: 'user' }, now, expectedRevision: page.revision, deferViewValidation,
   });
   invalidatePages([page.id], now, 'user');
 }
@@ -190,9 +192,9 @@ function saveDatabaseMutation(target: Extract<SafeTarget, {kind:'row'|'database'
   invalidateDatabasePages(target.databaseId, now, 'user');
 }
 
-function applyMutation(change: PageChangeDto, owner: string, mutation: TargetMutation, expected: TargetSnapshot | null, now: number): void {
+function applyMutation(change: PageChangeDto, owner: string, mutation: TargetMutation, expected: TargetSnapshot | null, now: number, deferViewValidation = false): void {
   if (change.target.kind === 'block') {
-    writePageMutation(change.target, owner, mutation, expected, now);
+    writePageMutation(change.target, owner, mutation, expected, now, deferViewValidation);
   } else {
     saveDatabaseMutation(change.target, owner, mutation, expected, now, true);
   }
@@ -221,13 +223,17 @@ function resourceRevision(target: ChangeTarget, owner: string): number {
  * history stays for agent changes.
  */
 export function revertChange(changeId: string, ownerUserId: string, now?: number, options: { allowUser?: boolean } = {}): PageChangeDto {
+  return revertRecordedChange(changeId, ownerUserId, now, options);
+}
+
+function revertRecordedChange(changeId: string, ownerUserId: string, now?: number, options: { allowUser?: boolean; deferViewValidation?: boolean } = {}): PageChangeDto {
   return pagesTransaction(() => {
     const timestamp = safeNow(now);
     const change = getChange(changeId, ownerUserId, { write: true });
     if (change.applicationState === 'reverted') return change;
     if (change.applicationState !== 'applied' || (change.proposalState !== null && change.proposalState !== 'accepted') || (change.source.kind === 'user' && !options.allowUser)) throw conflict('Only applied agent changes can be reverted');
     const { workspaceId, head } = transitionGuard(change, ownerUserId, 'undo');
-    applyMutation(change, ownerUserId, change.inverse, change.after, timestamp);
+    applyMutation(change, ownerUserId, change.inverse, change.after, timestamp, options.deferViewValidation);
     setTargetHead(workspaceId, change.target, { headId: change.previousHeadId, targetRevision: Math.max(head.targetRevision + 1, resourceRevision(change.target, ownerUserId)) });
     return updateChange(change.id, ownerUserId, { applicationState: 'reverted' });
   });
@@ -235,13 +241,17 @@ export function revertChange(changeId: string, ownerUserId: string, now?: number
 
 /** Puts back a reverted change; a person's own change only through the batch redo (`allowUser`). */
 export function redoChange(changeId: string, ownerUserId: string, now?: number, options: { allowUser?: boolean } = {}): PageChangeDto {
+  return redoRecordedChange(changeId, ownerUserId, now, options);
+}
+
+function redoRecordedChange(changeId: string, ownerUserId: string, now?: number, options: { allowUser?: boolean; deferViewValidation?: boolean } = {}): PageChangeDto {
   return pagesTransaction(() => {
     const timestamp = safeNow(now);
     const change = getChange(changeId, ownerUserId, { write: true });
     if (change.applicationState === 'applied') return change;
     if (change.applicationState !== 'reverted' || (change.proposalState !== null && change.proposalState !== 'accepted') || (change.source.kind === 'user' && !options.allowUser)) throw conflict('Only reverted agent changes can be redone');
     const { workspaceId, head } = transitionGuard(change, ownerUserId, 'redo');
-    applyMutation(change, ownerUserId, change.forward, change.before, timestamp);
+    applyMutation(change, ownerUserId, change.forward, change.before, timestamp, options.deferViewValidation);
     setTargetHead(workspaceId, change.target, { headId: change.id, targetRevision: Math.max(head.targetRevision + 1, resourceRevision(change.target, ownerUserId)) });
     return updateChange(change.id, ownerUserId, { applicationState: 'applied' });
   });
@@ -298,33 +308,55 @@ function revertOrder(records: PageChangeDto[]): PageChangeDto[] {
 
 export function revertBatch(batchId: string, ownerUserId: string, workspaceId: string, now?: number): { reverted: string[]; conflicts: Array<{changeId:string;message:string}> } {
   const records = listChangeBatch(batchId, ownerUserId, workspaceId).filter((record) => record.applicationState === 'applied');
-  const ordered = revertOrder(records);
-  const reverted: string[] = [];
-  const conflicts: Array<{changeId:string;message:string}> = [];
-  for (const record of ordered) {
-    try { revertChange(record.id, ownerUserId, now, { allowUser: true }); reverted.push(record.id); }
-    catch (error) {
-      if (error instanceof PageWriteError && (error.status === 409 || error.code === 'task_board_needs_workspace')) conflicts.push({ changeId: record.id, message: error.message });
-      else throw error;
-    }
-  }
-  return { reverted, conflicts };
+  const result = applyHistoryBatch(revertOrder(records), ownerUserId, 'undo', now);
+  return { reverted: result.applied, conflicts: result.conflicts };
 }
 
 /** Redoes what `revertBatch` undid, in the reverse of its order, reporting changes that no longer apply. */
 export function redoBatch(batchId: string, ownerUserId: string, workspaceId: string, now?: number): { redone: string[]; conflicts: Array<{changeId:string;message:string}> } {
   // The reverse of the order Undo used, so anchors are redone after what they anchor.
   const records = revertOrder(listChangeBatch(batchId, ownerUserId, workspaceId).filter((record) => record.applicationState === 'reverted')).reverse();
-  const redone: string[] = [];
+  const result = applyHistoryBatch(records, ownerUserId, 'redo', now);
+  return { redone: result.applied, conflicts: result.conflicts };
+}
+
+/** View definitions and their entries may be mutually dependent with the recorded
+ * structural anchors. Replay that page's group atomically, checking its final graph;
+ * ordinary pages and databases retain independent per-target undo behavior. */
+function applyHistoryBatch(records: PageChangeDto[], owner: string, action: 'undo' | 'redo', now?: number) {
+  const pageGroups = new Map<string, PageChangeDto[]>();
+  for (const record of records) if (record.target.kind === 'block') {
+    const id = record.target.pageId;
+    pageGroups.set(id, [...(pageGroups.get(id) ?? []), record]);
+  }
+  const atomicPages = new Set([...pageGroups].filter(([id, group]) =>
+    getPage(id, owner).blocks.some(block => block.type === 'view') || group.some(record =>
+      [record.before, record.after].some(snapshot => snapshot?.kind === 'block' && snapshot.exists && snapshot.block.type === 'view')),
+  ).map(([id]) => id));
+  const visited = new Set<string>();
+  const applied: string[] = [];
   const conflicts: Array<{changeId:string;message:string}> = [];
   for (const record of records) {
-    try { redoChange(record.id, ownerUserId, now, { allowUser: true }); redone.push(record.id); }
+    const pageId = record.target.kind === 'block' && atomicPages.has(record.target.pageId) ? record.target.pageId : null;
+    if (pageId && visited.has(pageId)) continue;
+    if (pageId) visited.add(pageId);
+    const group = pageId ? pageGroups.get(pageId)! : [record];
+    try {
+      pagesTransaction(() => {
+        for (const item of group) (action === 'undo' ? revertRecordedChange : redoRecordedChange)(item.id, owner, now, { allowUser: true, deferViewValidation: !!pageId });
+        if (pageId) {
+          const problem = pageViewProblem(getPage(pageId, owner).blocks);
+          if (problem) throw conflict(problem);
+        }
+      });
+      applied.push(...group.map(item => item.id));
+    }
     catch (error) {
-      if (error instanceof PageWriteError && (error.status === 409 || error.code === 'task_board_needs_workspace')) conflicts.push({ changeId: record.id, message: error.message });
+      if (error instanceof PageWriteError && (error.status === 409 || error.code === 'task_board_needs_workspace')) conflicts.push(...group.map(item => ({ changeId: item.id, message: error.message })));
       else throw error;
     }
   }
-  return { redone, conflicts };
+  return { applied, conflicts };
 }
 
 function changeTargetKey(target: ChangeTarget): string {
@@ -475,6 +507,32 @@ function acceptedMutations(change: PageChangeDto, before: TargetSnapshot, edited
     return { before, after, forward, inverse };
   }
   if (change.target.kind === 'database') {
+    if (change.op === 'schema') {
+      if (edited) throw new PageWriteError(400, 'invalid', 'Accept or dismiss database configuration proposals without edited content');
+      if (change.forward.kind !== 'database' || change.forward.op !== 'replace' ||
+        change.inverse.kind !== 'database' || change.inverse.op !== 'replace' || before.kind !== 'database' || !before.exists ||
+        change.after?.kind !== 'database' || !change.after.exists) throw conflict('Unsupported database configuration proposal');
+      assertExpected(before, change.before);
+      const original = before.database, proposed = change.forward.database;
+      const { revision: _revision, updatedAt: _updatedAt, ...storedAfter } = change.after.database;
+      const { revision: _beforeRevision, updatedAt: _beforeUpdatedAt, ...originalContent } = original;
+      if (proposed.id !== original.id || proposed.workspaceId !== original.workspaceId || proposed.title !== original.title ||
+        !same(storedAfter, proposed) || !same(change.inverse.database, originalContent) ||
+        original.columns.some((column) => !proposed.columns.some((next) => next.id === column.id)) ||
+        original.views.some((view) => !proposed.views.some((next) => next.id === view.id)) ||
+        proposed.columns.some((column) => column.type === 'threads') ||
+        proposed.views.some((view) => view.type === 'custom' && !same(view, original.views.find((old) => old.id === view.id))) ||
+        original.views.some((view) => view.type === 'custom' && !same(view, proposed.views.find((next) => next.id === view.id)))) {
+        throw conflict('The configuration proposal changed unsupported database content');
+      }
+      const live = getDatabase(change.target.databaseId, owner, { write: true });
+      if (live.role) throw conflict('Task database configuration stays in the UI');
+      const database = { ...proposed, views: proposed.views.map((view) =>
+        same(view, original.views.find((old) => old.id === view.id)) ? view : { ...view, edit: { at: now } }) };
+      // saveDatabase validates the resulting schema against the live rows before committing.
+      return { before, after: { kind: 'database', exists: true, database: { ...database, revision: original.revision + 1, updatedAt: now } },
+        forward: { kind: 'database', op: 'replace', database }, inverse: change.inverse };
+    }
     if (change.op !== 'view' || change.forward.kind !== 'database' || change.forward.op !== 'replace' ||
       change.inverse.kind !== 'database' || change.inverse.op !== 'replace' || before.kind !== 'database' || !before.exists ||
       !change.after || change.after.kind !== 'database' || !change.after.exists) throw conflict('Unsupported database proposal');

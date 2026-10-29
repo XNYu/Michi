@@ -249,6 +249,7 @@ test('createSlot omits absent fields and falls back to the configured agent', as
     await withAgent.createSlot({ name: 's3' });
     await withAgent.createSlot({ name: 's4', agent: 'other' });
     await bare.createSlot({ name: 's5', memory_mode: 'incognito' });
+    await bare.createSlot({ name: 's6', folder_id: 'f1' });
 
     const bodies = gw.requests.filter((r) => r.url === '/api/chat/slots').map((r) => JSON.parse(r.body));
     assert.deepEqual(bodies, [
@@ -257,6 +258,42 @@ test('createSlot omits absent fields and falls back to the configured agent', as
         { name: 's3', agent: 'kirocrew' },
         { name: 's4', agent: 'other' },
         { name: 's5', memory_mode: 'incognito' },
+        { name: 's6', folder_id: 'f1' },
+    ]);
+});
+
+test('folder calls read the whole tree, mark this App\'s folders, create and hide', async (t) => {
+    const tokens = withTokens((req, res, body) => {
+        if (req.method === 'GET' && req.url === '/api/chat/folders') return json(res, 200, [
+            { id: 'p1', name: 'Michi', parent_id: '', history_count: 3 },
+            { id: 'a1', name: 'Michi Crew', parent_id: 'p1', owner_app: APP, created_at: 12.5 },
+            { id: 'o1', name: 'Other', owner_app: 'other-app' },
+            { id: '', name: 'no id' }, { id: 'x' }, 'junk',
+        ]);
+        if (req.method === 'POST' && req.url === '/api/chat/folders') {
+            const { name, parent_id } = JSON.parse(body);
+            return json(res, 201, { id: `new-${name}`, name, parent_id: parent_id ?? '', owner_app: APP, created_at: 99 });
+        }
+        json(res, 200, {});
+    });
+    const gw = await stubGateway(t, tokens.handler);
+    const client = createCrewGateway(config(t, gw.baseUrl));
+
+    assert.deepEqual(await client.listFolders!(), [
+        { id: 'p1', name: 'Michi', parentId: '', own: false },
+        { id: 'a1', name: 'Michi Crew', parentId: 'p1', own: true, createdAt: 12.5 },
+        { id: 'o1', name: 'Other', parentId: '', own: false },
+    ]);
+    assert.deepEqual(await client.createFolder!('Michi Crew'), { id: 'new-Michi Crew', name: 'Michi Crew', parentId: '', own: true, createdAt: 99 });
+    assert.deepEqual(await client.createFolder!('rabbitholes', 'a1'), { id: 'new-rabbitholes', name: 'rabbitholes', parentId: 'a1', own: true, createdAt: 99 });
+    await client.hideFolder!('a/1');
+
+    const calls = gw.requests.slice(1).map((r) => [r.method, r.url, r.body ? JSON.parse(r.body) : null]);
+    assert.deepEqual(calls, [
+        ['GET', '/api/chat/folders', null],
+        ['POST', '/api/chat/folders', { name: 'Michi Crew' }],
+        ['POST', '/api/chat/folders', { name: 'rabbitholes', parent_id: 'a1' }],
+        ['PATCH', '/api/chat/folders/a%2F1', { hidden: true }],
     ]);
 });
 

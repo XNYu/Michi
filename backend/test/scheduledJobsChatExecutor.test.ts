@@ -17,6 +17,7 @@ import type { ScheduledJobRecord, ScheduledJobRunRecord } from '../src/services/
 import { ScheduledJobsRepository } from '../src/services/scheduledJobs/repository';
 import { ScheduledJobEventBus } from '../src/services/scheduledJobs/events';
 import { ScheduledJobScheduler } from '../src/services/scheduledJobs/scheduler';
+import { LOCAL_AGENT_OWNER_ID } from '../src/services/agentOwner';
 
 function iterator(events: NormalizedEvent[], gate?: Promise<void>): AsyncIterableIterator<NormalizedEvent> {
   let index = 0;
@@ -70,6 +71,7 @@ describe('ChatScheduledJobExecutor', () => {
   let sessions: Array<{ input: { workspaceId: string; nodeId: string }; prompt: string | null }>;
   let events: NormalizedEvent[];
   let gate: Promise<void> | undefined;
+  let releases: Array<{ ownerUserId: string; workspaceId: string; nodeId: string; turnActive: boolean }>;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-scheduled-executor-'));
@@ -79,6 +81,7 @@ describe('ChatScheduledJobExecutor', () => {
     saveWorkspace({ id: 'ws-1', name: 'Research', cwd: '/tmp/research', created_at: 1, updated_at: 1, active_tree_id: null });
     hub = new ChatHub({ retentionMs: 100 });
     sessions = [];
+    releases = [];
     events = [{ kind: 'chunk', text: '## Today\n\n**Markets** were calm. [TITLE: Daily]' }, { kind: 'turn_end', stopReason: 'end_turn' }];
     gate = undefined;
   });
@@ -93,6 +96,11 @@ describe('ChatScheduledJobExecutor', () => {
       chatHub: hub,
       getRuntime: fakeRuntime,
       clock: () => Date.parse('2026-10-16T09:00:00Z'),
+      releaseMaintenanceSession: async (input) => {
+        // A run's thread must have finished its turn before its session is released.
+        releases.push({ ...input, turnActive: hub.isActive(input.nodeId) || hub.isOwnerTurnActive(input.nodeId) });
+        return true;
+      },
       ensureSession: async (input) => {
         const record = { input, prompt: null as string | null };
         sessions.push(record);
@@ -254,6 +262,44 @@ describe('ChatScheduledJobExecutor', () => {
     release();
     await handle.done;
     assert.equal(runner.isRunningOn(handle.nodeId), false);
+  });
+
+  const maintenanceContext = {
+    workspaceId: 'ws-1', ownerUserId: LOCAL_AGENT_OWNER_ID, jobId: 'job-1', runId: 'run-1', claimedBy: 'worker-1',
+    configRevision: 1, planId: 'plan-1', sources: [],
+  };
+
+  test('a fresh maintenance run releases its session once its turn has ended; ordinary runs keep theirs', async () => {
+    const ordinary = await executor().start(job(), run, { onAttention: () => {} });
+    await ordinary.done;
+    assert.deepEqual(releases, [], 'an ordinary scheduled thread can be continued by the user');
+
+    let finish!: () => void;
+    gate = new Promise((resolve) => { finish = resolve; });
+    const handle = await executor().start(job(), run, { onAttention: () => {}, maintenanceContext });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(releases, [], 'never while the run is going');
+    finish();
+    const outcome = await handle.done;
+    assert.equal(outcome.status, 'succeeded');
+    assert.deepEqual(releases, [{ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: 'ws-1', nodeId: handle.nodeId, turnActive: false }]);
+  });
+
+  test('a maintenance run cancelled after its session opened releases that session', async () => {
+    const controller = new AbortController();
+    const worker = new ChatScheduledJobExecutor({
+      chatHub: hub, getRuntime: fakeRuntime,
+      releaseMaintenanceSession: async (input) => { releases.push({ ...input, turnActive: false }); return true; },
+      ensureSession: async (input) => {
+        controller.abort();
+        return { id: input.nodeId, runtimeId: 'kiro', send: () => iterator(events), cancel: () => {},
+          getHistory: () => [], getPendingAssistant: () => undefined } as AgentSession;
+      },
+    });
+    await assert.rejects(worker.start(job(), run, { onAttention: () => {}, signal: controller.signal, maintenanceContext }),
+      /cancelled or lost scheduler ownership/);
+    assert.equal(releases.length, 1);
+    worker.dispose();
   });
 
   for (const cancellation of ['manual', 'timeout'] as const) {

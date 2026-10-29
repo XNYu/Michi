@@ -15,13 +15,13 @@ import type { CodexAdapterOptions, CodexHostText, CodexRuntimeOptions } from '..
 import type {
   AcpLaunch, AcpProcessOptions, KiroAcpAgentTurnHandler, KiroAcpAgentTurnUpdate, KiroAcpClient, KiroAcpClientOptions,
   KiroAcpInitializeResult, KiroAcpMcpServer, KiroAcpSessionOptions, KiroAcpWorkflowRouter, KiroAdapterOptions,
-  KiroCliLookup, KiroDescriptorOverride, KiroEngine, KiroFlavor, KiroNewSessionMemory, KiroRuntimeOptions,
+  KiroCancelAck, KiroCliLookup, KiroDescriptorOverride, KiroEngine, KiroFlavor, KiroNewSessionMemory, KiroRuntimeOptions,
   KiroSessionMemory,
 } from '../src/adapters/kiro/index';
 import type { CrewAdapterOptions, CrewAppLocation, CrewLaunchResolution, CrewRuntimeOptions } from '../src/adapters/crew/index';
 import type {
-  ACPErrorDetails, AcpAgentCapabilities, AcpAuthMethod, AcpCancelOptions, AcpClientInfo, AcpConfigOption, AcpConfigValue,
-  AcpCoreOptions, AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest, AcpInitializeResult,
+  ACPErrorDetails, AcpAgentCapabilities, AcpAuthMethod, AcpCancelOptions, AcpCancelSettlement, AcpClientInfo, AcpConfigOption,
+  AcpConfigValue, AcpCoreOptions, AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest, AcpInitializeResult,
   AcpMcpAttach, AcpMcpCapabilities, AcpMcpServer, AcpPendingRequest, AcpPermissionRequest, AcpProfile, AcpPromptBlock,
   AcpPromptCapabilities, AcpRpcErrorPayload, AcpSessionInfo, AcpSessionOptions, AcpUpdate, AcpUserAnswer, SessionQueue,
   SessionQueueItem,
@@ -51,12 +51,12 @@ export type PublicTypeExports = [
   ClaudeAdapterOptions, ClaudeAdapterOptionsInput, ClaudeCliFlags, ClaudeHostText, ClaudeLimits, ClaudeModelCatalogOptions,
   ClaudeModelProbe, ClaudeRuntimeOptions, CodexAdapterOptions, CodexHostText, CodexRuntimeOptions,
   AcpLaunch, AcpProcessOptions, KiroAcpClient, KiroAdapterOptions, KiroCliLookup, KiroDescriptorOverride, KiroEngine,
-  KiroFlavor, KiroNewSessionMemory, KiroRuntimeOptions, KiroSessionMemory,
+  KiroCancelAck, KiroFlavor, KiroNewSessionMemory, KiroRuntimeOptions, KiroSessionMemory,
   KiroAcpAgentTurnHandler, KiroAcpAgentTurnUpdate, KiroAcpClientOptions, KiroAcpInitializeResult, KiroAcpMcpServer,
   KiroAcpSessionOptions, KiroAcpWorkflowRouter,
   CrewAdapterOptions, CrewAppLocation, CrewLaunchResolution, CrewRuntimeOptions,
-  ACPErrorDetails, AcpAgentCapabilities, AcpAuthMethod, AcpCancelOptions, AcpClientInfo, AcpConfigOption, AcpConfigValue,
-  AcpCoreOptions, AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest, AcpInitializeResult,
+  ACPErrorDetails, AcpAgentCapabilities, AcpAuthMethod, AcpCancelOptions, AcpCancelSettlement, AcpClientInfo, AcpConfigOption,
+  AcpConfigValue, AcpCoreOptions, AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest, AcpInitializeResult,
   AcpMcpAttach, AcpMcpCapabilities, AcpMcpServer, AcpPendingRequest, AcpPermissionRequest, AcpProfile, AcpPromptBlock,
   AcpPromptCapabilities, AcpRpcErrorPayload, AcpSessionInfo, AcpSessionOptions, AcpUpdate, AcpUserAnswer, SessionQueue,
   SessionQueueItem,

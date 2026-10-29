@@ -6,6 +6,7 @@ import { TextSelection } from '@tiptap/pm/state';
 import type { HomeCardsDto } from 'michi-shared';
 import TerminalHome from './Home';
 import { __resetManageComposerSessionStateForTests } from '../manage/ManageComposer';
+import { __resetHomeCardsCacheForTests } from '../../../state/homeCards/useHomeCards';
 import { HOME_STARTERS } from '../home/HomeGreeting';
 import { docToDraft, draftToDoc } from '../../mentionDoc';
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
@@ -79,6 +80,7 @@ beforeEach(() => {
   for (const fn of Object.values(store)) fn.mockClear();
   cards.fetchHomeCards.mockReset().mockResolvedValue(answer);
   cards.markHomeCardUsed.mockReset().mockResolvedValue(undefined);
+  __resetHomeCardsCacheForTests();
 });
 afterEach(() => cleanup());
 

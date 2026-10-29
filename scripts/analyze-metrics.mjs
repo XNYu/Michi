@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import fs from 'node:fs';
+import { readTypedEvents } from './jsonl-events.mjs';
 
 const files = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
@@ -9,40 +9,7 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-function tryParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function parseLine(line) {
-  const direct = tryParse(line);
-  if (direct?.type === 'metric') return direct;
-
-  const taggedStart = line.indexOf('{"type":"metric"');
-  if (taggedStart !== -1) {
-    const tagged = tryParse(line.slice(taggedStart));
-    if (tagged?.type === 'metric') return tagged;
-  }
-
-  const firstBrace = line.indexOf('{');
-  if (firstBrace !== -1) {
-    const sliced = tryParse(line.slice(firstBrace));
-    if (sliced?.type === 'metric') return sliced;
-  }
-
-  return null;
-}
-
-const rows = files
-  .flatMap((file) => fs.readFileSync(file, 'utf8')
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map(parseLine)
-    .filter(Boolean))
-  .sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+const rows = readTypedEvents(files, 'metric').sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
 
 if (rows.length === 0) {
   console.error('No metric rows found.');

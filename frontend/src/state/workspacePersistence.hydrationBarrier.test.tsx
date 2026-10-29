@@ -409,6 +409,31 @@ describe('cold-start hydration barrier', () => {
       nodes: [{ id: 'n-remote-slow', created_at: 2 }],
     };
 
+    it('does not wait for connection discovery before showing local workspaces', async () => {
+      const connections = deferred<BackendConnectionSummary[]>();
+      apiMocks.listBackendConnections.mockReturnValue(connections.promise);
+      apiMocks.fetchAllWorkspacesMeta.mockImplementation(async (id?: string) => id === remoteConnection.id ? [remoteWorkspace] : [backendWorkspaceRow]);
+      const { result } = renderHook(() => useHarness());
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(result.current.hydrated).toBe(true);
+      expect(result.current.projects.map(project => project.id)).toEqual(['ws-1']);
+      connections.resolve([remoteConnection]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(result.current.projects.map(project => project.id)).toEqual(['ws-1', backendEntityId(remoteConnection.id, 'ws-remote-slow')]);
+    });
+
+    it('ignores discovery that completes after unmount', async () => {
+      const connections = deferred<BackendConnectionSummary[]>();
+      apiMocks.listBackendConnections.mockReturnValue(connections.promise);
+      apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([backendWorkspaceRow]);
+      const { unmount } = renderHook(() => useHarness());
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      unmount();
+      connections.resolve([remoteConnection]);
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(apiMocks.fetchAllWorkspacesMeta).not.toHaveBeenCalledWith(remoteConnection.id, expect.anything());
+    });
+
     it('finalizes with local workspaces while the remote snapshot is still in flight, then merges it', async () => {
       const remote = deferred<unknown[]>();
       apiMocks.listBackendConnections.mockResolvedValue([remoteConnection]);

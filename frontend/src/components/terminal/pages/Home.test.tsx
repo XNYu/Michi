@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import type { HomeCard, HomeCardsDto } from 'michi-shared';
 import TerminalHome from './Home';
 import { PrefsProvider } from '../../../state/prefs';
+import { __resetHomeCardsCacheForTests } from '../../../state/homeCards/useHomeCards';
 import { AppearancePane } from './settings/AppearancePane';
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
 import { useZhCnDefaultLocale } from '../../../test/zhCnLocale';
@@ -13,14 +14,15 @@ import { useZhCnDefaultLocale } from '../../../test/zhCnLocale';
 const composer = vi.hoisted(() => ({ insert: vi.fn(), startMention: vi.fn() }));
 vi.mock('../manage/ManageComposer', async () => {
   const { forwardRef, useImperativeHandle } = await import('react');
-  const FakeComposer = forwardRef(function FakeComposer(_props, ref) {
+  const FakeComposer = forwardRef(function FakeComposer(props: { toolbarLeftPrefix?: React.ReactNode }, ref) {
     useImperativeHandle(ref, () => composer);
-    return <div data-testid="composer" />;
+    return <div data-testid="composer">{props.toolbarLeftPrefix}</div>;
   });
   return { default: FakeComposer };
 });
 vi.mock('../home/ChatHomeDocument', () => ({ default: ({ page }: { page: { title: string } }) => <section aria-label="Home content">{page.title}</section> }));
-vi.mock('../HomeWorkspaceChip', () => ({ HomeWorkspaceChip: () => null }));
+const chip = vi.hoisted(() => ({ props: vi.fn((_props: unknown) => null) }));
+vi.mock('../HomeWorkspaceChip', () => ({ HomeWorkspaceChip: (props: unknown) => chip.props(props) }));
 
 const api = vi.hoisted(() => ({ fetchHomeCards: vi.fn(), markHomeCardUsed: vi.fn() }));
 vi.mock('../../../services/api/homeCards', async () => ({
@@ -38,6 +40,7 @@ const store = vi.hoisted(() => ({
   nodes: {} as Record<string, ChatNodeState>,
   hydrated: true,
   selectProject: vi.fn(),
+  enterChatsWorkspace: vi.fn(async () => 'chats-default'),
 }));
 vi.mock('../../../state/chatStore', async () => ({
   ...(await vi.importActual<object>('../../../state/chatStore')),
@@ -47,6 +50,7 @@ vi.mock('../../../state/chatStore', async () => ({
     activeProjectId: store.projects[0]?.id ?? null,
     hydrated: store.hydrated,
     selectProject: store.selectProject,
+    enterChatsWorkspace: store.enterChatsWorkspace,
   }),
   useStructuralSelector: (selector: (n: Record<string, ChatNodeState>) => unknown) => selector(store.nodes),
 }));
@@ -92,11 +96,14 @@ describe('TerminalHome', () => {
     store.nodes = { a: node('a') };
     store.hydrated = true;
     store.selectProject.mockReset();
+    store.enterChatsWorkspace.mockClear();
+    chip.props.mockClear();
     submitted.mockReset();
     composer.insert.mockReset();
     composer.startMention.mockReset();
     api.fetchHomeCards.mockReset().mockResolvedValue(answer());
     api.markHomeCardUsed.mockReset().mockResolvedValue(undefined);
+    __resetHomeCardsCacheForTests();
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -111,7 +118,7 @@ describe('TerminalHome', () => {
     expect(screen.queryByRole('region', { name: 'Home content' })).toBeNull();
     expect(screen.getByRole('group', { name: 'Quick starts' })).toBeTruthy();
     expect(screen.getByTestId('composer')).toBeTruthy();
-    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Another road diverged');
     await waitFor(() => expect(JSON.parse(localStorage.getItem('michi:v1:prefs')!).homeRecommendations).toBe(false));
     view.unmount();
     render(<PrefsProvider><AppearancePane /><TerminalHome onSubmitted={submitted} /></PrefsProvider>);
@@ -120,6 +127,69 @@ describe('TerminalHome', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Pages recommendations on Home' }));
     await screen.findByRole('region', { name: 'Home content' });
     localStorage.removeItem('michi:v1:prefs');
+  });
+
+  it('keeps the default hero and composer while Pages is loading, then switches to its content', async () => {
+    let resolve!: (value: HomeCardsDto) => void;
+    api.fetchHomeCards.mockReturnValue(new Promise<HomeCardsDto>((done) => { resolve = done; }));
+    await renderHome();
+    const input = screen.getByTestId('composer');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Another road diverged');
+    expect(document.querySelector('.home-page')?.getAttribute('data-default-layout')).toBe('true');
+    expect(screen.getByRole('group', { name: 'Quick starts' })).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+    await act(async () => resolve(answer({ greeting: null, contentMode: 'page', contentPage: { id: 'home', title: 'My home layout' } as never })));
+    await screen.findByRole('region', { name: 'Home content' });
+    expect(document.querySelector('.home-page')?.hasAttribute('data-default-layout')).toBe(false);
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Quick starts' })).toBeNull();
+    expect(screen.getByTestId('composer')).toBe(input);
+  });
+
+  it('coming back to Home shows its last content at once, then the fresh read', async () => {
+    api.fetchHomeCards.mockResolvedValue(answer({ greeting: null, contentMode: 'page', contentPage: { id: 'home', title: 'My home layout' } as never }));
+    const first = await renderHome();
+    await screen.findByRole('region', { name: 'Home content' });
+    first.unmount();
+
+    let resolve!: (value: HomeCardsDto) => void;
+    api.fetchHomeCards.mockReturnValue(new Promise<HomeCardsDto>((done) => { resolve = done; }));
+    const second = render(<TerminalHome onSubmitted={submitted} />);
+    expect(screen.getByRole('region', { name: 'Home content' }).textContent).toBe('My home layout');
+    expect(document.querySelector('.home-page')?.hasAttribute('data-default-layout')).toBe(false);
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    await act(async () => resolve(answer({ greeting: null, contentMode: 'page', contentPage: { id: 'home', title: 'Renamed layout' } as never })));
+    expect(screen.getByRole('region', { name: 'Home content' }).textContent).toBe('Renamed layout');
+    second.unmount();
+
+    // A failed read is not remembered: the next visit waits with the default hero.
+    api.fetchHomeCards.mockRejectedValue(new Error('offline'));
+    (await renderHome()).unmount();
+    api.fetchHomeCards.mockReturnValue(new Promise<HomeCardsDto>(() => {}));
+    render(<TerminalHome onSubmitted={submitted} />);
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Another road diverged');
+    expect(screen.queryByRole('region', { name: 'Home content' })).toBeNull();
+  });
+
+  it('coming back to Home leaves out the card clicked last time', async () => {
+    const first = await renderHome();
+    fireEvent.click(screen.getAllByTestId('home-card')[0]!);
+    expect(cardTitles()[0]).toBe('Title a0');
+    first.unmount();
+    api.fetchHomeCards.mockReturnValue(new Promise<HomeCardsDto>(() => {}));
+    render(<TerminalHome onSubmitted={submitted} />);
+    expect(cardTitles()).toEqual(['Title a1', 'Title a2', 'Title a3', 'Title a4', 'Title a5']);
+  });
+
+  it('keeps the default layout when Pages has no content or cannot be read', async () => {
+    api.fetchHomeCards.mockResolvedValue(answer({ greeting: null, sets: [] }));
+    const view = await renderHome();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Another road diverged');
+    view.unmount();
+    api.fetchHomeCards.mockRejectedValue(new Error('offline'));
+    await renderHome();
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Another road diverged');
+    expect(screen.getByRole('group', { name: 'Quick starts' })).toBeTruthy();
   });
 
   it('shows the date, the greeting with its second line, the composer, quick starts and six cards', async () => {
@@ -284,5 +354,24 @@ describe('TerminalHome', () => {
     api.fetchHomeCards.mockResolvedValue(answer({ sets: [] }));
     await renderHome();
     expect(screen.queryAllByTestId('home-card')).toHaveLength(0);
+  });
+
+  type ChipProps = { active: { id: string } | null; liveProjects: Array<{ id: string }>; onClear?: () => void };
+  const lastChip = () => chip.props.mock.calls.at(-1)![0] as ChipProps;
+
+  it('the workspace chip clears into the folder-less Chats workspace', async () => {
+    await renderHome();
+    expect(lastChip().active?.id).toBe('p1');
+    lastChip().onClear!();
+    expect(store.enterChatsWorkspace).toHaveBeenCalledTimes(1);
+    expect(store.selectProject).not.toHaveBeenCalled();
+  });
+
+  it('shows the Chats workspace as no workspace, not as one to pick', async () => {
+    const chats = { id: 'chats-default', name: 'Chats', createdAt: 0, activeTreeId: null, chatIds: [], edges: [], trees: [] };
+    store.projects = [chats, ...withThreads] as unknown as Project[];
+    await renderHome();
+    expect(lastChip().active).toBeNull();
+    expect(lastChip().liveProjects.map((p) => p.id)).toEqual(['p1', 'p2']);
   });
 });

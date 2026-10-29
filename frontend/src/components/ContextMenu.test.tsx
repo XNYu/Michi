@@ -88,3 +88,28 @@ describe('ContextMenu description detail card', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });
+
+describe('ContextMenu filter on a touch screen', () => {
+  const sections = (count: number) => [{ items: Array.from({ length: count }, (_, i) => ({ id: `agent-${i}`, label: `Agent ${i}`, run: vi.fn() })) }];
+  const pointer = (coarse: boolean) => vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+    matches: coarse && query.includes('pointer: coarse'), media: query, addEventListener() {}, removeEventListener() {},
+  })));
+
+  it('shows no filter for a short list, so no keyboard rises over it', () => {
+    pointer(true);
+    render(<ContextMenu x={20} y={40} searchable sections={sections(4)} onClose={() => {}} />);
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+
+  it('keeps the filter for a long list without focusing it', () => {
+    pointer(true);
+    render(<ContextMenu x={20} y={40} searchable sections={sections(12)} onClose={() => {}} />);
+    expect(document.activeElement).not.toBe(screen.getByRole('textbox'));
+  });
+
+  it('focuses the filter for a pointer, as before', () => {
+    pointer(false);
+    render(<ContextMenu x={20} y={40} searchable sections={sections(4)} onClose={() => {}} />);
+    expect(document.activeElement).toBe(screen.getByRole('textbox'));
+  });
+});

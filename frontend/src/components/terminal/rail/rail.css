@@ -81,6 +81,44 @@
 }
 .area-rail__dot[data-tone='done'] { background: var(--term-digest); }
 .area-rail__dot[data-tone='warn'] { background: var(--term-danger); }
+
+/* Phone drawer: the rail's areas as one labelled row. */
+.area-tabs {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--term-line) 50%, transparent);
+}
+.area-tabs__btn {
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-2xs);
+  cursor: pointer;
+}
+.area-tabs__btn[aria-current='page'],
+.area-tabs__btn[aria-expanded='true'] {
+  background: var(--term-accent-f);
+  color: var(--term-accent);
+}
+.area-tabs__btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent);
+  outline-offset: -2px;
+}
+.area-tabs__icon { position: relative; display: grid; place-items: center; }
+.area-tabs__icon .area-rail__dot { right: -5px; top: -3px; }
+
 @media (prefers-reduced-motion: reduce) {
   .area-rail__btn { transition: none; }
 }

@@ -1,3 +1,4 @@
+import { restrictedChatProfile } from './helpers/restrictedChatProfile';
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
@@ -58,8 +59,6 @@ test('PiSession resolves model and reasoning against pi runtime, not the active 
       listMessages: () => [],
       getWorkspace: () => null,
       getWorkspaceInstructions: () => null,
-      hasGrant: () => false,
-      grantPermission: () => {},
     },
     providerKeys: {
       getProviderApiKey: (_provider: string, ownerUserId?: string) => {
@@ -201,7 +200,7 @@ test('PiSession sends thread messages directly but explicitly requested approval
   configureRuntimeDeps({
     historyStore: {
       getNode: () => null, listMessages: () => [], getWorkspace: () => null,
-      getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {},
+      getWorkspaceInstructions: () => null,
     },
     providerKeys: { getProviderApiKey: () => 'test-key' },
     agentConfig: {
@@ -279,7 +278,6 @@ function stubPiForMetaAgent(builtTools: string[]): { agentTools: () => string[] 
   configureRuntimeDeps({
     historyStore: {
       getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null,
-      hasGrant: () => false, grantPermission: () => {},
     },
     providerKeys: { getProviderApiKey: () => 'test-key' },
     agentConfig: {
@@ -333,7 +331,7 @@ async function drainPi(session: any, text: string, input?: unknown): Promise<voi
 test('Pi Meta agent chat: only the chat toolset reaches the model', async () => {
   const { assistantToolProfile, META_AGENT_CHAT_TOOL_NAMES } = require('../src/assistant/policy') as typeof import('../src/assistant/policy');
   const stub = stubPiForMetaAgent(['list_threads', 'send_to_thread', 'bash', 'read_page', 'save_artifact']);
-  const session = newPiMetaSession('n-chat', assistantToolProfile());
+  const session = newPiMetaSession('n-chat', restrictedChatProfile());
   await drainPi(session, 'what is waiting?');
   assert.deepEqual(stub.agentTools(), ['list_threads', 'read_page']);
   assert.ok(stub.agentTools()!.every((name) => META_AGENT_CHAT_TOOL_NAMES.includes(name)));
@@ -350,7 +348,7 @@ test('Pi Michi chat omits metadata glue and reminders on fresh and restored turn
       bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
       preamble: '', cwd: process.cwd(), enableFollowUps: true,
       firstUserGlue: buildFormatReminder(true), workspaceId: 'workspace-1', ownerUserId: null,
-      toolProfile: assistantToolProfile(),
+      toolProfile: restrictedChatProfile(),
       ...(restored ? { initialMessages: rowsToAgentMessages([
         { role: 'user', content: 'Earlier question', created_at: 1 },
         { role: 'assistant', content: 'Earlier answer', created_at: 2 },
@@ -368,7 +366,7 @@ test('Pi Meta agent chat: a tool that slips past the allow-list stops the run wi
   const { assistantToolProfile } = require('../src/assistant/policy') as typeof import('../src/assistant/policy');
   const { MetaAgentGuardError } = require('../src/agents/metaAgentGuard') as typeof import('../src/agents/metaAgentGuard');
   const stub = stubPiForMetaAgent(['list_threads', 'bash']);
-  const session = newPiMetaSession('n-chat-leak', assistantToolProfile());
+  const session = newPiMetaSession('n-chat-leak', restrictedChatProfile());
   session.isToolAllowed = () => true;
   await assert.rejects(drainPi(session, 'hi'), (error: unknown) => error instanceof MetaAgentGuardError
     && error.violation.runtimeId === 'pi' && error.violation.toolset === 'chat' && error.violation.unexpectedTools.join() === 'bash');

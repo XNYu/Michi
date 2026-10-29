@@ -1,10 +1,12 @@
+import { restrictedChatProfile } from './helpers/restrictedChatProfile';
 import { michiTestHost } from './helpers/michiTestHost';
 import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
 import { michiKiroRestrictedAgent } from '../src/agents/kiro/kiroMetaAgent';
 /**
  * The Meta agent on Kiro: the generated agent config, catalog normalization
- * and checks for both engines, and KiroRuntime opening a dedicated worker
- * whose session is selected, checked and locked. kiro-cli is replaced by an
+ * and checks for both engines, and KiroRuntime opening a per-toolset worker,
+ * shared by that toolset's sessions, whose sessions are each selected,
+ * checked and locked. kiro-cli is replaced by an
  * AcpClient whose RPCs are scripted; no real process runs.
  */
 
@@ -18,7 +20,7 @@ import {
     KIRO_META_AGENT_NAMES, ensureKiroMetaAgent, kiroMetaAgentClientOptions, kiroMetaAgentConfig, kiroMetaAgentDir,
     kiroV2MetaAgentCatalog, kiroV3MetaAgentCatalog, verifyKiroMetaAgentCatalog,
 } from '../src/agents/kiro/kiroMetaAgent';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { KiroProcessCapError, KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
 import { MetaAgentGuardError, isMetaAgentGuardError } from '../src/agents/metaAgentGuard';
 import { META_AGENT_MAINTENANCE_TOOL_NAMES, MaintenanceRuntimeUnsupportedError, maintenanceToolProfile } from '../src/agents/maintenancePolicy';
 import { AssistantRuntimeUnsupportedError, META_AGENT_CHAT_TOOL_NAMES, assistantToolProfile } from '../src/assistant/policy';
@@ -156,7 +158,7 @@ function makeRegistry() {
 }
 
 describe('verifyKiroMetaAgentCatalog', () => {
-    const run = async (script: Script, profile = assistantToolProfile(), timeoutMs = 2_000) => {
+    const run = async (script: Script, profile = restrictedChatProfile(), timeoutMs = 2_000) => {
         const { client } = scriptedClient(script);
         const { sessionId } = await client.newSession([]);
         const since = client.toolCatalog(sessionId)?.seq ?? 0;
@@ -180,10 +182,10 @@ describe('verifyKiroMetaAgentCatalog', () => {
     });
 
     test('v3: no catalog after the switch fails closed within the timeout', async () => {
-        await assert.rejects(run({ engine: 'v3', tagsAfterNew: michi(['read_node']), tagsAfterMode: [] }, assistantToolProfile(), 100),
+        await assert.rejects(run({ engine: 'v3', tagsAfterNew: michi(['read_node']), tagsAfterMode: [] }, restrictedChatProfile(), 100),
             (error: unknown) => isMetaAgentGuardError(error) && /no tool catalog/.test((error as Error).message),
             'the default agent\'s catalog from before the switch is not accepted');
-        await assert.rejects(run({ engine: 'v3', tagsAfterMode: [[]] }, assistantToolProfile(), 150),
+        await assert.rejects(run({ engine: 'v3', tagsAfterMode: [[]] }, restrictedChatProfile(), 150),
             (error: unknown) => isMetaAgentGuardError(error) && /none of the Michi tools/.test((error as Error).message));
     });
 
@@ -191,9 +193,10 @@ describe('verifyKiroMetaAgentCatalog', () => {
         assert.deepEqual(await run({ engine: 'v2', v2Tools: [{ name: 'read_node', source: 'mcp:michi' }] }), ['read_node']);
         await assert.rejects(run({ engine: 'v2', v2Tools: [{ name: 'read_node', source: 'mcp:michi' }, { name: 'fs_read', source: 'built-in' }] }),
             (error: unknown) => error instanceof MetaAgentGuardError && error.violation.unexpectedTools.join() === 'built-in:fs_read');
-        await assert.rejects(run({ engine: 'v2', v2Tools: [], v2MichiReady: false }, assistantToolProfile(), 100),
+        await assert.rejects(run({ engine: 'v2', v2Tools: [], v2MichiReady: false }, restrictedChatProfile(), 100),
             (error: unknown) => isMetaAgentGuardError(error) && /none of the Michi tools/.test((error as Error).message));
     });
+
 });
 
 describe('KiroRuntime Meta agent sessions', () => {
@@ -209,11 +212,11 @@ describe('KiroRuntime Meta agent sessions', () => {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    function setup(t: TestContext, script: Script) {
+    function setup(t: TestContext, script: Script, ordinary = false) {
         const scripted = scriptedClient(script);
         const opened: Array<{ cwd: string; options: unknown; runtime: any }> = [];
         t.mock.method(KiroRuntime.prototype, 'ensureClient', async function (this: any, cwd: string) {
-            if (!this.runtimeOptions.metaAgent) throw new Error('an ordinary client was asked for');
+            if (!ordinary && !this.runtimeOptions.metaAgent) throw new Error('an ordinary client was asked for');
             opened.push({ cwd, options: this.clientOptions(), runtime: this });
             this.pool.set(cwd, scripted.client);
             return scripted.client;
@@ -224,9 +227,26 @@ describe('KiroRuntime Meta agent sessions', () => {
         return { ...scripted, registry, runtime, opened };
     }
 
+    test('interactive Assistant accepts the ordinary Kiro catalog', async (t) => {
+        const env = setup(t, { engine: 'v3', tagsAfterNew: [
+            { source: 'builtin', tag: 'shell' },
+        ] }, true);
+        const session = await env.runtime.newSession({ sessionId: 'n-chat-open', cwd: tmpDir, toolProfile: assistantToolProfile() });
+        assert.equal((session as any).cwd, tmpDir);
+        assert.ok(!env.calls.some((call) => call.method === 'session/set_mode'));
+        assert.equal(env.opened[0].options, undefined);
+        assert.equal([...env.registry.slots.values()][0].restricted, undefined);
+    });
+
+    test('resuming an old restricted Assistant reconstructs history instead of retaining the closed agent', async (t) => {
+        const env = setup(t, { engine: 'v3', currentModeId: KIRO_META_AGENT_NAMES.chat }, true);
+        await assert.rejects(env.runtime.loadSession({ sessionId: 'sid-old', nodeId: 'n-old-open', nativeEngine: 'v3', cwd: tmpDir, toolProfile: assistantToolProfile() }), /retired restricted profile/);
+        assert.equal(env.registry.slots.size, 0);
+    });
+
     test('a chat session runs in its own kiro-cli and agent directory, selected and checked before it is returned', async (t) => {
         const env = setup(t, { engine: 'v3', tagsAfterNew: [{ source: 'builtin', tag: 'shell' }], tagsAfterMode: [[], michi(['read_node', 'list_threads'])] });
-        const session = await env.runtime.newSession({ sessionId: 'n-chat', cwd: '/home/u/assistant', toolProfile: assistantToolProfile() }) as any;
+        const session = await env.runtime.newSession({ sessionId: 'n-chat', cwd: '/home/u/assistant', toolProfile: restrictedChatProfile() }) as any;
         const dir = kiroMetaAgentDir(tmpDir, 'chat');
         assert.equal(env.opened.length, 1);
         assert.equal(env.opened[0].cwd, dir, 'never the chat\'s own cwd or the shared pool');
@@ -250,7 +270,7 @@ describe('KiroRuntime Meta agent sessions', () => {
         await assert.rejects(async () => { for await (const _ of session.send('/agent swap kiro_default')) { /* none */ } }, /commands are off/);
         assert.deepEqual(await session.executeCommand('agent', { value: 'kiro_default' }), { success: false, message: 'Kiro commands are off for the Meta agent.' });
         await assert.rejects(session.setMode('kiro_default'), /cannot switch/);
-        await assert.rejects(env.runtime.forkSession({ sessionId: 'n-fork', cwd: '/x', sourceNativeSessionId: 's', toolProfile: assistantToolProfile() }),
+        await assert.rejects(env.runtime.forkSession({ sessionId: 'n-fork', cwd: '/x', sourceNativeSessionId: 's', toolProfile: restrictedChatProfile() }),
             NativeResumeUnavailableError);
 
         // A later catalog with a built-in stops its tools, cancels the turn and fails the next send.
@@ -260,9 +280,10 @@ describe('KiroRuntime Meta agent sessions', () => {
         await assert.rejects(async () => { for await (const _ of session.send('hello')) { /* none */ } }, MetaAgentGuardError);
     });
 
+
     test('a catalog with one extra tool refuses the session, releases its slot and stops its kiro-cli', async (t) => {
         const env = setup(t, { engine: 'v3', tagsAfterMode: [[...michi(['read_node']), { source: 'builtin', tag: 'read' }]] });
-        await assert.rejects(env.runtime.newSession({ sessionId: 'n-bad', cwd: '/x', toolProfile: assistantToolProfile() }),
+        await assert.rejects(env.runtime.newSession({ sessionId: 'n-bad', cwd: '/x', toolProfile: restrictedChatProfile() }),
             (error: unknown) => error instanceof MetaAgentGuardError && error.violation.runtimeId === 'kiro'
                 && error.violation.toolset === 'chat' && error.violation.unexpectedTools.join() === 'builtin:read');
         assert.equal(env.registry.slots.size, 0);
@@ -273,11 +294,11 @@ describe('KiroRuntime Meta agent sessions', () => {
 
     test('fresh, repeated and restored chat turns contain no title, follow-up or overview instructions', async (t) => {
         const env = setup(t, { engine: 'v3', tagsAfterMode: [michi(['read_node'])] });
-        const fresh = await env.runtime.newSession({ sessionId: 'n-plain-replies', cwd: '/x', toolProfile: assistantToolProfile(), enableFollowUps: true });
+        const fresh = await env.runtime.newSession({ sessionId: 'n-plain-replies', cwd: '/x', toolProfile: restrictedChatProfile(), enableFollowUps: true });
         for (const message of ['Summarize this page.', 'What changed?']) {
             for await (const _event of fresh.send(message)) { /* drain */ }
         }
-        const restored = await env.runtime.loadSession({ sessionId: 'sid-old', nodeId: 'n-restored-replies', nativeEngine: 'v3', cwd: '/x', toolProfile: assistantToolProfile(), enableFollowUps: true });
+        const restored = await env.runtime.loadSession({ sessionId: 'sid-old', nodeId: 'n-restored-replies', nativeEngine: 'v3', cwd: '/x', toolProfile: restrictedChatProfile(), enableFollowUps: true });
         for await (const _event of restored.send('Continue.')) { /* drain */ }
         const prompts = env.calls.filter((call) => call.method === 'session/prompt').map((call) =>
             call.params.prompt.filter((part: { type: string }) => part.type === 'text').map((part: { text: string }) => part.text).join('\n'));
@@ -290,7 +311,7 @@ describe('KiroRuntime Meta agent sessions', () => {
 
     test('a Kiro agent that cannot be selected fails the check', async (t) => {
         const env = setup(t, { engine: 'v3', setModeError: 'unknown mode' });
-        await assert.rejects(env.runtime.newSession({ sessionId: 'n-mode', cwd: '/x', toolProfile: assistantToolProfile() }),
+        await assert.rejects(env.runtime.newSession({ sessionId: 'n-mode', cwd: '/x', toolProfile: restrictedChatProfile() }),
             (error: unknown) => isMetaAgentGuardError(error) && /did not select the Meta agent/.test((error as Error).message));
     });
 
@@ -316,6 +337,87 @@ describe('KiroRuntime Meta agent sessions', () => {
             'a maintenance send needs its trusted context');
     });
 
+    const v2Maintenance: Script = {
+        engine: 'v2', currentModeId: KIRO_META_AGENT_NAMES.maintenance,
+        v2Tools: [{ name: 'maintenance_read_source', source: 'mcp:michi' }, { name: 'maintenance_no_change', source: 'mcp:michi' }],
+    };
+    const maintain = (runtime: KiroRuntime, sessionId: string, toolProfile = maintenanceToolProfile()) =>
+        runtime.newSession({ sessionId, cwd: '/x', workspaceId: 'ws-1', ownerUserId: null, toolProfile }) as Promise<any>;
+
+    test('maintenance sessions share one kiro-cli with a slot each; the last release stops it after the idle TTL', async (t) => {
+        const env = setup(t, v2Maintenance);
+        const rt = env.runtime as any;
+        rt.idleTtlMs = 20;
+        rt.processCap = 1;
+        const [a, b] = await Promise.all([maintain(env.runtime, 'n-a'), maintain(env.runtime, 'n-b')]);
+        const worker = env.opened[0].runtime;
+        assert.equal(env.opened.length, 2);
+        assert.ok(env.opened.every((open) => open.runtime === worker), 'one worker, even for sessions opened at once');
+        assert.equal(env.runtime.activeProcessCount, 1, 'the second session does not hit a cap of one');
+        assert.notEqual(a.nativeSessionId, b.nativeSessionId);
+        assert.equal(env.registry.slots.size, 2);
+
+        await env.runtime.releaseSession('n-a');
+        assert.equal(worker.closing, false, 'its neighbour keeps the process');
+        assert.equal(env.runtime.getBinding('n-a'), undefined);
+        assert.ok(env.runtime.getBinding('n-b'));
+        await env.runtime.releaseSession('n-b');
+        assert.equal(env.registry.slots.size, 0);
+        assert.equal(worker.closing, false, 'kept for the idle TTL');
+        assert.equal(env.runtime.activeProcessCount, 1);
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        assert.equal(worker.closing, true);
+        assert.equal(env.runtime.activeProcessCount, 0);
+        await maintain(env.runtime, 'n-c');
+        assert.notEqual(env.opened.at(-1)!.runtime, worker, 'a later session starts a new one');
+    });
+
+    test('a session whose turn did not stop retires the shared kiro-cli: neighbours finish there, new sessions get a fresh one', async (t) => {
+        const env = setup(t, v2Maintenance);
+        const a = await maintain(env.runtime, 'n-a');
+        await maintain(env.runtime, 'n-b');
+        const worker = env.opened[0].runtime;
+        t.mock.method(env.client as any, 'needsSessionRecovery', (sid: string) => sid === a.nativeSessionId);
+        await env.runtime.releaseSession('n-a');
+        assert.equal(worker.closing, false, 'n-b still runs there');
+        await maintain(env.runtime, 'n-c');
+        const fresh = env.opened.at(-1)!.runtime;
+        assert.notEqual(fresh, worker);
+        assert.equal(env.runtime.activeProcessCount, 2);
+        await env.runtime.releaseSession('n-b');
+        assert.equal(worker.closing, true, 'stopped with its last session');
+        assert.equal(fresh.closing, false);
+        assert.equal(env.runtime.activeProcessCount, 1);
+    });
+
+    test('a changed agent config starts a new shared worker and the old one drains', async (t) => {
+        const env = setup(t, v2Maintenance);
+        await maintain(env.runtime, 'n-a');
+        const old = env.opened[0].runtime;
+        await maintain(env.runtime, 'n-b', { ...maintenanceToolProfile(), allowedToolNames: [...META_AGENT_MAINTENANCE_TOOL_NAMES, 'maintenance_future_tool'] });
+        const next = env.opened.at(-1)!.runtime;
+        assert.notEqual(next, old);
+        assert.equal(old.closing, false, 'n-a finishes on the old config');
+        await env.runtime.releaseSession('n-a');
+        assert.equal(old.closing, true);
+        assert.equal(next.closing, false);
+    });
+
+    test('at the process cap an idle shared worker gives way; one with sessions reports the cap', async (t) => {
+        const env = setup(t, v2Maintenance);
+        const rt = env.runtime as any;
+        rt.processCap = 1;
+        await maintain(env.runtime, 'n-a');
+        await assert.rejects(rt.ensureProcessSlot(),
+            (error: unknown) => error instanceof KiroProcessCapError && /^Kiro process cap \(1\) reached/.test((error as Error).message));
+        await env.runtime.releaseSession('n-a');
+        const worker = env.opened[0].runtime;
+        assert.equal(worker.closing, false);
+        await rt.ensureProcessSlot();
+        assert.equal(worker.closing, true, 'the idle worker was stopped to make room');
+        assert.equal(env.runtime.activeProcessCount, 0);
+    });
+
     test('v2: a built-in in the tools answer refuses the session', async (t) => {
         const env = setup(t, {
             engine: 'v2', currentModeId: KIRO_META_AGENT_NAMES.maintenance,
@@ -328,7 +430,7 @@ describe('KiroRuntime Meta agent sessions', () => {
 
     test('a restored session is selected and checked again', async (t) => {
         const env = setup(t, { engine: 'v3', currentModeId: KIRO_META_AGENT_NAMES.chat, tagsAfterMode: [michi(['read_node'])] });
-        const session = await env.runtime.loadSession({ sessionId: 'sid-old', nodeId: 'n-old', nativeEngine: 'v3', cwd: '/x', toolProfile: assistantToolProfile() }) as any;
+        const session = await env.runtime.loadSession({ sessionId: 'sid-old', nodeId: 'n-old', nativeEngine: 'v3', cwd: '/x', toolProfile: restrictedChatProfile() }) as any;
         assert.equal(session.nativeSessionId, 'sid-old');
         assert.ok(env.calls.some((call) => call.method === 'session/load'));
         assert.ok(env.calls.some((call) => call.method === 'session/set_mode'), 'v3 always switches, even when the loaded mode matches');
@@ -342,9 +444,9 @@ describe('KiroRuntime Meta agent sessions', () => {
         try {
             await assert.rejects(crew.newSession({ sessionId: 'n', cwd: '/x', toolProfile: maintenanceToolProfile() }),
                 (error: unknown) => error instanceof MaintenanceRuntimeUnsupportedError && /Kiro Crew/.test(error.message));
-            await assert.rejects(crew.loadSession({ sessionId: 'n', cwd: '/x', toolProfile: assistantToolProfile() }),
+            await assert.rejects(crew.loadSession({ sessionId: 'n', cwd: '/x', toolProfile: restrictedChatProfile() }),
                 (error: unknown) => error instanceof AssistantRuntimeUnsupportedError && /Kiro Crew/.test(error.message));
-            await assert.rejects(crew.forkSession({ sessionId: 'n', cwd: '/x', sourceNativeSessionId: 's', toolProfile: assistantToolProfile() }),
+            await assert.rejects(crew.forkSession({ sessionId: 'n', cwd: '/x', sourceNativeSessionId: 's', toolProfile: restrictedChatProfile() }),
                 AssistantRuntimeUnsupportedError);
         } finally {
             await crew.shutdown();

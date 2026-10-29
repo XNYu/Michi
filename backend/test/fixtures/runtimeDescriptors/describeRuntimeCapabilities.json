@@ -10,9 +10,9 @@
       "confidence": "unverifiable"
     },
     "interruptAck": {
-      "availability": "inferred",
-      "confidence": "unknown",
-      "notes": "session/cancel notify — dispatch, not an agent ack"
+      "availability": "native",
+      "confidence": "native",
+      "notes": "session/cancel; the pending session/prompt settles with stopReason cancelled"
     },
     "compact": {
       "availability": "native",
@@ -45,32 +45,33 @@
     "subagents": {
       "availability": "experimental",
       "confidence": "unknown",
-      "notes": "_session/terminate / subagent list"
+      "notes": "Roster: v2 _kiro.dev/subagent/list_update, v3 delegation tool calls. Control (v2 _session/spawn, _kiro.dev/session/terminate): native_unwired"
     },
     "usage": {
-      "availability": "invisible",
-      "confidence": "unverifiable"
+      "availability": "native",
+      "confidence": "native",
+      "notes": "Kiro metering: credits and context %, no token counts or cost"
     }
   },
   "crew": {
     "steer": {
       "availability": "invisible",
       "confidence": "unverifiable",
-      "notes": "Official Crew Gateway excludes App callers from same-turn steer"
+      "notes": "Official Crew Gateway queues App sends for the next turn; same-turn steer is human-only"
     },
     "followUp": {
       "availability": "invisible",
       "confidence": "unverifiable"
     },
     "interruptAck": {
-      "availability": "inferred",
-      "confidence": "unknown",
-      "notes": "session/cancel notify — dispatch, not an agent ack"
+      "availability": "native",
+      "confidence": "native",
+      "notes": "Gateway stop_event record (stopped / stop_failed_reset) after the adapter's stop; inferred when none arrives"
     },
     "compact": {
-      "availability": "invisible",
-      "confidence": "unverifiable",
-      "notes": "Kiro Crew adapter does not support Kiro compaction"
+      "availability": "native",
+      "confidence": "projected",
+      "notes": "/compact on the App's own idle slot; Gateway compaction notice"
     },
     "retry": {
       "availability": "invisible",
@@ -96,13 +97,14 @@
       "confidence": "unverifiable"
     },
     "subagents": {
-      "availability": "invisible",
-      "confidence": "unverifiable",
-      "notes": "Kiro Crew adapter does not stream subagent updates"
+      "availability": "native",
+      "confidence": "projected",
+      "notes": "Gateway subagent_* events for the App's own slots; spawn approvals are answered in the Crew dashboard, not Michi"
     },
     "usage": {
-      "availability": "invisible",
-      "confidence": "unverifiable"
+      "availability": "native",
+      "confidence": "projected",
+      "notes": "Per-turn credits from Gateway turn_stats (kiro-cli metering) and context %; no token totals"
     }
   },
   "pi": {
@@ -163,9 +165,9 @@
   },
   "claude": {
     "steer": {
-      "availability": "invisible",
-      "confidence": "unverifiable",
-      "notes": "SDK accepts input, but Michi does not yet multiplex active-turn steering results"
+      "availability": "native",
+      "confidence": "native",
+      "notes": "SDK user message during a turn: folded in at the next tool round, else run as the next CLI turn within the same Michi turn (command_lifecycle); Stop withdraws an unstarted steer. Chats only"
     },
     "followUp": {
       "availability": "invisible",
@@ -178,8 +180,9 @@
       "notes": "SDK interrupt plus terminal result; process retirement fallback is inferred"
     },
     "compact": {
-      "availability": "invisible",
-      "confidence": "unverifiable"
+      "availability": "native",
+      "confidence": "native",
+      "notes": "/compact through SDK input; compact_boundary reports the context before and after. Auto-compaction is reported too"
     },
     "retry": {
       "availability": "invisible",
@@ -203,17 +206,17 @@
     "sandbox": {
       "availability": "invisible",
       "confidence": "unverifiable",
-      "notes": "CLI isolation is unverifiable from Michi"
+      "notes": "Not enabled: Options.sandbox needs bubblewrap and socat on Linux; without them the CLI refuses to start or runs unsandboxed"
     },
     "subagents": {
-      "availability": "inferred",
-      "confidence": "projected",
-      "notes": "Task tool roster only"
+      "availability": "native",
+      "confidence": "native",
+      "notes": "Agent/Task: task_* lifecycle, forwarded child messages (parent_tool_use_id) and the structured hand-back"
     },
     "usage": {
-      "availability": "invisible",
-      "confidence": "unverifiable",
-      "notes": "Do not fabricate token/cost"
+      "availability": "native",
+      "confidence": "native",
+      "notes": "Per-turn tokens of the main loop from result.usage; the CLI cost is a list-price estimate and is not shown"
     }
   },
   "codex": {

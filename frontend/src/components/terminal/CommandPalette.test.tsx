@@ -50,10 +50,6 @@ vi.mock('../../state/prefs', () => ({
   }),
 }));
 
-vi.mock('../../state/useServerSearch', () => ({
-  useServerSearch: () => ({ matches: [], truncated: false, totalUnbounded: 0 }),
-}));
-
 vi.mock('../../state/navigateToNode', () => ({ navigateToNode }));
 vi.mock('../../lib/digestPrompt', () => ({ requestDigest: vi.fn() }));
 

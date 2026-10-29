@@ -15,8 +15,6 @@ import {
   getNode,
   getWorkspace,
   getWorkspaceInstructions,
-  grantPermission,
-  hasGrant,
   listMessages,
 } from '../src/services/dbRepository';
 import { __resetRuntimeDeps, configureRuntimeDeps } from '../src/agents/runtimeDeps';
@@ -65,7 +63,7 @@ beforeEach(async () => {
   process.env.MICHI_CLOUD = '1';
   closeDb(); initDb(); clearAllSessions(); captured = []; catalogProviders = [];
   configureRuntimeDeps({
-    historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission },
+    historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions },
     dataDir: directory,
     providerKeys: { getProviderApiKey: () => null },
     agentConfig: { getAgentConfig, resolveModel, resolveReasoning },

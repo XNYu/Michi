@@ -18,6 +18,7 @@ const nodeTests = [
   `src/state/!(${domStateTests.join('|')}).test.ts`,
   'src/lib/!(threadRowContextMenu).test.ts',
   'viteChunks.test.ts',
+  'importCycles.test.ts',
 ];
 const commonTest = { globals: true, css: false, isolate: true };
 

@@ -13,7 +13,6 @@ vi.mock('../../services/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/api')>();
   return {
     ...actual,
-    listModels: vi.fn().mockResolvedValue({ models: [], defaultModel: null }),
     listAgentModes: vi.fn().mockResolvedValue({ availableModes: [], defaultModeId: null }),
     fetchAllWorkspaces: vi.fn().mockResolvedValue([]),
     fetchAllWorkspacesMeta: vi.fn().mockResolvedValue([]),
@@ -127,9 +126,9 @@ describe('WorkspaceTree', () => {
 
     const row = (nodeId: string) =>
       document.querySelector<HTMLElement>(`[data-sidebar-row="${nodeId}"]`)!;
-    expect(row('childA').style.paddingLeft).toBe('57px');
-    expect(row('second').style.paddingLeft).toBe('57px');
-    expect(row('grand').style.paddingLeft).toBe('73px');
+    expect(row('childA').style.paddingLeft).toBe('43px');
+    expect(row('second').style.paddingLeft).toBe('43px');
+    expect(row('grand').style.paddingLeft).toBe('55px');
     // No connector lines: nothing bordered sits in front of a branch title.
     for (const id of ['childA', 'second', 'grand']) {
       const lines = [...row(id).querySelectorAll<HTMLElement>('[aria-hidden]')].filter(

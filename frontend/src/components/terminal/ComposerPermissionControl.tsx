@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { ChatPermissionMode } from 'michi-shared';
+import type { ChatPermissionChoice, ChatPermissionMode } from 'michi-shared';
 import { useCrewIntegration } from './CrewIntegrationStatus';
 import { activeBackendApiBase } from '../../config/backendConnections';
 import ContextMenu from '../ContextMenu';
@@ -14,13 +14,25 @@ export const PERMISSION_CHOICES: ReadonlyArray<{ mode: ChatPermissionMode; label
   { mode: 'yolo', label: 'YOLO', description: 'Approve tools automatically and use full access where the runtime supports it.' },
 ];
 
+/** Kiro V3's own approval on top of Ask; listed after Ask where a runtime supports it. */
+export const APPROVE_FOR_ME_CHOICE = {
+  mode: 'approve' as const, label: 'Approve for me',
+  description: 'Kiro approves routine work, blocks risky actions and asks when unsure. Workspace edits and read-only shell run automatically.',
+};
+
+const ALL_CHOICES: ReadonlyArray<{ mode: ChatPermissionChoice; label: string; description: string }> = [
+  PERMISSION_CHOICES[0], APPROVE_FOR_ME_CHOICE, ...PERMISSION_CHOICES.slice(1),
+];
+
 /** Same chip, anchor and ContextMenu used by the Composer agent picker. */
-export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled = false, compact = false, scope = 'chat', apiBase = activeBackendApiBase(), yoloRestartHint }: {
+export function ComposerPermissionControl({ mode, runtimeIds, approveForMeRuntimeIds = [], onChange, disabled = false, compact = false, scope = 'chat', apiBase = activeBackendApiBase(), yoloRestartHint }: {
   apiBase?: string;
-  mode: ChatPermissionMode;
+  mode: ChatPermissionChoice;
   /** One chat's runtime, or all registered runtimes for the global setting. */
   runtimeIds: readonly string[];
-  onChange: (mode: ChatPermissionMode) => void | Promise<void>;
+  /** Runtimes offering Approve for me (approveForMeRuntimeIds of the agent status). */
+  approveForMeRuntimeIds?: readonly string[];
+  onChange: (mode: ChatPermissionChoice) => void | Promise<void>;
   disabled?: boolean;
   compact?: boolean;
   scope?: 'chat' | 'global';
@@ -43,10 +55,14 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
     return <span className="t-toolbar-chip" role="status" title={detail}>{label}</span>;
   }
   const supportsYolo = runtimeIds.some(supportsChatYolo);
-  const displayedMode = mode === 'yolo' && !supportsYolo ? 'trust' : mode;
-  const choices = PERMISSION_CHOICES.filter((choice) => supportsYolo || choice.mode !== 'yolo');
-  const label = PERMISSION_CHOICES.find((choice) => choice.mode === displayedMode)?.label ?? 'Ask';
-  const crossesYolo = (next: ChatPermissionMode) => (next === 'yolo') !== (displayedMode === 'yolo');
+  const supportsApprove = runtimeIds.some((id) => approveForMeRuntimeIds.includes(id));
+  // A runtime without Approve for me runs it as Ask, so it shows Ask.
+  const displayedMode: ChatPermissionChoice = mode === 'yolo' && !supportsYolo ? 'trust' : mode === 'approve' && !supportsApprove ? 'ask' : mode;
+  const choices = ALL_CHOICES.filter((choice) => (supportsYolo || choice.mode !== 'yolo') && (supportsApprove || choice.mode !== 'approve'));
+  const label = ALL_CHOICES.find((choice) => choice.mode === displayedMode)?.label ?? 'Ask';
+  // Only the global setting can reach runtimes without it; they use Ask.
+  const approveScopeNote = scope === 'global' && runtimeIds.some((id) => !approveForMeRuntimeIds.includes(id)) ? ' Other runtimes use Ask.' : '';
+  const crossesYolo = (next: ChatPermissionChoice) => (next === 'yolo') !== (displayedMode === 'yolo');
   const baseTitle = `Permissions: ${label} · ${scope === 'global' ? 'all chats' : 'this chat'}`;
   return <>
     {/* Every label here is a short word, and "A…" says less than the shield
@@ -58,21 +74,23 @@ export function ComposerPermissionControl({ mode, runtimeIds, onChange, disabled
       onClick={(event) => {
         event.stopPropagation();
         const rect = event.currentTarget.getBoundingClientRect();
-        setAnchor(anchor ? null : { x: rect.left, y: rect.bottom + 6, anchorBottom: rect.top - 6, trigger: event.currentTarget });
+        setAnchor(anchor ? null : { x: rect.left, y: rect.bottom + 6, anchorBottom: rect.top - 6, trigger: event.currentTarget,
+          preferBelow: !!event.currentTarget.closest('.composer-tray') });
       }} onKeyDown={(event) => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault();
           if (!anchor) event.currentTarget.click();
         }
       }}>
-      {displayedMode === 'ask' ? <ShieldIcon /> : <ShieldOffIcon />}
+      {displayedMode === 'ask' || displayedMode === 'approve' ? <ShieldIcon /> : <ShieldOffIcon />}
       <span className="t-chip-label">{saving ? 'Saving…' : label}</span>
     </button>
     {anchor && !disabled && <ContextMenu {...anchor} menuKind="agents" width={300}
       onClose={() => setAnchor(null)} sections={[{ label: scope === 'global' ? 'Permissions · all chats' : 'Permissions · this chat', items: choices.map((choice) => ({
         id: choice.mode, label: choice.label,
         sublabel: [
-          choice.mode === 'trust' && !supportsYolo ? 'Approve tool requests automatically.' : choice.description,
+          choice.mode === 'trust' && !supportsYolo ? 'Approve tool requests automatically.'
+            : choice.mode === 'approve' ? `${choice.description}${approveScopeNote}` : choice.description,
           yoloRestartHint && supportsYolo && crossesYolo(choice.mode) ? yoloRestartHint : undefined,
         ].filter(Boolean).join(' '),
         glyph: choice.mode === displayedMode ? '✓' : undefined,

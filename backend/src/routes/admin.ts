@@ -245,8 +245,9 @@ router.post('/users/:id/export', async (req, res) => {
       return res.status(404).json({ error: 'user_not_found' });
     }
 
+    // Tombstoned rows (purged_at) are excluded, as in dbRepository's listWorkspaces/listNodes.
     const rawWorkspaces = dataDb.prepare(
-      'SELECT * FROM workspaces WHERE owner_user_id = ?'
+      'SELECT * FROM workspaces WHERE owner_user_id = ? AND purged_at IS NULL'
     ).all(targetId) as Array<Record<string, unknown>>;
     const workspaces = rawWorkspaces.map(portableWorkspaceRow);
 
@@ -261,7 +262,7 @@ router.post('/users/:id/export', async (req, res) => {
     if (wsIds.length > 0) {
       const placeholders = wsIds.map(() => '?').join(',');
       trees = dataDb.prepare(`SELECT * FROM trees WHERE workspace_id IN (${placeholders})`).all(...wsIds);
-      nodes = (dataDb.prepare(`SELECT * FROM nodes WHERE workspace_id IN (${placeholders})`).all(...wsIds) as Array<Record<string, unknown>>)
+      nodes = (dataDb.prepare(`SELECT * FROM nodes WHERE workspace_id IN (${placeholders}) AND purged_at IS NULL`).all(...wsIds) as Array<Record<string, unknown>>)
         .map(sanitizeAgentNodeForBackup);
       edges = dataDb.prepare(`SELECT * FROM edges WHERE workspace_id IN (${placeholders})`).all(...wsIds);
       contexts = (dataDb.prepare(`SELECT * FROM contexts WHERE workspace_id IN (${placeholders})`).all(
@@ -381,6 +382,7 @@ router.delete('/users/:id', async (req, res) => {
 
         if (nodeIds.length > 0) {
           const nph = nodeIds.map(() => '?').join(',');
+          dataDb.prepare(`DELETE FROM harness_events WHERE node_id IN (${nph})`).run(...nodeIds);
           dataDb.prepare(`DELETE FROM messages WHERE node_id IN (${nph})`).run(...nodeIds);
         }
 

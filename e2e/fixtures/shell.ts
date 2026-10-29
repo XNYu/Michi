@@ -22,19 +22,35 @@ export function areaButton(page: Page, area: ShellArea): Locator {
 }
 
 export async function openArea(page: Page, area: ShellArea): Promise<void> {
-  await areaButton(page, area).click();
+  const button = areaButton(page, area);
+  // A narrow window has no rail: its area tabs live in the sidebar overlay.
+  const openSidebar = page.getByRole('button', { name: 'Open sidebar', exact: true });
+  await button.or(openSidebar).first().waitFor();
+  if (!(await button.isVisible())) await openSidebar.click();
+  await button.click();
 }
 
-export type SettingsSection = 'General' | 'Runtime (global)' | 'Meta agent' | 'Components' | 'Assistant' | 'Appearance' | 'Data & backup';
+export type SettingsSection = 'General' | 'Runtime (global)' | 'Meta agent' | 'Components' | 'Appearance' | 'Data & backup';
 
 /** The global Settings drawer's content, separate from a Space's own settings. */
 export function settingsMain(page: Page): Locator {
   return page.getByRole('dialog', { name: 'Settings', exact: true }).locator('.terminal-settings--drawer');
 }
 
-/** Settings keeps its categories inside the drawer at every window width. */
+/** The Settings drawer's header control: × on a wide window, Back on a phone. */
+function settingsHeaderButton(page: Page, name: 'Close' | 'Back'): Locator {
+  return page.getByRole('dialog', { name: 'Settings', exact: true }).locator('.ui-overlay-header').getByRole('button', { name, exact: true });
+}
+
+/**
+ * Selects a section from the drawer's categories. A phone shows one level at
+ * a time, so from a section its header Back returns to the list first.
+ */
 export async function selectSettingsSection(page: Page, section: SettingsSection): Promise<void> {
   const nav = settingsMain(page).getByRole('navigation', { name: 'Settings sections' });
+  const heading = settingsMain(page).getByRole('heading', { level: 1 });
+  await nav.or(heading).filter({ visible: true }).first().waitFor();
+  if (!(await nav.isVisible())) await settingsHeaderButton(page, 'Back').click();
   await nav.getByRole('button', { name: section, exact: true }).click();
   await settingsMain(page).getByRole('heading', { level: 1, name: section, exact: true }).waitFor();
 }
@@ -50,9 +66,20 @@ export async function openSettings(page: Page, section?: SettingsSection): Promi
   return main;
 }
 
-/** Dismisses Settings and leaves the underlying page where it was. */
+/**
+ * Dismisses Settings and leaves the underlying page where it was. A phone's
+ * Back steps from a section to the list before it closes.
+ */
 export async function leaveSettings(page: Page): Promise<void> {
-  await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
+  const close = settingsHeaderButton(page, 'Close');
+  const back = settingsHeaderButton(page, 'Back');
+  await close.or(back).first().waitFor();
+  if (await close.isVisible()) await close.click();
+  else {
+    const nav = settingsMain(page).getByRole('navigation', { name: 'Settings sections' });
+    if (!(await nav.isVisible())) { await back.click(); await nav.waitFor(); }
+    await back.click();
+  }
   await settingsMain(page).waitFor({ state: 'detached' });
 }
 

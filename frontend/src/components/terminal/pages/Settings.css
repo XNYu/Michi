@@ -49,6 +49,15 @@
   border-left: 2px solid transparent;
 }
 
+.terminal-settings-alert {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--term-danger);
+}
+
 .terminal-settings-category[aria-current='page'] {
   border-left-color: var(--term-accent);
   background: var(--term-alt);
@@ -110,35 +119,222 @@
   font-weight: 600;
 }
 
+/* ── Sections and rows (SettingsSection.tsx) ──────────────────────
+   One h2 per group, peers separated by a rule; rows put the name and
+   description left and the control right, and stack in a narrow drawer. */
+.settings-section {
+  container: settings-section / inline-size;
+  min-width: 0;
+  font-family: var(--ui-font);
+  color: var(--term-fg);
+}
+.settings-section + .settings-section {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--term-line);
+}
+.settings-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-section__title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--term-fg);
+}
+.settings-section__aside {
+  flex: none;
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.settings-section__intro {
+  margin-top: 4px;
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+.settings-section__intro p { margin: 0; }
+.settings-section__intro p + p { margin-top: 6px; }
+/* Content that is not a row (a radio list, an action bar) keeps the rows' rhythm. */
+.settings-section__block { margin-top: 12px; }
+.settings-section__status { margin: 12px 0 0; color: var(--term-muted); font-size: var(--fs-md); }
+.settings-section__error { margin: 12px 0 0; color: var(--term-danger); font-size: var(--fs-md); }
+
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 0;
+}
+.settings-row + .settings-row { border-top: 1px solid var(--term-line); }
+.settings-row__text { min-width: 0; }
+.settings-row__label {
+  display: block;
+  font-size: var(--fs-lg);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--term-fg);
+}
+.settings-row__desc {
+  margin-top: 2px;
+  color: var(--term-muted);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+.settings-row__control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-row__body { grid-column: 1 / -1; min-width: 0; }
+.settings-row__note { margin: 8px 0 0; color: var(--term-muted); font-size: var(--fs-md); line-height: 1.55; text-wrap: pretty; }
+.settings-row__note:first-child { margin-top: 0; }
+.settings-row__note[role='alert'] { color: var(--term-danger); }
+.settings-row__state { color: var(--term-mid); font-size: var(--fs-sm); white-space: nowrap; }
+.settings-row__select.ui-select { width: auto; min-width: 0; max-width: 220px; }
+.settings-row__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--term-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.settings-row__link:hover { text-decoration: underline; }
+.settings-row__link:focus-visible { outline: 2px solid var(--term-accent); outline-offset: 2px; }
+.settings-row fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+
+@container settings-section (max-width: 360px) {
+  .settings-row { grid-template-columns: minmax(0, 1fr); }
+  .settings-row__control { justify-content: flex-start; }
+  .settings-row__select.ui-select { max-width: 100%; }
+}
+
+/* Connected machines: the list sits under the intro like a row group. */
+.settings-section .remote-connections__list { margin-top: 12px; }
+
+/* Account: who is signed in, as the row's name. */
+.settings-account { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.settings-account img { flex: none; width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.settings-account__who { display: flex; flex-direction: column; min-width: 0; }
+.settings-account__email { color: var(--term-muted); font-size: var(--fs-md); font-weight: 400; overflow-wrap: anywhere; }
+
+/* Shortcuts: reference tables, one per group. */
+.settings-shortcuts__group { margin-top: 14px; }
+.settings-shortcuts__group-title {
+  margin: 0 0 6px;
+  color: var(--term-muted);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  letter-spacing: var(--ls-caps-wide);
+  text-transform: uppercase;
+}
+.settings-shortcuts__table { border: 1px solid var(--term-line); background: var(--term-surface-glass); }
 .settings-shortcut-row {
+  display: grid;
   grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+}
+.settings-shortcut-row + .settings-shortcut-row { border-top: 1px solid var(--term-line); }
+.settings-shortcut-row__keys {
+  justify-self: start;
+  padding: 2px 6px;
+  border: 1px solid var(--term-line);
+  background: var(--term-alt);
+  color: var(--term-fg);
+  font-size: var(--fs-sm);
+}
+.settings-shortcut-row__label { color: var(--term-mid); font-size: var(--fs-md); }
+
+@container settings-section (max-width: 320px) {
+  .settings-shortcut-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }
 
-@container (max-width: 440px) {
-  .settings-shortcut-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* A drawer that fills a phone screen (data-stacked, set by the shell with its
+   header Back) shows one level at a time, like a phone's own settings: the
+   section list (data-view=menu), then the chosen section alone at full width
+   (data-view=section). The header Back returns from a section to the list. */
+.terminal-settings--drawer[data-stacked] .terminal-settings-layout {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
-@container (max-width: 540px) {
-  .terminal-settings--drawer .terminal-settings-layout {
-    grid-template-columns: 124px minmax(0, 1fr);
-  }
-
-  .terminal-settings-sidebar {
-    padding: 12px 8px;
-  }
-
-  .terminal-settings-content {
-    padding: 16px;
-  }
+.terminal-settings--drawer[data-view='menu'] .terminal-settings-content,
+.terminal-settings--drawer[data-view='section'] .terminal-settings-sidebar {
+  display: none;
 }
 
-/* These panes now share a drawer with navigation, even in a wide window. */
-.terminal-settings--drawer .components-settings__workspace { flex-wrap: wrap; gap: 8px; }
-.terminal-settings--drawer .components-settings__workspace select { min-width: 0; max-width: 100%; }
-.terminal-settings--drawer .page-component-library-grid { grid-template-columns: minmax(0, 1fr); }
-.terminal-settings--drawer .page-component-list { border-right: 0; padding-right: 0; }
+.terminal-settings--drawer[data-stacked] .terminal-settings-sidebar {
+  padding: 8px 0;
+  border-right: 0;
+  overscroll-behavior-y: contain;
+}
+
+.terminal-settings--drawer[data-stacked] .terminal-settings-categories {
+  gap: 0;
+}
+
+.terminal-settings--drawer[data-stacked] .terminal-settings-category {
+  position: relative;
+  gap: 12px;
+  min-height: 52px;
+  padding: 12px 16px 12px 20px;
+  border-left: 0;
+  color: var(--term-fg);
+  font-size: var(--fs-xl);
+  font-weight: 450;
+}
+
+/* Rows are divided under the label, not edge to edge. */
+.terminal-settings--drawer[data-stacked] .terminal-settings-category + .terminal-settings-category::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 20px;
+  right: 0;
+  border-top: 1px solid color-mix(in srgb, var(--term-line) 70%, transparent);
+}
+
+/* The list is a menu, not a selection: the last section is not highlighted. */
+.terminal-settings--drawer[data-stacked] .terminal-settings-category[aria-current='page'] {
+  background: transparent;
+  color: var(--term-fg);
+  font-weight: 450;
+}
+
+.terminal-settings--drawer[data-stacked] .terminal-settings-category:active {
+  background: var(--term-alt);
+}
+
+.terminal-settings-category__chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--term-muted);
+}
+
+.terminal-settings-alert + .terminal-settings-category__chevron {
+  margin-left: 0;
+}
+
+.terminal-settings--drawer[data-stacked] .terminal-settings-content {
+  padding: 16px;
+  overscroll-behavior-y: contain;
+}
+
+/* Focus lands on the section's heading when it opens; it is not a control. */
+.terminal-settings-heading:focus { outline: none; }
 
 @container (max-width: 740px) {
   .terminal-settings--drawer .meta-set__row { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
@@ -146,3 +342,11 @@
   .terminal-settings--drawer .meta-set__ctl { grid-column: 2; grid-row: 1 / span 2; }
   .terminal-settings--drawer .meta-set__notice { flex-wrap: wrap; }
 }
+
+.settings-backup { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--term-line); }
+.settings-backup h2 { margin: 0 0 12px; font-size: var(--fs-lg); font-weight: 600; }
+.settings-backup p { color: var(--term-muted); font-size: var(--fs-md); line-height: 1.6; margin: 8px 0 16px; }
+.settings-backup__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-backup__preview { margin-top: 20px; padding: 16px; border: 1px solid var(--term-line); border-radius: 6px; }
+.settings-backup__preview strong { overflow-wrap: anywhere; font-size: var(--fs-md); }
+.settings-backup [role='alert'] { color: var(--term-fg); }

@@ -26,8 +26,6 @@ export interface HistoryStore {
   listMessages(nodeId: string): MessageRowLike[];
   getWorkspace(id: string, userId?: string): WorkspaceRowLike | null;
   getWorkspaceInstructions(workspaceId: string): string | null;
-  hasGrant(workspaceId: string, toolName: string): boolean;
-  grantPermission(workspaceId: string, toolName: string): void;
 }
 
 /** Result shape returned by the Pi read-only global-context tools. */

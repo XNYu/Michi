@@ -1,5 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { lastInputWasTouch } from '../../lib/inputModality';
 import './Menu.css';
 
 /**
@@ -157,6 +158,9 @@ interface TooltipAnchorProps {
  * horizontally below the anchor, then clamps inside the viewport and flips
  * above when there is no room below. Uses the tooltip variant of
  * PopoverSurface so it inherits the shared tooltip tokens.
+ *
+ * Renders nothing when it mounts right after a tap: the tap's synthetic hover
+ * would otherwise leave the pill up until the next tap elsewhere.
  */
 export function Tooltip({
   anchorRef,
@@ -178,11 +182,12 @@ export function Tooltip({
   side?: TooltipSide;
 }) {
   const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null);
+  const [fromTouch] = React.useState(lastInputWasTouch);
   const bubbleRef = React.useRef<HTMLDivElement>(null);
 
   const measure = React.useCallback(() => {
     const el = anchorRef.current;
-    if (!el) return;
+    if (!el || fromTouch) return;
     const r = el.getBoundingClientRect();
     const bubble = bubbleRef.current;
     const width = bubble?.offsetWidth ?? 0;
@@ -217,12 +222,13 @@ export function Tooltip({
         ? prev
         : { left, top }
     ));
-  }, [anchorRef, offset, side]);
+  }, [anchorRef, fromTouch, offset, side]);
 
   // Run once before paint, then again after the pill mounts so the clamp and
   // flip use its real size. `hasPosition` flips once and triggers the second pass.
   const hasPosition = pos !== null;
   React.useLayoutEffect(() => {
+    if (fromTouch) return;
     measure();
     window.addEventListener('resize', measure);
     window.addEventListener('scroll', measure, true);
@@ -230,9 +236,9 @@ export function Tooltip({
       window.removeEventListener('resize', measure);
       window.removeEventListener('scroll', measure, true);
     };
-  }, [measure, label, kbd, hasPosition, side]);
+  }, [fromTouch, measure, label, kbd, hasPosition, side]);
 
-  if (pos === null) return null;
+  if (fromTouch || pos === null) return null;
   return (
     <PopoverSurface
       ref={bubbleRef}
@@ -306,13 +312,13 @@ export function HoverTip({
   }, [clearTimer]);
 
   const showNow = React.useCallback(() => {
-    if (disabled) return;
+    if (disabled || lastInputWasTouch()) return;
     clearTimer();
     setOpen(true);
   }, [clearTimer, disabled]);
 
   const showAfterHover = React.useCallback(() => {
-    if (disabled) return;
+    if (disabled || lastInputWasTouch()) return;
     clearTimer();
     if (delayMs <= 0) {
       setOpen(true);

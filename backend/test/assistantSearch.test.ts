@@ -23,7 +23,6 @@ import { listThreads, readNode, readNodeOverview, searchMessages } from '../src/
 import { LOCAL_AGENT_OWNER_ID } from '../src/services/agentOwner';
 import { createPage } from '../src/services/pages/repository';
 import { ensurePageHelper, promotePageHelper } from '../src/services/pages/helpers';
-import { excludeUnpromotedPageHelpers } from '../src/services/exportSummary';
 
 function seedChat(id: string, workspaceId: string, title: string): void {
   saveTree({ id: `t-${id}`, workspace_id: workspaceId, root_node_id: id, last_active_at: 1, created_at: 1 });
@@ -134,20 +133,6 @@ describe('search leaves the assistant out', () => {
       assert.equal(hiddenWorkspace.messages.some((message) => message.id === 'm-helper'), false);
       assert.equal(hiddenWorkspace.edges.some((edge) => edge.id === 'edge-helper'), false);
 
-      const exportRequest = {
-        workspace: { name: 'A', createdAt: 1 }, rootTitle: 'A', cwd: '/tmp/a',
-        nodes: [
-          { nodeId: 'n-a', depth: 0, messages: [{ role: 'user' as const, text: 'ordinary' }] },
-          { nodeId: helper.nodeId, depth: 0, messages: [{ role: 'user' as const, text: 'marigold helper secret phrase' }] },
-        ],
-      };
-      assert.deepEqual(excludeUnpromotedPageHelpers(exportRequest).nodes.map((node) => node.nodeId), ['n-a']);
-      assert.deepEqual(excludeUnpromotedPageHelpers({ ...exportRequest, nodeIds: [helper.nodeId] }), {
-        ...exportRequest,
-        nodes: [],
-        nodeIds: [],
-      }, 'an explicitly selected hidden helper cannot broaden into an ordinary-node export');
-
       promotePageHelper(page.id, LOCAL_AGENT_OWNER_ID);
       assert.deepEqual(keywordSearch('marigold').map((row) => row.node_id), [helper.nodeId]);
       assert.deepEqual(nodeGroupedSearch('marigold').map((row) => row.nodeId), [helper.nodeId]);
@@ -159,7 +144,6 @@ describe('search leaves the assistant out', () => {
       assert.equal(visibleWorkspace.nodes.some((node) => node.id === helper.nodeId), true);
       assert.equal(visibleWorkspace.messages.some((message) => message.id === 'm-helper'), true);
       assert.equal(visibleWorkspace.edges.some((edge) => edge.id === 'edge-helper'), true);
-      assert.equal(excludeUnpromotedPageHelpers(exportRequest).nodes.length, 2);
     } finally {
       await new Promise<void>((resolve) => { backupServer.close(() => resolve()); backupServer.closeAllConnections(); });
       await new Promise<void>((resolve) => { searchServer.close(() => resolve()); searchServer.closeAllConnections(); });

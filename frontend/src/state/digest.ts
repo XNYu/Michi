@@ -1,34 +1,8 @@
-import type { ChatNodeState } from './chatTypes';
+import type { ChatNodeState, DigestState, Project } from './chatTypes';
 import { digestSourceSnapshot } from '../lib/digestSource';
+import { descendants, findTreeIdForNode } from './tree';
 
-export interface DigestState {
-  /** Chat node ids whose transcripts feed the digest. */
-  sources: string[];
-  /** Snapshot of each source's fingerprint at generation time. */
-  sourceFingerprints: Record<string, string>;
-  /** The generated markdown. Empty string until the first generation completes. */
-  content: string;
-  /** Epoch ms when content was last written. 0 = never. */
-  generatedAt: number;
-  /**
-   * Epoch ms when the user last opened the digest detail view. Used to drive
-   * the unread indicator: a digest is unread iff `generatedAt > viewedAt`.
-   * 0 = never viewed.
-   */
-  viewedAt: number;
-  /** Mirror of chat status: 'streaming' while a generation/refresh is in flight. */
-  status: 'idle' | 'streaming' | 'error';
-  /** Last error message, if status === 'error'. */
-  error?: string;
-  /** Optional user-supplied prompt appended to the digest preamble. */
-  customPrompt?: string;
-  /** Ephemeral generation activity, never persisted or included in the result. */
-  generation?: {
-    startedAt: number;
-    thought: string;
-    activity: string;
-  };
-}
+export type { DigestState };
 
 /** Fingerprint exactly the source DTO sent to generation, excluding transient UI activity.
  * The version prefix makes older assistant-only watermarks stale once. */
@@ -71,6 +45,33 @@ export function staleSources(
     if (fp !== digest.sourceFingerprints[sid]) out.push(sid);
   }
   return out;
+}
+
+/**
+ * Live source list = every chat in the digest's originating tree, recomputed
+ * from the project's current edges so chats branched after the digest was
+ * generated count immediately. Falls back to the saved snapshot when the tree
+ * can't be resolved (e.g. all original sources gone).
+ */
+export function liveDigestSources(
+  digest: DigestState,
+  project: Pick<Project, 'trees' | 'edges'>,
+  nodes: Record<string, ChatNodeState>,
+): string[] {
+  const isAlive = (id: string) => {
+    const n = nodes[id];
+    return !!n && !n.deletedAt;
+  };
+  const anchor = digest.sources.find(isAlive);
+  const treeId = anchor ? findTreeIdForNode(anchor, project) : null;
+  const tree = treeId ? project.trees.find((t) => t.id === treeId) : null;
+  if (!tree || !isAlive(tree.rootNodeId)) return digest.sources;
+  const descIds = descendants(tree.rootNodeId, project.edges, isAlive);
+  const ids = [tree.rootNodeId, ...descIds].filter((id) => {
+    const n = nodes[id];
+    return !!n && n.kind === 'chat' && !n.deletedAt;
+  });
+  return ids.length > 0 ? ids : digest.sources;
 }
 
 export interface ParsedDigest {

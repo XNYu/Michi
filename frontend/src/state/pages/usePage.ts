@@ -256,7 +256,8 @@ export function usePage({ backendConnectionId, workspaceId, pageId, enabled = tr
         byId.set(change.id, change);
         return [...byId.values()].sort((a, b) => a.seq - b.seq);
       });
-      notifyPageChanged({ backendConnectionId, workspaceId, pageId });
+      notifyPageChanged({ backendConnectionId, workspaceId, pageId,
+        ...(change.target.kind === 'block' ? {} : { databaseId: change.target.databaseId }) });
       void refresh();
     } catch (error) {
       if (!stillCurrent()) return;

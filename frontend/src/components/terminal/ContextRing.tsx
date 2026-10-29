@@ -1,4 +1,5 @@
-import React, { useRef, useState, useMemo, useCallback } from 'react';
+import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
+import { lastInputWasTouch } from '../../lib/inputModality';
 import { PopoverSurface } from '../ui/Popover';
 
 export interface ContextRingProps {
@@ -42,7 +43,8 @@ function formatTokens(n: number): string {
  * Hidden when no context data is available.
  *
  * On hover, shows a styled tooltip with "Context usage: 75%" prominently
- * and optional token breakdown details below.
+ * and optional token breakdown details below. A touch screen has no hover, so
+ * a tap toggles the same card and the next tap outside the ring closes it.
  */
 export const ContextRing = React.memo(function ContextRing({
   percentage,
@@ -63,8 +65,18 @@ export const ContextRing = React.memo(function ContextRing({
     };
   }, [pct]);
 
-  const onEnter = useCallback(() => setHovered(true), []);
-  const onLeave = useCallback(() => setHovered(false), []);
+  const onEnter = useCallback(() => { if (!lastInputWasTouch()) setHovered(true); }, []);
+  const onLeave = useCallback(() => { if (!lastInputWasTouch()) setHovered(false); }, []);
+  const onTap = useCallback(() => { if (lastInputWasTouch()) setHovered(open => !open); }, []);
+
+  useEffect(() => {
+    if (!hovered) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!anchorRef.current?.contains(event.target as Node)) setHovered(false);
+    };
+    document.addEventListener('pointerdown', closeOutside, true);
+    return () => document.removeEventListener('pointerdown', closeOutside, true);
+  }, [hovered]);
 
   if (!visible) return null;
 
@@ -75,8 +87,10 @@ export const ContextRing = React.memo(function ContextRing({
     <>
       <div
         ref={anchorRef}
+        className="composer-context-ring"
         onMouseEnter={onEnter}
         onMouseLeave={onLeave}
+        onClick={onTap}
         aria-label={`Context usage: ${pct.toFixed(0)}%`}
         role="meter"
         aria-valuenow={pct}

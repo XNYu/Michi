@@ -16,7 +16,8 @@
 
 import { findOnPath } from "../executableLookup";
 import { spawnAgentProcess, killProcessTree } from "../processTree";
-import { resolveWithinCwd, PathSandboxError, getUserSandboxRoot } from "./pathSandbox";
+import { resolveWithinCwd, PathSandboxError } from "./pathSandbox";
+import { getUserSandboxRoot } from "../../services/workspaceSandbox";
 import { truncateTail, formatSize, type TruncationDetails } from "./truncate";
 import { errorResult, type ToolResult } from "./types";
 
@@ -41,7 +42,8 @@ export interface BashDetails {
  * Optional execution context forwarded from the owning session.
  * `ownerUserId` is used in cloud mode (MICHI_CLOUD=1) to build an explicit
  * env allowlist that prevents the bash process from reading secrets from
- * process.env (MICHI_ENCRYPTION_KEY, BETTER_AUTH_SECRET, etc.).
+ * process.env (MICHI_ENCRYPTION_KEY, BETTER_AUTH_SECRET, etc.). It is required
+ * in cloud mode: without it bash returns an error and spawns nothing.
  */
 export interface BashContext {
     ownerUserId?: string | null;
@@ -88,16 +90,22 @@ export async function executeBash(
     // In cloud mode, pass an explicit env allowlist so the bash subprocess
     // cannot read secrets from the parent process environment
     // (MICHI_ENCRYPTION_KEY, BETTER_AUTH_SECRET, RAILWAY_API_TOKEN, etc.).
+    // Without an owner there is no sandbox to scope it to, so refuse to run
+    // (fail closed, like mcpSubprocessEnvironment for external MCP).
     // Desktop mode (MICHI_CLOUD unset) keeps full process.env as today.
-    const spawnEnv =
-        process.env.MICHI_CLOUD === "1" && ctx.ownerUserId
-            ? {
-                  PATH: process.env.PATH ?? "/usr/bin:/bin",
-                  HOME: getUserSandboxRoot(ctx.ownerUserId),
-                  LANG: process.env.LANG ?? "en_US.UTF-8",
-                  NODE_NO_WARNINGS: "1",
-              }
-            : process.env;
+    let spawnEnv: NodeJS.ProcessEnv = process.env;
+    if (process.env.MICHI_CLOUD === "1") {
+        const ownerUserId = ctx.ownerUserId;
+        if (typeof ownerUserId !== "string" || ownerUserId.trim().length === 0) {
+            return errorResult("bash requires a session owner in cloud mode; the command was not run");
+        }
+        spawnEnv = {
+            PATH: process.env.PATH ?? "/usr/bin:/bin",
+            HOME: getUserSandboxRoot(ownerUserId),
+            LANG: process.env.LANG ?? "en_US.UTF-8",
+            NODE_NO_WARNINGS: "1",
+        };
+    }
 
     const shell = resolveBashShell();
     const child = spawnAgentProcess(shell.command, [...shell.prefix, args.command], {

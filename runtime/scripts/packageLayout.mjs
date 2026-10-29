@@ -27,6 +27,16 @@ export const CREW_BUNDLES = [
   ['adapters/crew/crewMcpHost.ts', 'crewMcpHost.js'],
 ];
 
+/**
+ * The line that opens the notices scripts/build.mjs appends to each Crew
+ * bundle: one entry per license or NOTICE file of each package it inlines,
+ * `// --- <name>@<version> (<SPDX expression>): <file> ---` and that file's
+ * text, every line a `//` comment ending in \n. scripts/pack.mjs checks them
+ * in the tarball.
+ */
+export const LICENSE_NOTICES_HEADER = '// Third-party notices: the packages this bundle inlines, with their license files.';
+export const LICENSE_NOTICE_ENTRY = /^\/\/ --- (\S+)@(\S+) \((.*)\): (\S+) ---$/;
+
 /** Files under src/ that are not TypeScript and that adapters read at run time, copied to the same path in dist/. */
 export const ASSETS = [
   // Codex's Stop hook runs it; codexFollowUpsHookPoc looks in assets/ beside itself.

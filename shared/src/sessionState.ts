@@ -1,6 +1,11 @@
-import type { AgentCommand } from './chatStreamEvents';
 import type { RuntimeReasoning } from './agentRuns';
 import { isReasoningLevel, sanitizeReasoningLevels, type ModelReasoningCapabilities } from './reasoning';
+
+export interface AgentCommand {
+  name: string;
+  description?: string;
+  input?: { type: string };
+}
 
 /** Replaceable session state, independent of transcript/turn sequence numbers. */
 export interface AgentSessionState {

@@ -34,7 +34,8 @@ import { useAgentModelCatalog } from '../../../../hooks/useAgentModelCatalog';
 import { filterModelCatalog } from './modelCatalogFilter';
 import { filterVisibleRuntimes } from '../../../../lib/runtimeVisibility';
 import { BedrockConfigPanel } from './BedrockConfigPanel';
-import { supportsChatYolo } from '../../../../lib/chatPermissionModes';
+import { approveForMeRuntimeIds, supportsChatYolo } from '../../../../lib/chatPermissionModes';
+import { chatPermissionChoiceParts } from 'michi-shared';
 
 export function ModelPane({
   activeProjectId,
@@ -142,7 +143,8 @@ export function ModelPane({
         <CrewMemorySettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : API_BASE_URL} /></>}
       <FollowUpsToggle />
       <PermissionSettings apiBase={activeProjectId ? workspaceBackendApiBase(activeProjectId) : undefined}
-        runtimeIds={[...(agentStatus ? [agentStatus.runtime] : []), ...visibleRuntimes.map((runtime) => runtime.id)]} />
+        runtimeIds={[...(agentStatus ? [agentStatus.runtime] : []), ...visibleRuntimes.map((runtime) => runtime.id)]}
+        approveRuntimeIds={approveForMeRuntimeIds(agentStatus)} />
 
 
     </div>
@@ -1039,14 +1041,15 @@ function FollowUpsToggle() {
  */
 const CLAUDE_YOLO_RESTART_NOTE = 'Moving a Claude chat into or out of YOLO restarts it on its next message, which stops any workflow it is running.';
 
-function PermissionSettings({ apiBase, runtimeIds }: { apiBase?: string; runtimeIds: readonly string[] }) {
+function PermissionSettings({ apiBase, runtimeIds, approveRuntimeIds }: { apiBase?: string; runtimeIds: readonly string[]; approveRuntimeIds: readonly string[] }) {
   const claudeAvailable = runtimeIds.includes('claude');
   const permissions = usePermissionPreferences(apiBase);
   const supportsYolo = runtimeIds.some(supportsChatYolo);
   const [saving, setSaving] = useState(false);
-  const save = async (global: boolean, mode = permissions.mode) => {
+  const save = async (global: boolean, choice = permissions.choice) => {
     setSaving(true);
-    try { await permissions.save({ global, mode }); }
+    const { mode, approveForMe } = chatPermissionChoiceParts(choice);
+    try { await permissions.save({ global, mode, ...(approveForMe ? { approveForMe } : {}) }); }
     catch (error) { toast.error(error instanceof Error ? error.message : 'Failed to save permission settings'); }
     finally { setSaving(false); }
   };
@@ -1064,16 +1067,17 @@ function PermissionSettings({ apiBase, runtimeIds }: { apiBase?: string; runtime
       </div>
     </ClickableRow>
     {permissions.global && <div style={{ marginTop: 10 }}>
-      <ComposerPermissionControl scope="global" mode={permissions.mode} disabled={saving || permissions.loading}
-        runtimeIds={runtimeIds}
+      <ComposerPermissionControl scope="global" mode={permissions.choice} disabled={saving || permissions.loading}
+        runtimeIds={runtimeIds} approveForMeRuntimeIds={approveRuntimeIds}
         yoloRestartHint={claudeAvailable ? CLAUDE_YOLO_RESTART_NOTE : undefined}
-        onChange={(mode) => save(true, mode)} />
+        onChange={(choice) => save(true, choice)} />
     </div>}
     {permissions.error && <p role="alert" style={{ color: 'var(--term-muted)' }}>{permissions.error} <button type="button" onClick={() => { void permissions.retry(); }} disabled={permissions.loading}>Retry</button></p>}
     <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 10 }}>
       {supportsYolo
         ? 'Changes apply to the next turn. Trust keeps native sandbox limits; YOLO uses full access where supported. Kiro, Crew and Pi use Trust for YOLO. Agent Runs use their own permissions.'
         : 'Changes apply to the next turn. Ask requests approval; Trust approves tools automatically. Agent Runs use their own permissions.'}
+      {approveRuntimeIds.length > 0 ? ' Approve for me lets Kiro V3 approve routine work and ask when unsure; other runtimes use Ask.' : null}
       {/* Turning global permissions on or off can also cross YOLO. */}
       {claudeAvailable && supportsYolo ? ` ${CLAUDE_YOLO_RESTART_NOTE}` : null}
     </p>

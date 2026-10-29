@@ -51,7 +51,8 @@
           "options": {
             "metadata": {
               "crew": {
-                "memoryMode": "persistent"
+                "memoryMode": "persistent",
+                "workspaceName": "Golden"
               }
             }
           }
@@ -125,7 +126,8 @@
           "options": {
             "metadata": {
               "crew": {
-                "memoryMode": "persistent"
+                "memoryMode": "persistent",
+                "workspaceName": "Golden"
               }
             }
           }
@@ -183,7 +185,8 @@
           "options": {
             "metadata": {
               "crew": {
-                "memoryMode": "persistent"
+                "memoryMode": "persistent",
+                "workspaceName": "Golden"
               }
             }
           }
@@ -347,7 +350,8 @@
           "options": {
             "metadata": {
               "crew": {
-                "memoryMode": "persistent"
+                "memoryMode": "persistent",
+                "workspaceName": "Golden"
               }
             }
           }
@@ -394,7 +398,8 @@
           "options": {
             "metadata": {
               "crew": {
-                "memoryMode": "persistent"
+                "memoryMode": "persistent",
+                "workspaceName": "Golden"
               }
             }
           }

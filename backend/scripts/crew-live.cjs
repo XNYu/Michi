@@ -5,80 +5,19 @@
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
-if (process.env.MICHI_CREW_LIVE_TEST !== '1') {
-    console.error('Set MICHI_CREW_LIVE_TEST=1 to allow real model calls and disposable Gateway test sessions.');
-    process.exit(2);
-}
-const root = path.resolve(__dirname, '../..');
-process.env.TS_NODE_PROJECT = path.join(root, 'backend/tsconfig.json');
-require('ts-node/register');
-const { AcpClient } = require('michi-runtime/internal/adapters/kiro/acpClient');
-const { CrewGatewayClient } = require('michi-runtime/internal/adapters/crew/acp/gatewayClient');
-const { parseCrewAcpConfig } = require('michi-runtime/internal/adapters/crew/acp/main');
-const { createMichiRuntimeHost } = require('../src/agents/michiRuntimeHost');
-const { observability } = createMichiRuntimeHost();
-const adapter = path.join(root, 'backend/dist/crewAcp.js');
-assert.ok(fs.existsSync(adapter), 'Build the adapter first with npm run backend:build');
-const config = parseCrewAcpConfig([], process.env);
-const gateway = new CrewGatewayClient({ ...config.gateway, requestTimeoutMs: 10000 });
-const model = process.env.MICHI_CREW_LIVE_MODEL || 'claude-sonnet-4.6';
-const template = process.env.MICHI_CREW_LIVE_AGENT || 'kirocrew';
-const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-crew-live-'));
+const { createCrewLiveFixture, textOf } = require('./crew-live-fixture.cjs');
+const live = createCrewLiveFixture({
+    prefix: 'michi-crew-live-', resultName: `michi-crew-live-${Date.now()}.json`, requestTimeoutMs: 10000,
+});
+const { gateway, model, template, cwd, slots, record, client, session, turn } = live;
 const scope = path.basename(cwd);
 // Crew repo_scope is an existing path INSIDE the project, not its basename.
 fs.mkdirSync(path.join(cwd, scope));
-const clients = [], slots = [];
-const report = { startedAt: new Date().toISOString(), checks: [] };
-const resultPath = path.resolve(process.env.MICHI_CREW_LIVE_RESULT || path.join(os.tmpdir(), `michi-crew-live-${Date.now()}.json`));
-const record = (name, detail = {}) => {
-    const row = { name, ...detail };
-    report.checks.push(row);
-    console.log(JSON.stringify(row));
-};
-const textOf = events => events.filter(e => e.sessionUpdate === 'agent_message_chunk').map(e => e.content?.text || '').join('');
 const outputOf = events => events.filter(e => e.sessionUpdate === 'tool_call_update').map(e => e.rawOutput || '').join('\n');
 const toolsOf = events => [...new Set(events.filter(e => e.sessionUpdate === 'tool_call_update').map(e => e.title))];
 
-async function client(memoryMode = 'temporary') {
-    const previous = process.env.MICHI_CREW_MEMORY_MODE;
-    process.env.MICHI_CREW_MEMORY_MODE = memoryMode;
-    const c = new AcpClient(undefined, cwd, undefined, 'v2', {
-        bin: process.execPath,
-        args: () => [adapter, '--model', model],
-        standardFork: true,
-        cancelTimeoutMs: 15000,
-    }, undefined, { observability });
-    clients.push(c);
-    try { c.start(); }
-    finally {
-        if (previous === undefined) delete process.env.MICHI_CREW_MEMORY_MODE;
-        else process.env.MICHI_CREW_MEMORY_MODE = previous;
-    }
-    await c.initialize();
-    return c;
-}
-async function session(memoryMode) {
-    const c = await client(memoryMode);
-    const info = await c.newSession([]);
-    const sid = info.sessionId;
-    slots.push(sid);
-    assert.ok(info.modes.availableModes.some(m => m.id === `template:${template}`), 'Template catalog unavailable: check App v0.2.0 permissions and MICHI_CREW_LIVE_AGENT');
-    await c.setMode(sid, `template:${template}`);
-    return { c, sid };
-}
-async function turn(c, sid, message) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => { controller.abort(); void c.cancel(sid); }, 120000);
-    const events = [];
-    try {
-        for await (const event of c.prompt(sid, message, [], controller.signal)) events.push(event);
-        assert.equal(events.at(-1)?.stopReason, 'end_turn', 'Diagnostic prompt did not finish');
-        return events;
-    } finally { clearTimeout(timer); }
-}
 async function settings(sid) {
     const slot = (await gateway.listSlots()).find(row => row.key === sid);
     assert.ok(slot, 'Diagnostic slot is not owned by the configured App');
@@ -159,8 +98,8 @@ async function memoryChecks() {
     record('temporary mode withheld the stored marker');
 }
 async function cleanup() {
-    let clean = true;
-    let retainedMemorySlot;
+    let failed = false;
+    let retainSlot;
     if (memoryCleanup) {
         const { c, sid, rule, scope: repoScope } = memoryCleanup;
         try {
@@ -170,43 +109,23 @@ async function cleanup() {
             record('removed scoped diagnostic lesson');
         } catch (error) {
             // Do not conceal a failed cleanup; retain the exact, non-secret selector.
-            clean = false;
-            retainedMemorySlot = sid;
+            failed = true;
+            retainSlot = sid;
             record('memory cleanup requires attention', { error: String(error), rule, scope: repoScope });
         }
     }
-    for (const c of clients) await c.shutdown().catch(() => {});
-    for (const sid of slots) {
-        if (sid === retainedMemorySlot) {
-            record('retained diagnostic slot for memory cleanup', { slot: sid });
-            continue;
-        }
-        try {
-            await gateway.stop(sid);
-            await gateway.waitUntilIdle(sid, AbortSignal.timeout(10000));
-            await gateway.deleteSlot(sid);
-            record('removed diagnostic slot', { slot: sid });
-        } catch (error) {
-            clean = false;
-            record('slot cleanup requires attention', { slot: sid, error: String(error) });
-        }
-    }
-    gateway.close();
-    if (clean) fs.rmSync(cwd, { recursive: true, force: true });
-    else { report.retainedFixtureDirectory = cwd; process.exitCode = 1; }
+    await live.cleanup({ retainSlot, failed });
 }
 (async () => {
     try {
         await coreChecks();
         if (process.argv.includes('--memory')) await memoryChecks();
     } catch (error) {
-        report.error = String(error);
+        live.report.error = String(error);
         console.error(String(error));
         process.exitCode = 1;
     } finally {
         await cleanup();
-        report.finishedAt = new Date().toISOString();
-        fs.writeFileSync(resultPath, JSON.stringify(report, null, 2));
-        console.log(`Results: ${resultPath}`);
+        live.writeReport();
     }
 })();

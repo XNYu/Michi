@@ -1,66 +1,36 @@
 /** Opt-in official Crew approval + broker acceptance. Only disposable App slots/files. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
 const { execFileSync } = require('node:child_process');
-if (process.env.MICHI_CREW_LIVE_TEST !== '1') throw new Error('Set MICHI_CREW_LIVE_TEST=1 to run real disposable model calls');
-const root = path.resolve(__dirname, '../..');
-process.env.TS_NODE_PROJECT = path.join(root, 'backend/tsconfig.json');
-require('ts-node/register');
+const { createCrewLiveFixture, textOf } = require('./crew-live-fixture.cjs');
+const live = createCrewLiveFixture({ prefix: 'michi-crew-bridge-', resultName: 'michi-crew-bridge-result.json' });
 const express = require('express');
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
-const { AcpClient } = require('michi-runtime/internal/adapters/kiro/acpClient');
-const { CrewGatewayClient } = require('michi-runtime/internal/adapters/crew/acp/gatewayClient');
-const { parseCrewAcpConfig } = require('michi-runtime/internal/adapters/crew/acp/main');
-const { createMichiRuntimeHost } = require('../src/agents/michiRuntimeHost');
-const { observability } = createMichiRuntimeHost();
-const gateway = new CrewGatewayClient(parseCrewAcpConfig([], process.env).gateway);
-const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-crew-bridge-'));
-const clients = [], slots = [], hits = [];
-const report = { startedAt: new Date().toISOString(), checks: [] };
-const record = (name, detail = {}) => { const row = { name, ...detail }; report.checks.push(row); console.log(JSON.stringify(row)); };
-const resultPath = process.env.MICHI_CREW_LIVE_RESULT || path.join(os.tmpdir(), 'michi-crew-bridge-result.json');
+const { root, gateway, cwd, slots, report, record } = live;
+const hits = [];
 const endpoints = new Map();
 let http, port, reloadProbe;
 const config = id => [{ name: 'michi', type: 'http', url: `http://127.0.0.1:${port}/api/mcp/${id}`, headers: [] }];
-async function client() {
-    const previous = process.env.MICHI_CREW_MEMORY_MODE;
-    process.env.MICHI_CREW_MEMORY_MODE = 'temporary';
-    const c = new AcpClient(undefined, cwd, undefined, 'v2', { bin: process.execPath,
-        args: () => [path.join(root, 'backend/dist/crewAcp.js'), '--model', process.env.MICHI_CREW_LIVE_MODEL || 'claude-sonnet-4.6'],
-        standardFork: true, cancelTimeoutMs: 15000 }, undefined, { observability });
-    clients.push(c);
-    try { c.start(); } finally { if (previous === undefined) delete process.env.MICHI_CREW_MEMORY_MODE; else process.env.MICHI_CREW_MEMORY_MODE = previous; }
-    await c.initialize(); return c;
-}
-async function session(mcp = []) {
-    const c = await client(); const info = await c.newSession(mcp);
-    slots.push(info.sessionId);
-    await c.setMode(info.sessionId, `template:${process.env.MICHI_CREW_LIVE_AGENT || 'kirocrew'}`);
-    return { c, sid: info.sessionId };
-}
+const client = () => live.client('temporary');
+const session = (mcp = []) => live.session('temporary', mcp);
 async function turn({c, sid}, message, decision = 'allow_once') {
-    const controller = new AbortController(), events = [];
-    let timedOut = false, approvals = 0;
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); void c.cancel(sid); }, 150000);
-    try {
-        for await (const event of c.prompt(sid, message, [], controller.signal)) {
-            events.push(event);
-            if (event.sessionUpdate === 'permission_request') {
-                approvals++;
-                record('observed official approval request', { decision, title: event.toolCall?.title });
-                if (decision === 'cancel') { controller.abort(); await c.cancel(sid); }
-                else c.respondToPermissionKind(event.requestId, decision);
-            }
-        }
-        assert.equal(timedOut, false, 'Live check exceeded 150 seconds');
-        if (decision !== 'cancel') assert.equal(events.at(-1)?.stopReason, 'end_turn');
-        return { events, approvals, text: events.filter(e=>e.sessionUpdate==='agent_message_chunk').map(e=>e.content?.text||'').join('') };
-    } finally { clearTimeout(timer); }
+    let approvals = 0;
+    const events = await live.turn(c, sid, message, {
+        timeoutMs: 150000,
+        expectEndTurn: decision !== 'cancel',
+        onEvent: async (event, controller) => {
+            if (event.sessionUpdate !== 'permission_request') return;
+            approvals++;
+            record('observed official approval request', { decision, title: event.toolCall?.title });
+            if (decision === 'cancel') { controller.abort(); await c.cancel(sid); }
+            else c.respondToPermissionKind(event.requestId, decision);
+        },
+    });
+    return { events, approvals, text: textOf(events) };
 }
 async function approvals() {
     assert.equal(await gateway.approvalsAvailable(), true);
@@ -175,12 +145,9 @@ module.exports = {...module.exports, createCrewMcpHandlers: (directory) => {
         report.ok=true;
     } catch(error) { report.ok=false; report.error=String(error); console.error(report.error); process.exitCode=1; }
     finally {
-        for(const c of clients) await c.shutdown().catch(()=>{});
-        for(const sid of slots) try { await gateway.stop(sid); await gateway.deleteSlot(sid); } catch(error) {record('cleanup failed',{sid,error:String(error)});report.ok=false;process.exitCode=1;}
-        gateway.close();
+        if (!(await live.cleanup())) report.ok = false;
         if(http){http.closeAllConnections();await new Promise(resolve=>http.close(resolve));}
-        fs.rmSync(cwd,{recursive:true,force:true});
-        report.finishedAt=new Date().toISOString(); record('cleanup',{slots:slots.length});
-        fs.writeFileSync(resultPath,JSON.stringify(report,null,2)+'\n'); console.log('Result: '+resultPath);
+        record('cleanup',{slots:slots.length});
+        live.writeReport();
     }
 })();

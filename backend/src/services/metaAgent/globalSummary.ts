@@ -91,7 +91,7 @@ export function homeSummaryPrompt(input: {
     '   If the current blocks already say all of this, call maintenance_no_change for the Spaces Home with the reason instead.',
     'Layout rules for the Spaces Home (follow them):',
     layoutRuleLines(input.spacesHomePageId, input.ownerUserId),
-    'Layout preferences for this page only (follow these alongside the rules; Michi-applied section limits remain authoritative):',
+    'Layout preferences for this page only. They come before the block list in step 3: when they ask for other blocks, another order or another length, follow them. Only Michi-applied section limits override them:',
     getLayoutPreferences(input.spacesHomePageId, input.ownerUserId).text || '(none)',
     '',
     '4. End your final reply with one ```json block for the Michi Home greeting and cards:',

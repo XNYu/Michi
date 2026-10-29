@@ -90,6 +90,8 @@ The composer can select other Crew templates, but those templates may lack Michi
 
 The **michi-crew** template contains the fixed Michi instructions. Messages carry dynamic context and a short output-format reminder. For short tasks, Medium / High reasoning may be more responsive than Extra high / Max; model latency, Memory retrieval, and queued work also affect response time.
 
+In the Crew sidebar, new Michi chats are filed under **Michi Crew / <workspace name>**. The App creates both folders; you can drag **Michi Crew** into one of your own folders. Folders match workspace names, so after a rename new chats go to a new folder while older chats stay put. Forks stay in their parent's folder. Chats whose project directory is in the system temporary directory, such as live tests, stay at the top level. The App cannot delete folders; remove unwanted ones in Crew.
+
 ## 5. Choose a Memory mode
 
 When the runtime selected in **Settings → Model** is **Kiro Crew**, a **Memory** selector appears above **FOLLOW-UPS**. It sets the default for **new Crew chats**.
@@ -192,7 +194,7 @@ If the registered source points into a code checkout, do not overwrite it with g
 
 ## Current limits and verification scope
 
-Text/thinking, native tool results, model/reasoning/template selection, resume, historical forks, Crew Memory, Michi MCP and approvals in Michi are implemented. Official App callers cannot use **same-turn steer**; busy messages queue for the next turn. Crew compacts automatically, but Michi has no manual Crew compact command or dedicated Crew subagent manager. The adapter does not support image/audio attachments. Private Member Memory inheritance remains unverified.
+Text/thinking, native tool results, model/reasoning/template selection, resume, historical forks, Crew Memory, Michi MCP and approvals in Michi are implemented. Official App callers cannot use **same-turn steer**; busy messages queue for the next turn. Crew compacts automatically, and `/compact` in an idle Michi chat runs Crew's own compaction. Michi shows the subagents Crew starts, but each spawn must be approved on a Crew dashboard tab (Michi cannot answer it, and with no tab open Crew refuses the spawn); there is no Michi control of running subagents. Usage shows Crew's per-turn credits and context %. The adapter does not support image/audio attachments. Private Member Memory inheritance remains unverified.
 
 On October 13, 2026, the production manifest passed official **0.9.0-insider.6** parser/install/Sync checks in an isolated home. The actual installed App was updated through Crew's **Sync** UI. Real model calls verified concurrent MCP isolation, adapter restart/resume, independent fork bindings and refusal for unbound sessions. Default-path startup with spaces and an empty Node PATH, plus same-connection handler updates and rebuild recovery, passed real stdio transport tests. The official broker also loaded a new relay generation during the same real model turn while retaining its host process, then recovered the original generation. Native approval allow/reject/cancel and a clean successor turn passed against an isolated official Gateway. In the actual Michi browser UI, Allow Once wrote the expected test file and Deny prevented a separate file from being created. An isolated old App version displayed Sync Crew App, and returning to 0.6.0 restored Ask. Trust button semantics have automated coverage; these two Trust choices were not manually exercised against a real model in this acceptance run.
 

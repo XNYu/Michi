@@ -1,0 +1,37 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { setupArtifactRoutes } from '../src/routes/artifacts';
+
+test('owner previews absolute image/text paths; cloud retains realpath containment', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'file-preview-'));
+  const root = path.join(dir, 'workspace');
+  fs.mkdirSync(root);
+  fs.writeFileSync(path.join(dir, 'shot.png'), Buffer.from([137, 80, 78, 71]));
+  fs.writeFileSync(path.join(root, 'a.txt'), 'hello');
+  fs.symlinkSync(path.join(dir, 'shot.png'), path.join(root, 'escape.png'));
+  const original = process.env.MICHI_CLOUD;
+  delete process.env.MICHI_CLOUD;
+  t.after(() => { if (original === undefined) delete process.env.MICHI_CLOUD; else process.env.MICHI_CLOUD = original; fs.rmSync(dir, { recursive: true, force: true }); });
+  const app = express();
+  app.use(setupArtifactRoutes({ resolveRoot: (_req, id) => { if (id !== 'owned') throw new Error('missing'); return root; } }));
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const read = (file: string, preview = true) => fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/artifacts/owned/read?path=${encodeURIComponent(file)}${preview ? '&preview=1' : ''}`);
+  const image = await read(path.join(dir, 'shot.png'));
+  assert.equal(image.status, 200);
+  assert.equal((await image.json() as { imageMime: string }).imageMime, 'image/png');
+  assert.equal(image.headers.get('cache-control'), 'private, no-store');
+  assert.equal((await read(path.join(dir, 'shot.png'), false)).status, 404);
+  assert.equal((await read(dir)).status, 404);
+  process.env.MICHI_CLOUD = '1';
+  assert.equal((await read(path.join(dir, 'shot.png'))).status, 404);
+  assert.equal((await read('escape.png')).status, 404);
+  assert.equal((await (await read(path.join(root, 'a.txt'))).json() as { content: string }).content, 'hello');
+});

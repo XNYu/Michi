@@ -59,6 +59,7 @@ export function Switch({ on, onChange, disabled, ...rest }: SwitchProps) {
     <button
       type="button"
       role="switch"
+      className="ui-switch"
       aria-checked={on}
       aria-label={ariaLabel}
       disabled={disabled}

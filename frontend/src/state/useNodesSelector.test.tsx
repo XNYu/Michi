@@ -8,7 +8,6 @@ vi.mock('../services/api', () => ({
   ensureSession: vi.fn().mockResolvedValue({ chatId: 'c1', currentModeId: null, resumeStrategy: 'fresh' }),
   deleteWorkspace: vi.fn().mockResolvedValue({ ok: true }),
   listAgentModes: vi.fn().mockResolvedValue({ availableModes: [], defaultModeId: null }),
-  listModels: vi.fn().mockResolvedValue({ models: [], default: null }),
   fetchPrefs: () => Promise.resolve(null),
   savePrefs: () => Promise.resolve(),
   setChatMode: vi.fn().mockResolvedValue({ ok: true }),

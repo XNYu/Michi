@@ -152,6 +152,18 @@ export interface AcpCancelOptions {
     spareOvertakenWake?: boolean;
 }
 
+/** What AcpClient.cancelAndSettle observed. */
+export interface AcpCancelSettlement {
+    /** As AcpClient.cancel: the client owned the session and handled the cancel. */
+    dispatched: boolean;
+    /**
+     * The stopReason the session/prompt that was out at the cancel settled
+     * with, within the deadline. Absent: no prompt was out, it failed (the
+     * cancel watchdog among other causes), or the deadline passed.
+     */
+    stopReason?: string;
+}
+
 /**
  * Per-runtime ACP personality. The shared client owns NDJSON JSON-RPC
  * transport; the profile owns spawn/auth/protocol and vendor extensions.

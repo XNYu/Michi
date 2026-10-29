@@ -16,6 +16,25 @@ beforeEach(() => {
   resetAssistantStoreForTests({ status: 'ready', info: info() });
 });
 describe('Assistant history', () => {
+  it('only shows and loads history while the assistant is open, refreshing on reopen', async () => {
+    const open = vi.fn();
+    const view = render(<AssistantHistory onOpenAssistant={open} />);
+    expect(screen.queryByRole('navigation', { name: 'Assistant conversations' })).toBeNull();
+    expect(api.list).not.toHaveBeenCalled();
+
+    view.rerender(<AssistantHistory onOpenAssistant={open} visible />);
+    await screen.findByRole('button', { name: /Previous question 0/ });
+    expect(api.list).toHaveBeenCalledOnce();
+
+    view.rerender(<AssistantHistory onOpenAssistant={open} />);
+    expect(screen.queryByRole('navigation', { name: 'Assistant conversations' })).toBeNull();
+    expect(api.list).toHaveBeenCalledOnce();
+
+    api.list.mockResolvedValue({ items: [row(6)], nextCursor: null });
+    view.rerender(<AssistantHistory onOpenAssistant={open} visible />);
+    await screen.findByRole('button', { name: /Previous question 6/ });
+    expect(api.list).toHaveBeenCalledTimes(2);
+  });
   it('shows five titles then loads more and resumes the selected transcript', async () => {
     const open = vi.fn();
     render(<AssistantHistory onOpenAssistant={open} visible />);
@@ -69,7 +88,7 @@ describe('Assistant history', () => {
   });
   it('keeps the active conversation on failure and blocks switching during an answer', async () => {
     const open = vi.fn();
-    const view = render(<AssistantHistory onOpenAssistant={open} />);
+    const view = render(<AssistantHistory onOpenAssistant={open} visible />);
     await screen.findByRole('button', { name: /Previous question 0/ });
     api.activate.mockRejectedValue(new Error('Still answering'));
     fireEvent.click(screen.getByRole('button', { name: /Previous question 0/ }));
@@ -77,7 +96,7 @@ describe('Assistant history', () => {
     expect(open).not.toHaveBeenCalled();
     expect(getAssistantSnapshot().info?.nodeId).toBe('current');
     api.status = 'streaming';
-    await act(async () => { view.rerender(<AssistantHistory onOpenAssistant={open} />); });
+    await act(async () => { view.rerender(<AssistantHistory onOpenAssistant={open} visible />); });
     expect((screen.getByRole('button', { name: /Previous question 0/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

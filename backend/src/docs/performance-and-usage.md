@@ -42,7 +42,7 @@ Custom templates must preserve Michi's tool configuration and output conventions
 
 Reference relevant Artifacts and ask for original passages when details matter. An Artifact manifest or chat summary is not a full read. Use a fresh branch when exploring a separate direction, but remember that inherited context can still be large.
 
-Manual compaction is connected for appropriate Kiro CLI/Codex sessions. Crew manages automatic compaction and has no Michi manual compact command. Pi and Claude do not expose that command through the current integration. Compaction is a summary mechanism, not a backup or guaranteed exact retention of every detail.
+Manual compaction is connected for appropriate Kiro CLI/Codex sessions and for Claude chats, where `/compact` runs between turns and reports the context size before and after. Crew manages automatic compaction and has no Michi manual compact command. Pi does not expose that command through the current integration. Compaction is a summary mechanism, not a backup or guaranteed exact retention of every detail.
 
 Before a long handoff, save the current goal, verified state, files, decisions and unresolved questions as an Artifact. Keep sources so the next agent can refresh facts.
 

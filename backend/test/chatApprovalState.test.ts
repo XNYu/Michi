@@ -15,8 +15,7 @@ function setup() {
     const revisions: Record<string, string> = {};
     configureRuntimeDeps({
         dataDir: '/tmp/michi-approval-state-tests',
-        historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null,
-            hasGrant: () => false, grantPermission: () => { throw new Error('No workspace grants'); } },
+        historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null },
         agentConfig: { getAgentConfig: () => ({ runtime: 'pi', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined },
         chatPermissions: {
             getMode: () => 'ask', hasGrant: (id, name) => grants.has(`${id}:${name}`),

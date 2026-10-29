@@ -95,6 +95,30 @@ describe('ChatHub.startTurn', () => {
     assert.deepEqual(inputs.map((input) => input?.humanOrigin), [true, undefined]);
   });
 
+  it('opts renderer feeds into owner-scoped foreground delivery and cursor replay', async () => {
+    const hub = hubWithPersistence();
+    const received: ChatStreamEvent[] = [];
+    const otherOwner: ChatStreamEvent[] = [];
+    const detach = hub.subscribeBackground({ includeForeground: true, ownerUserId: 'owner',
+      send: (_chatId, event, selfInitiated) => { assert.equal(selfInitiated, false); received.push(event); }, close() {} });
+    const detachOther = hub.subscribeBackground({ includeForeground: true, ownerUserId: 'other',
+      send: (_chatId, event) => otherOwner.push(event), close() {} });
+    const { done, turnId } = await hub.startTurn({ chatId: 'phone', nodeId: 'phone', ownerUserId: 'owner',
+      text: 'from phone', userMetadata: { quotedText: 'quote' },
+      session: sessionFrom([{ kind: 'chunk', text: 'answer' }, { kind: 'turn_end', stopReason: 'end_turn' }]) });
+    await done;
+    assert.deepEqual(received.map(event => event.event), ['turn_start', 'chunk', 'done']);
+    assert.deepEqual((received[0].data as any).userMetadata, { quotedText: 'quote' });
+    assert.equal(otherOwner.length, 0);
+    detach(); detachOther();
+    const replay: ChatStreamEvent[] = [];
+    hub.subscribeBackground({ includeForeground: true, ownerUserId: 'owner', send: (_id, event) => replay.push(event), close() {} },
+      { cursors: { phone: { turnId, seq: 1 } } })();
+    assert.deepEqual(replay.map(event => event.event), ['done']);
+    hub.subscribeBackground({ includeForeground: true, ownerUserId: 'other', send: (_id, event) => otherOwner.push(event), close() {} })();
+    assert.equal(otherOwner.length, 0);
+  });
+
   it('routes foreground turns only to direct subscribers and self turns only to background subscribers', async () => {
     const hub = hubWithPersistence();
     const direct: ChatStreamEvent[] = [];

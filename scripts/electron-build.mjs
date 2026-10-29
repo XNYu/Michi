@@ -1,10 +1,6 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { npm, run } from "./lib/proc.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const extra = process.argv.slice(2);
 
 function defaultBuilderArgs() {
@@ -13,24 +9,11 @@ function defaultBuilderArgs() {
   return ["--linux", "--x64"];
 }
 
-function run(command, args, env = process.env) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: root,
-      env,
-      stdio: "inherit",
-      shell: process.platform === "win32",
-      windowsHide: true,
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${command} ${args.join(" ")} exited ${code}`));
-    });
-  });
-}
-
-await run(npm, ["run", "frontend:build"], { ...process.env, VITE_API_URL: "/api" });
+// frontend/.env.production already sets VITE_API_URL=/api, but Vite lets the
+// process environment override .env files. Setting it here keeps a
+// VITE_API_URL left in the developer's shell out of the packaged app, which
+// must call its own backend at the same-origin /api. Keep both.
+await run(npm, ["run", "frontend:build"], { env: { ...process.env, VITE_API_URL: "/api" } });
 await run(npm, ["run", "backend:build"]);
 await run(npm, ["run", "electron:build-main"]);
 await run(npm, ["run", "electron:rebuild-native"]);

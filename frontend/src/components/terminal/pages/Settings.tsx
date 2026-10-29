@@ -11,13 +11,12 @@ import { ShortcutsPane } from './settings/ShortcutsPane';
 import { AccountPane } from './settings/AccountPane';
 import { ConnectionsPane } from './settings/ConnectionsPane';
 import { BackgroundPane } from './settings/BackgroundPane';
-import { MichiAssistantSettings } from './settings/assistant/MichiAssistantSettings';
 import './Settings.css';
 import { setManageWorkspaceId } from '../../../state/manageRoute';
 
 // No Custom Agents section: that feature is switched on by the backend's
 // environment (MICHI_CUSTOM_AGENTS=1), never from the app.
-export type SettingsSection = 'browser' | 'model' | 'assistant' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'background' | 'account';
+export type SettingsSection = 'browser' | 'model' | 'connections' | 'appearance' | 'shortcuts' | 'notifications' | 'background' | 'account';
 
 export default function TerminalSettings({
   onNav,
@@ -69,7 +68,6 @@ export default function TerminalSettings({
   const sections: Array<[SettingsSection, string]> = [
     ['appearance', 'Appearance'],
     ['model', 'Model'],
-    ['assistant', 'Assistant'],
     ['connections', 'Connections'],
     ['browser', 'Browser'],
     ['notifications', 'Notifications'],
@@ -78,7 +76,7 @@ export default function TerminalSettings({
     ...(signedIn ? ([['account', 'Account']] as Array<[SettingsSection, string]>) : []),
   ];
   const sectionLabel = sections.find(([key]) => key === section)?.[1];
-  const waitingForWorkspace = !workspaceReady && ['model', 'assistant', 'connections'].includes(section);
+  const waitingForWorkspace = !workspaceReady && ['model', 'connections'].includes(section);
 
   const openTrashPage = () => {
     onClose?.();
@@ -125,11 +123,9 @@ export default function TerminalSettings({
 
         <section className="terminal-settings-content term-scrollbar" id={contentId} aria-label={sectionLabel} key={section}>
           {waitingForWorkspace ? <div role="status">Loading workspaces…</div> : <>
-          {section === 'account' && <h2 className="terminal-settings-heading">Account</h2>}
           {section === 'appearance' && <AppearancePane />}
           {section === 'browser' && <BrowserSettingsPane />}
           {section === 'model' && <ModelPane activeProjectId={activeProject?.id ?? null} />}
-          {section === 'assistant' && <MichiAssistantSettings />}
           {section === 'connections' && <ConnectionsPane projects={projects} onOpenWorkspace={onNav ? id => {
             setManageWorkspaceId(id); onClose?.(); onNav('workspace-manage');
           } : undefined} />}

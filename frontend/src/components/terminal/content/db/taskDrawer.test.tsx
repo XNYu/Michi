@@ -4,8 +4,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { MichiDatabase, MichiDbEditOp, MichiDbRow, ThreadCardItem } from 'michi-shared';
 import { TASK_VIEW } from 'michi-shared';
 import { DatabaseView } from './DatabaseView';
-import { applyOpsLocally } from './dbRead';
-import { taskDatabase } from './dbTestData';
+import { applyOpsLocally, taskDatabase } from './dbTestData';
 import { LiveThreadsContext, type ConversationChoice, type LiveThreads } from './liveThreads';
 
 const NOW = new Date(2026, 9, 26, 15, 0).getTime();

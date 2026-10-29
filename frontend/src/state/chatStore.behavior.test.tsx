@@ -19,12 +19,10 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 
 vi.mock('../services/api', () => ({
   __esModule: true,
-  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   allocateNodeIdsLocal: (() => { let i = 0; return (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   // Non-spied: plain arrow that returns what the provider expects.
   listAgentModes: () => Promise.resolve({ availableModes: [], defaultModeId: null }),
   fetchAgentStatus: () => Promise.resolve(null),
-  listModels: () => Promise.resolve({ models: [], defaultModel: null }),
   fetchPrefs: () => Promise.resolve(null),
   savePrefs: () => Promise.resolve(),
   deleteWorkspace: () => Promise.resolve({ ok: true }),
@@ -515,12 +513,12 @@ describe('auto-branch behavior (real provider)', () => {
     expect(result.current.nodes[nodeId].status).toBe('idle');
   });
 
-  function hydratedCancellationNode(status: 'idle' | 'streaming') {
+  function hydratedCancellationNode(status: 'idle' | 'streaming', bound = true) {
     vi.mocked(api.fetchAllWorkspacesMeta).mockResolvedValue([{
       workspace: { id: 'cancel-ws', name: 'Cancellation', created_at: 1, active_tree_id: 'cancel-tree' },
       trees: [{ id: 'cancel-tree', root_node_id: 'cancel-node', created_at: 1, last_active_at: 1 }],
       nodes: [{
-        id: 'cancel-node', status, acp_session_id: 'native-session', runtime_id: 'claude',
+        id: 'cancel-node', status, acp_session_id: bound ? 'native-session' : null, runtime_id: 'claude',
         last_applied_turn_id: 'old-foreground', last_applied_seq: 1,
       }],
       messages: [
@@ -530,6 +528,23 @@ describe('auto-branch behavior (real provider)', () => {
     }]);
     return renderHook(() => ({ store: useChatStore(), node: useChatNode('cancel-node'), nodes: useChatNodesSnapshot() }), { wrapper });
   }
+
+  it.each([true, false])('renders another device’s user turn once (already bound: %s)', async (bound) => {
+    const { result } = hydratedCancellationNode('idle', bound);
+    await waitFor(() => expect(result.current.node?.messages.length).toBe(2));
+    const handlers = backgroundForCancellationNode();
+    const envelope = { chatId: 'cancel-node', nodeId: 'cancel-node', turnId: 'phone-turn', assistantId: 'phone-a' };
+    const start = { event: 'turn_start' as const, data: { ...envelope, seq: 0, userText: 'sent on phone', userMetadata: { quotedText: 'a quote' } } };
+    const chunk = { event: 'chunk' as const, data: { ...envelope, seq: 1, text: 'phone answer' } };
+    act(() => { dispatchChatStreamEvent(start, handlers); dispatchChatStreamEvent(chunk, handlers); dispatchChatStreamEvent(chunk, handlers); });
+    expect(result.current.node?.status).toBe('streaming');
+    expect(result.current.node?.messages.filter(message => message.text === 'sent on phone')).toHaveLength(1);
+    expect(result.current.node?.messages.find(message => message.text === 'sent on phone')?.quotedText).toBe('a quote');
+    expect(result.current.node?.messages.find(message => message.id === 'phone-a')?.blocks?.filter(block => block.kind === 'answer').map(block => block.rawText).join('')).toBe('phone answer');
+    act(() => { dispatchChatStreamEvent({ event: 'done', data: { ...envelope, seq: 2, stopReason: 'end_turn', persisted: true } }, handlers); });
+    expect(result.current.node?.status).toBe('idle');
+    expect(mockStreamMessage).not.toHaveBeenCalled();
+  });
 
   function backgroundForCancellationNode() {
     const handlersForChat = vi.mocked(api.subscribeBackground).mock.calls.at(-1)![0];

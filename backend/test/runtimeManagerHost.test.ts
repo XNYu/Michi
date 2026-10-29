@@ -108,7 +108,6 @@ test('after configureRuntimeManager, session state still persists through runtim
   configureRuntimeDeps({
     historyStore: {
       getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null,
-      hasGrant: () => false, grantPermission: () => {},
     },
     agentConfig: {
       getAgentConfig: () => ({ runtime: 'kiro', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }),

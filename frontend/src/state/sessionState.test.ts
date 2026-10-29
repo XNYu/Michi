@@ -33,3 +33,14 @@ it('an older turn replay cannot roll back newer session settings', () => {
     modelId: 'latest', sessionState: { runtimeId: 'kiro', version: 20, modelId: 'latest' } } };
   expect(reduceNodes(nodes, { type: 'session-state', nodeId: 'n', state: { runtimeId: 'kiro', version: 19, modelId: 'old' } })).toBe(nodes);
 });
+
+it('a Claude chat follows the turn stream from Plan back to Default after an approved plan', () => {
+  const modes = [{ id: 'default', name: 'Default' }, { id: 'plan', name: 'Plan' }];
+  let nodes: Record<string, ChatNodeState> = { n: { nodeId: 'n', kind: 'chat', chatId: 'n', projectId: 'p', runtimeId: 'claude', messages: [], followUps: [], status: 'streaming',
+    currentModeId: 'plan', sessionState: { runtimeId: 'claude', version: 10, currentModeId: 'plan', availableModes: modes } } };
+  const event = parseChatStreamEvent('session_state', JSON.stringify({ runtimeId: 'claude', nativeEngine: 'agent-sdk', version: 11, currentModeId: 'default', availableModes: modes }));
+  expect(event).not.toBeNull();
+  nodes = reduceNodes(nodes, { type: 'session-state', nodeId: 'n', state: event!.data as never });
+  expect(nodes.n.currentModeId).toBe('default');
+  expect(nodes.n.sessionState?.availableModes).toEqual(modes);
+});

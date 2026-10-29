@@ -76,26 +76,17 @@ function ExportPanelManager() {
   const nodesSnapshot = useChatNodesSnapshot();
   const [exportState, setExportState] = useState<ExportPanelState>({ kind: 'idle' });
   const [open, setOpen] = useState(false);
-  const abortRef = React.useRef<AbortController | null>(null);
   const activeProjectRef = React.useRef(activeProject);
   const projectsRef = React.useRef(projects);
   const nodesRef = React.useRef(nodesSnapshot);
   const selectionRef = React.useRef(selection);
-  const exportStateRef = React.useRef(exportState);
 
   activeProjectRef.current = activeProject;
   projectsRef.current = projects;
   nodesRef.current = nodesSnapshot;
   selectionRef.current = selection;
-  exportStateRef.current = exportState;
 
   const close = React.useCallback(() => setOpen(false), []);
-  const abort = React.useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setExportState({ kind: 'idle' });
-    setOpen(false);
-  }, []);
 
   const save = React.useCallback(() => {
     if (exportState.kind !== 'done') return;
@@ -158,8 +149,6 @@ function ExportPanelManager() {
           ? Array.from(selectionRef.current)
           : undefined);
 
-      abortRef.current?.abort();
-      abortRef.current = null;
       const exportTitle = exportTitleForThread(project, nodesRef.current, detail?.treeId);
 
       try {
@@ -193,7 +182,6 @@ function ExportPanelManager() {
         open={open}
         state={exportState}
         onClose={close}
-        onAbort={abort}
         onSave={save}
       />
     </React.Suspense>

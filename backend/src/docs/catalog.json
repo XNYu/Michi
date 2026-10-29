@@ -45,7 +45,7 @@
     "id": "pages-and-components",
     "title": "Pages, databases and native components",
     "summary": "Pages navigation, Assistant, native blocks/databases, tasks and task boards, responsive grid, per-item Sources, layout preferences, write receipts and the component sandbox contract.",
-    "keywords": "pages page spaces database component custom view sandbox props data call onMichiComponentUpdate list_pages read_page edit_page create_page read_database edit_database list_page_components read_page_component save_page_component configure_database_view open_task_database list_tasks task tasks task-view board needsYou 页面 数据库 组件 沙箱 视图 任务 任务库 看板 待办 grid segmentSources sources layout preferences assistant full screen ignore archive responsive 布局 偏好 来源 网格 全屏 all-tasks upkeep suggestion 全部任务",
+    "keywords": "pages page spaces database component custom view sandbox props data call onMichiComponentUpdate list_pages read_page edit_page create_page create_database configure_database read_database edit_database list_page_components read_page_component save_page_component configure_database_view open_task_database list_tasks task tasks task-view board needsYou 页面 数据库 组件 沙箱 视图 任务 任务库 看板 待办 grid segmentSources sources layout preferences assistant full screen ignore archive responsive 布局 偏好 来源 网格 全屏 all-tasks upkeep suggestion 全部任务",
     "source": "docs/pages-and-components.md"
   },
   {
@@ -54,6 +54,13 @@
     "summary": "Local Meta agent configuration, initial Home generation, conversation maintenance, catch-up, evidence, protected proposals and durable progress.",
     "keywords": "pages maintenance meta agent automatic updates first run home conversation completion cursor catch-up reconsider paused runtime kiro claude pi codex crew 后台 自动更新 页面维护 初次生成 补读 追赶 maintenance_list_tasks task database tasks 任务库",
     "source": "docs/pages-maintenance.md"
+  },
+  {
+    "id": "page-interactions",
+    "title": "Optional interactions in Michi Pages",
+    "summary": "Optional named views, text links, metric actions and block entries opening arbitrary native content inline, in drawers or dialogs.",
+    "keywords": "interactions generic view open-view view-link drill-down links details comparison visualization 页面交互 通用视图 链接 明细 侧栏 弹窗 按需能力",
+    "source": "docs/page-interactions.md"
   },
   {
     "id": "page-component-design",
@@ -66,7 +73,7 @@
     "id": "permissions",
     "title": "Permissions and tool approvals",
     "summary": "Global/per-chat modes, approval cards, grant lifetimes, revocation and sandbox boundaries.",
-    "keywords": "approval permission deny allow once trust sandbox yolo revoke 审批 权限 信任 授权 撤销 全局 单次 审批没出现",
+    "keywords": "approval permission deny allow once trust sandbox yolo revoke approve-for-me classifier 审批 权限 信任 授权 撤销 全局 单次 审批没出现 自动批准 分类器",
     "source": "docs/permissions.md"
   },
   {

@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kiroEnv, kiroArgs, resolveKiroEngine, normalizeSessionInfo, rewindPoints, v3InfoUpdates } from 'michi-runtime/internal/adapters/kiro/kiroProtocol';
+import { KIRO_APPROVE_FOR_ME_PRESET, kiroEnv, kiroArgs, kiroSessionMeta, resolveKiroEngine, normalizeSessionInfo, rewindPoints, v3InfoUpdates } from 'michi-runtime/internal/adapters/kiro/kiroProtocol';
 import { chooseResumeStrategy } from '../src/services/resumeStrategy';
 
-test('Kiro launch pins v2 by default and never sends v2-only flags to v3', () => {
-    assert.equal(resolveKiroEngine(''), 'v2');
+test('Kiro launch pins v3 by default and never sends v2-only flags to v3', () => {
+    assert.equal(resolveKiroEngine(''), 'v3');
+    assert.equal(resolveKiroEngine(undefined), 'v3');
+    assert.equal(resolveKiroEngine('v2'), 'v2');
     assert.throws(() => resolveKiroEngine('v4'), /must be/);
     assert.deepEqual(kiroArgs('v2', 'model'), ['acp', '--agent-engine', 'v2', '--model', 'model']);
     assert.deepEqual(kiroArgs('v3', 'model'), ['acp', '--agent-engine', 'v3', '--auth-method', 'cli']);
@@ -47,11 +49,25 @@ test('legacy Kiro bindings are v2, and an engine change never claims native resu
 });
 
 for (const engine of ['v2', 'v3'] as const) {
-    test(`${engine} copies the host environment without adding CLI settings`, () => {
+    const classifier = engine === 'v3' ? { KIRO_TRUST_CLASSIFIER_MODE: 'enforce' } : {};
+    test(`${engine} preserves caller settings and applies its classifier default`, () => {
         const env = { KEEP: 'value' };
-        assert.deepEqual(kiroEnv(engine, env), env);
+        assert.deepEqual(kiroEnv(engine, env), { ...env, ...classifier });
         assert.notEqual(kiroEnv(engine, env), env);
-        assert.deepEqual(kiroEnv(engine, env, false), env);
-        assert.deepEqual(kiroEnv(engine, {}), {});
+        assert.deepEqual(kiroEnv(engine, env, false), { ...env, ...classifier });
+        assert.deepEqual(kiroEnv(engine, {}), classifier);
     });
 }
+
+test('v3 keeps a trust classifier mode the user set; v2 never gets one', () => {
+    assert.equal(kiroEnv('v3', { KIRO_TRUST_CLASSIFIER_MODE: 'monitor' }).KIRO_TRUST_CLASSIFIER_MODE, 'monitor');
+    assert.equal(kiroEnv('v3', { KIRO_TRUST_CLASSIFIER_MODE: ' ' }).KIRO_TRUST_CLASSIFIER_MODE, 'enforce');
+    assert.equal(kiroEnv('v2', {}).KIRO_TRUST_CLASSIFIER_MODE, undefined);
+});
+
+test('v3 session meta seeds policy presets; v2 sends none', () => {
+    assert.deepEqual(kiroSessionMeta('v3', { policyPresets: [KIRO_APPROVE_FOR_ME_PRESET] }),
+        { _meta: { kiro: { policyPreset: ['approve-for-me'] } } });
+    assert.deepEqual(kiroSessionMeta('v3', { policyPresets: [] }), { _meta: { kiro: {} } });
+    assert.deepEqual(kiroSessionMeta('v2', { policyPresets: [KIRO_APPROVE_FOR_ME_PRESET] }), {});
+});

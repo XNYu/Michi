@@ -97,3 +97,102 @@ test('public updater uses the shared invoke channels and update-state event', as
   unsubscribe();
   assert.equal(handlers.has('app:update-state'), false);
 });
+
+// ── Sandbox contract ──────────────────────────────────────────────────────
+// The windows run with sandbox: true, so the shipped preload may require only
+// 'electron' and must not touch Node-only globals. These checks read the real
+// tsc output; run `npm run electron:build-main` first.
+const NODE_ONLY_GLOBALS = new Set(['Buffer', 'setImmediate', 'clearImmediate', 'process', '__dirname', '__filename', 'global', 'module']);
+
+function isPropertyName(node) {
+  const parent = node.parent;
+  if (!parent) return false;
+  if (ts.isPropertyAccessExpression(parent) && parent.name === node) return true;
+  return (ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent) || ts.isPropertyDeclaration(parent)) && parent.name === node;
+}
+
+function sandboxViolations(code) {
+  const file = ts.createSourceFile('preload.js', code, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
+  const violations = [];
+  const visit = (node) => {
+    if (ts.isIdentifier(node) && !isPropertyName(node)) {
+      if (node.text === 'require') {
+        const call = node.parent;
+        const ok = ts.isCallExpression(call) && call.expression === node && call.arguments.length === 1
+          && ts.isStringLiteral(call.arguments[0]) && call.arguments[0].text === 'electron';
+        if (!ok) violations.push(node.parent.getText(file));
+      } else if (NODE_ONLY_GLOBALS.has(node.text)) {
+        violations.push(node.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return violations;
+}
+
+function webPreferencesOf(sourceText, constructorNames) {
+  const file = ts.createSourceFile('main.ts', sourceText, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  const found = [];
+  const visit = (node) => {
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && constructorNames.includes(node.expression.text)) {
+      const options = node.arguments?.[0];
+      const prefs = options && ts.isObjectLiteralExpression(options)
+        ? options.properties.find((p) => ts.isPropertyAssignment(p) && p.name.getText(file) === 'webPreferences')
+        : undefined;
+      if (prefs && ts.isObjectLiteralExpression(prefs.initializer)) {
+        const values = {};
+        for (const p of prefs.initializer.properties) {
+          if (ts.isPropertyAssignment(p)) values[p.name.getText(file)] = p.initializer.getText(file);
+        }
+        found.push({ constructor: node.expression.text, line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1, values });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+test('sandbox scan detects Node-only globals and non-electron requires', () => {
+  assert.deepEqual(
+    sandboxViolations('const fs = require("fs"); Buffer.from("x"); setImmediate(() => {}); process.platform; obj.process = 1;'),
+    ['require("fs")', 'Buffer', 'setImmediate', 'process'],
+  );
+  assert.deepEqual(sandboxViolations('const electron_1 = require("electron"); window.process; ({ process: 1 });'), []);
+});
+
+test('compiled preload requires only electron and uses no Node-only globals', () => {
+  const builtUrl = new URL('../electron/dist/preload.js', import.meta.url);
+  assert.ok(fs.existsSync(builtUrl), 'electron/dist/preload.js is missing; run `npm run electron:build-main` first');
+  const built = fs.readFileSync(builtUrl, 'utf8');
+  assert.deepEqual(sandboxViolations(built), []);
+  // The tsc CommonJS output loads with only the module/exports/require a
+  // sandboxed preload receives, plus the web globals it reads.
+  let exposed;
+  vm.runInNewContext(built, {
+    require(name) {
+      assert.equal(name, 'electron');
+      return {
+        contextBridge: { exposeInMainWorld(_name, value) { exposed = value; } },
+        ipcRenderer: { invoke() {}, send() {}, on() {}, removeListener() {} },
+        webUtils: { getPathForFile() { return ''; } },
+      };
+    },
+    exports: {}, URLSearchParams, window: { location: { search: '' } },
+    document: { documentElement: { setAttribute() {} } },
+  }, { filename: 'electron/dist/preload.js' });
+  assert.equal(typeof exposed?.getPathForFile, 'function');
+});
+
+test('every window and view that loads web content keeps the renderer sandboxed', () => {
+  const mainSource = fs.readFileSync(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const found = webPreferencesOf(mainSource, ['BrowserWindow', 'WebContentsView']);
+  assert.ok(found.some((entry) => entry.constructor === 'BrowserWindow' && 'preload' in entry.values), 'main window webPreferences not found');
+  for (const entry of found) {
+    const where = `${entry.constructor} at electron/main.ts:${entry.line}`;
+    assert.equal(entry.values.sandbox, 'true', `${where} must set sandbox: true`);
+    assert.equal(entry.values.contextIsolation, 'true', `${where} must set contextIsolation: true`);
+    assert.equal(entry.values.nodeIntegration, 'false', `${where} must set nodeIntegration: false`);
+  }
+});

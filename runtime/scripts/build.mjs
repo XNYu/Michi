@@ -13,19 +13,22 @@
 //    to that copy.
 // 3. Crew's three process entries become self-contained CommonJS bundles in
 //    dist/adapters/crew/, where crewLaunch and crewMcpHost look for them.
+//    The packages each inlines must be at package-lock.json's versions, and
+//    it ends with their license files.
 // 4. Files the adapters read at run time are copied beside their modules.
 // 5. Each public entry gets an .mjs wrapper that re-exports its CommonJS
 //    module, so import and require share one module instance.
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import ts from 'typescript';
-import { ASSETS, CREW_BUNDLES, EXCLUDED_SHARED_MODULES, INTERNAL_MARKERS, PUBLIC_ENTRIES } from './packageLayout.mjs';
+import { ASSETS, CREW_BUNDLES, EXCLUDED_SHARED_MODULES, INTERNAL_MARKERS, LICENSE_NOTICES_HEADER, PUBLIC_ENTRIES } from './packageLayout.mjs';
 
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = resolve(pkgRoot, '..');
 const src = join(pkgRoot, 'src');
 const dist = join(pkgRoot, 'dist');
 const require = createRequire(join(pkgRoot, 'package.json'));
@@ -305,13 +308,98 @@ function assertProcessEntriesNotLoaded() {
  * path of the machine that built them. Fails on a module from outside it.
  */
 function assertInputsInsideRepository(outName, metafile) {
-  const repoRoot = resolve(pkgRoot, '..');
   const outside = Object.keys(metafile.inputs).filter((input) =>
     isAbsolute(input) || relative(repoRoot, resolve(pkgRoot, input)).startsWith('..'));
   if (outside.length > 0) {
     fail(`${outName} would inline modules from outside the repository, and with them paths of this machine:\n`
       + outside.slice(0, 10).join('\n'));
   }
+}
+
+/** The third-party packages a bundle inlines, from its metafile: [directory, package.json] by name, then version. */
+function inlinedPackages(metafile) {
+  const packages = new Map(); // package directory -> its package.json
+  for (const input of Object.keys(metafile.inputs)) {
+    const match = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(slash(input));
+    if (!match) continue;
+    const dir = resolve(pkgRoot, match[1]);
+    if (!packages.has(dir)) packages.set(dir, JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')));
+  }
+  const order = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  return [...packages].sort(([, a], [, b]) => order(a.name, b.name) || order(a.version, b.version));
+}
+
+/**
+ * A bundle inlines what node_modules holds, which can lag behind the commit
+ * being built: a pulled package-lock.json nobody installed yet. Every inlined
+ * package's version must be the one package-lock.json pins at its path, so
+ * the bundles are what this commit's lockfile says they are.
+ */
+function assertInlinedPackagesLocked(outName, packages) {
+  const locked = JSON.parse(readFileSync(join(repoRoot, 'package-lock.json'), 'utf8')).packages ?? {};
+  const drift = [];
+  for (const [dir, manifest] of packages) {
+    const key = slash(relative(repoRoot, dir));
+    const version = locked[key]?.version;
+    if (version !== manifest.version) {
+      drift.push(`${manifest.name}: ${key} holds ${manifest.version}, package-lock.json ${version ? `pins ${version}` : 'has no entry for it'}`);
+    }
+  }
+  if (drift.length > 0) {
+    fail(`${outName} would inline packages that differ from package-lock.json:\n${drift.join('\n')}\n`
+      + 'Run npm ci (or npm install) at the repository root, then build again.');
+  }
+}
+
+const LICENSE_FILE = /^licen[cs]e(?:[.-][\w.-]+)?$/i;
+// Apache-2.0 §4(d): a NOTICE file goes with every copy.
+const NOTICE_FILE = /^notice(?:[.-][\w.-]+)?$/i;
+// JavaScript ends a // comment at CR, LS and PS too; these and the other
+// Unicode line breaks become \n, so no text of a file leaves its comment.
+const LINE_BREAK = /\r\n|[\n\v\f\r\u0085\u2028\u2029]/g;
+
+/** The license a package.json declares, for a notice heading: its SPDX expression without outer parentheses. */
+function declaredLicense(manifest) {
+  const { license, licenses } = manifest;
+  const named = typeof license === 'string' ? license
+    : typeof license?.type === 'string' ? license.type
+      : Array.isArray(licenses) ? licenses.map((entry) => entry?.type ?? entry).filter((entry) => typeof entry === 'string').join(' OR ')
+        : '';
+  let expression = named.trim().replace(/\s+/g, ' ');
+  // `(MIT OR Apache-2.0)` loses its parentheses, `(MIT) AND (ISC)` keeps them.
+  let depth = 0;
+  let closes = -1;
+  for (let i = 0; i < expression.length && closes < 0; i += 1) {
+    depth += (expression[i] === '(') - (expression[i] === ')');
+    if (depth === 0) closes = i;
+  }
+  if (expression.startsWith('(') && closes === expression.length - 1) expression = expression.slice(1, -1).trim();
+  return expression || 'see file';
+}
+
+/**
+ * The packages a bundle inlines ship their copyright and license notices in
+ * files beside their code, not as legal comments esbuild would keep. Appends
+ * to the bundle, in the format LICENSE_NOTICES_HEADER describes, each
+ * package's name@version and its license and NOTICE files, in the order of
+ * `packages`. Fails on a package without a license file.
+ */
+function appendLicenseNotices(outName, packages) {
+  const lines = [LICENSE_NOTICES_HEADER];
+  for (const [dir, manifest] of packages) {
+    const names = readdirSync(dir);
+    const licenses = names.filter((file) => LICENSE_FILE.test(file)).sort();
+    if (licenses.length === 0) {
+      fail(`${outName} inlines ${manifest.name}@${manifest.version}, which has no license file in ${slash(relative(pkgRoot, dir))}`);
+    }
+    const license = declaredLicense(manifest);
+    for (const file of [...licenses, ...names.filter((name) => NOTICE_FILE.test(name)).sort()]) {
+      lines.push('//', `// --- ${manifest.name}@${manifest.version} (${license}): ${file} ---`);
+      const text = readFileSync(join(dir, file), 'utf8').replace(LINE_BREAK, '\n').replace(/\s+$/, '');
+      for (const line of text.split('\n')) lines.push(`// ${line}`.trimEnd());
+    }
+  }
+  appendFileSync(join(dist, 'adapters/crew', outName), `\n${lines.join('\n')}\n`);
 }
 
 async function bundleCrewEntries() {
@@ -321,6 +409,7 @@ async function bundleCrewEntries() {
       pluginBuild.onResolve({ filter: /^michi-shared$/ }, () => ({ path: join(vendorDir, 'index.js') }));
     },
   };
+  const notices = [];
   for (const [entry, outName] of CREW_BUNDLES) {
     const { metafile } = await build({
       entryPoints: [join(src, entry)],
@@ -329,7 +418,8 @@ async function bundleCrewEntries() {
       platform: 'node',
       target: 'node22',
       format: 'cjs',
-      legalComments: 'none',
+      // A legal comment (//!, /*!, @license, @preserve) of an inlined module moves to the end of the bundle.
+      legalComments: 'eof',
       tsconfig: join(pkgRoot, 'tsconfig.build.json'),
       absWorkingDir: pkgRoot,
       preserveSymlinks: true,
@@ -339,7 +429,12 @@ async function bundleCrewEntries() {
       logLevel: 'warning',
     });
     assertInputsInsideRepository(outName, metafile);
+    const packages = inlinedPackages(metafile);
+    assertInlinedPackagesLocked(outName, packages);
+    appendLicenseNotices(outName, packages);
+    notices.push(`${outName} ${packages.length}`);
   }
+  return notices;
 }
 
 function copyAssets() {
@@ -400,7 +495,7 @@ try {
   const shared = vendorShared();
   const rewritten = rewriteSharedImports();
   assertProcessEntriesNotLoaded();
-  await bundleCrewEntries();
+  const notices = await bundleCrewEntries();
   const assets = copyAssets();
   writeEsmWrappers();
   assertSelfContained();
@@ -408,7 +503,7 @@ try {
     `[runtime] dist/ built: ${walk(dist).length} files`,
     `  shared: ${shared.names} names from ${shared.modules.length} modules vendored (${shared.modules.join(', ')}); `
       + `${rewritten} imports rewritten; left out: ${shared.leftOut.join(', ')}`,
-    `  crew bundles: ${CREW_BUNDLES.map(([, out]) => out).join(', ')}`,
+    `  crew bundles: ${CREW_BUNDLES.map(([, out]) => out).join(', ')}; license notices of the packages they inline: ${notices.join(', ')}`,
     `  assets copied: ${assets.copied.join(', ')}; left out: ${assets.leftOut.join(', ')}`,
     `  public entries: ${PUBLIC_ENTRIES.map(([subpath]) => subpath).join(', ')}`,
   ].join('\n'));

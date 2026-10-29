@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+/** Every VITE_* variable the frontend reads. Keep .env.example in step;
+ *  src/config/viteEnv.test.js checks both against the source. */
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
   readonly VITE_MICHI_METRICS?: string;
@@ -10,6 +12,8 @@ interface ImportMetaEnv {
   readonly VITE_MICHI_FRAME_METRICS?: string;
   readonly VITE_MICHI_FRAME_METRICS_WINDOW_MS?: string;
   readonly VITE_STREAMING_MARKDOWN_BLOCKS?: string;
+  readonly VITE_MARKDOWN_REMEND?: string;
+  readonly VITE_MARKDOWN_REINTERPRET_HZ?: string;
   /** When '1' / 'true', mount the design-system Profile page (sidebar
    *  entry, ⌘P shortcut, command-palette command). Default off. */
   readonly VITE_MICHI_PROFILE_PAGE?: string;

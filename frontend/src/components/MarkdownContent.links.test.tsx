@@ -23,16 +23,6 @@ describe('MarkdownContent links', () => {
     expect(received).toEqual(['notes/design.md']);
   });
 
-  it('calls onLinkClick prop instead of custom event when provided', () => {
-    const clicked: string[] = [];
-    const { container } = render(
-      <MarkdownContent text="[file](output.txt)" onLinkClick={(href) => clicked.push(href)} />,
-    );
-    const a = byHref(container, 'output.txt')!;
-    a.click();
-    expect(clicked).toEqual(['output.txt']);
-  });
-
   it('does not prevent default on hash-only links', () => {
     const { container } = render(
       <MarkdownContent text="[section](#heading)" />,
@@ -70,3 +60,13 @@ describe('MarkdownContent links', () => {
     expect(a.getAttribute('target')).toBe('_blank');
   });
 });
+
+  it('opens inline paths and encoded file links, but leaves fenced code alone', () => {
+    const clicked: string[] = [];
+    const { container } = render(<MarkdownContent text={'`/home/me/a b.png` [source](file:///home/me/a%20b.ts:12)\n\n```\n/home/me/no.png\n```'} onLinkClick={href => clicked.push(href)} />);
+    const links = container.querySelectorAll<HTMLAnchorElement>('[data-file-link]');
+    expect(links).toHaveLength(2);
+    links.forEach(link => link.click());
+    expect(clicked).toEqual(['/home/me/a b.png', '/home/me/a b.ts:12']);
+    expect(container.querySelector('pre a')).toBeNull();
+  });

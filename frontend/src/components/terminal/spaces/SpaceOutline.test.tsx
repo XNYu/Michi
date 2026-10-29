@@ -18,6 +18,14 @@ const BLOCKS = [
 ];
 
 describe('Space outline', () => {
+  it('omits content reserved for a named view', () => {
+    expect(pageOutline([
+      block('detail-title', { type: 'heading', text: 'Hidden evidence', visibility: 'detail' }),
+      block('definition', { type: 'view', viewId: 'evidence', title: 'Evidence', blockIds: ['detail-title'] }),
+      block('visible', { type: 'chart', title: 'Progress' }),
+    ])).toEqual([{ id: 'visible', text: 'Progress', depth: 1 }]);
+  });
+
   it('lists the headings, and the titled blocks under them one step in', () => {
     expect(pageOutline(BLOCKS)).toEqual([
       { id: 't', text: 'Threads', depth: 1 },

@@ -1,4 +1,6 @@
 import React from 'react';
+import { Cpu } from 'lucide-react';
+import { usePhoneLayout } from '../../hooks/usePhoneLayout';
 import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentStatus } from '../../services/api';
 import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
 import { ChevronRightIcon } from './icons';
@@ -6,6 +8,8 @@ import { REASONING_LABELS, type PaneMenuAnchor } from './PaneComposerToolbarLeft
 import './ComposerModelPicker.css';
 import { resolveComposerReasoning } from './composerReasoning';
 import { composerModelLabel } from './composerModelLabel';
+
+const EFFORT_INITIALS: Record<string, string> = { minimal: 'Min', low: 'L', medium: 'M', high: 'H', xhigh: 'XH', max: 'Max' };
 
 interface ComposerModelTriggerProps {
   toolbarTier: 0 | 1 | 2;
@@ -32,9 +36,10 @@ export function ComposerModelTrigger({ toolbarTier, agentStatus, resolvedBinding
   const effortLabel = effort.adjustable ? REASONING_LABELS[effort.value ?? ''] ?? effort.value : undefined;
   // A locked binding cannot be switched here, so there is nothing to warn about.
   const hint = locked ? undefined : switchHint;
+  const phone = usePhoneLayout();
 
   return (
-    <button type="button" className="t-toolbar-chip composer-model-trigger" data-compact={toolbarTier > 0 || undefined}
+    <button type="button" className={`t-toolbar-chip composer-model-trigger${phone ? ' is-icon' : ''}`} data-compact={toolbarTier > 0 || undefined}
       aria-label={`${locked ? 'Model' : 'Model settings'}: ${runtimeLabel}, ${modelLabel}${effortLabel ? `, ${effortLabel} effort` : ''}${hint ? `. ${hint}` : ''}`}
       title={[[runtimeLabel, modelLabel, effortLabel].filter(Boolean).join(' · '), hint].filter(Boolean).join('. ')}
       aria-haspopup={locked ? undefined : 'dialog'} aria-expanded={locked ? undefined : modelMenuOpen} disabled={isStreaming || locked}
@@ -49,9 +54,14 @@ export function ComposerModelTrigger({ toolbarTier, agentStatus, resolvedBinding
         event.stopPropagation();
         if (!modelMenuOpen) event.currentTarget.click();
       }}>
-      <span className="t-chip-label">{hasModel ? modelLabel : runtimeLabel}</span>
-      {effortLabel && <span className="composer-model-trigger-effort">{effortLabel}</span>}
-      {!locked && <ChevronRightIcon size={12} className="composer-model-chevron" />}
+      {phone ? <>
+        <Cpu size={16} strokeWidth={1.6} aria-hidden="true" />
+        {effortLabel && <span className="composer-model-trigger-effort" aria-hidden="true">{EFFORT_INITIALS[effort.value ?? ''] ?? effortLabel.charAt(0)}</span>}
+      </> : <>
+        <span className="t-chip-label">{hasModel ? modelLabel : runtimeLabel}</span>
+        {effortLabel && <span className="composer-model-trigger-effort">{effortLabel}</span>}
+        {!locked && <ChevronRightIcon size={12} className="composer-model-chevron" />}
+      </>}
     </button>
   );
 }

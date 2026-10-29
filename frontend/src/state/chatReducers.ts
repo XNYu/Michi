@@ -287,7 +287,8 @@ export function reduceNodes(
   switch (action.type) {
     case 'set-permission-mode': {
       const node = nodes[action.nodeId];
-      return node ? { ...nodes, [action.nodeId]: { ...node, permissionMode: action.mode } } : nodes;
+      return node ? { ...nodes, [action.nodeId]: { ...node, permissionMode: action.mode,
+        permissionApproveForMe: action.mode === 'ask' && action.approveForMe === true ? true : undefined } } : nodes;
     }
     case 'create': {
       return {
@@ -432,7 +433,7 @@ export function reduceNodes(
       // A self-initiated turn normally has no user side. A cross-thread
       // message carries one; map it like a hydrated row so live and reloaded
       // transcripts render the same bubble and source marker.
-      const selfUserMessage = action.selfInitiated && action.userText
+      const userMessage = (!action.selfInitiated || action.userText)
         ? mapMessageRow({
             id: `u-${action.assistantId}`, role: 'user', content: action.userText,
             metadata: action.userMetadata, created_at: now,
@@ -440,7 +441,7 @@ export function reduceNodes(
         : null;
       const newMessages = action.selfInitiated
         ? [
-            ...(selfUserMessage ? [selfUserMessage] : []),
+            ...(userMessage ? [userMessage] : []),
             // Self-initiated turn with no prior assistant message: standalone placeholder
             {
               id: action.assistantId,
@@ -453,13 +454,7 @@ export function reduceNodes(
             },
           ]
         : [
-            {
-              id: `u-${action.assistantId}`,
-              role: 'user' as const,
-              text: action.userText,
-              toolCalls: [] as never[],
-              createdAt: now,
-            },
+            ...(userMessage ? [userMessage] : []),
             {
               id: action.assistantId,
               role: 'assistant' as const,

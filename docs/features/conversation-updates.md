@@ -1,5 +1,9 @@
 # Conversation increments
 
+更新：2026-10-26 · 阶段：已合入
+
+实现已包含在当前源码中；已安装版本：未核对。
+
 Native Pages integration reviewed against `feat/pages-spaces` source on 2026-10-26.
 
 Michi reads newly completed conversation turns directly from `turns` and

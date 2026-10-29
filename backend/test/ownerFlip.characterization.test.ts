@@ -89,8 +89,6 @@ describe('chat permission keys', () => {
         listMessages: () => [],
         getWorkspace: (id: string) => (id === 'ws-1' ? { owner_user_id: 'workspace-owner' } : null),
         getWorkspaceInstructions: () => null,
-        hasGrant: () => false,
-        grantPermission: () => { throw new Error('No workspace grants'); },
       } as never,
       agentConfig: { getAgentConfig: () => ({ runtime: 'pi', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined },
       chatPermissions: {
@@ -193,8 +191,7 @@ describe('Run-scoped tool bindings', () => {
     const seen = captureBindings(t);
     configureRuntimeDeps({
       dataDir: '/tmp/michi-owner-flip-tests',
-      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null,
-        hasGrant: () => false, grantPermission: () => {} } as never,
+      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null } as never,
       agentConfig: { getAgentConfig: () => ({ runtime: 'pi', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined },
     });
     const Type = new Proxy({}, { get: () => () => ({}) });

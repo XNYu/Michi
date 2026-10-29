@@ -36,10 +36,10 @@ beforeEach(() => {
 });
 afterEach(() => { closeRemoteAuthentication(); for (const key of ['native-success', 'native-fail', 'web-fallback', 'web-cancel', 'strict-auth']) completeRemoteAuthentication(key); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
-it('opens a dedicated remote PTY, forwards user input, reconnects once after success and destroys on close', async () => {
+it('opens a dedicated remote PTY, forwards user input, reconnects once after success and closes itself', async () => {
   const onComplete = vi.fn();
   requestRemoteAuthentication({ key: 'native-success', target: { scope: 'remote', host: 'test-host' }, connectionId: 'remote', onComplete }, true);
-  const view = render(<RemoteAuthenticationDialog />);
+  render(<RemoteAuthenticationDialog />);
   const create = vi.mocked(state.bridge!.remoteAuthCreate as (...args: unknown[]) => Promise<unknown>);
   await waitFor(() => expect(create).toHaveBeenCalledOnce());
   const id = create.mock.calls[0][0] as string;
@@ -48,8 +48,22 @@ it('opens a dedicated remote PTY, forwards user input, reconnects once after suc
   expect(state.bridge!.terminalWrite).toHaveBeenCalledWith(id, 'user-input');
   await act(async () => { state.exit?.(id, 0); state.exit?.(id, 0); });
   expect(state.recover).toHaveBeenCalledOnce(); expect(onComplete).toHaveBeenCalledOnce();
-  expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy();
-  view.unmount(); expect(state.bridge!.terminalDestroy).toHaveBeenCalledWith(id);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(state.bridge!.terminalDestroy).toHaveBeenCalledWith(id);
+});
+
+it('stays open with the error when reconnecting after a successful sign-in fails', async () => {
+  state.recover.mockRejectedValueOnce(new Error('Remote Michi did not start'));
+  const onComplete = vi.fn();
+  requestRemoteAuthentication({ key: 'native-success', target: { scope: 'remote', host: 'test-host' }, connectionId: 'remote', onComplete }, true);
+  render(<RemoteAuthenticationDialog />);
+  const create = vi.mocked(state.bridge!.remoteAuthCreate as (...args: unknown[]) => Promise<unknown>);
+  await waitFor(() => expect(create).toHaveBeenCalledOnce());
+  await act(async () => { state.exit?.(create.mock.calls[0][0] as string, 0); });
+  expect(screen.getByRole('dialog')).toBeTruthy();
+  expect(screen.getByText('Remote Michi did not start')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Try sign-in again' })).toBeTruthy();
+  expect(onComplete).not.toHaveBeenCalled();
 });
 
 it('does not reconnect after a failed sign-in and supports retry and cancel', async () => {

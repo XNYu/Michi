@@ -1,8 +1,9 @@
 /**
  * Meta agent restriction check shared by every runtime adapter.
  *
- * A Meta agent run (background maintenance or the Spaces chat window) may only
- * see its closed toolset. Each adapter reports the tool names the runtime
+ * A restricted Meta agent run (background maintenance or an explicit legacy
+ * closed chat profile) may only see its closed toolset. Interactive Assistant
+ * sessions have an identity marker without this restriction. Each adapter reports the tool names the runtime
  * actually exposed after session start, normalized to Michi tool names (or the
  * runtime's own built-in names), and fails the run when anything is outside the
  * allow-list. Never degrade or skip the check.
@@ -39,7 +40,7 @@ export function metaAgentToolsetOf(profile: RuntimeToolProfile | null | undefine
   if (!profile) return null;
   if (profile.metaAgentToolset) return profile.metaAgentToolset;
   if (profile.maintenance === true) return 'maintenance';
-  if (profile.assistant === true) return 'chat';
+  if (profile.assistant === true && profile.restricted === true) return 'chat';
   return null;
 }
 

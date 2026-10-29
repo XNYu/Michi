@@ -311,9 +311,11 @@ function contextRowForSave(source: ContextRow, id: string, workspaceId: string,
   };
 }
 
-function replaceWorkspaceInTransaction(workspaceId: string, userId?: string): void {
+/** Exported for tests. Must run inside the import transaction. */
+export function replaceWorkspaceInTransaction(workspaceId: string, userId?: string): void {
   const db = getDb();
-  if (process.env.MICHI_CLOUD === '1' && userId) {
+  // Same rule as dbRepository.deleteWorkspace: an empty id still scopes.
+  if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const owned = db.prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?')
       .get(workspaceId, userId);
     if (!owned) return;
@@ -327,6 +329,7 @@ function replaceWorkspaceInTransaction(workspaceId: string, userId?: string): vo
   const now = Date.now();
   db.prepare('UPDATE workspaces SET purged_at = ? WHERE id = ? AND purged_at IS NULL').run(now, workspaceId);
   db.prepare('UPDATE nodes SET purged_at = ? WHERE workspace_id = ? AND purged_at IS NULL').run(now, workspaceId);
+  db.prepare('DELETE FROM harness_events WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ?)').run(workspaceId);
   db.prepare('DELETE FROM messages WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ?)').run(workspaceId);
   db.prepare('DELETE FROM edges WHERE workspace_id = ?').run(workspaceId);
   db.prepare('DELETE FROM trees WHERE workspace_id = ?').run(workspaceId);

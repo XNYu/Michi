@@ -109,3 +109,45 @@ describe('--term-danger-text', () => {
     }
   });
 });
+
+
+describe('raised selection surfaces', () => {
+  function resolveColor(value: string): string {
+    if (value.startsWith('#')) return value;
+    const match = value.match(/^color-mix\(in srgb, (#[0-9a-f]{6}) (\d+)%, (#[0-9a-f]{6})\)$/i);
+    if (!match) throw new Error(`Unsupported color: ${value}`);
+    return mixSrgb(match[1], match[3], Number(match[2]) / 100);
+  }
+
+  it.each(Object.entries(PALETTES))('keeps %s floating text readable and dark surfaces distinct', (name, p) => {
+    const vars = cssVarsFor(name as keyof typeof PALETTES, p.accent);
+    const background = resolveColor(vars['--sel-bar-bg']);
+    for (const key of ['--sel-bar-fg', '--sel-bar-mid', '--sel-bar-muted']) {
+      expect(contrastRatio(resolveColor(vars[key]), background)).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrastRatio(resolveColor(vars['--sel-bar-action-fg']), resolveColor(vars['--sel-bar-action-bg']))).toBeGreaterThanOrEqual(4.5);
+    if (DARK_PALETTES.has(name as keyof typeof PALETTES)) {
+      expect(relativeLuminance(background)).toBeGreaterThan(relativeLuminance(p.surface) + 0.015);
+      expect(relativeLuminance(background)).toBeLessThan(0.1);
+    } else {
+      expect(relativeLuminance(background)).toBeLessThan(0.1);
+      expect(vars['--sel-bar-color-scheme']).toBe('dark');
+      for (const key of ['--sel-bar-mid', '--sel-bar-muted']) {
+        expect(contrastRatio(resolveColor(vars[key]), resolveColor(vars['--sel-bar-quote-bg']))).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(resolveColor(vars[key]), resolveColor(vars['--sel-bar-hover']))).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('gives Slate a cool floating surface and Bone a warm one', () => {
+    const slate = cssVarsFor('slate', PALETTES.slate.accent)['--sel-bar-bg'];
+    const bone = cssVarsFor('bone', PALETTES.bone.accent)['--sel-bar-bg'];
+    const rgb = (hex: string) => [1, 3, 5].map(start => parseInt(hex.slice(start, start + 2), 16));
+    const [sr, sg, sb] = rgb(slate);
+    const [br, bg, bb] = rgb(bone);
+    expect(sb).toBeGreaterThan(sg);
+    expect(sg).toBeGreaterThan(sr);
+    expect(br).toBeGreaterThan(bg);
+    expect(bg).toBeGreaterThan(bb);
+  });
+});

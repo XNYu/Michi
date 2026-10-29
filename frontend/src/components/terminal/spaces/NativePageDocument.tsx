@@ -1,5 +1,5 @@
 import { NativeHomeSection } from './home/NativeHomeSection';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Archive, Copy, EyeOff, Quote, Sparkles, SquareCheck } from 'lucide-react';
 import type { BlockSource, PageBlock, PageDto, PageEditOp } from 'michi-shared';
@@ -22,6 +22,7 @@ import type { PageBlockWithSources } from '../content/page/vendor-blocks/shared/
 import { useMetaChatTargeting } from './metaChat/SpacesMetaChat';
 import { backendConnectionIdForWorkspace } from '../../../config/backendConnections';
 import { NativeMarkdownSegments, nativeSourceRows } from './NativeMarkdownSegments';
+import { PageViewEntry, PageViewHost } from '../content/page/PageViewContext';
 
 export interface NativePageDocumentProps {
   page: PageDto;
@@ -68,7 +69,18 @@ function nativeText(block: PageBlock | undefined): string {
 }
 
 /** Native Page renderer backed by the same editors/chrome as the Michi page. */
-export function NativePageDocument({
+export function NativePageDocument(props: NativePageDocumentProps) {
+  const identity = JSON.stringify([backendConnectionIdForWorkspace(props.page.workspaceId), props.page.workspaceId, props.page.id]);
+  return <PageViewHost key={identity} page={props.page} renderBlocks={ids => <>
+    {ids.some(id => !props.page.blocks.some(block => block.id === id)) && <p role="status">Some content in this view is no longer available.</p>}
+    <NativePageDocumentContent {...props}
+      visibleBlocks={ids.flatMap(id => { const block = props.page.blocks.find(block => block.id === id); return block ? [block] : []; })} detailView />
+  </>}>
+    <NativePageDocumentContent {...props} />
+  </PageViewHost>;
+}
+
+function NativePageDocumentContent({
   page,
   visibleBlocks = page.blocks,
   sourceLabel,
@@ -93,10 +105,12 @@ export function NativePageDocument({
   slotAddEntries,
   onStartConversation,
   onOpenConversation,
-}: NativePageDocumentProps) {
+  detailView = false,
+}: NativePageDocumentProps & { detailView?: boolean }) {
   const targeting = useMetaChatTargeting();
+  const instanceId = useId();
   const documentRef = useRef<HTMLDivElement>(null);
-  const drag = usePageBlockDrag(page, documentRef, onEdit, readOnly);
+  const drag = usePageBlockDrag(page, documentRef, onEdit, readOnly || detailView);
   const [actionError, setActionError] = useState<string | null>(null);
   const actionPending = useRef(false);
   const [actionBusy, setActionBusy] = useState(false);
@@ -150,7 +164,7 @@ export function NativePageDocument({
   const chrome = useMemo<PageChrome>(() => ({
     projectId: page.workspaceId,
     generatedAt: page.revision,
-    capabilities: { ask: Boolean(onAsk || onAskAssistant), branch: false, sources: Boolean(onOpenSource), copyLink: false, select: true, drag: !compact },
+    capabilities: { ask: Boolean(onAsk || onAskAssistant), branch: false, sources: Boolean(onOpenSource), copyLink: false, select: true, drag: !compact && !detailView },
     ask: (michiBlock, question) => {
       const native = michiBlock.id ? nativeById.get(michiBlock.id) : undefined;
       if (native) onAsk?.(native, question);
@@ -206,7 +220,7 @@ export function NativePageDocument({
         { id: 'copy', label: 'Copy text', glyph: <Copy size={15} />, onSelect: () => { void clipboard(nativeText(block)); } },
       ];
     },
-  }), [activeSelection, actionBusy, addEntries, apply, compact, drag.dragStart, drag.takeDragged, drag.moving, nativeById, onAsk, onAskAssistant, onOpenSource, onOrphanDraft, onSelectBlock, onSelectionChange, page, perform, select, selectedBlockIds, sourceLabel]);
+  }), [activeSelection, actionBusy, addEntries, apply, compact, detailView, drag.dragStart, drag.takeDragged, drag.moving, nativeById, onAsk, onAskAssistant, onOpenSource, onOrphanDraft, onSelectBlock, onSelectionChange, page, perform, select, selectedBlockIds, sourceLabel]);
 
   const ctx = useMemo<MichiBlockCtx>(() => ({
     depth: 0,
@@ -241,8 +255,8 @@ export function NativePageDocument({
 
   const renderBlock = useCallback((displayBlock: MichiPageBlock, blockCtx: MichiBlockCtx) => {
     const native = displayBlock.id ? nativeById.get(displayBlock.id) : undefined;
-    if (native?.type === 'home-section') return <NativeHomeSection section={native.section} pageId={page.id} connectionId={backendConnectionIdForWorkspace(page.workspaceId)} readOnly={readOnly} />;
-    if (native && (native as { type?: string }).type === 'component' && renderComponent) return renderComponent(native);
+    if (native?.type === 'home-section') return <><NativeHomeSection section={native.section} pageId={page.id} connectionId={backendConnectionIdForWorkspace(page.workspaceId)} readOnly={readOnly} />{native.interaction && <div className="page-view-block-entry"><PageViewEntry action={native.interaction.action}>{native.interaction.label}</PageViewEntry></div>}</>;
+    if (native?.type === 'component' && renderComponent) return <>{renderComponent(native)}{native.interaction && <div className="page-view-block-entry"><PageViewEntry action={native.interaction.action}>{native.interaction.label}</PageViewEntry></div>}</>;
     return <MichiBlock block={displayBlock} ctx={blockCtx} />;
   }, [nativeById, renderComponent, page.id, page.workspaceId, readOnly]);
 
@@ -250,30 +264,30 @@ export function NativePageDocument({
     const display = michiBlocks[index];
     return <BlockFrame
       key={block.id}
-      id={`page-block-${block.id}`}
+      id={`page-block-${detailView ? `${instanceId}-` : ''}${block.id}`}
       block={display}
       ctx={{ ...ctx,
         renderNativeMarkdown: (markdown) => <NativeMarkdownSegments blockId={typeof markdown.id === 'string' ? markdown.id : undefined} text={typeof markdown.text === 'string' ? markdown.text : ''} segmentSources={markdown.segmentSources}
           sourceLabel={sourceLabel} onOpenSource={onOpenSource} onError={() => setActionError('Source unavailable')} loadImages />,
         ...(ctx.requestAssistant ? { requestAssistant: (_block, prompt, title, send) => ctx.requestAssistant!(display, prompt, title, send) } : {}) }}
       chrome={readOnly ? null : chrome}
-      index={compact ? undefined : index}
+      index={compact || detailView ? undefined : index}
       count={michiBlocks.length}
       selected={activeSelection.includes(block.id)}
       dragging={drag.dragging === block.id}
       renderBlock={renderBlock}
-      renderDecorations={() => <>{renderDecorations?.(block)}{decisionNote?.blockId === block.id && <p className="native-page-decision-note" role="alert">{decisionNote.text}</p>}</>}
+      renderDecorations={() => <>{renderDecorations?.(block)}{decisionNote?.blockId === block.id && <p className="native-page-decision-note" role="alert">{decisionNote.text}</p>}<div data-page-view-outlet="" /></>}
     />;
-  }, [chrome, compact, ctx, michiBlocks, readOnly, renderBlock, renderDecorations, activeSelection, decisionNote, drag.dragging, sourceLabel, onOpenSource]);
+  }, [chrome, compact, ctx, michiBlocks, readOnly, renderBlock, renderDecorations, activeSelection, decisionNote, drag.dragging, sourceLabel, onOpenSource, detailView, instanceId]);
 
   // The page title and chrome belong to the document shell around this list.
   return (
-    <MichiMantine><PageBlocksContext.Provider value={page.blocks.map(toMichiBlock) as unknown as PageBlockWithSources[]}>
+    <MichiMantine><PageBlocksContext.Provider value={visibleBlocks.filter(block => block.type !== 'view' && (detailView || block.visibility !== 'detail')).map(toMichiBlock) as unknown as PageBlockWithSources[]}>
     <div ref={documentRef} className="michi-doc-blocks" data-native-page="" data-native-page-id={page.id} data-native-workspace-id={page.workspaceId} data-dragging={drag.dragging || undefined} onClick={selectOnClick && !readOnly ? (event) => {
       const id = clickedBlockId(event);
       if (id) chrome.select(id, 'toggle');
     } : undefined} aria-label={`${page.title || 'Untitled page'} content`}>
-      {visibleBlocks.map((block, index) => frameFor(block, index))}
+      {visibleBlocks.map((block, index) => block.type === 'view' || (!detailView && block.visibility === 'detail') ? null : frameFor(block, index))}
       {drag.drop && createPortal(<div className="native-page-drop" aria-hidden="true" style={{ left: drag.drop.left, top: drag.drop.top, width: drag.drop.width }} />, document.body)}
       {(actionError || drag.error) && <p className="native-page-decision-note" role="alert">{actionError || drag.error}</p>}
       {!page.blocks.length && <EmptyPageEditor page={page} onEdit={onEdit} onOrphanDraft={onOrphanDraft} readOnly={readOnly} />}

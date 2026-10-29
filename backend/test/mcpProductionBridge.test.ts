@@ -7,6 +7,8 @@ import { McpClientManager } from '../src/services/mcpClientManager';
 import { buildMcpToolsForPi } from '../src/agents/pi/mcpToolBridge';
 import { loadPiAi } from '../src/agents/pi/piAi';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
+import { JSON_BODY_LIMIT_BYTES } from '../src/services/requestBodyLimit';
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from '@modelcontextprotocol/sdk/shared/stdio.js';
 
 const fixture = path.resolve(__dirname, 'fixtures/mcpConsistencyServer.cjs');
 const config = (serverName: string, mode = 'pagination', args: string[] = []) => ({ serverName, command: process.execPath, args: [fixture, mode, ...args] });
@@ -32,6 +34,30 @@ test('real stdio manager preserves full MCP result and production Pi bridge proj
   const text = result.content.filter((block: any) => block.type === 'text').map((block: any) => block.text).join('\n');
   for (const expected of ['visible', 'resource body', 'fixture://link', 'Structured result', 'answer', 'audio', 'application/pdf']) assert.match(text, new RegExp(expected));
   assert.doesNotMatch(text, /YXVkaW8=|YmluYXJ5/);
+});
+
+test('a stdio server result above the SDK default read buffer reaches the manager, up to the JSON body limit', async t => {
+  const bytes = 11 * 1024 * 1024;
+  assert.ok(bytes > STDIO_DEFAULT_MAX_BUFFER_SIZE && bytes < JSON_BODY_LIMIT_BYTES);
+  // A stdio server of its own (node -e, resolving the SDK from backend/): echo, and large returning `bytes` characters.
+  const server = `
+    const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
+    const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
+    const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
+    const server = new Server({ name: 'large-result', version: '1' }, { capabilities: { tools: {} } });
+    const tool = (name) => ({ name, inputSchema: { type: 'object', additionalProperties: true } });
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [tool('echo'), tool('large')] }));
+    server.setRequestHandler(CallToolRequestSchema, async ({ params }) => ({ content: [{ type: 'text',
+      text: params.name === 'large' ? 'x'.repeat(params.arguments.bytes) : JSON.stringify(params.arguments) }] }));
+    server.connect(new StdioServerTransport()).catch(() => process.exit(1));`;
+  const manager = new McpClientManager(); t.after(() => manager.dispose());
+  await manager.connect({ serverName: 'large', command: process.execPath, args: ['-e', server], cwd: path.resolve(__dirname, '..') });
+  const result = await manager.callTool('large', 'large', { bytes });
+  assert.notEqual(result.isError, true, JSON.stringify(result.content).slice(0, 300));
+  assert.equal((result.content[0] as { text: string }).text.length, bytes);
+  // The connection stays open for the next call.
+  const echo = await manager.callTool('large', 'echo', { after: true });
+  assert.deepEqual(echo.content, [{ type: 'text', text: '{"after":true}' }]);
 });
 
 test('real image-only, resource-only and structured-only results stay useful through the production bridge', async t => {

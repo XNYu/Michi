@@ -5,7 +5,7 @@ import { getAiGlobalContext, getWorkspace } from '../services/dbRepository';
 import { workspaceIdKindHint } from '../services/idKindHint';
 import { isAssistantWorkspace } from '../assistant/identity';
 import { LOCAL_AGENT_OWNER_ID, workspaceOwnerMatches } from '../services/agentOwner';
-import { applyAgentDbEdits, configureDatabaseView } from '../services/pages/databaseWrites';
+import { applyAgentDbEdits, configureDatabase, createAgentDatabase, configureDatabaseView } from '../services/pages/databaseWrites';
 import { pageComponents } from '../services/pages/components';
 import { PageWriteError, requireChatChangeSource, requirePagesWorkspace, type ChatChangeSource } from '../services/pages/core';
 import { createPage, getDatabase, getPage, listPages } from '../services/pages/repository';
@@ -440,6 +440,25 @@ export function runPageTool(name: PageToolName, caller: PageToolCaller, rawArgs:
           page: { id: page.id, title: page.title, workspaceId: page.workspaceId, parentId: page.parentId, revision: page.revision, viewVersion: page.viewVersion },
           michiPageWrite,
         });
+      }
+      case 'create_database': {
+        const workspaceId = namedWorkspace(scope, args.workspaceId);
+        const source = writeSource(caller, scope, workspaceId);
+        const { database, result } = createAgentDatabase({ workspaceId, ownerUserId, source,
+          title: parseString(args.title, 'title')!, columns: args.columns });
+        return scopedResult(scope, workspaceId, { ...writeReceipt(result, database.title, undefined, true), database: databaseRead(database, 1) });
+      }
+      case 'configure_database': {
+        const databaseId = parseString(args.databaseId, 'databaseId')!;
+        const database = getDatabase(databaseId, ownerUserId);
+        if (!inScope(scope, database.workspaceId)) throw new PageWriteError(404, 'not_found', 'Database not found');
+        const source = writeSource(caller, scope, database.workspaceId);
+        const result = configureDatabase({ databaseId, ownerUserId, workspaceId: database.workspaceId,
+          revision: args.revision as number, ops: args.ops, source });
+        const refs = getDb().prepare('SELECT page_id FROM page_database_refs WHERE database_id=? ORDER BY page_id').all(databaseId) as Array<{ page_id: string }>;
+        const updated = getDatabase(databaseId, ownerUserId);
+        return scopedResult(scope, database.workspaceId, { ...writeReceipt(result, database.title, undefined, false, refs.map((ref) => ref.page_id)),
+          database: { id: updated.id, revision: updated.revision, columns: updated.columns, views: updated.views } });
       }
       case 'read_database': {
         const databaseId = parseString(args.databaseId, 'databaseId')!;

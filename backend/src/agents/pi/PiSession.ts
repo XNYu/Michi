@@ -1,3 +1,4 @@
+import { createMaintenanceAccessTools } from '../../services/metaAgent/maintenanceAccess';
 import { hostOwner } from '../ownerMapping';
 import { ChatApprovalState, chatApprovalOptions, approvalCoversTool } from '../chatApprovalState';
 import { chatNodeOf, chatOwner, isRunOwner } from '../ownerMapping';
@@ -396,6 +397,7 @@ export class PiSession implements AgentSession {
         const isAwsCred = providerUsesAwsCredentials(provider);
         let apiKey: string | null = null;
         let bedrockStreamOpts: Record<string, unknown> = {};
+        let bedrockAuthRetry: Parameters<typeof streamSimpleWithFallback>[5];
 
         if (isAwsCred) {
             const creds = resolveBedrockCredentials();
@@ -405,6 +407,7 @@ export class PiSession implements AgentSession {
                 );
             }
             await abortable(refreshBedrockCredentialsIfNeeded(creds), signal);
+            bedrockAuthRetry = { isAuthError: isBedrockAuthError, refresh: () => refreshOnAuthFailure(creds) };
             bedrockStreamOpts = { region: creds.region };
             if (creds.bearerToken) bedrockStreamOpts.bearerToken = creds.bearerToken;
             if (creds.profile) bedrockStreamOpts.profile = creds.profile;
@@ -487,7 +490,18 @@ export class PiSession implements AgentSession {
             }).filter((tool) => this.isToolAllowed(tool.name));
 
             if (isMaintenanceProfile(this.toolProfile)) {
-                const maintenanceTools = createMaintenanceTools(() => this.getActiveMaintenanceExecutionContext(), {});
+                const getContext = () => this.getActiveMaintenanceExecutionContext();
+                const maintenanceTools = [...createMaintenanceTools(getContext, {}), ...createMaintenanceAccessTools(getContext, {
+                    internalTools: (context) => buildPiTools({
+                        bridge: this.bridge, cwd: this.cwd, parentChatId: this.id, workspaceId: context.workspaceId,
+                        owner: this.owner, ownerUserId: context.ownerUserId, enableFollowUps: false,
+                        imageQuota: this.imageQuota, seenPaths: this.seenPaths, Type,
+                        getActivePageTurnAttribution: () => context.execution,
+                    }).map((tool: any) => ({
+                        name: tool.name, description: tool.description, inputSchema: tool.parameters,
+                        execute: (args: Record<string, unknown>, signal?: AbortSignal) => tool.execute('maintenance', args, signal),
+                    })),
+                })];
                 for (const tool of maintenanceTools) {
                     if (!META_AGENT_MAINTENANCE_TOOL_NAMES.includes(tool.name) || !this.isToolAllowed(tool.name)) continue;
                     const parameters = mcpInputSchemaToTypebox(tool.parameters as unknown as Record<string, unknown>, Type);
@@ -496,9 +510,9 @@ export class PiSession implements AgentSession {
                         label: tool.name.replaceAll('_', ' '),
                         description: tool.description,
                         parameters,
-                        execute: async (_id: string, args: Record<string, unknown>) => {
+                        execute: async (_id: string, args: Record<string, unknown>, signal?: AbortSignal) => {
                             const { __tool_use_purpose: _purpose, ...input } = args ?? {};
-                            return tool.execute(input);
+                            return tool.execute(input, signal);
                         },
                     });
                 }
@@ -540,13 +554,14 @@ export class PiSession implements AgentSession {
                     modelAttempts,
                     c,
                     { ...o, ...(apiKey ? { apiKey } : {}), ...bedrockStreamOpts },
+                    bedrockAuthRetry,
                 ),
                 beforeToolCall: async (
                     bcCtx: { toolCall: { name: string }; args: unknown },
                     signal?: AbortSignal,
                 ): Promise<{ block: boolean; reason?: string } | undefined> => {
                     signal?.throwIfAborted();
-                    if (isAssistantProfile(this.toolProfile)) {
+                    if (isAssistantProfile(this.toolProfile) && isMetaAgentProfile(this.toolProfile)) {
                         // The assistant's tools enforce their own approvals; nothing else exists.
                         return piAssistantToolDecision(bcCtx.toolCall.name) === "allow"
                             ? undefined
@@ -1078,9 +1093,12 @@ export function streamSimpleWithFallback(
     models: any[],
     context: any,
     options: any,
+    /** Bedrock: an auth error before any output refreshes credentials and retries the same model once. */
+    authRetry?: { isAuthError(ev: any): boolean; refresh(): Promise<boolean> },
 ): any /* AssistantMessageEventStream */ {
     const outer = piMod.createAssistantMessageEventStream();
     const attempts = models.length > 0 ? models : [undefined];
+    let authRetried = false;
     const fail = (error: unknown, modelId = '') => {
         const aborted = options?.signal?.aborted || (error as { name?: string })?.name === 'AbortError';
         outer.push({
@@ -1103,6 +1121,7 @@ export function streamSimpleWithFallback(
             const model = attempts[i];
             const modelId = model?.id;
             let yieldedAny = false;
+            let retrySameModel = false;
 
             try {
                 options?.signal?.throwIfAborted();
@@ -1113,6 +1132,12 @@ export function streamSimpleWithFallback(
                         outer.push({ ...ev, reason: 'aborted', error: { ...ev.error, stopReason: 'aborted' } });
                         return;
                     }
+                    if (ev?.type === 'error' && !yieldedAny && authRetry && !authRetried && authRetry.isAuthError(ev)) {
+                        authRetried = true;
+                        const refresh = authRetry.refresh();
+                        retrySameModel = options?.signal ? await abortable(refresh, options.signal) : await refresh;
+                        if (retrySameModel) break;
+                    }
                     // Still no output + error + more models to try → switch
                     if (ev?.type === "error" && !yieldedAny && i < attempts.length - 1) {
                         lastError = ev;
@@ -1122,6 +1147,10 @@ export function streamSimpleWithFallback(
                     outer.push(ev);
                     terminalSeen ||= ev?.type === 'done' || ev?.type === 'error';
                     // push of done/error event auto-resolves outer.result()
+                }
+                if (retrySameModel) {
+                    i -= 1;
+                    continue;
                 }
                 if (terminalSeen) return;
                 if (yieldedAny) throw new Error('Pi provider stream ended without a terminal event');

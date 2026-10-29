@@ -105,6 +105,9 @@ vi.mock('./backgroundWork/BackgroundWorkDrawer', () => ({
     : null,
 }));
 
+// The useNodesSelector mock above answers {} to every selector; the button has its own tests.
+vi.mock('./backgroundWork/BackgroundWorkButton', () => ({ default: () => null }));
+
 vi.mock('./useTerminalColors', () => ({
   useTerminalColors: () => ({}),
 }));

@@ -1,5 +1,5 @@
 import React, { createContext, use, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { PALETTES } from '../components/terminal/tokens';
+import { PALETTES, type TerminalPalette } from '../components/terminal/tokens';
 import { fetchPrefs, savePrefs } from '../services/api';
 import { savePermissionSettings } from '../services/api/prefs';
 import { isChatPermissionMode, type ChatPermissionSettings, type ChatPermissionMode } from 'michi-shared';
@@ -10,8 +10,8 @@ import { normalizePaneMotion, type PaneMotion } from '../components/terminal/pan
 
 export type { SidebarRowStyle };
 export type { PaneWidthMode };
+export type { TerminalPalette };
 
-export type TerminalPalette = 'bone' | 'slate' | 'monokai' | 'gruvbox';
 export type TerminalDensity = 'comfortable' | 'compact' | 'dense';
 /** Vertical density of the LEFT SIDEBAR's rows only. Independent of
  *  `terminalDensity` (which governs message/pane spacing) so the tree can
@@ -179,6 +179,8 @@ export interface Prefs {
   /** Shared backend permission setting. Per-chat choices live on durable nodes. */
   globalPermissions: boolean;
   permissionMode: ChatPermissionMode;
+  /** Approve for me on top of the global Ask (Kiro V3). Mirrors the Backend. */
+  permissionApproveForMe: boolean;
   /** Number of unpinned threads to show per workspace before "Show more".
    *  Must be ≥1. Default 5. */
   sidebarThreadLimit: number;
@@ -247,6 +249,7 @@ export const DEFAULT_PREFS: Prefs = {
   reduceMotion: false,
   globalPermissions: false,
   permissionMode: 'ask',
+  permissionApproveForMe: false,
   sidebarExpanded: { workspaces: {}, threads: {}, branches: {} },
   sidebarThreadLimit: 5,
   workspaceOrder: [],
@@ -275,7 +278,8 @@ export function cornerRadiusVars(
   return { '--ui-radius': `${r}px`, '--ui-radius-sm': `${Math.round(r / 2)}px`, '--ui-radius-lg': `${r * 2}px` };
 }
 
-const PREFS_KEY = 'michi:v1:prefs';
+/** Also read by the first-frame script in index.html. */
+export const PREFS_KEY = 'michi:v1:prefs';
 const VALID_PALETTES: ReadonlySet<TerminalPalette> = new Set([
   'bone',
   'slate',
@@ -293,6 +297,7 @@ function readInitial(): Prefs {
     merged.homeRecommendations = typeof parsed.homeRecommendations === 'boolean' ? parsed.homeRecommendations : DEFAULT_PREFS.homeRecommendations;
     merged.globalPermissions = typeof parsed.globalPermissions === 'boolean' ? parsed.globalPermissions : parsed.bypassPermissions === true;
     merged.permissionMode = isChatPermissionMode(parsed.permissionMode) ? parsed.permissionMode : parsed.bypassPermissions === true ? 'trust' : 'ask';
+    merged.permissionApproveForMe = merged.permissionMode === 'ask' && parsed.permissionApproveForMe === true;
     delete (merged as { bypassPermissions?: unknown }).bypassPermissions;
     merged.linkOpenTarget = merged.linkOpenTarget === 'external' ? 'external' : 'internal';
     merged.paneWidthMode = normalizePaneWidthMode(merged.paneWidthMode);
@@ -473,6 +478,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
         setPrefs((prev) => ({ ...prev,
           globalPermissions: typeof remote.globalPermissions === 'boolean' ? remote.globalPermissions : remote.bypassPermissions === true,
           permissionMode: isChatPermissionMode(remote.permissionMode) ? remote.permissionMode : remote.bypassPermissions === true ? 'trust' : 'ask',
+          permissionApproveForMe: remote.permissionMode === 'ask' && remote.permissionApproveForMe === true,
         }));
         return;
       }
@@ -489,6 +495,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       );
       merged.globalPermissions = typeof remote.globalPermissions === 'boolean' ? remote.globalPermissions : remote.bypassPermissions === true;
       merged.permissionMode = isChatPermissionMode(remote.permissionMode) ? remote.permissionMode : remote.bypassPermissions === true ? 'trust' : 'ask';
+      merged.permissionApproveForMe = remote.permissionMode === 'ask' && remote.permissionApproveForMe === true;
       delete (merged as { bypassPermissions?: unknown }).bypassPermissions;
       setPrefs(merged);
     });
@@ -503,8 +510,9 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
         const global = remote.globalPermissions;
         const mode = remote.permissionMode;
         if (typeof global !== 'boolean' || !isChatPermissionMode(mode)) return;
-        setPrefs((prev) => prev.globalPermissions === global && prev.permissionMode === mode
-          ? prev : { ...prev, globalPermissions: global, permissionMode: mode });
+        const approveForMe = mode === 'ask' && remote.permissionApproveForMe === true;
+        setPrefs((prev) => prev.globalPermissions === global && prev.permissionMode === mode && prev.permissionApproveForMe === approveForMe
+          ? prev : { ...prev, globalPermissions: global, permissionMode: mode, permissionApproveForMe: approveForMe });
       });
     };
     const onStorage = (event: StorageEvent) => { if (event.key === PREFS_KEY) refresh(); };
@@ -651,11 +659,11 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
   const setPermissionSettings = useCallback(async (settings: ChatPermissionSettings) => {
     permissionWriteRevision.current += 1;
     const saved = await savePermissionSettings(settings).finally(() => { permissionWriteRevision.current += 1; });
-    setPrefs((prev) => ({ ...prev, globalPermissions: saved.global, permissionMode: saved.mode }));
+    setPrefs((prev) => ({ ...prev, globalPermissions: saved.global, permissionMode: saved.mode, permissionApproveForMe: saved.mode === 'ask' && saved.approveForMe === true }));
   }, []);
 
   const reset = useCallback(() => {
-    setPrefs((prev) => ({ ...DEFAULT_PREFS, globalPermissions: prev.globalPermissions, permissionMode: prev.permissionMode }));
+    setPrefs((prev) => ({ ...DEFAULT_PREFS, globalPermissions: prev.globalPermissions, permissionMode: prev.permissionMode, permissionApproveForMe: prev.permissionApproveForMe }));
   }, []);
 
   const resetTerminal = useCallback(() => {

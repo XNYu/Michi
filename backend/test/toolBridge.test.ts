@@ -84,3 +84,34 @@ describe('AgentToolBridge spawned identity', () => {
     }]);
   });
 });
+
+describe('AgentToolBridge arbitrary files', () => {
+  test('registers images, binaries and extensionless files without rewriting bytes', () => {
+    const cwd = mkTmpDir();
+    const bridge = createAgentToolBridge({ createChild: async () => ({ chatId: 'c', nodeId: 'n' }), persistContext: () => 'ctx-file' });
+    for (const filename of ['shot.PNG', 'report.pdf', 'page.html', 'archive.zip', 'audio.mp3', 'video.mp4', 'data']) {
+      const bytes = Buffer.from([0, 255, 128, 1, 2]);
+      fs.writeFileSync(path.join(cwd, filename), bytes);
+      for (const source of [filename, path.join(cwd, filename)]) {
+        assert.deepEqual(bridge.saveContext({ cwd, chatId: 'c', name: 'output', path: source }), {
+          id: 'ctx-file', name: 'output', filePath: filename, size: bytes.length,
+        });
+      }
+      assert.deepEqual(fs.readFileSync(path.join(cwd, filename)), bytes);
+    }
+    assert.equal(fs.existsSync(path.join(cwd, '.contexts')), false);
+  });
+
+  test('rejects missing files, directories, traversal, external symlinks and ambiguous sources', () => {
+    const cwd = mkTmpDir();
+    const outside = mkTmpDir();
+    fs.writeFileSync(path.join(outside, 'secret'), 'secret');
+    fs.symlinkSync(path.join(outside, 'secret'), path.join(cwd, 'escape'));
+    const bridge = createAgentToolBridge({ createChild: async () => ({ chatId: 'c', nodeId: 'n' }) });
+    for (const source of ['missing', '.', 'escape', path.join(outside, 'secret'), path.relative(cwd, path.join(outside, 'secret'))]) {
+      assert.equal(bridge.saveContext({ cwd, name: 'file', path: source }), null);
+    }
+    assert.equal(bridge.saveContext({ cwd, name: 'file' }), null);
+    assert.equal(bridge.saveContext({ cwd, name: 'file', path: 'a', body: 'text' }), null);
+  });
+});

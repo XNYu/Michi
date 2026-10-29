@@ -11,10 +11,10 @@ const LABELS: Record<MetaAgentRuntimeId, string> = {
 
 /** How each runtime is held to the Meta agent's own tools, in plain words. */
 const RESTRICTIONS: Record<MetaAgentRuntimeId, string> = {
-  claude: 'Claude’s own tools are off, and Michi checks every tool call',
-  pi: 'Michi gives Pi only Michi’s tools',
-  codex: 'Codex can’t run commands, edit files or search the web, and reaches only Michi’s tools',
-  kiro: 'Michi gives Kiro its own agent with only Michi’s tools',
+  claude: 'Michi checks tool access; external tools are read-only',
+  pi: 'Michi checks tool access; external tools are read-only',
+  codex: 'Michi checks tool access; external tools are read-only',
+  kiro: 'Michi checks tool access; external tools are read-only',
   crew: 'the Meta agent can’t use Kiro Crew yet',
 };
 

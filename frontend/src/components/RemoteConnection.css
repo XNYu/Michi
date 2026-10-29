@@ -9,18 +9,6 @@
   color: var(--term-fg);
 }
 
-.remote-connections h1 {
-  margin: 0;
-  font-size: var(--fs-2xl);
-  font-weight: 700;
-}
-
-.remote-connections__intro {
-  margin: 8px 0 20px;
-  color: var(--term-muted);
-  text-wrap: pretty;
-}
-
 .remote-connections__list {
   margin: 0;
   padding: 0;

@@ -18,7 +18,7 @@ test('shared MCP endpoint routes explicit SessionIDs, keeps warm catalog stable,
             notifications.push({ session, name, result });
             if (session === 'B') throw new Error('UI callback unavailable');
         },
-        onSaveArtifact: (name, body) => {
+        onSaveArtifact: (name, body = '') => {
             calls.push({ session, name, body });
             return { name, filePath: `${session}/${name}`, size: body.length };
         },

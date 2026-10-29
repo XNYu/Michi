@@ -103,8 +103,9 @@ describe("Kiro's ACP profile", () => {
         let reads = 0;
         const hostEnv = () => { reads++; return { KEEP: "1" }; };
         for (const engine of ["v2", "v3"] as const) {
+            // v3 also runs Kiro's trust classifier, which Approve for me needs.
             assert.deepEqual(new KiroAcpProfile({ ...base, engine }).spawnEnvironment(hostEnv),
-                { KEEP: "1" });
+                { KEEP: "1", ...(engine === "v3" ? { KIRO_TRUST_CLASSIFIER_MODE: "enforce" } : {}) });
         }
         assert.equal(reads, 2);
         let preloadReads = 0;

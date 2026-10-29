@@ -1,20 +1,207 @@
-# Michi runtime
+# michi-runtime
 
-`runtime/` is the agent runtime layer inside Michi. It keeps Kiro-CLI, Kiro
-Crew, Codex and Claude Code behind one `AgentRuntime` / `AgentSession`
-interface, separate from the backend's persistence and UI.
+Run local coding agents from your own Node service through one interface.
+`michi-runtime` puts **Kiro CLI**, **Kiro Crew**, **Codex** and
+**Claude Code** behind the same `AgentRuntime` / `AgentSession` contract, so a
+host writes its session handling, event rendering, approvals and tools once
+and can switch or mix agents without rewriting them.
 
-This directory remains part of the Michi repository and ships with Michi.
-It is an npm workspace only to resolve local source imports and dependencies;
-it is not a separately released package. Both its source manifest and any
-local validation tarball are marked `private: true`. No separate npm release,
-external installation procedure or independent compatibility promise is made.
+It is Michi's repository-local runtime layer. The workspace remains in this
+repository and is private; Michi uses its source directly.
 
-Michi consumes `src/` through the workspace entries. `RUNTIME_CONTRACT_VERSION`
-is an internal interface version. The host ports and adapter boundaries below
-remain useful for maintaining and testing Michi.
+## What it is for
 
-## Runtime and host responsibilities
+Each of these agents speaks a different protocol:
+
+| Agent | Protocol |
+|---|---|
+| Kiro CLI and Kiro Crew | ACP |
+| Codex | JSON-RPC to `codex app-server` |
+| Claude Code | the Claude Agent SDK |
+
+Each protocol also has its own way to stream output, ask for approval, cancel,
+resume, fork and reach the host's tools. A host that wants more than one agent
+ends up writing that glue once per agent.
+
+This package is that glue, written once and tested against each agent. Use it
+when you build:
+
+- a chat or IDE-like product that lets users pick their agent;
+- a backend that runs agent sessions on behalf of users or jobs, with
+  approvals routed to your own UI or policy;
+- a batch or scheduled job that runs an agent unattended and collects a result;
+- a tool server that exposes your own functions to all four agents at once.
+
+## What it covers
+
+- **One session contract.**
+  - Open, send, steer, cancel, resume, fork and release a session through
+    `AgentRuntime` / `AgentSession`, the same way for every agent.
+  - `RuntimeManager` keeps track of the sessions of every registered runtime.
+- **One event stream.** A turn yields the same normalized events whichever
+  agent runs it:
+  - text and thinking chunks, tool calls and plans;
+  - permission and user-input requests and their resolutions;
+  - steering, compaction and retry phases;
+  - subagent activity and usage;
+  - titles, warnings and `turn_end`;
+  - categorized `runtime_error`s;
+  - `host_event`s reported by your own tools.
+- **Approvals.**
+  - The permission modes are Ask, Trust and YOLO. YOLO is full access on
+    Codex and Claude Code; Kiro and Crew treat it as Trust.
+  - Kiro v3 adds Approve for me on top of Ask: its own trust classifier
+    approves what no rule settles (`PermissionPolicyPort.approveForMe`).
+  - The answer options are `allow_once`, `allow_always`, `allow_session`
+    and `reject_once`.
+  - The host keeps the grants and can persist them.
+  - *Restricted* sessions can call only the tools you allow (Codex, Claude
+    Code, and Kiro on an agent configuration the host supplies).
+- **Your tools for every agent.**
+  - `./mcp-host` is a loopback-only MCP host. You register your tools on it
+    once, and each session reaches them through its own capability URL.
+  - `createMcpSlotProvider` wires that host into the adapters.
+- **Models and effort.**
+  - A runtime lists its models (`listModels`) and the reasoning levels it
+    accepts.
+  - A session opens or resumes with a model and a level.
+  - Where the agent supports it, `setModel` and `setMode` change them on an
+    open session.
+- **Unattended runs.** `startHeadlessSession` drives a session without a user.
+  - It answers approvals and questions through your callbacks, or pauses on
+    them.
+  - It ends as `completed`, `waiting`, `cancelled` or `failed`.
+  - It checkpoints the native session so the run can resume.
+- **A host you can start with.**
+  - `createDefaultHost()` gives in-memory defaults for every host port.
+  - When you need durable resume, auth or your own prompts, you replace the
+    individual ports (persistence, permissions, prompt policy, principal,
+    observability).
+
+**What is not included:**
+- a UI, an HTTP API for your users, user authentication, or a database (the
+  host owns these, through the ports);
+- installing or signing in to the agent CLIs;
+- Pi, which stays in Michi.
+
+## Runtimes
+
+| Runtime | Entry | Talks to | Process model | Needs on the machine |
+|---|---|---|---|---|
+| Kiro CLI | `./adapters/kiro` (`KiroRuntime`) | `kiro-cli` over ACP, engine v3 by default, or v2 | one `kiro-cli` per working directory, sessions multiplexed on it, warm sessions | `kiro-cli`, signed in |
+| Kiro Crew | `./adapters/crew` (`createCrewRuntime`) | the Kiro Crew Gateway through the bundled Crew ACP adapter | one adapter process per working directory | the Kiro Crew App, installed and approved for sessions |
+| Codex | `./adapters/codex` (`CodexRuntime`) | `codex app-server` over JSON-RPC | one app-server for the runtime, a thread per session | `codex`, signed in |
+| Claude Code | `./adapters/claude` (`ClaudeRuntime`, `claudeAdapterOptions`) | the Claude Agent SDK and the installed Claude CLI | one CLI process per session, warm processes per (cwd, model) | `claude`, signed in, and the optional peer `@anthropic-ai/claude-agent-sdk@0.3.306` |
+
+`./adapters/acp` holds the generic ACP client core that the Kiro adapter
+extends. Use it to add another ACP agent.
+
+## Capabilities by runtime
+
+What each runtime supports in 1.2. A runtime reports the same facts at run
+time:
+- `runtime.capabilities` holds the setting flags.
+- `runtime.descriptor.harness` describes each capability with:
+  - an availability: `native`, `inferred`, `experimental` or `invisible`;
+  - a confidence: `native`, `projected`, `unknown` or `unverifiable`.
+- `runtime.descriptor.topology` covers cancel, tool delivery and titles.
+
+A host should read these instead of hard-coding this table. Kiro v3
+reports compaction, fork and steering only when every live `kiro-cli`
+negotiated them.
+
+| Capability | Kiro CLI | Kiro Crew | Codex | Claude Code |
+|---|---|---|---|---|
+| Steer a running turn | ✓ queued for the agent's next boundary | — the Gateway queues App input for the next turn | ✓ | ✓ in chats: joins the turn at its next tool round, or runs right after it in the same turn |
+| Stop | ✓ confirmed by the agent: the prompt ends as cancelled and the session takes the next message | ✓ confirmed by the Gateway's stop record; without one, reported as sent only | ✓ confirmed by the agent | ✓ confirmed by the agent |
+| Compact the context | ✓ | ✓ `/compact` on the session's idle Gateway slot; the Gateway also compacts on its own | ✓ | ✓ `/compact` between turns; automatic compaction is reported too |
+| Fork a conversation | ✓ from an idle conversation | ✓ copies the Gateway transcript and replays its context | ✓ from an idle conversation | ✓ also from an earlier saved message |
+| Resume a native session | ✓ | ✓ | ✓ | ✓ |
+| Approval requests | ✓; v3 adds Approve for me | ✓ once the App grants session approval | ✓ | ✓ |
+| Full access (YOLO) | — treated as Trust | — treated as Trust | ✓ full native access | ✓ the CLI's bypass mode |
+| Restricted sessions | ✓ on the host's `restrictedAgent` configuration; refused without it | refused | ✓ read-only and offline, host tools only, no subagents | ✓ no built-in tools, host tools only |
+| Agent's own sandbox | not reported | not reported | ✓ OS sandbox and approval policy | not wired: needs bubblewrap and socat on Linux |
+| Subagents | experimental roster; spawn and terminate not wired | ✓ Gateway subagent events for the session's own slots; spawns are approved in the Crew dashboard | ✓ child threads streamed | ✓ native task lifecycle and forwarded child messages |
+| Usage | credits and context %, no token counts | per-turn credits and context %, no token totals | tokens | per-turn tokens of the main agent; no cost, which the CLI only estimates |
+| Modes | ✓ Kiro agents | ✓ Crew templates | ✓ Default / Plan | ✓ Default / Plan, in chats |
+| Model choice | ✓ | ✓ | ✓ | ✓ |
+| Reasoning levels | low – max | low – max | low – xhigh | low – max |
+| Warm sessions | ✓ | — | — | ✓ |
+| Host tools | ✓ MCP over HTTP; v3 chats share one endpoint per directory | ✓ through the App's stdio relay, which needs a Michi installation | ✓ MCP over HTTP; the user's own configured MCP servers are turned off | ✓ MCP over HTTP |
+| Titles | from a side session the user turns on | from the Gateway | generated beside the first turn | — |
+| Turns the agent starts itself | v3: when a workflow it launched finishes | — | — (goals are off) | ✓ when a background task completes |
+| Unattended runs (`startHeadlessSession`) | ✓ steering queued natively | — | ✓ steering through `turn/steer` | ✓ allowlisted tools, steering on the next turn |
+
+Kiro starts on engine v3 unless the host asks for v2 (`resolveKiroEngine`).
+Kiro v3 also runs Kiro workflows for users who turn them on. Claude Code's
+Plan mode always asks the person to approve the plan, whatever the
+permission mode. For what a restricted session can call, see
+[Restricted sessions](#restricted-sessions).
+
+## Local runtime contract
+
+`RUNTIME_CONTRACT_VERSION` is `1`. It identifies the host/adapter contract
+used within Michi; it is not a standalone package release promise. The local
+workspace exports `.`, `./mcp-host` and
+`./adapters/{kiro,crew,codex,claude,acp}`.
+
+Michi runs this workspace from source. Its package.json maps the root entry
+to `src/index.ts`, and `internal/<module>` to `src/<module>.ts` for in-repository
+wiring. Host and adapter changes should be made and validated together.
+Adapters build descriptors over `UNKNOWN_HARNESS` so newly added capabilities
+receive a default. Consumers should tolerate event kinds and optional fields
+they do not recognize.
+
+## In-repository example
+
+Run `npm install` from Michi's repository root to create the workspace links
+and install dependencies, including the Claude Agent SDK used by Michi.
+The runtime stays in `runtime/`, with `private: true`; it needs no separate
+installation or registry release. The following example illustrates the
+host/adapter boundary for repository maintenance.
+
+A host builds one host object, a loopback MCP host carrying its own tools, a
+slot provider on it, and the runtime it runs:
+
+```ts
+import { createDefaultHost, createRuntimeManager, interactiveOwner, type McpSlot } from 'michi-runtime';
+import { createMcpHost, createMcpSlotProvider } from 'michi-runtime/mcp-host';
+import { CodexRuntime } from 'michi-runtime/adapters/codex';
+
+const host = createDefaultHost({ principal: 'me' });
+const manager = createRuntimeManager({ host });       // the same host object, not a copy
+const mcpHost = createMcpHost<McpSlot>({ basePath: '/api/mcp', serverName: 'my-host' });
+mcpHost.registerTool({
+  name: 'lookup', description: 'Looks a thing up.', inputSchema: { type: 'object', properties: {} },
+  handler: async (_args, ctx) => ({ content: [{ type: 'text', text: `asked by ${ctx.slot.binding.nodeId}` }] }),
+});
+await mcpHost.listen();                                // 127.0.0.1, a free port
+const codex = new CodexRuntime({
+  host, bridge: {}, mcpSlots: createMcpSlotProvider(mcpHost),
+  spawnEnv: () => process.env,                         // what the agent sees: filter it if this process holds secrets
+});
+manager.register(codex);
+
+const session = await codex.newSession({ sessionId: 'chat-1', cwd: process.cwd(), owner: interactiveOwner('chat-1') });
+for await (const event of session.send('Call the lookup tool and tell me what it says.')) {
+  if (event.kind === 'chunk') process.stdout.write(event.text);
+  if (event.kind === 'permission_request') {
+    const deny = event.options.find((option) => option.kind === 'reject_once');
+    if (deny) session.respondToPermission?.(event.requestId, deny.optionId);
+  }
+}
+await codex.shutdown();
+await mcpHost.close();
+```
+
+`examples/minimal-server-host.ts` is an in-repository maintenance example.
+It exercises host tools, approval, cancellation and native resume for the four
+runtimes. `pack:check` compiles and runs its `--check --runtime all` mode
+without starting an agent, using the private local validation artifact
+described under [Building and packing](#building-and-packing). Its head
+comment documents the optional live checks, which require a configured agent.
+
+## What the package provides, and what the host provides
 
 The package provides:
 
@@ -69,14 +256,14 @@ owns (`ports`):
 | `profile` | which sessions are restricted, and the error for one an adapter refuses | restricted when the tool profile carries the restricted flag |
 | `bindings` | the host's node, workspace and edge rows, native session ids, fork anchors, Crew memory modes | in memory; `recordNativeSessionId` writes there, for interactive owners only |
 | `sessions` | the live session directory adapters register into | one in-memory directory, shared with `createRuntimeManager({ host })` |
-| `permissions` | permission modes and grants | Ask, grants held in memory per owner and tool |
+| `permissions` | permission modes, Approve for me and grants | Ask, Approve for me off (its `approveForMe` option), grants held in memory per owner and tool |
 | `principal` | maps owner users onto principals | `local`, or its `principal` option; no user ownership checks |
 | `observability` | logs and performance marks | the console, from `info` (its `logLevel` option); no performance output |
 | `title` | whether runtimes title threads, and the instruction | off |
 | `backgroundTurns` | turns a runtime starts on its own | cancelled and drained: nobody watches them |
 | `workflows` | native workflow runs, controls and approvals | dropped; approvals fall back to the session |
 | `backgroundSubagents` | background subagents a session still tracks | dropped |
-| `interaction` (optional) | an interaction broker | absent. `@experimental`: no adapter calls it; see [Outside the v1 compatibility guarantee](#outside-the-v1-compatibility-guarantee) |
+| `interaction` (optional) | an interaction broker | absent. `@experimental`: no adapter calls it; see [Experimental and implementation-specific members](#experimental-and-implementation-specific-members) |
 | `onSessionStateChanged` (optional) | a live session's state changed | absent; the directory logs the change |
 
 Each adapter asserts at construction the ports it reads, and throws a
@@ -167,7 +354,7 @@ sign-in; the MCP routes stay loopback-only.
 the agent can see. A host process holding secrets the agent must not see
 passes a filtered copy.
 
-## Protocol contracts
+## Frozen external contracts
 
 Agent CLIs, the Crew App and Michi's installed files depend on these, so they
 do not change with the package:
@@ -202,7 +389,8 @@ its Gateway, App and lease settings from it (`CREW_GATEWAY_URL`,
 before it starts the CLI (`ANTHROPIC_API_KEY`, `CLAUDE_CODE_USE_BEDROCK`,
 `CLAUDE_CODE_USE_VERTEX`, `AWS_ACCESS_KEY_ID`, `AWS_PROFILE`,
 `GOOGLE_APPLICATION_CREDENTIALS`, `GCP_PROJECT`); the Kiro adapter copies
-that environment unchanged. With a `launch` override it uses the parent
+that environment without injecting tool preload settings and, on v3, sets
+`KIRO_TRUST_CLASSIFIER_MODE=enforce` unless the caller set it. With a `launch` override it uses the parent
 environment. The host passes everything else:
 
 | Runtime | Defaults in the package | The host must pass | Left to the host |
@@ -226,7 +414,15 @@ only the host's own tools:
   server but the host's turned off, and declines every approval. Under
   `createDefaultHost` such a session now runs locked down; before contract v1
   the default host refused it.
-- Kiro and Crew refuse it (`SessionProfilePort.unsupportedError`).
+- Kiro runs it on an agent configuration the host supplies
+  (`KiroAdapterOptions.restrictedAgent`, with `SessionProfilePort.toolset`)
+  and checks the session's tools against that catalog. Without it, or with a
+  `launch` override, Kiro refuses it (`SessionProfilePort.unsupportedError`).
+- Crew refuses it.
+- A restricted Codex session cannot start subagents: Codex refuses the
+  spawn, and if a child thread starts anyway the adapter ends the turn with
+  `runtime_error` `codex_subagent_blocked` and interrupts the parent and
+  every child.
 
 Which of the host's tools a restricted session can call is for the host's
 slot to enforce. When the tool profile lists `allowedToolNames`, Claude and
@@ -251,9 +447,9 @@ its method (`spawnBranches`, `saveContext`, `updateContext`), and the flags
 stay `true` when it does not. A host that leaves a method out should not read
 the flag as the tool being offered.
 
-## Implementation details
+## Experimental and implementation-specific members
 
-These may still change after the contract is frozen. Experimental members
+These members are implementation details or experimental. Experimental members
 are marked `@experimental` in the source, and an experimental argument or
 value is described as such in its member's doc. The last two entries carry no
 such mark: `CodexRuntime`'s test seams are `@internal`, and `KiroRuntime`'s
@@ -268,7 +464,7 @@ members beyond `AgentRuntime` are named here only.
   the `hookPocEnabled` argument of `PromptPolicyPort.followUpsMetadataOutputMode`
   and `PromptPolicyPort.followUpsTurnReminder`.
 - `CodexRuntime`'s test seams: an internal second constructor argument, left
-  out of the published declarations.
+  out of the generated validation declarations.
 - `KiroRuntime`'s members that `AgentRuntime` does not declare, and the types
   only they use (`KiroSession`, `KiroSessionBinding`, `OpenSessionResult`,
   `LoadSessionResult`, `McpSlotCallbacksFactory`): Michi's own wiring of Kiro.
@@ -299,21 +495,62 @@ into that constant rather than imported. To release a new App version, bump
 `version` in `crew-app/app.json` and `CREW_APP_VERSION` in the same commit;
 `test/crewAppVersion.test.ts` fails while the two differ.
 
-## Development and local packaging checks
+## Building and packing
 
-Run Michi from the repository root with `npm install` and `npm run dev`.
-Michi builds its runtime source into the backend bundle; a separate runtime
-build is not required for application development or distribution.
+From the repository root:
 
-The existing `build` and `pack:check` scripts remain local boundary checks.
-They exercise module exports, declarations, adapter resources and the example
-host in isolation. Their tarball manifest retains `private: true` and must
-not be published. They do not constitute a standalone release workflow.
+```bash
+npm run build -w michi-runtime        # dist/
+npm run pack:check -w michi-runtime   # dist/, then .pack/<name>-<version>.tgz
+```
+
+Neither publishes anything. `build` compiles `src/` to CommonJS with
+declarations in `dist/` (`tsconfig.build.json`, `scripts/build.mjs`).
+`pack:check` stages `dist/`, this README and a private package.json for local validation in
+`.pack/package/`, runs `npm pack` there, checks the tarball, compiles its
+declarations as a TypeScript host would (strict, `skipLibCheck` off, `node10`
+and `nodenext` resolution), and loads it the way a host does
+(`scripts/packSmoke.mjs`). TypeScript hosts also need `@types/node`. It
+fails when the public declarations reach a type that no entry exports, unless
+`REACHABLE_UNEXPORTED` in `scripts/packageLayout.mjs` lists it with a reason.
+
+`pack:check` also checks `examples/minimal-server-host.ts` against the
+unpacked tarball: it imports node builtins and the public entries only, it
+compiles (strict, `nodenext`, `verbatimModuleSyntax`, `erasableSyntaxOnly`),
+and `--check --runtime all` under a scratch HOME builds all four runtimes,
+listens on `http://127.0.0.1:<port>` and exits 0 without starting an agent.
+That listener and the one `packSmoke.mjs` opens for the slot provider are
+loopback only, on a free port, and closed when their check ends.
+
+The private local validation artifact:
+
+- exports `.`, `./mcp-host` and `./adapters/{kiro,crew,codex,claude,acp}` only,
+  each with `types`, `import` and `require` conditions. `require` gets the
+  CommonJS module and `import` an `.mjs` wrapper that re-exports that same
+  module, so both share one instance (one session directory behind
+  `createDefaultHost`, for example). There is no `internal/*`. TypeScript's
+  `node10` resolution, which reads no `exports`, finds the subpaths' types
+  through `typesVersions`.
+- depends on `ws` and `@modelcontextprotocol/sdk` only. Michi's shared workspace
+  remains local: the modules used by this validation artifact are copied into
+  `dist/vendor/michi-shared/`.
+- carries Crew's ACP adapter and MCP relay as self-contained CommonJS bundles
+  in `dist/adapters/crew/` (`crewAcp.js`, `crewMcp.js`, `crewMcpHost.js`),
+  where the Crew adapter looks for them, and the Codex Stop hook runner in
+  `dist/adapters/codex/assets/`.
+- needs Node.js 22 or later (`engines.node`).
+- does not export `package.json`; a host checks the contract it was built
+  against with `RUNTIME_CONTRACT_VERSION`.
+- types its `import` condition with the CommonJS declarations. Checkers that
+  compare each condition's types with its module, such as arethetypeswrong,
+  report this as "Masquerading as CJS"; the `.mjs` wrapper re-exports the
+  CommonJS module as its default and its named exports, which is what those
+  declarations describe, so TypeScript and Node agree.
 
 ### Claude Agent SDK peer
 
-The package has `@anthropic-ai/claude-agent-sdk` as an optional peer. A host
-that runs the Claude adapter installs it at the version in `peerDependencies`.
+The package has `@anthropic-ai/claude-agent-sdk` as an optional peer. Michi
+provides the version listed in `peerDependencies` through its root installation.
 `ClaudeRuntime.checkAvailability()` checks the CLI and its sign-in, not the
 SDK. Without the SDK, `newSession` throws a `ClaudeSdkMissingError` (exported
 by `./adapters/claude`) once those checks pass, and so do model probes and

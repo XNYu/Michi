@@ -3,9 +3,15 @@
  * update, run now and delete. Registered for chat threads on every runtime
  * (MCP for Kiro/Claude/Codex/Crew, built-in tools for Pi).
  *
+ * The Scheduled window's assistant conversation gets the same tools through
+ * assistantScheduledJobTool (assistant/tools.ts), across the user's workspaces.
+ *
  * Boundaries enforced here, independent of runtime permission modes:
- *  - The workspace comes from the session binding, never from tool
- *    arguments, and a job in another workspace is reported as not found.
+ *  - In a chat thread the workspace comes from the session binding, never
+ *    from tool arguments, and a job in another workspace is reported as not
+ *    found. The Scheduled window names a new job's workspace, which its
+ *    caller checks against the user's own rules (system, archived and
+ *    AI-navigation-off workspaces are refused); every card names it.
  *  - Every change except pausing needs an explicit, single-use approval from
  *    the user. Trust/YOLO, "always allow" grants and session trust never
  *    approve it: a job runs prompts later with nobody watching, so a prompt
@@ -71,7 +77,7 @@ export interface ScheduledJobToolResult {
 
 type SchedulerApi = Pick<ScheduledJobScheduler,
   | "status" | "listJobs" | "getJob" | "listRuns" | "validateCreate" | "createJob"
-  | "validateUpdate" | "updateJob" | "runNow" | "deleteJob">;
+  | "validateUpdate" | "updateJob" | "runNow" | "deleteJob" | "requirePromptJob">;
 
 export interface ScheduledJobToolDeps {
   scheduler: SchedulerApi;
@@ -258,12 +264,53 @@ function requireJobId(args: Record<string, unknown>): string {
 
 // ── Caller and ownership ─────────────────────────────────────────────────────
 
-interface ResolvedCaller {
-  workspaceId: string;
-  nodeId: string;
+/** A workspace the Scheduled window's agent may schedule in. */
+export interface ScheduleWorkspace {
+  id: string;
+  name: string;
 }
 
-function resolveCaller(caller: ScheduledJobToolCaller, deps: ScheduledJobToolDeps): ResolvedCaller {
+/** Why it may not: a tool error code ("INVALID_ARGUMENT", "NAVIGATION_DISABLED"…) and a message for the agent. */
+export interface ScheduleWorkspaceRefusal {
+  refused: string;
+  message: string;
+}
+
+/**
+ * The Scheduled window's assistant conversation. It has no workspace of its
+ * own (it lives in the assistant's hidden one), so each new job names its
+ * workspace and an existing job is reached through its own. Session-bound
+ * like ScheduledJobToolCaller; only the workspace a job goes in comes from
+ * the arguments, and `workspace` decides whether the agent may use it.
+ */
+export interface AssistantScheduledJobCaller {
+  ownerUserId: string | null;
+  nodeId: string | null;
+  /**
+   * The user's rules for one workspace: it exists for this owner, is not a
+   * system workspace and lets AI navigate it; `create` also refuses an
+   * archived one, whose existing jobs stay reachable.
+   */
+  workspace(workspaceId: string, use: "create" | "existing"): ScheduleWorkspace | ScheduleWorkspaceRefusal;
+}
+
+/** Which jobs a caller sees and where a new one goes. */
+interface JobScope {
+  nodeId: string;
+  /** The checked workspace for a new job. Throws ToolError when the caller may not use it. */
+  createWorkspace(args: Record<string, unknown>): { id: string; name: string | null };
+  /** True for a job the caller may see and change; any other reads as missing. */
+  sees(job: ScheduledJobDto): boolean;
+  /** The jobs a list call returns (the assistant may name one workspace). */
+  listFilter(args: Record<string, unknown>): (job: ScheduledJobDto) => boolean;
+  /** Approval-card lines naming an existing job's workspace; none where the session has one. */
+  workspaceLines(job: ScheduledJobDto): string[];
+  /** Names each listed job's workspace (the assistant works across workspaces). */
+  workspaceOf?(job: ScheduledJobDto): ScheduleWorkspace | null;
+}
+
+/** A chat thread: its own workspace, from the session binding. */
+function chatScope(caller: ScheduledJobToolCaller, deps: ScheduledJobToolDeps): JobScope {
   if (caller.isAgentRun) {
     throw new ToolError("UNSUPPORTED", "scheduled jobs can be managed only from chat threads, not Agent Runs");
   }
@@ -273,13 +320,55 @@ function resolveCaller(caller: ScheduledJobToolCaller, deps: ScheduledJobToolDep
   if (deps.isScheduledRunNode(caller.nodeId)) {
     throw new ToolError("UNSUPPORTED", "scheduled jobs cannot be managed from inside a scheduled run");
   }
-  return { workspaceId: caller.workspaceId, nodeId: caller.nodeId };
+  const workspaceId = caller.workspaceId;
+  const own = (job: ScheduledJobDto) => job.workspaceId === workspaceId;
+  return {
+    nodeId: caller.nodeId,
+    createWorkspace: () => ({ id: workspaceId, name: deps.workspaceName?.(workspaceId) ?? null }),
+    sees: own,
+    listFilter: () => own,
+    workspaceLines: () => [],
+  };
 }
 
-/** A job in another workspace is indistinguishable from a missing one. */
-function ownJob(deps: ScheduledJobToolDeps, workspaceId: string, jobId: string): ScheduledJobDto {
+/** The Scheduled window: any workspace the user lets it use, named per job. */
+function assistantScope(caller: AssistantScheduledJobCaller): JobScope {
+  if (!caller.nodeId) {
+    throw new ToolError("SOURCE_UNAVAILABLE", "this session is not yet bound to its conversation");
+  }
+  const resolve = (workspaceId: string, use: "create" | "existing"): ScheduleWorkspace => {
+    const found = caller.workspace(workspaceId, use);
+    if ("refused" in found) throw new ToolError(found.refused, found.message);
+    return found;
+  };
+  const usable = (job: ScheduledJobDto): ScheduleWorkspace | null => {
+    const found = caller.workspace(job.workspaceId, "existing");
+    return "refused" in found ? null : found;
+  };
+  return {
+    nodeId: caller.nodeId,
+    createWorkspace: (args) => {
+      const id = typeof args.workspaceId === "string" ? args.workspaceId.trim() : "";
+      if (!id) throw new ToolError("INVALID_ARGUMENT", "workspaceId is required: the workspace the job runs in, from list_workspaces");
+      return resolve(id, "create");
+    },
+    sees: (job) => usable(job) !== null,
+    listFilter: (args) => {
+      const id = typeof args.workspaceId === "string" ? args.workspaceId.trim() : "";
+      if (!id) return (job) => usable(job) !== null;
+      const workspace = resolve(id, "existing");
+      return (job) => job.workspaceId === workspace.id;
+    },
+    workspaceLines: (job) => [`Workspace: ${resolve(job.workspaceId, "existing").name}`],
+    workspaceOf: usable,
+  };
+}
+
+/** A job the caller may not see is indistinguishable from a missing one. */
+function ownJob(deps: ScheduledJobToolDeps, scope: JobScope, jobId: string): ScheduledJobDto {
+  deps.scheduler.requirePromptJob(jobId);
   const job = deps.scheduler.getJob(jobId);
-  if (job.workspaceId !== workspaceId) throw new ScheduledJobNotFoundError("Scheduled job not found");
+  if (!scope.sees(job)) throw new ScheduledJobNotFoundError("Scheduled job not found");
   return job;
 }
 
@@ -346,45 +435,79 @@ export async function scheduledJobTool(
   approve: ScheduledJobApprover,
   deps: ScheduledJobToolDeps | null = configuredDeps,
 ): Promise<ScheduledJobToolResult> {
+  return runTool(name, (d) => chatScope(caller, d), rawArgs, approve, deps);
+}
+
+/**
+ * The same tools for the Scheduled window's assistant conversation: a new
+ * job names its workspace (checked by `caller.workspace`), and every approval
+ * card names the job's workspace. All other boundaries are the chat
+ * version's: single-use approval for every change but pausing, maintenance
+ * jobs invisible, the scheduler's own validation.
+ */
+export async function assistantScheduledJobTool(
+  name: ScheduledJobToolName,
+  caller: AssistantScheduledJobCaller,
+  rawArgs: unknown,
+  approve: ScheduledJobApprover,
+  deps: ScheduledJobToolDeps | null = configuredDeps,
+): Promise<ScheduledJobToolResult> {
+  return runTool(name, () => assistantScope(caller), rawArgs, approve, deps);
+}
+
+async function runTool(
+  name: ScheduledJobToolName,
+  scopeOf: (deps: ScheduledJobToolDeps) => JobScope,
+  rawArgs: unknown,
+  approve: ScheduledJobApprover,
+  deps: ScheduledJobToolDeps | null,
+): Promise<ScheduledJobToolResult> {
   if (!deps) return errorResult("UNAVAILABLE", "scheduled jobs are not available on this server");
   const args = asRecord(rawArgs);
   const env: Env = { now: (deps.clock ?? Date.now)(), timeZone: (deps.timeZone ?? systemTimeZone)() };
   try {
-    const owner = resolveCaller(caller, deps);
+    const scope = scopeOf(deps);
     switch (name) {
-      case "list_scheduled_jobs": return listJobs(deps, owner, args, env);
-      case "create_scheduled_job": return await createJob(deps, owner, args, env, approve);
-      case "update_scheduled_job": return await updateJob(deps, owner, args, env, approve);
-      case "run_scheduled_job": return await runJob(deps, owner, args, approve);
-      case "delete_scheduled_job": return await deleteJob(deps, owner, args, approve);
+      case "list_scheduled_jobs": return listJobs(deps, scope, args, env);
+      case "create_scheduled_job": return await createJob(deps, scope, args, env, approve);
+      case "update_scheduled_job": return await updateJob(deps, scope, args, env, approve);
+      case "run_scheduled_job": return await runJob(deps, scope, args, approve);
+      case "delete_scheduled_job": return await deleteJob(deps, scope, args, approve);
     }
   } catch (error) {
     return toolError(error);
   }
 }
 
-function listJobs(deps: ScheduledJobToolDeps, owner: ResolvedCaller, args: Record<string, unknown>, env: Env): ScheduledJobToolResult {
+/** A job as the agent sees it; across workspaces, with the workspace it belongs to. */
+function scopedJobView(scope: JobScope, job: ScheduledJobDto, env: Env, full: boolean): Record<string, unknown> {
+  const workspace = scope.workspaceOf?.(job);
+  return { ...jobView(job, env, full), ...(workspace ? { workspace } : {}) };
+}
+
+function listJobs(deps: ScheduledJobToolDeps, scope: JobScope, args: Record<string, unknown>, env: Env): ScheduledJobToolResult {
   const status = deps.scheduler.status();
   const note = schedulerNote(status);
   if (typeof args.jobId === "string" && args.jobId.trim()) {
-    const job = ownJob(deps, owner.workspaceId, args.jobId.trim());
+    const job = ownJob(deps, scope, args.jobId.trim());
     const runs = deps.scheduler.listRuns(job.id).slice(0, 10).map((run) => runView(run, env));
-    return jsonResult({ job: jobView(job, env, true), recentRuns: runs, ...(note ? { note } : {}) });
+    return jsonResult({ job: scopedJobView(scope, job, env, true), recentRuns: runs, ...(note ? { note } : {}) });
   }
-  const jobs = deps.scheduler.listJobs().filter((job) => job.workspaceId === owner.workspaceId);
+  const jobs = deps.scheduler.listJobs().filter(scope.listFilter(args));
   return jsonResult({
     timeZone: env.timeZone,
     count: jobs.length,
-    jobs: jobs.map((job) => jobView(job, env, false)),
+    jobs: jobs.map((job) => scopedJobView(scope, job, env, false)),
     ...(note ? { note } : {}),
     next: jobs.length > 0 ? "Pass jobId to see one job's full prompt and recent runs." : undefined,
   });
 }
 
 async function createJob(
-  deps: ScheduledJobToolDeps, owner: ResolvedCaller, args: Record<string, unknown>, env: Env, approve: ScheduledJobApprover,
+  deps: ScheduledJobToolDeps, scope: JobScope, args: Record<string, unknown>, env: Env, approve: ScheduledJobApprover,
 ): Promise<ScheduledJobToolResult> {
-  const input = { ...pickFields(args), workspaceId: owner.workspaceId };
+  const workspace = scope.createWorkspace(args);
+  const input = { ...pickFields(args), workspaceId: workspace.id };
   // Validate first so the user is never asked to approve something invalid,
   // and so the card shows the saved values (defaults applied).
   const fields = deps.scheduler.validateCreate(input);
@@ -393,25 +516,27 @@ async function createJob(
     action: "create",
     jobName: fields.name,
     title: `Create scheduled job “${fields.name}”?`,
-    lines: createLines(fields, env, deps.workspaceName?.(owner.workspaceId) ?? null),
+    lines: createLines(fields, env, workspace.name),
     approveLabel: "Create",
   });
   if (!approval.approved) return declined(approval, "no job was created");
+  // The approval may have waited minutes: the workspace must still take jobs from this caller.
+  scope.createWorkspace(args);
   const job = deps.scheduler.createJob(input);
   const note = schedulerNote(deps.scheduler.status());
-  return jsonResult({ status: "created", job: jobView(job, env, false), ...(note ? { note } : {}) });
+  return jsonResult({ status: "created", job: scopedJobView(scope, job, env, false), ...(note ? { note } : {}) });
 }
 
 async function updateJob(
-  deps: ScheduledJobToolDeps, owner: ResolvedCaller, args: Record<string, unknown>, env: Env, approve: ScheduledJobApprover,
+  deps: ScheduledJobToolDeps, scope: JobScope, args: Record<string, unknown>, env: Env, approve: ScheduledJobApprover,
 ): Promise<ScheduledJobToolResult> {
   const jobId = requireJobId(args);
-  const job = ownJob(deps, owner.workspaceId, jobId);
+  const job = ownJob(deps, scope, jobId);
   const patch = pickFields(args);
   if (Object.keys(patch).length === 0) throw new ToolError("INVALID_ARGUMENT", "pass at least one field to change");
   const changed = deps.scheduler.validateUpdate(job.id, patch);
   const keys = Object.keys(changed);
-  if (keys.length === 0) return jsonResult({ status: "unchanged", job: jobView(job, env, false) });
+  if (keys.length === 0) return jsonResult({ status: "unchanged", job: scopedJobView(scope, job, env, false) });
   // Pausing only reduces what runs unattended, so it needs no approval.
   const pauseOnly = keys.length === 1 && changed.enabled === false;
   if (!pauseOnly) {
@@ -420,56 +545,56 @@ async function updateJob(
       action: "update",
       jobName: job.name,
       title: `Change scheduled job “${job.name}”?`,
-      lines: updateLines(job, changed, env),
+      lines: [...scope.workspaceLines(job), ...updateLines(job, changed, env)],
       approveLabel: "Save changes",
     });
     if (!approval.approved) return declined(approval, "the job was not changed");
     // The approval may have waited minutes: the job must still be ours.
-    ownJob(deps, owner.workspaceId, jobId);
+    ownJob(deps, scope, jobId);
   }
   const updated = deps.scheduler.updateJob(job.id, changed);
-  return jsonResult({ status: pauseOnly ? "paused" : "updated", job: jobView(updated, env, false) });
+  return jsonResult({ status: pauseOnly ? "paused" : "updated", job: scopedJobView(scope, updated, env, false) });
 }
 
 async function runJob(
-  deps: ScheduledJobToolDeps, owner: ResolvedCaller, args: Record<string, unknown>, approve: ScheduledJobApprover,
+  deps: ScheduledJobToolDeps, scope: JobScope, args: Record<string, unknown>, approve: ScheduledJobApprover,
 ): Promise<ScheduledJobToolResult> {
   const jobId = requireJobId(args);
-  const job = ownJob(deps, owner.workspaceId, jobId);
+  const job = ownJob(deps, scope, jobId);
   if (job.activeRunId) throw new ScheduledJobConflictError("This job is already running");
   const approval = await approve({
     toolName: "run_scheduled_job",
     action: "run",
     jobName: job.name,
     title: `Run scheduled job “${job.name}” now?`,
-    lines: runLines(job),
+    lines: [...scope.workspaceLines(job), ...runLines(job)],
     approveLabel: "Run now",
   });
   if (!approval.approved) return declined(approval, "nothing was started");
-  ownJob(deps, owner.workspaceId, jobId);
+  ownJob(deps, scope, jobId);
   const run = await deps.scheduler.runNow(jobId);
   return jsonResult({
     status: "started",
     runId: run.id,
-    next: "The run opens its own thread in this workspace. Call list_scheduled_jobs with this jobId later to see its result; do not wait in a loop.",
+    next: "The run opens its own thread in the job's workspace. Call list_scheduled_jobs with this jobId later to see its result; do not wait in a loop.",
   });
 }
 
 async function deleteJob(
-  deps: ScheduledJobToolDeps, owner: ResolvedCaller, args: Record<string, unknown>, approve: ScheduledJobApprover,
+  deps: ScheduledJobToolDeps, scope: JobScope, args: Record<string, unknown>, approve: ScheduledJobApprover,
 ): Promise<ScheduledJobToolResult> {
   const jobId = requireJobId(args);
-  const job = ownJob(deps, owner.workspaceId, jobId);
+  const job = ownJob(deps, scope, jobId);
   const approval = await approve({
     toolName: "delete_scheduled_job",
     action: "delete",
     jobName: job.name,
     title: `Delete scheduled job “${job.name}”?`,
-    lines: DELETE_LINES,
+    lines: [...scope.workspaceLines(job), ...DELETE_LINES],
     approveLabel: "Delete",
   });
   if (!approval.approved) return declined(approval, "the job was not deleted");
-  ownJob(deps, owner.workspaceId, jobId);
+  ownJob(deps, scope, jobId);
   deps.scheduler.deleteJob(jobId);
   return jsonResult({ status: "deleted", jobId });
 }

@@ -10,13 +10,18 @@
  * swap between engines via a single boolean toggle.
  */
 import { useState, useEffect, useRef } from 'react';
-import ELK from 'elkjs/lib/elk.bundled.js';
-import type { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk-api';
+import type { ELK, ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk-api';
 import type { ProjectEdge, Tree } from '../../../state/chatTypes';
 import { CARD_H, CARD_W } from '../map/mapCardMetrics';
 
-// Singleton ELK instance — no need to create one per render.
-const elk = new ELK();
+// Share the engine and concurrent loads, but don't block Map's chrome or other
+// views on downloading it. Failed loads can be retried on the next layout.
+let elkPromise: Promise<ELK> | null = null;
+function loadElk(): Promise<ELK> {
+  return elkPromise ??= import('elkjs/lib/elk.bundled.js')
+    .then(({ default: Engine }) => new Engine())
+    .catch(error => { elkPromise = null; throw error; });
+}
 
 export type ElkLayoutResult = {
   ids: string[];
@@ -174,7 +179,8 @@ export function useElkLayout({
 
     const gen = ++genRef.current;
 
-    elk.layout(graph).then((laid) => {
+    void loadElk().then(elk => genRef.current === gen ? elk.layout(graph) : null).then((laid) => {
+      if (!laid) return;
       if (genRef.current !== gen) return; // stale
 
       const positions = new Map<string, { x: number; y: number }>();
@@ -214,9 +220,11 @@ export function useElkLayout({
         height: maxY + PAD,
       });
     }).catch((err) => {
+      if (genRef.current !== gen) return;
       console.error('[ELK layout error]', err);
       setResult(null);
     });
+    return () => { genRef.current += 1; };
   }, [enabled, trees, activeTree, edges, liveSet, mode, cardHeights, graphChildren, routingStyle]);
 
   return result;

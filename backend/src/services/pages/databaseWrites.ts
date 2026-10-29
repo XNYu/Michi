@@ -12,7 +12,7 @@ import {
   invalidateDatabasePages, newPageId, PageWriteError, pagesTransaction,
   requireChatChangeSource,
 } from './core';
-import { getDatabase, requireDatabaseRecord, saveDatabase } from './repository';
+import { createDatabase, getDatabase, requireDatabaseRecord, saveDatabase } from './repository';
 import { getDb } from '../db';
 import { dismissPendingProposals, getTargetHead, insertChange, setTargetHead } from './historyRepository';
 import { pageComponents } from './components';
@@ -482,6 +482,87 @@ export interface ConfigureDatabaseViewInput {
   databaseId: string; workspaceId: string; ownerUserId: string; revision: number; viewId?: string;
   componentId: string; props: unknown; pinnedVersion?: number; source: Extract<ChangeSource, { kind: 'chat' | 'helper' }>;
   now?: number;
+}
+
+export interface ConfigureDatabaseInput {
+  databaseId: string; workspaceId: string; ownerUserId: string; revision: number;
+  ops: unknown; source: Extract<ChangeSource, { kind: 'chat' | 'helper' }>; now?: number;
+}
+
+/** A separate, bounded schema capability; row writers and maintenance retain their row-only parser. */
+export function configureDatabase(input: ConfigureDatabaseInput): PageWriteResult {
+  return pagesTransaction(() => {
+    const now = safeNow(input.now);
+    requireChatChangeSource(input.workspaceId, input.ownerUserId, input.source);
+    const current = getDatabase(input.databaseId, input.ownerUserId, { write: true });
+    if (current.workspaceId !== input.workspaceId) throw new PageWriteError(404, 'not_found', 'Database not found');
+    if (current.role) throw invalid('Task database configuration stays in the UI');
+    assertExpectedDatabaseRevision(current, input.revision);
+    if (!Array.isArray(input.ops) || input.ops.length < 1 || input.ops.length > 50) throw invalid('Configuration requires 1 to 50 operations');
+    const ops = parseOps(input.ops, 'user');
+    let proposal = false;
+    for (const op of ops) {
+      if (op.op === 'column.add') {
+        if (op.column.id !== undefined || op.column.type === 'threads') throw invalid('Column IDs are server assigned; threads columns belong to task databases');
+      } else if (op.op === 'column.update' || op.op === 'option.add') {
+        const old = current.columns.find((column) => column.id === op.id);
+        if (!old) throw invalid('Column not found');
+        if (op.op === 'column.update' && op.patch.type === 'threads') throw invalid('threads columns belong to task databases');
+        // Columns have no per-field ownership metadata: conservatively protect every existing column.
+        proposal = true;
+      } else if (op.op === 'view.save') {
+        if (op.view.type === 'custom') throw invalid('Use configure_database_view for custom component views');
+        if (op.view.id !== undefined) {
+          const old = current.views.find((view) => view.id === op.view.id);
+          if (!old) throw invalid('View not found; omit id to create one');
+          if (old.type === 'custom') throw invalid('Use configure_database_view for custom component views');
+          proposal ||= old.edit !== undefined;
+        }
+      } else throw invalid('Only column.add, column.update, option.add and native view.save are supported');
+    }
+    let working: PageDatabase;
+    try {
+      // The pure model validates schema shapes; only this allowlisted path may use its schema operations.
+      working = applyPageDatabaseOps(current, ops, { actor: 'user', revision: current.revision + 1, now,
+        newId: (prefix) => newPageId(prefix === 'col' ? 'column' : 'view') }).database;
+    } catch (error) { throw invalid(error instanceof Error ? error.message : 'Invalid database configuration'); }
+    // Model evaluation must not label agent-created native views as human edits.
+    working = { ...working, views: working.views.map(({ edit: _edit, ...view }) => {
+      const old = current.views.find((item) => item.id === view.id);
+      return { ...view, ...(old?.edit ? { edit: old.edit } : {}) };
+    }) };
+    if (sameCanonical(current.columns, working.columns) && sameCanonical(current.views, working.views)) {
+      return { resource: { kind: 'database', id: current.id }, revision: current.revision, applied: [], proposed: [], rejected: [] };
+    }
+    const change = recordChange({ ownerUserId: input.ownerUserId, workspaceId: input.workspaceId,
+      batchId: newPageId('batch'), target: { kind: 'database', databaseId: current.id }, op: 'schema',
+      before: dbSnapshot(current), after: dbSnapshot(working),
+      forward: { kind: 'database', op: 'replace', database: { id: working.id, workspaceId: working.workspaceId, title: working.title, columns: working.columns, views: working.views } },
+      inverse: { kind: 'database', op: 'replace', database: { id: current.id, workspaceId: current.workspaceId, title: current.title, columns: current.columns, views: current.views } },
+      baseRev: current.revision, appliedRev: proposal ? null : working.revision, source: input.source, now, proposal });
+    if (!proposal) saveDatabase(working, input.ownerUserId, { now, actor: 'agent' });
+    invalidateDatabasePages(current.id, now, 'agent');
+    return { resource: { kind: 'database', id: current.id }, revision: proposal ? current.revision : working.revision,
+      applied: proposal ? [] : [change], proposed: proposal ? [change] : [], rejected: [] };
+  });
+}
+
+/** Creation and its initial schema history commit together; invalid columns leave no empty orphan. */
+export function createAgentDatabase(input: {
+  workspaceId: string; ownerUserId: string; title: string; columns: unknown;
+  source: ConfigureDatabaseInput['source']; now?: number;
+}): { database: PageDatabase; result: PageWriteResult } {
+  return pagesTransaction(() => {
+    requireChatChangeSource(input.workspaceId, input.ownerUserId, input.source);
+    if (!Array.isArray(input.columns) || !input.columns.length || input.columns.length > 50) {
+      throw invalid('columns must contain 1 to 50 columns');
+    }
+    const database = createDatabase({ workspaceId: input.workspaceId, ownerUserId: input.ownerUserId, title: input.title, now: input.now,
+      views: [{ id: newPageId('view'), name: 'Table', type: 'table', position: 0, config: { filters: [], match: 'all', sorts: [] } }] });
+    const result = configureDatabase({ ...input, databaseId: database.id, revision: database.revision,
+      ops: input.columns.map((column) => ({ op: 'column.add', column })) });
+    return { database: getDatabase(database.id, input.ownerUserId), result };
+  });
 }
 
 /** Configure a custom view to render a validated, versioned library component. */

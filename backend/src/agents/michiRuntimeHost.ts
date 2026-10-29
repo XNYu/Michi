@@ -64,10 +64,10 @@ export function createMichiRuntimeHost(): RuntimeHost {
     },
     prompt: {
       firstTurnPrefix: (input) => preamble.buildFirstTurnPrefix(input),
-      preamble: ({ toolProfile, ...input }) => preamble.buildPreamble({ ...input, ...(metaAgentGuard.isMetaAgentProfile(toolProfile) ? { toolCapabilities: maintenancePolicy.isMaintenanceProfile(toolProfile) ? 'maintenance' : 'assistant' } : {}) }),
+      preamble: ({ toolProfile, ...input }) => preamble.buildPreamble({ ...input, ...((metaAgentGuard.isMetaAgentProfile(toolProfile) || assistantPolicy.isAssistantProfile(toolProfile)) ? { toolCapabilities: maintenancePolicy.isMaintenanceProfile(toolProfile) ? 'maintenance' : 'assistant' } : {}) }),
       // The assistant gets its own short tool note instead of the ordinary chat tools.
       stableSystemPrompt: (metadataOutputMode, enableFollowUps, nativeAskUser, restricted, profile) => preamble.buildStableSystemPrompt(
-        metadataOutputMode, enableFollowUps, nativeAskUser, maintenancePolicy.isMaintenanceProfile(profile) ? 'maintenance' : restricted ? 'assistant' : undefined,
+        metadataOutputMode, enableFollowUps, nativeAskUser, maintenancePolicy.isMaintenanceProfile(profile) ? 'maintenance' : (restricted || assistantPolicy.isAssistantProfile(profile)) ? 'assistant' : undefined,
       ),
       // As KiroSession.send builds it: Crew's inline answer format (none for
       // Agent Runs), else the follow-up reminder and the set_branch_overview note.

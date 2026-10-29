@@ -8,10 +8,11 @@
  * install is untouched and switching back is a real escape hatch.
  *
  * The three B modes differ ONLY in corner radius and fill width. Every text
- * spine is identical across them (20 / 36 / 52), which is the whole point —
+ * spine is identical across them (12 / 24 / 36 before workspace icon offset),
+ * which is the whole point —
  * when you flip between them in the app you're judging the corners, not an
  * accidental alignment change. `rowGeom` is the single source of that math;
- * see sidebarRowStyle.test.ts for the spine assertions.
+ * all three modes share the same geometry below.
  */
 
 /** Card-mode row fills. Deliberately NOT the solid `--term-alt` /
@@ -93,14 +94,14 @@ export interface RowGeom {
   workspaceIconSlot: number;
 }
 
-/** Shared spine ladder for every B mode. Keep in sync with the mock at
- *  docs/mocks/2026-08-27-sidebar-B-switch.html. */
-const B_TITLE_X = 20;
-const B_INDENT_STEP = 16;
+/** Compact spine ladder shared by every B mode. Workspace titles and threads
+ *  start at 31px after the folder slot; branches add 12px per level. */
+const B_TITLE_X = 12;
+const B_INDENT_STEP = 12;
 const B_RIGHT_GAP = 16;
 /** Folder glyph in the workspace header (see WorkspaceRow) and the gap after it. */
 export const WORKSPACE_ICON_SIZE = 15;
-export const WORKSPACE_ICON_GAP = 6;
+export const WORKSPACE_ICON_GAP = 4;
 
 function bMode(style: SidebarRowStyle, inset: number, radius: number): RowGeom {
   return {
@@ -198,7 +199,10 @@ const CARET_KEBAB_GAP = 2;
  *  caret/⋯ cluster ate visibly too much of the row.
  *
  *  Reserved unconditionally rather than only while hovered, so the caret doesn't
- *  jump sideways as the pointer enters the row. */
+ *  jump sideways as the pointer enters the row.
+ *
+ *  Touch screens widen the ⋯; callers add `var(--row-kebab-extra)` (set in
+ *  index.css for coarse pointers) on top of this value. */
 export function caretKebabClearance(g: RowGeom): number {
   if (!g.isCard) return 0;
   const paddingRight = parseFloat(rowPadding(g).paddingRight);

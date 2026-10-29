@@ -19,7 +19,6 @@ export default function AuthenticationTerminal({ request }: { request: RemoteAut
   const [generation, setGeneration] = useState(0);
   const [status, setStatus] = useState('');
   const [failed, setFailed] = useState(false);
-  const [finished, setFinished] = useState(false);
   const [copied, setCopied] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const requestRef = useRef(request);
@@ -74,11 +73,12 @@ export default function AuthenticationTerminal({ request }: { request: RemoteAut
           if (disposed) return;
           current.onComplete?.();
           completeRemoteAuthentication(current.key);
-          setFinished(true); setStatus('Sign-in command completed. Michi is checking the connection; retry your chat when ready.');
+          // Nothing is left to do in the dialog once sign-in and reconnect succeed.
+          closeRemoteAuthentication();
         } catch (error) { if (!disposed) { setFailed(true); setStatus(error instanceof Error ? error.message : String(error)); } }
       })();
     });
-    resize(); setFailed(false); setFinished(false); setStatus('Complete the sign-in prompts below.');
+    resize(); setFailed(false); setStatus('Complete the sign-in prompts below.');
     // React StrictMode replays effects in development. Defer the process spawn
     // so the discarded effect never launches a second authentication command.
     const startTimer = window.setTimeout(() => {
@@ -109,7 +109,7 @@ export default function AuthenticationTerminal({ request }: { request: RemoteAut
       <div className="remote-auth__terminal"><div ref={host} className="remote-auth__terminal-host" aria-label="Sign-in terminal" /></div>
       <p role="status">{status}</p>
       <div className="remote-auth__actions">{failed && <Button onClick={() => setGeneration(value => value + 1)}>Try sign-in again</Button>}
-        <Button variant="secondary" onClick={closeRemoteAuthentication}>{finished ? 'Done' : 'Cancel'}</Button></div>
+        <Button variant="secondary" onClick={closeRemoteAuthentication}>Cancel</Button></div>
     </> : <>
       {command && <><p>Use the Michi desktop app for the embedded terminal, or run this command in Terminal:</p>
       <pre>{command}</pre></>}

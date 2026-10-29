@@ -1593,17 +1593,27 @@ export function useWorkspacePersistence({
       }
     };
     type RemoteFetchResult = { connection: BackendConnectionSummary; snapshot: BackendSnapshot | null };
+    type RemoteDiscovery = { connections: BackendConnectionSummary[]; remoteFetches: Promise<RemoteFetchResult>[] };
+    let remoteDiscovery: Promise<RemoteDiscovery> | null = null;
+    const discoverRemotes = (): Promise<RemoteDiscovery> => remoteDiscovery ??= Promise.resolve().then(async () => {
+      const connections = typeof listBackendConnections === 'function' ? await listBackendConnections().catch(() => []) : [];
+      if (cancelled) return { connections: [], remoteFetches: [] };
+      setKnownBackendConnections(connections);
+      for (const connection of connections) activeRemoteIds.add(connection.id);
+      return { connections, remoteFetches: connections.map(async (connection): Promise<RemoteFetchResult> => ({
+        connection, snapshot: await fetchRemoteSnapshot(connection),
+      })) };
+    });
     /**
-     * Wait for the LOCAL backend only. Remote snapshot fetches are started here
-     * (so they overlap the local work) but returned as pending promises: the
+     * Wait for the LOCAL backend only. Remote discovery and snapshot fetches start after local metadata
+     * confirms the backend is ready (and overlap local state installation) but returned as pending promises: the
      * caller decides whether to block on them. In the measured real launch the
      * remote SSH tunnel spent the full 8s timeout before the retry succeeded in
      * 0.5s — holding the whole UI behind it turned a ~0.5s boot into ~8.5s.
      */
     const awaitLocalSnapshot = async (): Promise<{
       localWorkspaces: unknown[];
-      connections: BackendConnectionSummary[];
-      remoteFetches: Promise<RemoteFetchResult>[];
+      remotes: Promise<RemoteDiscovery>;
     } | null> => {
       for (;;) {
         if (cancelled) return null;
@@ -1635,20 +1645,9 @@ export function useWorkspacePersistence({
           // for the active tree are eager-loaded below; other trees load on
           // demand when opened. This is what shrinks the boot payload from the
           // whole-forest 13MB to a ~structural fraction.
-          const [localWorkspaces, connections] = await Promise.all([
-            fetchAllWorkspacesMeta(LOCAL_BACKEND_CONNECTION_ID),
-            typeof listBackendConnections === 'function'
-              ? listBackendConnections().catch(() => [])
-              : Promise.resolve([]),
-          ]);
+          const localWorkspaces = await fetchAllWorkspacesMeta(LOCAL_BACKEND_CONNECTION_ID);
           if (cancelled) return null;
-          setKnownBackendConnections(connections);
-          for (const connection of connections) activeRemoteIds.add(connection.id);
-          const remoteFetches = connections.map(async (connection): Promise<RemoteFetchResult> => ({
-            connection,
-            snapshot: await fetchRemoteSnapshot(connection),
-          }));
-          return { localWorkspaces, connections, remoteFetches };
+          return { localWorkspaces, remotes: discoverRemotes() };
         } catch {
           if (cancelled) return null;
           // Connection-level failure: the backend is still starting. Wait and
@@ -1779,6 +1778,7 @@ export function useWorkspacePersistence({
       refreshingConnections = true;
       try {
         await localInstalled;
+        await discoverRemotes(); // A late initial list must not restore a removed connection.
         if (cancelled) return;
         const connections = await listBackendConnections();
         if (cancelled) return;
@@ -1805,13 +1805,14 @@ export function useWorkspacePersistence({
       try {
         const localResult = await awaitLocalSnapshot();
         if (cancelled || localResult === null) return;
-        const { localWorkspaces, connections, remoteFetches } = localResult;
-        for (const connection of connections) knownConnectionIds.add(connection.id);
+        const { localWorkspaces, remotes } = localResult;
         const snapshots: BackendSnapshot[] = [
           { connectionId: LOCAL_BACKEND_CONNECTION_ID, workspaces: localWorkspaces },
         ];
         const unavailableConnections: BackendConnectionSummary[] = [];
-        if (localWorkspaces.length === 0 && connections.length > 0) {
+        if (localWorkspaces.length === 0) {
+          const { connections, remoteFetches } = await remotes;
+          for (const connection of connections) knownConnectionIds.add(connection.id);
           // Remote-only setup: the local DB has nothing to paint, so finishing
           // now would flash the empty-DB "create a workspace" state and then
           // pop the remote workspaces in. Block on the remotes (bounded by
@@ -1823,7 +1824,11 @@ export function useWorkspacePersistence({
         } else {
           // Local-first: paint as soon as the local backend answers. Each remote
           // snapshot merges in when it lands (or enters the retry loop).
-          for (const fetch of remoteFetches) void mergeRemoteWhenReady(fetch);
+          void remotes.then(({ connections, remoteFetches }) => {
+            if (cancelled) return;
+            for (const connection of connections) knownConnectionIds.add(connection.id);
+            for (const fetch of remoteFetches) void mergeRemoteWhenReady(fetch);
+          });
         }
         if (cancelled) return;
         const backendState: HydratedState = { projects: [], activeProjectId: null, nodes: {} };
@@ -1839,7 +1844,7 @@ export function useWorkspacePersistence({
             const resolvedActiveId = preferredUsable
               ? preferredActiveId
               : backendState.projects.find((p) => !isSystemWorkspace(p))?.id ?? null;
-            if (!preferredExists && preferredActiveId !== null && connections.length > 0) {
+            if (!preferredExists && preferredActiveId !== null) {
               // Likely a remote workspace whose snapshot has not landed yet.
               pendingPreferredActiveId = preferredActiveId;
               autoSelectedActiveId = resolvedActiveId;

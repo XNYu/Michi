@@ -1,3 +1,4 @@
+import { artifactTypeForPath } from 'michi-shared';
 import { getDb, prepareCached, runInTransaction } from './db';
 import { randomUUID } from 'node:crypto';
 import { purgeWorkspacePages } from './pages/repository';
@@ -105,6 +106,8 @@ export interface NodeRow {
   current_mode_id?: string | null;
   /** Written only by the ordinary chat permission API. Graph snapshots cannot overwrite it. */
   permission_mode?: string | null;
+  /** 1: Approve for me on top of permission_mode 'ask'. Written with permission_mode only. */
+  permission_approve_for_me?: number | null;
   crew_memory_mode?: string | null;
   pane_width?: number | null;
   digest?: string | null;
@@ -388,6 +391,10 @@ export function deleteWorkspace(id: string, userId?: string): void {
       .run(now, id);
     db.prepare('UPDATE nodes SET purged_at = ? WHERE workspace_id = ? AND purged_at IS NULL')
       .run(now, id);
+    // harness_events has no FK to nodes; drop it before the trees cascade removes node rows.
+    db.prepare(
+      'DELETE FROM harness_events WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ?)',
+    ).run(id);
     db.prepare(
       'DELETE FROM messages WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ?)',
     ).run(id);
@@ -408,6 +415,10 @@ export function deleteWorkspace(id: string, userId?: string): void {
 export function runTombstoneGc(): { workspaces: number; nodes: number } {
   const cutoff = Date.now() - TOMBSTONE_TTL_MS;
   const db = getDb();
+  // Tombstones from before purges cleared harness_events may still own rows.
+  db.prepare(
+    'DELETE FROM harness_events WHERE node_id IN (SELECT id FROM nodes WHERE purged_at IS NOT NULL AND purged_at < ?)',
+  ).run(cutoff);
   const nodes = db.prepare(
     'DELETE FROM nodes WHERE purged_at IS NOT NULL AND purged_at < ?',
   ).run(cutoff).changes as number;
@@ -466,12 +477,19 @@ export function saveTree(tree: TreeRow, userId?: string): void {
 }
 
 export function deleteTree(id: string, userId?: string): void {
+  // nodes.tree_id cascades, so the Tree's nodes go too; harness_events has no FK.
   if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
+    getDb().prepare(
+      `DELETE FROM harness_events WHERE node_id IN (SELECT n.id FROM nodes n
+         JOIN trees t ON t.id = n.tree_id JOIN workspaces w ON w.id = t.workspace_id
+        WHERE t.id = ? AND w.owner_user_id = ?)`
+    ).run(id, userId);
     getDb().prepare(
       'DELETE FROM trees WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM trees WHERE id = ?) AND owner_user_id = ?)'
     ).run(id, id, userId);
     return;
   }
+  getDb().prepare('DELETE FROM harness_events WHERE node_id IN (SELECT id FROM nodes WHERE tree_id = ?)').run(id);
   getDb().prepare('DELETE FROM trees WHERE id = ?').run(id);
 }
 
@@ -580,7 +598,7 @@ export function getNode(id: string): NodeRow | null {
 }
 
 export function saveNode(node: NodeRow, userId?: string): void {
-  const { permission_mode: _permissionMode, crew_memory_mode: _crewMemoryMode, maintenance_job_id: _maintenanceJobId,
+  const { permission_mode: _permissionMode, permission_approve_for_me: _approveForMe, crew_memory_mode: _crewMemoryMode, maintenance_job_id: _maintenanceJobId,
     viewed_at: _viewedAt, ...graphNode } = node;
   if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
     const owned = getDb().prepare('SELECT 1 FROM workspaces WHERE id = ? AND owner_user_id = ?').get(node.workspace_id, userId);
@@ -780,6 +798,10 @@ export function emptyWorkspaceTrash(workspaceId: string): number {
     // deleted because a tombstoned node can never come back, so its messages /
     // edges have nowhere to attach.
     db.prepare(
+      `DELETE FROM harness_events
+       WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND purged_at IS NOT NULL)`,
+    ).run(workspaceId);
+    db.prepare(
       `DELETE FROM messages
        WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND purged_at IS NOT NULL)`,
     ).run(workspaceId);
@@ -817,6 +839,11 @@ export function purgeWorkspaceNodes(workspaceId: string, nodeIds: readonly strin
       `UPDATE nodes SET purged_at = ?
        WHERE workspace_id = ? AND id IN (${placeholders}) AND purged_at IS NULL`,
     ).run(now, workspaceId, ...nodeIds);
+    db.prepare(
+      `DELETE FROM harness_events
+       WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND purged_at IS NOT NULL
+                           AND id IN (${placeholders}))`,
+    ).run(workspaceId, ...nodeIds);
     db.prepare(
       `DELETE FROM messages
        WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND purged_at IS NOT NULL
@@ -1589,11 +1616,11 @@ export function upsertAgentContextMetadata(input: {
     size: input.size,
     auto_inject: existing?.auto_inject ?? 0,
     source: 'agent',
-    type: existing?.type ?? 'doc',
-    url: existing?.url ?? null,
+    type: artifactTypeForPath(input.filePath),
+    url: null,
     origin_node_id: existing?.origin_node_id ?? input.nodeId,
     origin_message_id: existing?.origin_message_id ?? null,
-    kind: existing?.kind ?? 'embedded',
+    kind: 'embedded',
     pinned_at: existing?.pinned_at ?? null,
     created_at: existing?.created_at ?? now,
     updated_at: now,
@@ -1885,23 +1912,6 @@ export function listGrants(workspaceId: string): PermissionGrant[] {
       'SELECT workspace_id, tool_name, granted_at FROM workspace_permission_grants WHERE workspace_id = ? ORDER BY tool_name ASC',
     )
     .all(workspaceId) as unknown as PermissionGrant[];
-}
-
-export function hasGrant(workspaceId: string, toolName: string): boolean {
-  const row = getDb()
-    .prepare(
-      'SELECT 1 FROM workspace_permission_grants WHERE workspace_id = ? AND tool_name = ?',
-    )
-    .get(workspaceId, toolName);
-  return !!row;
-}
-
-export function grantPermission(workspaceId: string, toolName: string): void {
-  getDb()
-    .prepare(
-      'INSERT OR REPLACE INTO workspace_permission_grants (workspace_id, tool_name, granted_at) VALUES (?, ?, ?)',
-    )
-    .run(workspaceId, toolName, Date.now());
 }
 
 export function revokePermission(workspaceId: string, toolName: string): void {

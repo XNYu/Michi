@@ -89,3 +89,45 @@ test('Spaces opens on its Home, a workspace home opens from the sidebar, and ⌘
   await expect(assistant).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test('floating assistant stays inset when dragged, resized, and the viewport shrinks', async ({ page }) => {
+  const spaces = createSpacesHomeMock({ homeBlocks: [] });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => {
+    localStorage.setItem('michi:v1:prefs', JSON.stringify({ onboardingCompletedAt: 1 }));
+    localStorage.setItem('michi:migrated', '1');
+    localStorage.setItem('michi:metaChat:window:v1', JSON.stringify({
+      form: 'float', minimized: false, rect: { x: 650, y: 300, w: 450, h: 600 }, dockRatio: 50,
+    }));
+  });
+  await installMockApi(page, { workspaces: [workspace], custom: spaces.handle });
+  await page.goto('/');
+  await openArea(page, 'spaces');
+  const assistant = page.getByRole('region', { name: 'Assistant', exact: true });
+  await expect(assistant).toBeVisible();
+  const expectInside = async () => {
+    await expect.poll(async () => assistant.evaluate((el) => {
+      const panel = el.getBoundingClientRect();
+      const area = el.closest('.meta-chat-area')!.getBoundingClientRect();
+      return Math.min(panel.left - area.left, panel.top - area.top, area.right - panel.right, area.bottom - panel.bottom);
+    })).toBeGreaterThanOrEqual(17.5);
+  };
+  await expectInside();
+  const title = await assistant.locator('header').boundingBox();
+  await page.mouse.move(title!.x + 30, title!.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(0, 990, { steps: 5 });
+  await expectInside();
+  await page.mouse.up();
+  const corner = await assistant.locator('[data-dir="se"]').boundingBox();
+  await page.mouse.move(corner!.x + 5, corner!.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(1435, 995, { steps: 5 });
+  await page.mouse.up();
+  await expectInside();
+  await page.setViewportSize({ width: 800, height: 500 });
+  await expectInside();
+  await expect(assistant.getByRole('button', { name: 'Minimize', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expectInside();
+});

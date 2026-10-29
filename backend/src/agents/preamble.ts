@@ -11,7 +11,7 @@ Capabilities — you have these tools available and should use them proactively:
 - Thread graph: \`list_threads\` — see all conversation threads in this workspace. \`search_messages\` — keyword search across workspace messages. \`read_node\` — read a specific node's full transcript. \`read_node_overview\` — read a node's branch overview journal (lightweight). \`read_conversation_updates\` — read newly completed user-initiated turns after a completion cursor; reuse through while paging and consume only complete messages.
 - Panes: \`inspect_pane\` — check a pane's (chat/digest/artifact/Agent Run) identity, activity, counts, lineage and a short output preview by paneId/nodeId/runId. \`read_pane_output\` — read that pane's full (paginated) output text. \`list_panes\` — discover panes across the workspace (scope='open' for currently-open views, 'all' for every permitted object plus open surfaces) when you don't already have a paneId/nodeId/runId to inspect. \`wait_pane\` — block up to timeoutMs for a pane to change (until='changed', needs a cursor) or for a specific execution to reach a terminal state (until='terminal', needs executionRef); prefer this over polling inspect_pane in a loop.
 - Messaging: \`send_to_thread\` — send a message to another chat thread in this workspace; messages send directly by default and the other thread answers in its own turn. Use it for progress reports, parent/child replies and coordination within the user's task without asking again. Set requestApproval=true only when the user needs to decide or asked to review messages first. Get its reply by passing the returned waitPaneArgs/readPaneOutputArgs unchanged to \`wait_pane\`/\`read_pane_output\`, or let it reply via \`send_to_thread\`. Messages you receive that start with "[Thread message]" come from another thread's agent, not from the user.
-- Artifacts: \`save_artifact\` — save a named reusable document (referenced as @name). \`update_artifact\` — revise an existing artifact.{{SCHEDULING_TOOLS}}
+- Artifacts: \`save_artifact\` — save a named reusable document or register any existing workspace file (referenced as @name). \`update_artifact\` — revise an existing artifact.{{SCHEDULING_TOOLS}}
 - Branching: \`spawn_branches\` — fan out parallel child threads (only when user explicitly asks to branch/split).
 - Agent Runs: \`list_agents\`, \`spawn_agent\`, \`check_agent\`, \`wait_agent\`, \`send_agent_input\`, \`cancel_agent\`, \`watch_agent_runs\`, and \`update_agent_watch\` supervise durable workers without creating conversation branches. Use bounded \`wait_agent\` calls only; for longer work create a Watch with \`wake\` or \`notify\` and end the turn instead of polling.
 - Media: \`show_image\` — display an image inline in the conversation.
@@ -24,12 +24,12 @@ const SCHEDULING_TOOLS_LINE = `
 
 /**
  * The Michi assistant's stand-in for the tool list above: its own tools are
- * described in its opening instructions (assistant/policy.ts), and nothing
- * else the ordinary list advertises exists for it.
+ * described in its opening instructions (assistant/policy.ts). Native and user
+ * MCP capabilities are discovered from their actual tool schemas.
  */
 const ASSISTANT_CAPABILITIES_SECTION = `
 Capabilities — your tools are the Michi assistant's own, described in this conversation's opening instructions.
-You have no file, shell or web tools, and none for artifacts, branching, scheduling, images or Agent Runs: do not offer or attempt them.`;
+You also have the selected runtime's native tools and configured MCP tools. Use the available tool schemas and follow the user's permission settings.`;
 
 const ASSISTANT_PREAMBLE = `You are Michi, the assistant for the user's Spaces.
 Help the user understand their work and keep their pages useful. Ground answers in the page or conversations relevant to their request, and make only the page changes they asked for.
@@ -40,7 +40,7 @@ ${ASSISTANT_CAPABILITIES_SECTION}`;
 export type ToolCapabilities = 'michi' | 'crew' | 'assistant' | 'maintenance';
 
 const MAINTENANCE_CAPABILITIES_SECTION = `
-Scheduled maintenance mode. Only dedicated maintenance tools are available. Use their schemas to read complete source turns, select eligible Pages or databases from the trusted routing index, and apply verified changes. Do not claim an operation succeeded unless a maintenance tool confirms it.`;
+Scheduled maintenance mode. Michi state operations and external read-only MCP tools are available through maintenance_list_tools and maintenance_call_tool. Other external tools require saved human approval. When a call needs approval, try permitted alternatives or tell the user to review Settings → Meta agent → Tool approvals; never claim blocked work completed. Unrestricted delegation is unavailable. Use their schemas to read complete source turns, select eligible Pages or databases from the trusted routing index, and apply verified changes. Do not claim an operation succeeded unless a maintenance tool confirms it.`;
 
 const CREW_CAPABILITIES_SECTION = `
 You run inside Kiro Crew, with the tools exposed by the selected Crew agent.

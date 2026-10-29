@@ -9,12 +9,14 @@ import type {
   AgentTurnInput,
   CancelAck,
   ChatMessage,
+  CompactResult,
   LoadAgentSessionOptions,
   NewAgentSessionOptions,
   RuntimePermissionBroker,
   RuntimeSessionOwner,
   RuntimeToolProfile,
   MaintenanceExecutionContext,
+  SteerResult,
 } from '../../contract/types';
 import type { NormalizedEvent } from '../../contract/events';
 import { interactiveOwner, sameOwner } from '../../contract/types';
@@ -37,9 +39,10 @@ import {
   type RunWorkerToolProfile,
 } from '../../contract/tools';
 import { createClaudeSdkTransport, type ClaudeSdkTransport } from './claudeSdkTransport';
-import type { SDKUserMessage, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage, PermissionMode, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { CLAUDE_MODES, isClaudeWorkMode, type ClaudeWorkMode } from './claudeModes';
 import { resolveClaudeCliModelId } from './claudeModelCatalog';
-import { createTranslator } from './claudeEventTranslator';
+import { createTranslator, type ClaudeCompaction } from './claudeEventTranslator';
 import { getClaudeJsonlPath } from './claudeProjectsPath';
 import {
   buildClaudeMcpConfig, claudeInitCatalog, claudeLacksRestrictedFlag, claudeLacksToolsFlag, michiMcpToolName,
@@ -86,6 +89,22 @@ function nextInteractionRequestId(): number {
   if (!Number.isSafeInteger(lastInteractionRequestId)) throw new Error('Claude interaction request ID exhausted');
   return lastInteractionRequestId;
 }
+
+// Session-state versions keep rising across sessions and backend restarts,
+// so a renderer never takes a newer session's state for an older one.
+let lastStateVersion = Date.now();
+function nextStateVersion(): number {
+  lastStateVersion = Math.max(Date.now(), lastStateVersion + 1);
+  return lastStateVersion;
+}
+
+// Reviewing a plan (ExitPlanMode) is the user's decision in every approval
+// mode: no policy, grant or session trust answers it.
+const PLAN_REVIEW_OPTIONS = [
+  { optionId: 'reject_once', name: 'Keep planning', kind: 'reject_once' as const },
+  { optionId: 'allow_once', name: 'Approve plan', kind: 'allow_once' as const },
+];
+const PLAN_REJECTED = 'The user did not approve the plan. Stay in plan mode and wait for their feedback before continuing.';
 
 // ---- Session state -----------------------------------------------------------
 
@@ -143,7 +162,11 @@ export class ClaudeSession implements AgentSession {
   public runtimeProfileHash: string | null;
   public readonly runtimeId = 'claude';
   public readonly parentChatId: string | undefined;
-  public currentModeId: string | null = null;
+
+  /** The work mode (claudeModes.ts) of a chat that has modes; null otherwise. */
+  get currentModeId(): ClaudeWorkMode | null {
+    return this.supportsModes() ? this.workMode : null;
+  }
 
   /** Model currently bound to this session (reflects setModel). */
   get currentModelId(): string | null {
@@ -171,7 +194,19 @@ export class ClaudeSession implements AgentSession {
    */
   private readonly approvals: ApprovalCoordinator;
   private turnPermissionMode: import('michi-shared').ChatPermissionMode | undefined;
-  private nativePermissionMode: 'default' | 'bypassPermissions' = 'default';
+  /** The SDK permission mode the CLI runs under, as last set or reported. */
+  private nativePermissionMode: PermissionMode = 'default';
+  /**
+   * Default or Plan. Plan sets the SDK mode to 'plan'; Default uses the mode
+   * the approval policy maps to (policyNativeMode). The CLI leaves plan mode
+   * on its own when the user approves a plan, and enters it when the model
+   * calls EnterPlanMode: its reported mode keeps this in step.
+   */
+  private workMode: ClaudeWorkMode = 'default';
+  /** SDK permission-mode changes, one at a time. */
+  private nativeModeOp: Promise<void> = Promise.resolve();
+  private readonly stateListeners = new Set<() => void>();
+  private stateVersion = nextStateVersion();
   private nodeId: string;
   private readonly cwd: string;
   private workspaceId: string | null;
@@ -219,6 +254,26 @@ export class ClaudeSession implements AgentSession {
   private translatorHasBackgroundSubagents: (() => boolean) | null = null;
   /** Them as roster entries (see endBackgroundSubagents). */
   private translatorPendingBackgroundSubagents: (() => SubagentInfo[]) | null = null;
+  /** The live translator's last native compaction (see compact()). */
+  private takeTranslatorCompaction: (() => ClaudeCompaction | null) | null = null;
+  /**
+   * Steers (SDK user messages sent during a turn) the CLI has not started
+   * yet, by uuid. Its command_lifecycle frames say when it does: folded into
+   * the running turn, or as its own turn right after it, which the host's
+   * turn then waits for (TranslatorOptions.holdTurnEnd).
+   */
+  private readonly pendingSteers = new Set<string>();
+  /** Every steer sent during the current turn, started or not. */
+  private readonly turnSteers = new Set<string>();
+  /**
+   * A result of this turn was held for a pending steer and no CLI turn has
+   * started since: the CLI is between that result and the steer's turn.
+   */
+  private heldTurnEnd = false;
+  /** Ends a held turn when no CLI turn follows (see heldTurnEnd). */
+  private releaseHeldTurn: (() => void) | null = null;
+  /** The CLI's protocol capabilities, from system/init. */
+  private nativeCapabilities: ReadonlySet<string> = new Set();
   private readonly backgroundSubagents: BackgroundSubagentSink;
   /** This session's reports to the registry (unique per session object). */
   private readonly backgroundSubagentSource = `claude:${randomUUID()}`;
@@ -304,7 +359,7 @@ export class ClaudeSession implements AgentSession {
       ]);
     }
     this.perf = this.host.observability.perf;
-    this.followUpsHookPocEnabled = !this.host.profile.isRestricted(deps.toolProfile) && this.options.followUpsHookPoc();
+    this.followUpsHookPocEnabled = !this.host.profile.isRestricted(deps.toolProfile) && !deps.toolProfile?.assistant && this.options.followUpsHookPoc();
     this.approvals = new ApprovalCoordinator({
       permissions: this.host.permissions,
       canonicalize: (toolName) => this.host.permissions.grantKey?.(toolName) ?? toolName,
@@ -478,20 +533,17 @@ export class ClaudeSession implements AgentSession {
         await abortable(this.retirement, controller.signal);
       }
       this.turnPermissionMode = this.host.permissions.mode(this.owner, this.ownerUserId);
-      const desiredPermissionMode = claudeSpawnPolicy(this.host.profile.isRestricted(this.toolProfile), {
-        ownerMode: ownerMode(this.owner), permissionMode: this.turnPermissionMode, toolProfile: this.toolProfile,
-      }).permissionMode;
+      const desiredPermissionMode = this.desiredNativeMode();
       if (this.child && desiredPermissionMode !== this.nativePermissionMode) {
         yield { kind: 'retry_start', detail: 'Applying permission mode' };
         if (!this.transport) throw new Error('Claude SDK transport is unavailable');
         try {
-          await abortable(withDeadline(this.transport.query.setPermissionMode(desiredPermissionMode), SDK_CONTROL_TIMEOUT_MS, 'Claude permission mode change timed out'), controller.signal);
+          await abortable(this.applyNativeMode(desiredPermissionMode), controller.signal);
         } catch (error) {
           this.workflowTap.expectStop('Stopped by a permission-mode change: the Claude session restarted');
           await this.retireProcess();
           throw error;
         }
-        this.nativePermissionMode = desiredPermissionMode;
         yield { kind: 'retry_end' };
       }
       if (this.state === 'crashed') {
@@ -523,7 +575,7 @@ export class ClaudeSession implements AgentSession {
       // Append follow-up reminder for the model only — keep history clean so
       // fork/branch transcripts don't accumulate reminder noise.
       const userTurnCount = this.history.filter(m => m.role === 'user').length + 1;
-      const reminder = this.host.profile.isRestricted(this.toolProfile) ? '' : this.host.prompt.followUpsTurnReminder(
+      const reminder = (this.host.profile.isRestricted(this.toolProfile) || this.toolProfile?.assistant) ? '' : this.host.prompt.followUpsTurnReminder(
         userTurnCount,
         this.followUpsHookPocEnabled,
         this.followUpsExperimentMode,
@@ -540,6 +592,9 @@ export class ClaudeSession implements AgentSession {
 
       this.history.push({ role: 'user', content: outgoingText });
       this.markTranslatorTurnStart?.();
+      this.pendingSteers.clear();
+      this.turnSteers.clear();
+      this.heldTurnEnd = false;
       this.initSeenThisTurn = false;
       this.firstModelEnvelopeThisTurn = false;
       this.stdinWriteAt = this.perf.now();
@@ -849,7 +904,21 @@ export class ClaudeSession implements AgentSession {
     if (canInterrupt) {
       const settled = new Promise<void>((resolve) => { this.settleInterrupt = resolve; });
       try {
-        await withDeadline(Promise.all([this.transport!.query.interrupt(), settled]), SDK_CONTROL_TIMEOUT_MS, 'Claude interrupt did not settle');
+        // A steer the CLI has not started survives an interrupt and would
+        // run as a turn of its own after the Stop: withdraw it first.
+        const steers = this.pendingSteers.size > 0 ? await this.withdrawPendingSteers() : 'withdrawn';
+        if (steers === 'failed') throw new Error('Claude did not withdraw the queued steer');
+        if (steers === 'withdrawn' && this.heldTurnEnd) {
+          // The CLI is idle between the held result and the withdrawn
+          // steer's turn: nothing runs that an interrupt could stop.
+          this.heldTurnEnd = false;
+          this.releaseHeldTurn?.();
+          await withDeadline(settled, SDK_CONTROL_TIMEOUT_MS, 'Claude turn did not settle');
+          return { acknowledged: true, source: 'native', confidence: 'native', nativeMethod: 'SDK cancel_async_message' };
+        }
+        const [receipt] = await withDeadline(Promise.all([this.transport!.query.interrupt(), settled]), SDK_CONTROL_TIMEOUT_MS, 'Claude interrupt did not settle');
+        // interrupt_receipt_v1: a steer of this turn listed as still queued will run.
+        if (receipt?.still_queued?.some((uuid) => this.turnSteers.has(uuid))) throw new Error('A steer survived the interrupt');
         return { acknowledged: true, source: 'native', confidence: 'native', nativeMethod: 'SDK interrupt + result' };
       } catch { /* Retire the owned process if the SDK cannot confirm a boundary. */ }
       finally { this.settleInterrupt = null; }
@@ -860,6 +929,130 @@ export class ClaudeSession implements AgentSession {
     try { await this.retireProcess(); }
     catch { return { acknowledged: false, source: 'inferred', confidence: 'unknown' }; }
     return { acknowledged: true, source: 'inferred', confidence: 'unknown', nativeMethod: 'SIGINT/SIGKILL' };
+  }
+
+  /**
+   * Withdraw the steers the CLI has not started (cancel_async_message).
+   * `dequeued`: one was already taken for a turn, which the caller's
+   * interrupt then stops. `failed`: the SDK has no such control or did not
+   * answer, so one may still run.
+   */
+  private async withdrawPendingSteers(): Promise<'withdrawn' | 'dequeued' | 'failed'> {
+    const uuids = [...this.pendingSteers];
+    if (uuids.length === 0) return 'withdrawn';
+    const cancelAsyncMessage = this.sdkCancelAsyncMessage();
+    if (!cancelAsyncMessage) return 'failed';
+    try {
+      const removed = await withDeadline(Promise.all(uuids.map((uuid) => cancelAsyncMessage(uuid))),
+        SDK_CONTROL_TIMEOUT_MS, 'Claude did not confirm withdrawing the steer');
+      uuids.forEach((uuid, index) => { if (removed[index] === true) this.pendingSteers.delete(uuid); });
+      return removed.every((value) => value === true) ? 'withdrawn' : 'dequeued';
+    } catch (error) {
+      this.host.observability.log('warn', 'chat', 'claude steer could not be withdrawn', {
+        nodeId: this.nodeId, error: error instanceof Error ? error.message : String(error),
+      });
+      return 'failed';
+    }
+  }
+
+  /**
+   * The SDK's cancel_async_message control. Query implements it in the
+   * pinned SDK (0.3.306) without declaring it in its types, so it is
+   * feature-detected: without it, steering is not offered.
+   */
+  private sdkCancelAsyncMessage(): ((uuid: string) => Promise<boolean>) | null {
+    const query = this.transport?.query as { cancelAsyncMessage?: (uuid: string) => Promise<boolean> } | undefined;
+    return typeof query?.cancelAsyncMessage === 'function' ? (uuid) => query.cancelAsyncMessage!(uuid) : null;
+  }
+
+  /**
+   * Same-turn steer: an SDK user message sent while a turn runs. The CLI
+   * folds it into that turn at its next model call (between tool rounds).
+   * When the turn makes no further call, the CLI runs it as its own turn
+   * right after, and this Michi turn goes on until that one ends
+   * (holdTurnEnd), so the reply still belongs to it. command_lifecycle
+   * frames (msg_lifecycle_v1) say which happened; Stop withdraws a steer the
+   * CLI has not started. Chats only: Agent Runs take input on the next turn.
+   */
+  async steer(text: string): Promise<SteerResult> {
+    if (!text.trim()) return { accepted: false, reason: 'empty' };
+    // A slash command would run as a command, not as input to this turn.
+    if (text.trimStart().startsWith('/')) return { accepted: false, reason: 'not_queued' };
+    if (ownerMode(this.owner) !== 'interactive' || this.host.profile.isRestricted(this.toolProfile) || this.permissionBroker) {
+      return { accepted: false, reason: 'unsupported' };
+    }
+    const transport = this.transport;
+    if (this.state !== 'in_turn' || !transport || !this.turnAbort || this.turnAbort.signal.aborted
+      || this.cancellation || this.retirement || this.resumePending) {
+      return { accepted: false, reason: 'no_active_turn' };
+    }
+    if (!this.nativeCapabilities.has('msg_lifecycle_v1') || !this.sdkCancelAsyncMessage()) {
+      return { accepted: false, reason: 'unsupported' };
+    }
+    const message: SDKUserMessage = { ...userEnvelope(text), priority: 'next' };
+    const uuid = message.uuid!;
+    this.pendingSteers.add(uuid);
+    this.turnSteers.add(uuid);
+    try {
+      this.sendInput(message);
+    } catch (error) {
+      this.pendingSteers.delete(uuid);
+      this.turnSteers.delete(uuid);
+      return { accepted: false, reason: error instanceof Error ? error.message : 'not_queued' };
+    }
+    this.history.push({ role: 'user', content: text });
+    return { accepted: true, pending: true };
+  }
+
+  /**
+   * Native compaction: Claude Code's /compact, sent as an SDK user message
+   * between turns. Resolves when its result arrives, with the context size
+   * before and after from compact_boundary.
+   */
+  async compact(instructions?: string): Promise<CompactResult> {
+    if (this.host.profile.isRestricted(this.toolProfile) || ownerMode(this.owner) !== 'interactive') {
+      return { started: false, detail: 'unsupported' };
+    }
+    if (this.turnLock || this.state === 'in_turn') {
+      return { started: false, detail: 'Wait for the active turn to finish before compacting.' };
+    }
+    if (this.resumePending) {
+      return { started: false, detail: 'Send a message first: Claude restores this conversation on its next turn.' };
+    }
+    if (this.state !== 'idle' || !this.transport || !this.externalSessionId) {
+      return { started: false, detail: 'Claude has no conversation to compact yet.' };
+    }
+    this.acquireTurnLock();
+    this.idleGate.close();
+    if (!this.idlePumpTurnClaimed) this.queue.interruptWaiter();
+    try {
+      this.lastUsedAt = Date.now();
+      this.state = 'in_turn';
+      this.markTranslatorTurnStart?.();
+      this.takeTranslatorCompaction?.();
+      const text = instructions?.trim() ? `/compact ${instructions.trim().replace(/\s+/g, ' ')}` : '/compact';
+      this.sendInput(userEnvelope(text));
+      let stopReason: string | undefined;
+      // Compaction is no conversation turn: its frames are not shown.
+      for await (const ev of this.queue.drainUntilTurnEnd()) {
+        if (ev.kind === 'turn_end') stopReason = ev.stopReason;
+      }
+      const compaction = this.takeTranslatorCompaction?.() ?? null;
+      const stateAfter = this.state as SessionState;
+      if (stateAfter !== 'crashed' && stateAfter !== 'disposed') this.state = 'idle';
+      this.lastUsedAt = Date.now();
+      if (stopReason !== 'end_turn' || compaction?.result === 'failed' || compaction?.postTokens === undefined) {
+        return { started: false, detail: compaction?.error ? `Compaction failed: ${compaction.error}` : 'Claude did not compact the conversation.' };
+      }
+      const size = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+      return { started: true, completed: true,
+        detail: compaction.preTokens !== undefined
+          ? `Compacted ${size(compaction.preTokens)} → ${size(compaction.postTokens)} tokens.`
+          : `Compacted to ${size(compaction.postTokens)} tokens.` };
+    } finally {
+      this.releaseTurnLock();
+      this.idleGate.open();
+    }
   }
 
   private clearInteractions(): void {
@@ -882,6 +1075,9 @@ export class ClaudeSession implements AgentSession {
     const exit = this.exitPromise;
     if (this.state !== 'disposed') this.state = 'crashed';
     this.clearInteractions();
+    // Steers the process had not started go with it.
+    this.pendingSteers.clear();
+    this.heldTurnEnd = false;
     // Background agents run inside the process and end with it; nothing
     // will report their outcome (the tracker goes with the translator), so
     // they are recorded as ended before the synthetic turn_end below.
@@ -905,6 +1101,8 @@ export class ClaudeSession implements AgentSession {
           this.getNativeForkAnchor = null;
           this.translatorHasBackgroundSubagents = null;
           this.translatorPendingBackgroundSubagents = null;
+          this.takeTranslatorCompaction = null;
+          this.releaseHeldTurn = null;
         }
         if (this.state === 'disposed') this.fireDisposedCallback();
       } finally {
@@ -977,8 +1175,109 @@ export class ClaudeSession implements AgentSession {
   }
 
   getSessionState(): import('michi-shared').AgentSessionState {
-    return { runtimeId: 'claude', nativeEngine: 'agent-sdk', modelId: this.currentModelId,
+    const modes = this.supportsModes();
+    return { runtimeId: 'claude', nativeEngine: 'agent-sdk', version: this.stateVersion, modelId: this.currentModelId,
+      currentModeId: this.currentModeId,
+      availableModes: modes ? CLAUDE_MODES.map(({ id, label, description }) => ({ id, name: label, description })) : [],
       commands: ['status', 'model', 'context', 'mcp'].map(name => ({ name })) };
+  }
+
+  onSessionState(notify: () => void): () => void {
+    this.stateListeners.add(notify);
+    return () => { this.stateListeners.delete(notify); };
+  }
+
+  // ---- Work modes (Default / Plan) -------------------------------------------
+
+  /** Chats have modes; Agent Runs, Run brokers and restricted sessions do not. */
+  private supportsModes(): boolean {
+    return ownerMode(this.owner) === 'interactive' && !this.host.profile.isRestricted(this.toolProfile) && !this.permissionBroker;
+  }
+
+  /** The SDK mode the approval policy maps to (Default work mode). */
+  private policyNativeMode(): 'default' | 'bypassPermissions' {
+    const permissionMode = (this.turnAbort ? this.turnPermissionMode : undefined) ?? this.host.permissions.mode(this.owner, this.ownerUserId);
+    return claudeSpawnPolicy(this.host.profile.isRestricted(this.toolProfile), {
+      ownerMode: ownerMode(this.owner), permissionMode, toolProfile: this.toolProfile,
+    }).permissionMode;
+  }
+
+  private desiredNativeMode(): PermissionMode {
+    return this.supportsModes() && this.workMode === 'plan' ? 'plan' : this.policyNativeMode();
+  }
+
+  /** Set the SDK permission mode of the live process, after any earlier change. */
+  private applyNativeMode(target: PermissionMode): Promise<void> {
+    const run = this.nativeModeOp.catch(() => {}).then(async () => {
+      const transport = this.transport;
+      if (!transport || this.nativePermissionMode === target) return;
+      await withDeadline(transport.query.setPermissionMode(target), SDK_CONTROL_TIMEOUT_MS, 'Claude permission mode change timed out');
+      if (this.transport === transport) this.nativePermissionMode = target;
+    });
+    this.nativeModeOp = run;
+    return run;
+  }
+
+  /**
+   * The CLI reported its permission mode. It leaves plan mode itself when
+   * the user approves a plan (restoring the mode it had before planning)
+   * and enters it when the model calls EnterPlanMode. The work mode follows;
+   * on leaving plan mode the approval policy's mode is restored, so a
+   * change of policy during planning, or a respawn in plan, still applies.
+   */
+  private observeNativeMode(mode: PermissionMode): void {
+    this.nativePermissionMode = mode;
+    if (!this.supportsModes()) return;
+    const next: ClaudeWorkMode = mode === 'plan' ? 'plan' : 'default';
+    if (next === this.workMode) return;
+    this.workMode = next;
+    this.publishSessionState();
+    if (next === 'default') {
+      const policy = this.policyNativeMode();
+      // If this fails the next turn applies it (send compares the modes).
+      if (mode !== policy) void this.applyNativeMode(policy).catch((error) => {
+        this.host.observability.log('warn', 'chat', 'claude permission mode could not be restored after planning', {
+          nodeId: this.nodeId, mode, policy, error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+  }
+
+  /** A changed mode reaches the running turn's stream and every state listener. */
+  private publishSessionState(): void {
+    this.stateVersion = nextStateVersion();
+    const state = this.getSessionState();
+    // Outside a turn a queued event would open a self-turn; listeners carry it.
+    if (this.state === 'in_turn' && this.turnAbort && !this.turnAbort.signal.aborted) {
+      this.queue.push({ kind: 'session_state', state });
+    }
+    for (const notify of [...this.stateListeners]) {
+      try { notify(); } catch { /* a listener's failure is its own */ }
+    }
+  }
+
+  /**
+   * Switch the work mode. Plan is a chat feature: an Agent Run (or a
+   * restricted session) accepts only Default. With a live process the SDK
+   * mode changes at once, also during a turn; otherwise the next spawn uses it.
+   */
+  async setMode(modeId: string): Promise<void> {
+    if (!isClaudeWorkMode(modeId)) throw new Error(`Unknown Claude mode: ${modeId}`);
+    if (!this.supportsModes()) {
+      if (modeId === 'default') return;
+      throw new Error('Plan mode is available only in Claude chats, not in Agent Runs or restricted sessions');
+    }
+    if (this.state === 'disposed') throw new Error('Cannot switch mode on a disposed session');
+    if (modeId === this.workMode) return;
+    const previous = this.workMode;
+    this.workMode = modeId;
+    try {
+      if (this.transport && this.state !== 'crashed') await this.applyNativeMode(this.desiredNativeMode());
+    } catch (error) {
+      this.workMode = previous;
+      throw error;
+    }
+    this.publishSessionState();
   }
 
   /** Host command bridge over official SDK controls; these are not TUI pages. */
@@ -1358,19 +1657,53 @@ export class ClaudeSession implements AgentSession {
         this.lastUsedAt = Date.now();
       }
       if (ev.kind === 'turn_end') this.settleInterrupt?.();
+      if (ev.kind === 'turn_end') {
+        this.heldTurnEnd = false;
+        // A turn that failed with a steer still queued: withdraw it rather
+        // than let it start a turn of its own (Stop withdraws it itself).
+        if (this.pendingSteers.size > 0 && !this.turnAbort?.signal.aborted) void this.withdrawPendingSteers();
+      }
       this.queue.push(ev.kind === 'turn_end' && this.turnAbort?.signal.aborted
         ? { ...ev, stopReason: 'cancelled' } : ev);
     }, {
       // Background agents live in this process; retireProcess withdraws them.
       onBackgroundSubagents: (ids) => { if (isCurrent()) this.reportBackgroundSubagents(ids); },
+      // A steer the CLI has not started when this result arrives runs as its
+      // own CLI turn next; the host's turn goes on until that one ends.
+      holdTurnEnd: () => {
+        const hold = isCurrent() && this.state === 'in_turn' && this.pendingSteers.size > 0
+          && !!this.turnAbort && !this.turnAbort.signal.aborted;
+        if (hold) this.heldTurnEnd = true;
+        return hold;
+      },
     });
     this.markTranslatorTurnStart = translator.startTurn;
     this.getNativeForkAnchor = translator.getForkAnchor;
     this.translatorHasBackgroundSubagents = translator.hasBackgroundSubagents;
     this.translatorPendingBackgroundSubagents = translator.pendingBackgroundSubagents;
+    this.takeTranslatorCompaction = translator.takeCompaction;
+    this.releaseHeldTurn = translator.releaseHeldTurn;
+    this.pendingSteers.clear();
+    this.turnSteers.clear();
+    this.heldTurnEnd = false;
+    this.nativeCapabilities = new Set();
 
     const onMessage = (envelope: Record<string, unknown>) => {
         if (!isCurrent()) return;
+        // msg_lifecycle_v1: the CLI reports each uuid-stamped user message
+        // as queued, started (taken into a turn), completed or cancelled.
+        if (envelope.type === 'command_lifecycle') {
+          const uuid = envelope.command_uuid;
+          if (typeof uuid !== 'string' || envelope.state === 'queued' || !this.pendingSteers.delete(uuid)) return;
+          if (envelope.state === 'started') this.heldTurnEnd = false;
+          // The CLI dropped the steer a held turn was waiting for: no CLI
+          // turn follows, so the held result ends the host's turn after all.
+          else if (this.heldTurnEnd && this.pendingSteers.size === 0 && !this.turnAbort?.signal.aborted) {
+            this.heldTurnEnd = false;
+            translator.releaseHeldTurn();
+          }
+          return;
+        }
         if (envelope.type === 'system' && envelope.subtype === 'api_retry' && envelope.error === 'authentication_failed') {
           this.failProcess(new Error('Claude authentication failed. Refresh the CLI credentials and retry; the original session is retained.'));
           return;
@@ -1421,6 +1754,10 @@ export class ClaudeSession implements AgentSession {
           }
           // Keep the native token available for retry even when its DB write fails.
           this.externalSessionId = sessionId;
+          const capabilities = envelope['capabilities'];
+          if (Array.isArray(capabilities)) {
+            this.nativeCapabilities = new Set(capabilities.filter((value): value is string => typeof value === 'string'));
+          }
           // Recorded synchronously, before this envelope reaches the
           // translator: a throw stops the process before any event of it.
           if (this.persistNativeIdentity && isInteractiveOwner(this.owner)) {
@@ -1453,6 +1790,12 @@ export class ClaudeSession implements AgentSession {
         }
         // Workflow progress goes to the workflow hub, never the turn queue.
         this.workflowTap.observe(envelope);
+        // The CLI's own permission mode: on init (each turn) and on status
+        // when it changes (EnterPlanMode, an approved plan, a set mode).
+        if (envelope['type'] === 'system' && (envelope['subtype'] === 'init' || envelope['subtype'] === 'status')
+          && typeof envelope['permissionMode'] === 'string') {
+          this.observeNativeMode(envelope['permissionMode'] as PermissionMode);
+        }
         this.logFollowUpsHookEnvelope(envelope);
         this.completeFollowUpsOutputBoundaryFromEnvelope(envelope);
         translator.feed(envelope);
@@ -1485,7 +1828,9 @@ export class ClaudeSession implements AgentSession {
       // user's settings (claudeRestrictedProfile.ts).
       const assistant = this.host.profile.isRestricted(this.toolProfile);
       const spawnPolicy = claudeSpawnPolicy(assistant, { ownerMode: ownerMode(this.owner), permissionMode, toolProfile: this.toolProfile });
-      this.nativePermissionMode = spawnPolicy.permissionMode;
+      // A respawn during planning (a restore, a recovered Stop) keeps planning.
+      const spawnMode = this.supportsModes() && this.workMode === 'plan' ? 'plan' as const : spawnPolicy.permissionMode;
+      this.nativePermissionMode = spawnMode;
       const transport = await createClaudeSdkTransport({
         onMessage,
         onError: (error) => { if (!transportReady) startupError = error; else if (isCurrent()) this.failProcess(error); },
@@ -1499,14 +1844,15 @@ export class ClaudeSession implements AgentSession {
         tools: spawnPolicy.tools ? [...spawnPolicy.tools] : this.sdkBuiltinTools(),
         ...(spawnPolicy.disallowedTools ? { disallowedTools: [...spawnPolicy.disallowedTools] } : {}),
         // Restricted: mandatory host hooks, and no YOLO switch to bypassPermissions later.
-        restricted: assistant || ownerMode(this.owner) === 'headless' || !!this.toolProfile || !!this.permissionBroker,
+        restricted: assistant || ownerMode(this.owner) === 'headless'
+          || (!!this.toolProfile && (!this.toolProfile.assistant || !!this.toolProfile.allowedToolNames)) || !!this.permissionBroker,
         // The user's settings, hooks, plugins and skills never reach the assistant.
         ...(spawnPolicy.isolateSettings ? { isolateSettings: true } : {}),
         ...(spawnPolicy.restrictedMode ? { restrictedMode: true } : {}),
         sessionId: opts.sessionId,
         resumeSessionId: opts.resumeSessionId,
         forkSession: opts.forkSession,
-        permissionMode: this.nativePermissionMode,
+        permissionMode: spawnMode,
         mcpConfigInline: opts.mcpConfig,
         settingsInline: this.followUpsHookPocEnabled
           ? buildClaudeFollowUpsHookPocSettings()
@@ -1956,6 +2302,26 @@ export class ClaudeSession implements AgentSession {
           ? { behavior: 'allow', updatedInput: params.input }
           : { behavior: 'deny', message: 'denied by Run permission policy' };
       }
+      // The user reviews a plan in every approval mode (Ask, Trust, YOLO):
+      // no policy, grant, session trust or workflow answers ExitPlanMode.
+      // The CLI hands it to canUseTool even under bypassPermissions.
+      if (params.toolName === 'ExitPlanMode') {
+        if (!permissionTurn) permissionTurn = this.ensureSelfTurnController();
+        if (!isActive()) return { behavior: 'deny', message: 'permission request is no longer active' };
+        const requestId = nextInteractionRequestId();
+        this.queue.push({
+          kind: 'permission_request',
+          requestId,
+          title: 'Approve the plan?',
+          detail: formatPermissionDetail(params.toolName, params.input),
+          options: PLAN_REVIEW_OPTIONS.map((option) => ({ ...option })),
+          source: 'claude_prompt_tool',
+        });
+        const answer = await this.awaitPermission(requestId, params.toolName, signal);
+        if (!isActive()) return { behavior: 'deny', message: 'permission request is no longer active' };
+        return answer?.startsWith('allow') ? { behavior: 'allow', updatedInput: params.input } : { behavior: 'deny', message: PLAN_REJECTED };
+      }
+
       const policy = this.approvals.policy(this.owner, this.ownerUserId, params.toolName, true, this.turnPermissionMode);
       if (policy === 'allow') return { behavior: 'allow', updatedInput: params.input };
       if (policy === 'deny') return { behavior: 'deny', message: 'policy denied' };
@@ -2006,6 +2372,8 @@ export class ClaudeSession implements AgentSession {
 
       if (this.approvals.accept(result, this.owner, params.toolName, this.ownerUserId)) {
         for (const [id, request] of this.pendingPermissions) {
+          // A grant never answers a plan review.
+          if (request.toolName === 'ExitPlanMode') continue;
           if (this.approvals.covers(result, params.toolName, request.toolName)) this.respondToPermission(id, 'allow_once');
         }
         this.workflowTap.answerCovered((toolName) => this.approvals.covers(result, params.toolName, toolName), 'allow_once');
@@ -2057,9 +2425,9 @@ export class ClaudeSession implements AgentSession {
         },
       } : {}),
       ...(this.bridge.saveContext ? {
-        onSaveArtifact: (name: string, body: string) => {
+        onSaveArtifact: (name: string, body: string | undefined, path?: string) => {
           if (!this.isToolAllowed('save_artifact')) return null;
-          return this.bridge.saveContext!({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body });
+          return this.bridge.saveContext!({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body, path });
         },
       } : {}),
       ...(this.bridge.updateContext ? {

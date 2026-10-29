@@ -9,7 +9,7 @@ import { createDefaultHost } from '../src/core/defaultHost';
 import type { CodexAppServerClient, ServerRequestHandler } from '../src/adapters/codex/CodexAppServerClient';
 import { CodexRuntime, type CodexHostText } from '../src/adapters/codex/CodexRuntime';
 import type { CodexSession } from '../src/adapters/codex/CodexSession';
-import { CODEX_HOST_MCP_SERVER, CODEX_SERVER_REQUESTS } from '../src/adapters/codex/codexProtocol';
+import { CODEX_HOST_MCP_SERVER, CODEX_SERVER_REQUESTS, CODEX_THREAD_FEATURES_OFF } from '../src/adapters/codex/codexProtocol';
 import { CODEX_RESTRICTED_FEATURES_OFF } from '../src/adapters/codex/codexRestrictedProfile';
 
 interface Request { method: string; params: Record<string, any> }
@@ -170,7 +170,8 @@ describe('CodexRuntime under createDefaultHost', () => {
     assert.equal(ordinary.slot.restricted, undefined);
     assert.equal(ordinary.slot.exposedToolNames, undefined);
     assert.equal(ordinary.threadStart.params.sandbox, 'workspace-write');
-    assert.equal(ordinary.threadStart.params.config.features, undefined);
+    // Ordinary threads turn off only Codex goals (self-started turns Michi does not show).
+    assert.deepEqual(ordinary.threadStart.params.config.features, CODEX_THREAD_FEATURES_OFF);
     assert.deepEqual(ordinary.turnStart.params.sandboxPolicy, { type: 'dangerFullAccess' });
     assert.notDeepEqual(await server.ask(CODEX_SERVER_REQUESTS.commandApproval, ordinary.threadId, { command: 'ls' }), { decision: 'decline' },
       'the same request reaches an ordinary session, which YOLO mode does not decline');

@@ -1,24 +1,25 @@
-import React, { useCallback, useId, useMemo } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import type { PageId } from '../../../state/commands';
 import type { ChatNodeState } from '../../../state/chatTypes';
 import { useChatProjects, useStructuralSelector } from '../../../state/chatStore';
 import { isArchiveGroupId } from '../../../state/trashActions';
 import { isVisibleConversationNode } from '../../../state/conversationVisibility';
-import { useAuthSession } from '../../../services/auth';
-import { setManageWorkspaceId } from '../../../state/manageRoute';
 import { SETTINGS_AREA_SECTIONS, type SettingsAreaSection } from '../../../state/shellArea';
+import { useMetaAgentSettingsAlert } from '../../../state/metaAgent/useMetaAgentOverview';
 import { AppearancePane } from '../pages/settings/AppearancePane';
-import { ModelPane } from '../pages/settings/ModelPane';
-import { NotificationsPane } from '../pages/settings/NotificationsPane';
-import { ShortcutsPane } from '../pages/settings/ShortcutsPane';
-import { AccountPane } from '../pages/settings/AccountPane';
-import { ConnectionsPane } from '../pages/settings/ConnectionsPane';
-import { BackgroundPane } from '../pages/settings/BackgroundPane';
-import { BrowserSettingsPane } from '../pages/settings/BrowserSettingsPane';
-import { MetaAgentSettings } from '../settings/metaAgent/MetaAgentSettings';
-import { MichiAssistantSettings } from '../pages/settings/assistant/MichiAssistantSettings';
-import { ComponentsSettings } from '../spaces/components/ComponentsSettings';
 import '../pages/Settings.css';
+
+// Keep the drawer and local appearance controls ready with the shell. Other
+// categories load only when selected, without suspending the navigation.
+const GeneralPane = React.lazy(() => import('../pages/settings/GeneralPane'));
+const ModelPane = React.lazy(() => import('../pages/settings/ModelPane').then(module => ({ default: module.ModelPane })));
+const MetaAgentSettings = React.lazy(() => import('../settings/metaAgent/MetaAgentSettings').then(module => ({ default: module.MetaAgentSettings })));
+const BackupPane = React.lazy(() => import('../pages/settings/BackupPane').then(module => ({ default: module.BackupPane })));
+
+function SectionContent({ children }: { children: React.ReactNode }) {
+  return <React.Suspense fallback={<div role="status">Loading settings…</div>}>{children}</React.Suspense>;
+}
 
 function countGroups(nodes: Record<string, ChatNodeState>, belongs: (node: ChatNodeState) => boolean): number {
   const groups = new Set<string>();
@@ -51,42 +52,62 @@ function HistoryLink({ label, count, onClick }: { label: string; count: number; 
   );
 }
 
-/** Shared settings panes, with category navigation when hosted in the global drawer. */
-export default function SettingsMain({ section, workspaceReady = true, onNav, onSectionChange }: {
+export type SettingsLevel = 'menu' | 'section';
+
+/**
+ * Shared settings panes, with category navigation when hosted in the global drawer.
+ *
+ * A `stacked` drawer (one that fills a phone screen) shows one level at a
+ * time, like a phone's own settings: the section list, then the chosen
+ * section alone. The host owns the level (`view`) so its header Back can
+ * return from a section to the list; picking a section asks for 'section'.
+ * Unstacked drawers keep the list beside the section and ignore the level.
+ */
+export default function SettingsMain({ section, workspaceReady = true, onNav, onSectionChange, view: hostView, onViewChange, stacked = false }: {
   section: SettingsAreaSection;
   workspaceReady?: boolean;
   onNav: (page: PageId) => void;
   onSectionChange?: (section: SettingsAreaSection) => void;
+  view?: SettingsLevel;
+  onViewChange?: (view: SettingsLevel) => void;
+  stacked?: boolean;
 }) {
-  const { activeProject, projects } = useChatProjects();
-  const session = useAuthSession();
+  const { activeProject } = useChatProjects();
   const history = useHistoryCounts();
+  const metaAgentAlert = useMetaAgentSettingsAlert();
   const label = SETTINGS_AREA_SECTIONS.find((item) => item.id === section)?.label ?? 'Settings';
   const contentId = useId();
+  const [ownView, setOwnView] = useState<SettingsLevel>('menu');
+  const view = hostView ?? ownView;
+  // Switching level in a stacked drawer hides what has focus (the picked row,
+  // or the section the header Back left), so focus follows: to the section's
+  // heading, or back to the row of the section just left.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const categoryRefs = useRef(new Map<SettingsAreaSection, HTMLButtonElement>());
+  const previousView = useRef(view);
+  useEffect(() => {
+    const previous = previousView.current;
+    previousView.current = view;
+    if (!stacked || previous === view) return;
+    if (view === 'section') headingRef.current?.focus({ preventScroll: true });
+    else categoryRefs.current.get(section)?.focus({ preventScroll: true });
+  }, [view, stacked, section]);
+  const openSection = (next: SettingsAreaSection) => {
+    setOwnView('section');
+    onViewChange?.('section');
+    onSectionChange?.(next);
+  };
   const waiting = <div role="status">Loading workspaces…</div>;
   let body: React.ReactNode;
   switch (section) {
     case 'general':
-      body = workspaceReady ? <>
-        <ConnectionsPane projects={projects} onOpenWorkspace={(id) => { setManageWorkspaceId(id); onNav('workspace-manage'); }} />
-        <NotificationsPane />
-        <BrowserSettingsPane />
-        <BackgroundPane onOpenScheduled={() => onNav('scheduled')} />
-        <ShortcutsPane />
-        {session?.user && <AccountPane user={session.user} />}
-      </> : waiting;
+      body = workspaceReady ? <GeneralPane onNav={onNav} /> : waiting;
       break;
     case 'runtime':
       body = workspaceReady ? <ModelPane activeProjectId={activeProject?.id ?? null} /> : waiting;
       break;
-    case 'assistant':
-      body = workspaceReady ? <MichiAssistantSettings /> : waiting;
-      break;
     case 'meta-agent':
       body = <MetaAgentSettings />;
-      break;
-    case 'components':
-      body = workspaceReady ? <ComponentsSettings /> : waiting;
       break;
     case 'appearance':
       body = <AppearancePane />;
@@ -97,24 +118,29 @@ export default function SettingsMain({ section, workspaceReady = true, onNav, on
           <HistoryLink label="Trash" count={workspaceReady ? history.trash : 0} onClick={() => onNav('trash')} />
           <HistoryLink label="Archived" count={workspaceReady ? history.archived : 0} onClick={() => onNav('archived')} />
         </div>
-        <p className="area-settings__note">Backup and restore will be set here.</p>
+        {workspaceReady ? <SectionContent><BackupPane /></SectionContent> : waiting}
       </>;
       break;
   }
   if (onSectionChange) return (
-    <div className="terminal-settings terminal-settings--drawer" data-section={section}>
+    <div className="terminal-settings terminal-settings--drawer" data-section={section}
+      data-stacked={stacked || undefined} data-view={stacked ? view : undefined}>
       <div className="terminal-settings-layout">
         <aside className="terminal-settings-sidebar term-scrollbar">
           <nav className="terminal-settings-categories" aria-label="Settings sections">
             {SETTINGS_AREA_SECTIONS.map(item => <button key={item.id} type="button" className="terminal-settings-category"
-              aria-current={section === item.id ? 'page' : undefined} aria-controls={contentId} onClick={() => onSectionChange(item.id)}>
+              ref={(button) => { if (button) categoryRefs.current.set(item.id, button); else categoryRefs.current.delete(item.id); }}
+              aria-label={item.id === 'meta-agent' && metaAgentAlert ? `${item.label}, needs attention` : undefined}
+              aria-current={section === item.id ? 'page' : undefined} aria-controls={contentId} onClick={() => openSection(item.id)}>
               {item.label}
+              {item.id === 'meta-agent' && metaAgentAlert && <span className="terminal-settings-alert" aria-hidden="true" />}
+              {stacked && <ChevronRight className="terminal-settings-category__chevron" size={16} strokeWidth={1.75} aria-hidden="true" />}
             </button>)}
           </nav>
         </aside>
         <section id={contentId} className="terminal-settings-content term-scrollbar" aria-label={label} key={section}>
-          <h1 className="terminal-settings-heading">{label}</h1>
-          {body}
+          <h1 ref={headingRef} tabIndex={-1} className="terminal-settings-heading">{label}</h1>
+          <SectionContent>{body}</SectionContent>
         </section>
       </div>
     </div>
@@ -124,7 +150,7 @@ export default function SettingsMain({ section, workspaceReady = true, onNav, on
       <section className="terminal-settings-content area-settings__doc" aria-label={label} key={section}>
         <p className="area-settings__kicker">Settings</p>
         <h1 className="area-settings__title">{label}</h1>
-        {body}
+        <SectionContent>{body}</SectionContent>
       </section>
     </div>
   );

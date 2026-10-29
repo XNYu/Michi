@@ -117,6 +117,7 @@ choices are preserved when global control is enabled and restored when it is
 disabled. New chats default to Ask; a choice made in the Home Composer applies
 before the first prompt. Settings and chat choices are persisted by the Backend.
 Kiro and Pi Composers offer **Ask / Trust**; Claude and Codex also offer **YOLO**.
+Kiro V3, the default Kiro engine, also offers **Approve for me**.
 Existing YOLO choices display as Trust on Kiro and Pi, with the same execution
 behavior. The global menu retains YOLO when that Backend registers a runtime
 that supports it, since the setting also controls chats using that runtime.
@@ -129,6 +130,15 @@ that supports it, since the setting also controls chats using that runtime.
   supported. Claude uses its bypass permission mode; Codex uses full access.
   Kiro and Pi use backend auto-approval and do not acquire an additional OS
   sandbox from Michi, so Trust and YOLO have the same approval behavior there.
+- **Approve for me** (Kiro V3 only) is Ask with Kiro's trust classifier added.
+  Kiro allows workspace edits and read-only shell commands; its classifier
+  approves routine work, blocks risky actions and sends an ordinary approval
+  card when unsure. Michi seeds Kiro's `approve-for-me` policy preset when it
+  opens the native session and starts Kiro V3 with
+  `KIRO_TRUST_CLASSIFIER_MODE=enforce` unless that variable is already set.
+  Switching into or out of it reopens the idle native session before the next
+  message; if turning it off fails, the message is not sent. Other runtimes,
+  Agent Runs and Meta agent sessions run this choice as Ask.
 
 Changes apply from the next turn. Returning to Ask clears Michi's always-allow
 chat grants. Approval remains enforced without a connected renderer. Local and
@@ -236,12 +246,7 @@ in the background with one command:
 
 ```bash
 npm run remote:launch
-```
-
-The command prints `MICHI_REMOTE_TOKEN=...` after the health check succeeds.
-To register an auto-restarting systemd user service instead:
-
-```bash
+# Or register an auto-restarting systemd user service instead:
 npm run remote:launch -- --service
 ```
 
@@ -288,8 +293,9 @@ Local and remote entities with the same server ID remain separate. Requests
 translate those identities back to the original server IDs and reject
 references belonging to another connection.
 
-See [docs/remote-backend.md](docs/remote-backend.md) for deployment and
-security details.
+[docs/remote-backend.md](docs/remote-backend.md) is the full guide and the
+built-in `remote-backend` help article: requirements, token reuse, lifecycle
+commands, Direct URL connections, updates, recovery and network security.
 
 ## Common Commands
 
@@ -305,14 +311,13 @@ npm run electron:dev          # backend + frontend + Electron
 # Build and package
 npm run shared:build
 npm run build                 # frontend build + backend typecheck/bundle
-npm run build:artifact        # also copy frontend/build to backend/dist/frontend
 npm start                     # run backend/dist/server.js
 npm run remote:launch         # one-command remote build + token + background start
 npm run remote:launch -- --service # register/start a systemd user service
 npm run remote:status         # inspect the background/service state
 npm run remote:restart        # restart while preserving the token
 npm run remote:stop           # stop the remote backend
-npm run remote:setup          # install/build only backend + shared (no Electron/node-pty)
+npm run remote:setup          # install/build web + backend + shared + runtime (no Electron/node-pty)
 npm run remote:start          # foreground remote backend on loopback, for the SSH tunnel (requires MICHI_REMOTE_TOKEN)
 npm run server                # install, build artifact, then start
 npm run electron:build        # unsigned macOS arm64 dmg in dist-electron/
@@ -405,6 +410,8 @@ MICHI_BIND_HOST=127.0.0.1
 # Runtime registry
 MICHI_ENABLED_RUNTIMES=kiro,pi,claude,cursor,grok,antigravity
 MICHI_DEFAULT_RUNTIME=kiro
+# Kiro engine: v3 (default) or v2
+MICHI_KIRO_ENGINE=v3
 
 # Optional CLI overrides
 KIRO_CLI_BIN=/absolute/path/to/kiro-cli
@@ -494,20 +501,10 @@ tool only after a provider and key are configured. Set
 `MICHI_DEFAULT_WEB_SEARCH_PROVIDER=jina` or `tavily` can select the initial
 provider for operator-managed deployments.
 
-Important frontend variables:
-
-```env
-VITE_API_URL=http://localhost:3000/api
-VITE_MICHI_PROFILE_PAGE=0
-VITE_MICHI_METRICS=0
-VITE_MICHI_METRICS_RUN_ID=local-dev
-VITE_MICHI_FRAME_METRICS=0
-VITE_MICHI_FRAME_METRICS_WINDOW_MS=2000
-VITE_MICHI_PERF=0
-```
-
-Vite inlines `VITE_*` values at build time. Restart the dev server or rebuild
-after changing them.
+Frontend variables are declared in `frontend/src/vite-env.d.ts` and each one
+is documented in `frontend/.env.example`; copy it to `frontend/.env.local` for
+personal overrides. Vite inlines `VITE_*` values at build time. Restart the
+dev server or rebuild after changing them.
 
 ### Development isolation
 
@@ -812,7 +809,14 @@ Runtime-specific notes:
   See the [runtime documentation](runtime/README.md) for the in-repository layout.
 - **Codex** speaks app-server JSON-RPC, performs auth/version preflight, resumes
   native threads, renders rich tool activity, and generates a first-turn title
-  in parallel. Chat branch-overview entries use the hidden `set_branch_overview`
+  in parallel. Without `auth.json` it asks app-server (`account/read`) whether
+  the configured provider still needs a login. The agent menu offers Codex's
+  collaboration modes, Default and Plan; Plan explores read-only and proposes a
+  plan. Codex goals are turned off in Michi threads, because Codex would pursue
+  them in turns it starts itself. Each thread disables the MCP servers of the
+  user's Codex config by name and keeps only Michi's; a server still running
+  afterwards is logged. Restricted sessions (Pages Assistant, Meta agent) also
+  make Codex refuse sub-agents and stop the turn if one starts anyway. Chat branch-overview entries use the hidden `set_branch_overview`
   tool by default; native resume and recovery refresh the metadata instructions.
   Follow-ups retain their configured sentinel/Hook experiment mode.
 
@@ -909,6 +913,17 @@ state such as the active workspace. Durable workspace data is cleared from the
 mirror after a successful backend hydration. Preferences are also persisted
 through backend config storage.
 
+Each remote connection owns its workspace and chat data. The renderer loads
+that content from the connection, keeps it in memory while available, and
+removes it when the connection becomes unavailable. Reconnecting fetches it
+again from the remote backend. Remote content is excluded from localStorage
+workspace caches and is never mirrored into the bundled Local database.
+Connection settings and small UI references can still be saved locally.
+Workspace, tree and node identities include their connection in the renderer, so
+Local and remote entities with the same server ID remain separate. Requests
+translate those identities back to the original server IDs and reject
+references belonging to another connection.
+
 Native agent sessions are resumed when the runtime supports it. Settings > Model
 has a Native Resume switch for each supported runtime, enabled by default.
 Disabling it reconstructs cold chat sessions from the persisted ancestor chain
@@ -950,11 +965,13 @@ or replacing an application.
 
 #### Kiro ACP Engines
 
-Michi explicitly launches **v2 by default**, even if the CLI's own default changes.
-v3 is implemented but is not selected automatically and has no new UI switch.
-For an isolated v3 deployment, set `MICHI_KIRO_ENGINE=v3` before starting the
-backend; omitting it or setting `v2` keeps the existing engine. Both paths were
-verified with the installed `kiro-cli 2.24.0` (v3 KAS `0.66.8`).
+Michi launches **v3 by default** and passes the engine explicitly, so the CLI's
+own default does not apply. Set `MICHI_KIRO_ENGINE=v2` before starting the
+backend to keep v2. The engine is part of a chat's native binding: a chat
+created under v2 cannot natively resume under v3 and is rebuilt from Michi's
+transcript, and the reverse. Kiro Crew pins its own engine. Both engines were
+verified with `kiro-cli 2.24.0` (v3 KAS `0.66.8`); the default switch and
+Approve for me were checked against `kiro-cli 2.35.1`.
 
 - v2 uses native `_session/steer` and `rewind` over the command RPC. Historical
   branches use stored native `logIndex` anchors, not UI message offsets.
@@ -968,7 +985,8 @@ verified with the installed `kiro-cli 2.24.0` (v3 KAS `0.66.8`).
   Agent Run Attempts and cloud chats retain isolated ACP processes and tool
   profiles. See the [runtime documentation](runtime/README.md) for the adapter layout.
 - Both engines support native load, permission decisions, cancellation/steer
-  queue cleanup, and compaction. The engine is part of durable session identity;
+  queue cleanup, and compaction. Stop is acknowledged by Kiro itself: the
+  stopped prompt ends with stopReason `cancelled` (kiro-cli 2.35.1). The engine is part of durable session identity;
   legacy bindings are v2. Cross-engine history is never claimed as native resume.
 - Native fork requires an idle, compatible parent. Historical messages created
   before native anchors were recorded fall back to Michi's textual context.

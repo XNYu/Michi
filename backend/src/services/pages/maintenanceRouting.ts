@@ -1,3 +1,4 @@
+import { maintenanceCoordinatorState } from '../metaAgent/maintenanceCoordinator';
 import type { MaintenanceWorkspaceResponse } from 'michi-shared';
 import { conversationCompletionCounter } from '../conversationUpdates';
 import type { ScheduledJobScheduler } from '../scheduledJobs/scheduler';
@@ -33,7 +34,7 @@ export function getMaintenanceWorkspaceView(input: {
       pendingSources: backlog.pendingSources,
       attentionSources: backlog.attentionSources,
     } : null,
-    backlog, job, scheduler: !job || unavailable ? 'unavailable' : config?.paused ? 'paused' : 'available', excludedSpaceIds,
+    backlog, job, scheduler: !job || unavailable ? 'unavailable' : (config?.paused || maintenanceCoordinatorState(input.ownerUserId).paused) ? 'paused' : 'available', excludedSpaceIds,
     catchUpSuggestions, runtime,
   };
 }

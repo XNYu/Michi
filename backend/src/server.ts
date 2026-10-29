@@ -1,3 +1,5 @@
+import { startMetaAgentMetrics, stopMetaAgentMetrics } from './services/metaAgentMetrics';
+import { nextPerformanceContext, startEventLoopDiagnostics, withPerformanceContext } from './services/performanceDiagnostics';
 import { jsonConfigErrorResponse } from "./routes/jsonConfigErrorResponse";
 import { persistSessionState } from './services/sessionStatePersistence';
 import express from 'express';
@@ -45,7 +47,6 @@ import { workflowRunHub } from './services/workflowRunHub';
 import { backgroundSubagentRegistry } from './services/backgroundSubagentRegistry';
 import { endNodeBackgroundSubagents, endOrphanedBackgroundSubagents } from './services/backgroundSubagentEndsRepository';
 import { installLocalAccessGuards } from './services/localOrigins';
-import { setupUserKeysRoutes } from './routes/userKeys';
 import { setupUploadsRoutes } from './routes/uploads';
 import { setupFilesRoutes } from './routes/files';
 import { setupArtifactRoutes } from './routes/artifacts';
@@ -78,13 +79,14 @@ import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRunti
 import { printEnvInfo } from './envDetect';
 import { startupMark } from './services/startupTrace';
 import { configureRuntimeDeps } from './agents/runtimeDeps';
-import { resolveChatPermissionMode, hasChatToolGrant, grantChatTool, chatPermissionResetToken } from './services/chatPermissions';
-import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission, recoverInterruptedTurns, updateNodeResumeBinding, upsertAgentContextMetadata } from './services/dbRepository';
+import { resolveChatPermissionMode, resolveChatApproveForMe, hasChatToolGrant, grantChatTool, chatPermissionResetToken } from './services/chatPermissions';
+import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, recoverInterruptedTurns, updateNodeResumeBinding, upsertAgentContextMetadata } from './services/dbRepository';
 import { ensureDurableGraphNode, rollbackProvisionalSpawnNode } from './services/graphCommands';
 import { getMichiDataDir } from './services/dataDir';
 import {
   createRemoteAccessMiddleware,
   remoteAccessEnabled,
+  remoteAccessToken,
   remoteServerId,
   resolveListenHost,
   validateRemoteAccessConfiguration,
@@ -95,7 +97,6 @@ import { FileRuntimeCatalogCache } from './agents/runtimeModelCache';
 import { refreshRuntimeModelsInBackground } from './agents/runtimeModelRefresh';
 import { createAgentRunAssembly, type AgentRunAssembly } from './agents/agentRunAssembly';
 import { chatHub } from './agents/chatHub';
-import { watchAssistantGuardChecks } from './services/metaAgent/chatGuardWatcher';
 import { configureThreadMessaging } from './agents/threadMessageTool';
 import { acquireSessionRestoreLock } from './services/nativeResume';
 import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
@@ -175,10 +176,12 @@ log.info('boot', 'backend starting', {
   processCwd: process.cwd(),
 });
 const app = express();
+const stopEventLoopDiagnostics = startEventLoopDiagnostics();
 const port = process.env.PORT || 3000;
 
 // Initialize SQLite before anything that might need it
 initDb();
+if (process.env.MICHI_CLOUD !== '1') startMetaAgentMetrics();
 // Spin up the async database worker thread. It opens its own WAL connection
 // to the same data.db file so writes execute off the main thread. Hot-path
 // routes (ensure-session) call dbWorker.* instead of synchronous dbRepository.
@@ -223,8 +226,8 @@ log.info('boot', 'agent config loaded');
 // runtime modules read getRuntimeDeps() at call-time and throw if unconfigured.
 configureRuntimeDeps({
   onSessionStateChanged: persistSessionState,
-  chatPermissions: { getMode: resolveChatPermissionMode, hasGrant: hasChatToolGrant, grant: grantChatTool, resetToken: chatPermissionResetToken },
-  historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions, hasGrant, grantPermission },
+  chatPermissions: { getMode: resolveChatPermissionMode, getApproveForMe: resolveChatApproveForMe, hasGrant: hasChatToolGrant, grant: grantChatTool, resetToken: chatPermissionResetToken },
+  historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions },
   dataDir: getMichiDataDir(),
   providerKeys: { getProviderApiKey },
   globalContext: { listThreads, searchMessages, readNode, readNodeOverview },
@@ -454,7 +457,6 @@ const agentRunRecoveryPromise = agentRunAssembly.start()
   });
 
 // The Meta agent chat window checks its tools inside each turn on some runtimes.
-if (process.env.MICHI_CLOUD !== '1') watchAssistantGuardChecks(chatHub);
 
 // Scheduled Jobs run prompts headlessly as ordinary durable chat turns. They
 // are a desktop feature: cloud deployments have per-user owners and no local
@@ -464,6 +466,7 @@ const scheduledJobExecutor = SCHEDULED_JOBS_ENABLED
   ? new ChatScheduledJobExecutor({
       chatHub,
       ensureSession: (input) => chatManager.ensureParentSession(input),
+      releaseMaintenanceSession: (input) => chatManager.releaseMaintenanceSession(input),
     })
   : null;
 const scheduledJobScheduler = scheduledJobExecutor
@@ -703,15 +706,16 @@ const redactCapabilityIds = (path: string) =>
   path.replace(/(?<=\/)[0-9a-f]{32}(?=\/|$)/g, (id) => `${id.slice(0, 4)}…`);
 app.use((req, res, next) => {
   const t0 = Date.now();
+  const requestId = nextPerformanceContext();
   res.on('finish', () => {
     const dur = Date.now() - t0;
     const status = res.statusCode;
     if (!shouldLogAccess(req.method, req.path, status)) return;
     const stage = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
     const fn = stage === 'error' ? log.error : stage === 'warn' ? log.warn : log.info;
-    fn('http', `${req.method} ${redactCapabilityIds(req.path)}`, { status, durMs: dur });
+    fn('http', `${req.method} ${redactCapabilityIds(req.path)}`, { status, durMs: dur, requestId });
   });
-  next();
+  withPerformanceContext(requestId, next);
 });
 
 app.get('/api/health', (req, res) => {
@@ -782,17 +786,9 @@ app.use('/api', setupAgentRunRoutes({
 // Runs a previous process left open lost their runtime with it.
 workflowRunHub.recover();
 app.use('/api', setupWorkflowRunRoutes({ hub: workflowRunHub, backgroundSubagents: backgroundSubagentRegistry }));
-// Connection credentials belong to the local desktop gateway. A remotely
-// exposed execution backend never needs to manage or replay another server's
-// saved token, so keep this surface unavailable in remote mode.
+// Saved credentials belong to the desktop gateway, not execution backends.
 if (!remoteAccessEnabled()) {
   app.use('/api', setupBackendConnectionRoutes());
-}
-if (accessPolicy.ownerScoped) {
-  // BYOK provider key routes — only mounted in cloud mode. Local dev /
-  // Electron continue to use the disk-based shared provider key store
-  // in services/secrets.ts.
-  app.use('/api', setupUserKeysRoutes());
 }
 if (REQUIRE_AUTH) {
   // Admin routes — gated by MICHI_ADMIN_EMAILS env var (requireAdmin).
@@ -825,9 +821,9 @@ app.use('/api', setupPageMaintenanceRoutes({ scheduler: scheduledJobScheduler })
 app.use('/api', setupBackupRoutes());
 app.use('/api', setupSearchRoutes());
 app.use('/api', setupVersionRoutes());
-// The Michi assistant reads workspaces and maintains Pages: a
-// desktop feature, never offered from a cloud or remotely exposed backend.
-if (process.env.MICHI_CLOUD !== '1' && !remoteAccessEnabled()) {
+// Assistant and Meta agent controls belong to this backend's owner,
+// including authenticated remote access. Cloud owners remain isolated.
+if (process.env.MICHI_CLOUD !== '1') {
   app.use('/api', setupAssistantRoutes());
   app.use('/api', setupMetaAgentRoutes());
   app.use('/api', setupMetaAgentOverviewRoutes({ scheduler: scheduledJobScheduler }));
@@ -837,7 +833,8 @@ app.use('/api', setupScheduledJobRoutes({ scheduler: scheduledJobScheduler, even
 const frontendBuild = path.join(__dirname, '../../frontend/build');
 const indexHtml = path.join(frontendBuild, 'index.html');
 
-if (fs.existsSync(indexHtml)) {
+const servingFrontend = fs.existsSync(indexHtml);
+if (servingFrontend) {
   setupSpaFallback(app, frontendBuild);
 }
 
@@ -896,6 +893,7 @@ let shuttingDown = false;
 const gracefulShutdown = async (): Promise<void> => {
   if (shuttingDown) return;
   shuttingDown = true;
+  stopEventLoopDiagnostics();
   log.info('boot', 'shutting down');
   chatHub.prepareForShutdown();
   streamTransport.close();
@@ -915,6 +913,7 @@ const gracefulShutdown = async (): Promise<void> => {
   closeAllArtifactWatchers();
   // Coalesced workflow snapshots would otherwise lose their last revisions.
   workflowRunHub.flush();
+  await stopMetaAgentMetrics();
   closeDb();
   closeAuditDb();
   await shutdownDbWorker();

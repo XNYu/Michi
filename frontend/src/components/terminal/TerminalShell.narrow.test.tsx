@@ -1,6 +1,6 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import TerminalShell from './TerminalShell';
 import { PrefsProvider } from '../../state/prefs';
 
@@ -44,6 +44,7 @@ vi.mock('../../state/chatStore', async () => {
 });
 
 const wideWidth = window.innerWidth;
+const areas = () => screen.queryByRole('navigation', { name: 'Areas' });
 const rail = (name: string) => screen.getByRole('navigation', { name: 'Areas' }).querySelector<HTMLButtonElement>(`[data-area="${name}"]`)!;
 const toggle = () => screen.getByRole('button', { name: 'toggle sidebar' });
 
@@ -56,35 +57,74 @@ describe('TerminalShell in a narrow window', () => {
   });
   afterEach(() => { Object.defineProperty(window, 'innerWidth', { configurable: true, value: wideWidth }); });
 
-  it('reserves the area rail in the top bar while the sidebar overlay is closed', async () => {
+  it('has no area rail; its drawer opens with the areas as the first row', async () => {
     render(<PrefsProvider><TerminalShell /></PrefsProvider>);
     expect(await screen.findByText('Conversation home')).toBeTruthy();
-    expect(screen.getByRole('navigation', { name: 'Areas' })).toBeTruthy();
-    expect(toggle().getAttribute('data-sidebar-rail')).toBe('true');
+    expect(areas()).toBeNull();
+    expect(toggle().getAttribute('data-sidebar-rail')).toBe('false');
 
     fireEvent.click(toggle());
+    expect(rail('conversations').getAttribute('aria-current')).toBe('page');
     expect(toggle().getAttribute('data-sidebar-rail')).toBe('false');
     fireEvent.click(toggle());
-    expect(toggle().getAttribute('data-sidebar-rail')).toBe('true');
+    expect(areas()).toBeNull();
   });
 
-  it('keeps Settings categories in its drawer without opening the sidebar overlay', async () => {
+  it('opens Settings from the drawer, which closes, and keeps its categories in the Settings drawer', async () => {
     render(<PrefsProvider><TerminalShell /></PrefsProvider>);
+    fireEvent.click(toggle());
     fireEvent.click(rail('settings'));
     expect(await screen.findByText('Appearance pane')).toBeTruthy();
+    expect(areas()).toBeNull();
     const sections = screen.getByRole('navigation', { name: 'Settings sections' });
     fireEvent.click(screen.getByRole('button', { name: 'Runtime (global)' }));
     expect(await screen.findByText('Model pane')).toBeTruthy();
     expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBe(sections);
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
-    expect(toggle().getAttribute('data-sidebar-rail')).toBe('true');
+    expect(toggle().getAttribute('data-sidebar-rail')).toBe('false');
   });
 
-  it('closes the overlay when the Scheduled Meta agent row is picked', async () => {
+  it('returns from Settings with a Back button in the top-left corner instead of ×', async () => {
     render(<PrefsProvider><TerminalShell /></PrefsProvider>);
+    fireEvent.click(toggle());
+    fireEvent.click(rail('settings'));
+    expect(await screen.findByText('Appearance pane')).toBeTruthy();
+    const dialog = screen.getByRole('dialog', { name: 'Settings' });
+    const back = within(dialog).getByRole('button', { name: 'Back' });
+    expect(dialog.querySelector('.ui-overlay-header')!.firstElementChild).toBe(back);
+    expect(within(dialog).queryByRole('button', { name: 'Close' })).toBeNull();
+    fireEvent.click(back);
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull());
+    expect(screen.getByText('Conversation home')).toBeTruthy();
+  });
+
+  it('steps Back from a Settings section to the section list before closing, and reopens on the list', async () => {
+    render(<PrefsProvider><TerminalShell /></PrefsProvider>);
+    fireEvent.click(toggle());
+    fireEvent.click(rail('settings'));
+    const dialog = await screen.findByRole('dialog', { name: 'Settings' });
+    const level = () => dialog.querySelector('.terminal-settings--drawer')?.getAttribute('data-view');
+    await waitFor(() => expect(level()).toBe('menu'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Runtime (global)' }));
+    expect(await screen.findByText('Model pane')).toBeTruthy();
+    expect(level()).toBe('section');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }));
+    expect(level()).toBe('menu');
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBe(dialog);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull());
+    fireEvent.click(toggle());
+    fireEvent.click(rail('settings'));
+    const reopened = await screen.findByRole('dialog', { name: 'Settings' });
+    await waitFor(() => expect(reopened.querySelector('.terminal-settings--drawer')?.getAttribute('data-view')).toBe('menu'));
+  });
+
+  it('keeps the drawer open on the Scheduled list and closes it when the Meta agent row is picked', async () => {
+    render(<PrefsProvider><TerminalShell /></PrefsProvider>);
+    fireEvent.click(toggle());
     fireEvent.click(rail('scheduled'));
     expect(await screen.findByText('Scheduled page')).toBeTruthy();
-    fireEvent.click(toggle());
+    expect(rail('scheduled').getAttribute('aria-current')).toBe('page');
     fireEvent.click(screen.getByText('Meta agent · maintain Pages'));
     expect(await screen.findByText('Meta agent detail page')).toBeTruthy();
     await waitFor(() => expect(screen.queryByText('Meta agent · maintain Pages')).toBeNull());
@@ -99,5 +139,8 @@ describe('TerminalShell in a narrow window', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Runtime (global)' }));
     expect(await screen.findByText('Model pane')).toBeTruthy();
     expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeTruthy();
+    const dialog = screen.getByRole('dialog', { name: 'Settings' });
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: 'Back' })).toBeNull();
   });
 });

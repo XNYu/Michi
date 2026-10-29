@@ -299,7 +299,7 @@ export class AcpAgentRuntime implements AgentRuntime {
     private makeSlotCallbacks(getSlotId: () => string | undefined): McpSlotCallbacks {
         return {
             onSpawnBranches: async (topics) => this.handleSpawnBranches(getSlotId()!, topics),
-            onSaveArtifact: (name, body) => this.handleSaveContext(getSlotId()!, name, body),
+            onSaveArtifact: (name, body, path) => this.handleSaveContext(getSlotId()!, name, body, path),
             onUpdateArtifact: (name, body) => this.handleUpdateContext(getSlotId()!, name, body),
             onSetFollowUps: (followUps) => this.handleSetFollowUps(getSlotId()!, followUps),
             onSetBranchOverview: (overview) => this.handleSetBranchOverview(getSlotId()!, overview),
@@ -342,12 +342,12 @@ export class AcpAgentRuntime implements AgentRuntime {
         return created ?? [];
     }
 
-    private handleSaveContext(slotId: string, name: string, body: string): BridgeContextResult | null {
+    private handleSaveContext(slotId: string, name: string, body: string | undefined, path?: string): BridgeContextResult | null {
         const slot = this.mcpRegistry?.get(slotId);
         if (!slot) return null;
         const parentChatId = slot.parentChatId;
         if (parentChatId === "__pending__") return null;
-        const result = this.bridge.saveContext?.({ cwd: slot.cwd, chatId: parentChatId, ownerUserId: slot.ownerUserId, name, body });
+        const result = this.bridge.saveContext?.({ cwd: slot.cwd, chatId: parentChatId, ownerUserId: slot.ownerUserId, name, body, path });
         if (!result) return null;
         return result;
     }

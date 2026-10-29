@@ -608,6 +608,15 @@ module.exports = {
   writeFixture,
   runCheck,
   formatComparison,
+  // Scanner helpers reused by scripts/dependencyRules.cjs.
+  createMatcher,
+  scanRoots,
+  fsSource,
+  parse,
+  moduleSpecifiers,
+  classifySpecifier,
+  resolveRepoModule,
+  sortedUnique,
 };
 
 if (require.main === module) {

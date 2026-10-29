@@ -21,8 +21,7 @@ export interface GenerationRequest {
 
 /**
  * Strip the workspace's Title:/Follow-up Questions: scaffolding from the
- * kiro response. Same logic as before — shared here so both export and
- * digest output come out clean.
+ * kiro response so digest output comes out clean.
  */
 export function stripScaffolding(markdown: string): string {
     let s = markdown;
@@ -59,25 +58,6 @@ function composeTranscript(req: GenerationRequest): string {
     }
     return parts.join("\n");
 }
-
-const EXPORT_PREAMBLE = `You are summarizing a branching exploration the user conducted in a "workspace" app. The user explored a topic by asking questions and branching into sub-topics; you now see the full tree of conversation.
-
-Produce a Markdown document with this structure:
-
-# {Workspace name}
-
-## Overview
-
-Two to four paragraphs synthesizing the whole exploration: what the user was after, what they found, any surprising angles. Readable as a standalone writeup.
-
-## Map
-
-Then reproduce the tree structure using heading levels that match the depth of each node (depth 0 → ##, depth 1 → ###, depth 2 → ####, ...). For each node, write:
-- A short italic line: the node's title (or first user message if no title).
-- One paragraph summarizing the conversation at that node (not a transcript — a condensed takeaway).
-- If the node had interesting follow-up questions, list 1–3 at the end.
-
-Do not quote the raw transcript. Do not use the "Title:" / "Follow-up Questions:" markers from the workspace prompt — those are UI scaffolding. Output clean, publishable Markdown.`;
 
 const DIGEST_PREAMBLE = `You are producing a living research document from a user's exploration workspace. The user explored a topic across multiple branching conversations, and this digest is their comprehensive reference document.
 
@@ -120,21 +100,6 @@ function composePrompt(req: GenerationRequest, preamble: string): string {
     return parts.join("\n");
 }
 
-async function runGeneration(
-    chatManager: ChatManager,
-    req: GenerationRequest,
-    preamble: string,
-): Promise<string> {
-    const chatId = await chatManager.newChat(undefined, req.cwd);
-    const firstMessage = composePrompt(req, preamble);
-    const chunks: string[] = [];
-    for await (const ev of chatManager.sendMessage(chatId, firstMessage)) {
-        if (ev.kind === "chunk") chunks.push(ev.text);
-        else if (ev.kind === "turn_end") break;
-    }
-    return stripScaffolding(chunks.join(""));
-}
-
 export type DigestGenerationEvent =
     | { kind: "chunk" | "thought" | "status"; text: string }
     | { kind: "done"; finalMarkdown: string };
@@ -169,18 +134,4 @@ export async function* streamDigestGeneration(
     const finalMarkdown = stripScaffolding(chunks.join(""));
     if (!finalMarkdown) throw new Error("Digest generation returned no content. Please rebuild to try again.");
     yield { kind: "done", finalMarkdown };
-}
-
-export function runExportGeneration(
-    chatManager: ChatManager,
-    req: GenerationRequest,
-): Promise<string> {
-    return runGeneration(chatManager, req, EXPORT_PREAMBLE);
-}
-
-export function runDigestGeneration(
-    chatManager: ChatManager,
-    req: GenerationRequest,
-): Promise<string> {
-    return runGeneration(chatManager, req, DIGEST_PREAMBLE);
 }

@@ -1,0 +1,57 @@
+/* The chips before the toolbar's spacer (Home's workspace chip, +, @, agent).
+   A class rather than inline styles, so a caller such as Home can rearrange
+   them for a narrow composer. */
+.manage-composer-toolbar-left {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The tray under a narrow new-thread composer (the trayBelow prop): Home's
+   workspace chip on the left, the permission chip on the right. It hangs
+   from the composer's bottom edge, inset, so the frame above reads as the
+   message and the tray as where it goes. Corners match the phone composer. */
+.composer-tray {
+  /* Hover needs to differ from the tray's own fill. */
+  --term-hover-bg: color-mix(in srgb, var(--term-fg) 7%, var(--term-alt));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0 8px;
+  padding: 0 2px;
+  background: var(--term-alt);
+  border: 1px solid color-mix(in srgb, var(--term-line) 65%, transparent);
+  border-top: 0;
+  border-radius: 0 0 calc(var(--ui-radius) * 2) calc(var(--ui-radius) * 2);
+}
+.composer-tray__start,
+.composer-tray__end {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+}
+.composer-tray__end { margin-left: auto; }
+/* Up-down chevrons mark the chips that open a menu. */
+.composer-tray button.t-toolbar-chip[aria-haspopup]::after {
+  content: '';
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: currentColor;
+  opacity: .55;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 6.5l3-3 3 3M5 9.5l3 3 3-3'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 6.5l3-3 3 3M5 9.5l3 3 3-3'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* Crew's setup notice is a status, not a button: it shortens to fit and its
+   tooltip keeps the full text. */
+.composer-tray span.t-toolbar-chip[role='status'] {
+  display: block;
+  line-height: var(--composer-chip-height, 30px);
+  text-overflow: ellipsis;
+  cursor: default;
+}

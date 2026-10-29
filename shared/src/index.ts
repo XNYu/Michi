@@ -33,3 +33,4 @@ export * from './runtimeContracts';
 export * from './desktopContracts';
 export * from './pages';
 export * from './database/viewModel';
+export * from './artifactType';

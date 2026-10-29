@@ -1,5 +1,6 @@
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
 import { isVisibleConversationNode } from '../../../state/conversationVisibility';
+import { liveDigestSources } from '../../../state/digest';
 
 export interface HeaderCounts {
   chats: number;
@@ -189,18 +190,14 @@ export function deriveDigests(
     const node = nodes[id];
     if (!node || node.deletedAt) continue;
     if (node.kind !== 'digest') continue;
-    const digest = (
-      node as ChatNodeState & {
-        digest?: { content?: string; sourceCount?: number; generatedAt?: number };
-      }
-    ).digest;
+    const digest = node.digest;
     const content = digest?.content?.trim() ?? '';
     const excerpt = content.replace(/\s+/g, ' ').slice(0, EXCERPT_LEN);
     out.push({
       nodeId: id,
       title: node.title?.trim() || 'Untitled digest',
       excerpt,
-      sourceCount: digest?.sourceCount ?? 0,
+      sourceCount: digest ? liveDigestSources(digest, project, nodes).length : 0,
       updatedAt: digest?.generatedAt ?? 0,
     });
   }

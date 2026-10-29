@@ -25,7 +25,7 @@ function setupPi(t: TestContext, nodes = new Map<string, any>()) {
   configureRuntimeDeps({ dataDir: '/tmp', historyStore: {
     getNode: (id) => { reads++; return nodes.get(id) ?? null; },
     listMessages: (id) => [{ role: 'user', content: `history:${id}` }] as any,
-    getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission() {},
+    getWorkspace: () => null, getWorkspaceInstructions: () => null,
   }, agentConfig: {
     getAgentConfig: () => ({ runtime: 'pi', provider: 'test', modelByRuntime: {}, reasoningByRuntime: {} }),
     resolveModel: () => '', resolveReasoning: () => undefined,

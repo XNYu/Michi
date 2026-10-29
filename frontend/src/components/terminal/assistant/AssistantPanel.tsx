@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
 import TPane from '../TPane';
 import { MichiSectionLabel } from '../content/MichiSectionLabel';
 import { BorderBtn } from '../primitives';
@@ -20,7 +22,7 @@ import {
   type MichiAssistantPage,
   type OpenMichiAssistantOptions,
 } from '../../../state/content/assistantBridge';
-import { MICHI_ASSISTANT_RESET_EVENT, type AssistantInfo } from '../../../services/api/assistant';
+import { AssistantApiError, MICHI_ASSISTANT_RESET_EVENT, resetAssistant, type AssistantInfo } from '../../../services/api/assistant';
 import {
   adoptAssistantInfo,
   closeAssistantPanel,
@@ -324,6 +326,27 @@ function AssistantPanel({
     closeAssistantPanel();
   };
 
+  // Starting over, which Settings used to offer: the old conversation stays in history.
+  const answering = useStructuralSelector(useCallback(
+    (nodes: Record<string, ChatNodeState>) => !!nodeId && nodes[nodeId]?.status === 'streaming', [nodeId]));
+  const [starting, setStarting] = useState(false);
+  const startOver = async () => {
+    if (!nodeId || starting) return;
+    setStarting(true);
+    try {
+      const next = await resetAssistant(nodeId);
+      adoptAssistantInfo(next);
+      window.dispatchEvent(new CustomEvent<AssistantInfo>(MICHI_ASSISTANT_RESET_EVENT, { detail: next }));
+      setRequestFocusSeq((n) => n + 1);
+    } catch (cause) {
+      // Another window already started over: show the conversation that is current now.
+      if (cause instanceof AssistantApiError && cause.current) adoptAssistantInfo(cause.current);
+      else toast.error(cause instanceof Error ? cause.message : 'Could not start a new conversation');
+    } finally {
+      setStarting(false);
+    }
+  };
+
   const caption = assistantPageCaption(composer.page);
   return (
     <div
@@ -336,6 +359,17 @@ function AssistantPanel({
     >
       <div className="assistant-panel__head">
         <MichiSectionLabel label={caption ? `Assistant · on ${caption}` : 'Assistant'} />
+        <button
+          type="button"
+          className="assistant-panel__btn"
+          aria-label="New conversation"
+          title="New conversation"
+          aria-busy={starting || undefined}
+          disabled={!ready || answering || starting}
+          onClick={() => { void startOver(); }}
+        >
+          <Plus size={13} aria-hidden="true" />
+        </button>
         <button
           type="button"
           className="assistant-panel__btn"
@@ -359,7 +393,8 @@ function AssistantPanel({
       <div className="assistant-panel__body">
         {ready && nodeId ? (
           <AssistantLinkScope>
-            <TPane nodeId={nodeId} embedded />
+            {/* A message sent while starting over would land in the conversation being archived. */}
+            <TPane nodeId={nodeId} embedded composerDisabled={starting} />
           </AssistantLinkScope>
         ) : status === 'error' || nodeState === 'failed' ? (
           <div className="assistant-panel__status">

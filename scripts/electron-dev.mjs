@@ -4,26 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { findOpenPort } from "./find-open-port.mjs";
 import { electronDevEnvironment } from "./electron-dev-env.mjs";
+import { npm, run } from "./lib/proc.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-
-function run(command, args, opts = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: opts.cwd ?? root,
-      env: opts.env ?? process.env,
-      stdio: "inherit",
-      shell: process.platform === "win32",
-      windowsHide: true,
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${command} ${args.join(" ")} exited ${code}`));
-    });
-  });
-}
 
 await run(npm, ["run", "shared:build"]);
 

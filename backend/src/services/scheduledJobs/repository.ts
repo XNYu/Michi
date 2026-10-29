@@ -14,6 +14,7 @@ import {
 import { getDb, runInTransaction } from '../db';
 
 interface JobRow {
+  execution_kind: 'scheduled' | 'maintenance';
   id: string;
   owner_user_id: string | null;
   workspace_id: string;
@@ -64,6 +65,8 @@ interface RunRow {
 
 /** Everything the scheduler needs to persist about a job. */
 export interface ScheduledJobRecord {
+  /** Maintenance uses this ledger for fenced execution and historical receipts, never its schedule. */
+  executionKind?: 'scheduled' | 'maintenance';
   conversationCursor?: number | null;
   id: string;
   ownerUserId: string | null;
@@ -109,6 +112,7 @@ function parseScheduleColumn(raw: string): ScheduledJobSchedule {
 function toRecord(row: JobRow): ScheduledJobRecord {
   return {
     id: row.id,
+    executionKind: row.execution_kind,
     conversationCursor: row.conversation_cursor ?? null,
     ownerUserId: row.owner_user_id,
     workspaceId: row.workspace_id,
@@ -233,6 +237,7 @@ export type JobUpdate = Partial<Omit<ScheduledJobRecord, 'id' | 'ownerUserId' | 
 };
 
 const UPDATE_COLUMNS: Record<keyof JobUpdate, string> = {
+  executionKind: 'execution_kind',
   conversationCursor: 'conversation_cursor',
   workspaceId: 'workspace_id',
   name: 'name',
@@ -266,12 +271,16 @@ function columnValue(key: keyof JobUpdate, value: unknown): string | number | nu
 
 export class ScheduledJobsRepository {
   listJobs(): Array<{ record: ScheduledJobRecord; activeRunId: string | null }> {
-    const rows = getDb().prepare(`SELECT ${JOB_COLUMNS} FROM scheduled_jobs j ORDER BY j.created_at ASC`).all() as unknown as JobRow[];
+    const rows = getDb().prepare(`SELECT ${JOB_COLUMNS} FROM scheduled_jobs j WHERE j.execution_kind='scheduled' ORDER BY j.created_at ASC`).all() as unknown as JobRow[];
     return rows.map((row) => ({ record: toRecord(row), activeRunId: row.active_run_id ?? null }));
   }
 
+  listMaintenanceExecutions(): ScheduledJobRecord[] {
+    return (getDb().prepare("SELECT * FROM scheduled_jobs WHERE execution_kind='maintenance'").all() as unknown as JobRow[]).map(toRecord);
+  }
+
   countJobs(): number {
-    return (getDb().prepare('SELECT COUNT(*) AS count FROM scheduled_jobs').get() as { count: number }).count;
+    return (getDb().prepare("SELECT COUNT(*) AS count FROM scheduled_jobs WHERE execution_kind='scheduled'").get() as { count: number }).count;
   }
 
   getJob(id: string): { record: ScheduledJobRecord; activeRunId: string | null } | null {
@@ -284,8 +293,8 @@ export class ScheduledJobsRepository {
       INSERT INTO scheduled_jobs (
         id, owner_user_id, workspace_id, name, prompt, schedule, runtime_id, provider_id, model_id, reasoning,
         permission_mode, session_mode, persistent_node_id, notify, enabled, auto_paused, consecutive_failures,
-        timeout_seconds, next_run_at, last_run_at, last_status, last_error, created_at, updated_at, conversation_cursor
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        timeout_seconds, next_run_at, last_run_at, last_status, last_error, created_at, updated_at, conversation_cursor, execution_kind
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id, record.ownerUserId, record.workspaceId, record.name, record.prompt, JSON.stringify(record.schedule),
       record.runtimeId, record.providerId, record.modelId, record.reasoning,
@@ -293,7 +302,7 @@ export class ScheduledJobsRepository {
       record.notify ? 1 : 0, record.enabled ? 1 : 0, record.autoPaused ? 1 : 0, record.consecutiveFailures,
       record.timeoutSeconds, record.nextRunAt, record.lastRunAt, record.lastStatus, record.lastError,
       record.createdAt, record.updatedAt,
-      record.conversationCursor ?? null,
+      record.conversationCursor ?? null, record.executionKind ?? 'scheduled',
     );
   }
 
@@ -315,7 +324,7 @@ export class ScheduledJobsRepository {
   listScheduledJobs(): ScheduledJobRecord[] {
     const rows = getDb().prepare(`
       SELECT j.* FROM scheduled_jobs j
-       WHERE j.enabled = 1 AND j.auto_paused = 0 AND j.next_run_at IS NOT NULL
+       WHERE j.execution_kind='scheduled' AND j.enabled = 1 AND j.auto_paused = 0 AND j.next_run_at IS NOT NULL
        ORDER BY j.next_run_at ASC
     `).all() as unknown as JobRow[];
     return rows.map(toRecord);
@@ -327,7 +336,7 @@ export class ScheduledJobsRepository {
       if (!this.ownsLease(input.lease, input.now)) return { run: null, reason: 'lease_lost' };
       const row = getDb().prepare('SELECT * FROM scheduled_jobs WHERE id = ?').get(input.jobId) as unknown as JobRow | undefined;
       if (!row) return { run: null, reason: 'missing' };
-      if (input.requireDue && (row.enabled !== 1 || row.auto_paused === 1 || row.next_run_at === null || row.next_run_at > input.now)) {
+      if (input.requireDue && (row.execution_kind !== 'scheduled' || row.enabled !== 1 || row.auto_paused === 1 || row.next_run_at === null || row.next_run_at > input.now)) {
         return { run: null, reason: 'not_due' };
       }
       // A previous holder may still be starting/cancelling an executor. Lease
@@ -338,6 +347,10 @@ export class ScheduledJobsRepository {
       const running = getDb().prepare(`SELECT 1 FROM scheduled_job_runs WHERE job_id = ? AND status = 'running'
         UNION ALL SELECT 1 FROM scheduler_execution_claims WHERE job_id = ? LIMIT 1`).get(input.jobId, input.jobId);
       if (running) return { run: null, reason: 'job_running' };
+      if (row.execution_kind === 'maintenance' && getDb().prepare(`SELECT 1 FROM scheduler_execution_claims x
+        JOIN scheduled_jobs j ON j.id=x.job_id WHERE j.execution_kind='maintenance' LIMIT 1`).get()) {
+        return { run: null, reason: 'capacity' };
+      }
       const count = getDb().prepare('SELECT COUNT(*) AS count FROM scheduler_execution_claims').get() as { count: number };
       if (count.count >= input.maxConcurrentRuns) return { run: null, reason: 'capacity' };
       getDb().prepare(`

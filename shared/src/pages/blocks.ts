@@ -2,6 +2,7 @@
 import { parseRichBlock, richChartSchema, type RichBlockContent, type RichChart } from './richBlocks';
 import { validatePageComponentProps } from './components';
 import { parsePageSegmentSources, type PageSegmentSources } from './markdownSegments';
+import { isPageViewId, parsePageViewAction, parsePageViewInteraction, type PageViewAction, type PageViewBlock, type PageViewLinkBlock, type PageViewInteraction } from './viewInteractions';
 export interface BlockSource {
   nodeId: string;
   turnId: string;
@@ -20,7 +21,7 @@ export const METRIC_TONES: readonly MetricTone[] = ['default', 'accent'];
 export type NextStepWho = 'user' | 'agent';
 export const NEXT_STEP_WHO: readonly NextStepWho[] = ['user', 'agent'];
 
-export interface MetricItem { label: string; value: string; tone?: MetricTone; note?: string }
+export interface MetricItem { label: string; value: string; tone?: MetricTone; note?: string; action?: PageViewAction }
 export interface NextStepItem { who: NextStepWho; text: string; unblocks?: string }
 /** `at` is epoch milliseconds or an ISO 8601 date or date-time. */
 export interface TimelineItem { title: string; at: number | string; detail?: string; tone?: BlockTone }
@@ -100,7 +101,7 @@ interface TaskViewBlock { type: 'task-view'; viewId?: string; title?: string }
 
 /** Containers are content groups, saved and versioned as one top-level block.
  * Resource references stay top-level so their identity, ownership and history remain explicit. */
-export type NestedPageBlock = Exclude<PageBlockContent, DatabaseRefBlock | PageLinkBlock | ComponentBlock | ThreadsBlock | ConflictBlock | HomeSectionBlock>;
+export type NestedPageBlock = Exclude<PageBlockContent, DatabaseRefBlock | PageLinkBlock | ComponentBlock | ThreadsBlock | ConflictBlock | HomeSectionBlock | PageViewBlock>;
 /** A region keeps its identity when the person changes its width or reading order. */
 export interface PageGridRegion { id: string; span: number; tabletSpan?: number; title?: string; blocks: NestedPageBlock[] }
 export type ContainerBlock = { type: 'toggle'; title: string; blocks: NestedPageBlock[] }
@@ -108,9 +109,10 @@ export type ContainerBlock = { type: 'toggle'; title: string; blocks: NestedPage
   | { type: 'tabs'; tabs: Array<{ label: string; blocks: NestedPageBlock[] }> }
   | { type: 'grid'; regions: PageGridRegion[] };
 
-export type PageBlockContent = RichBlockContent | RichChart | ContainerBlock | HeadingBlock | MarkdownBlock | CalloutBlock | ChecklistBlock | MetricsBlock | NextStepsBlock | TimelineBlock
+export type PageBlockContent = (RichBlockContent | RichChart | ContainerBlock | HeadingBlock | MarkdownBlock | CalloutBlock | ChecklistBlock | MetricsBlock | NextStepsBlock | TimelineBlock
   | DatabaseRefBlock | PageLinkBlock | ComponentBlock | TaskViewBlock | HomeSectionBlock
-  | PlanActualBlock | CompareBlock | ConflictBlock | TableBlock | CriteriaBlock | ChartBlock | GalleryBlock | ForgotBlock | ThreadsBlock;
+  | PlanActualBlock | CompareBlock | ConflictBlock | TableBlock | CriteriaBlock | ChartBlock | GalleryBlock | ForgotBlock | ThreadsBlock | PageViewBlock | PageViewLinkBlock)
+  & { interaction?: PageViewInteraction; visibility?: 'detail' };
 export type PageBlockInput = PageBlockContent;
 export type PageBlock = PageBlockContent & { id: string; rev: number; sources?: BlockSource[]; edit?: BlockEdit };
 export type PageBlockWithSources = PageBlock;
@@ -172,9 +174,9 @@ function parseItems<T>(value: unknown, max: number, parse: (item: Record<string,
 }
 
 function parseMetric(item: Record<string, unknown>): MetricItem | null {
-  if (!exactKeys(item, ['label', 'value', 'tone', 'note']) || !validText(item.label, MAX_TITLE) || !validText(item.value, PAGE_BLOCK_LIMITS.value) ||
-    !optional(item.tone, oneOf(METRIC_TONES)) || !optional(item.note, (note) => validText(note, MAX_TITLE))) return null;
-  return { label: item.label, value: item.value, ...present<MetricItem>(item, ['tone', 'note']) };
+  if (!exactKeys(item, ['label', 'value', 'tone', 'note', 'action']) || !validText(item.label, MAX_TITLE) || !validText(item.value, PAGE_BLOCK_LIMITS.value) ||
+    !optional(item.tone, oneOf(METRIC_TONES)) || !optional(item.note, (note) => validText(note, MAX_TITLE)) || !optional(item.action, action => !!parsePageViewAction(action))) return null;
+  return { label: item.label, value: item.value, ...present<MetricItem>(item, ['tone', 'note', 'action']) };
 }
 
 function parseNextStep(item: Record<string, unknown>): NextStepItem | null {
@@ -311,7 +313,26 @@ export function parsePageBlockInput(value: unknown): PageBlockInput | null {
 function parseContent(value: unknown, depth: number, budget: { left: number }): PageBlockInput | null {
   if (depth > 2 || budget.left-- <= 0) return null;
   if (!isRecord(value) || typeof value.type !== 'string') return null;
+  const { interaction, visibility, ...content } = value;
+  if (visibility !== undefined && (visibility !== 'detail' || depth !== 0 || value.type === 'view')) return null;
+  const parsedInteraction = interaction === undefined ? undefined : parsePageViewInteraction(interaction);
+  if (parsedInteraction === null || (value.type === 'view' && interaction !== undefined)) return null;
+  const parsed = parseBaseContent(content, depth, budget);
+  return parsed ? { ...parsed, ...(parsedInteraction ? { interaction: parsedInteraction } : {}), ...(visibility ? { visibility: 'detail' as const } : {}) } : null;
+}
+
+function parseBaseContent(value: Record<string, unknown>, depth: number, budget: { left: number }): PageBlockInput | null {
   switch (value.type) {
+    case 'view': {
+      if (depth !== 0 || !exactKeys(value, ['type', 'viewId', 'title', 'blockIds']) || !isPageViewId(value.viewId) || !validText(value.title, MAX_TITLE) || !value.title.trim()) return null;
+      const blockIds = parseList(value.blockIds, 1, 40, id => validId(id) ? id : null);
+      return blockIds && new Set(blockIds).size === blockIds.length ? { type: 'view', viewId: value.viewId, title: value.title, blockIds } : null;
+    }
+    case 'view-link': {
+      if (!exactKeys(value, ['type', 'label', 'action']) || !validText(value.label, MAX_TITLE) || !value.label.trim()) return null;
+      const action = parsePageViewAction(value.action);
+      return action ? { type: 'view-link', label: value.label, action } : null;
+    }
     case 'heading':
       return exactKeys(value, ['type', 'text']) && validText(value.text, MAX_TITLE)
         ? { type: 'heading', text: value.text } : null;
@@ -447,7 +468,7 @@ function parseContent(value: unknown, depth: number, budget: { left: number }): 
       const slot = (raw: unknown): NestedPageBlock[] | null => {
         if (!Array.isArray(raw) || raw.length > 20) return null;
         const parsed = raw.map((child) => parseContent(child, depth + 1, budget));
-        const references = new Set(['database-ref', 'page-link', 'component', 'threads', 'conflict', 'home-section']);
+        const references = new Set(['database-ref', 'page-link', 'component', 'threads', 'conflict', 'home-section', 'view']);
         return parsed.every((child) => child && !references.has(child.type)) ? parsed as NestedPageBlock[] : null;
       };
       if (value.type === 'toggle') {

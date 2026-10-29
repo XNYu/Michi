@@ -62,7 +62,9 @@ describe('FilePane captured feedback', () => {
       snapshot:expect.objectContaining({hashKind:'sha256-text-utf8',contentHash:expect.stringMatching(/^[a-f0-9]{64}$/),modifiedAt:1}),
     }), expect.objectContaining({nodeId:'a',treeId:'t1'}));
     const banner = render(<>{H.props!.renderSelectionContext!(context, vi.fn())}</>);
-    expect(banner.getByText(/previously read content/)).toBeTruthy();
+    expect(banner.getByText('File changed since this selection.')).toBeTruthy();
+    expect(banner.container.querySelector('details')).toBeNull();
+    expect(banner.queryByText(/Read version/)).toBeNull();
   });
 
   it('rejects an invalid target without falling back and allows explicit replacement', async () => {

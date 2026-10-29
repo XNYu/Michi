@@ -98,11 +98,11 @@ test('each setting is read when it was before: module load, runtime creation, or
   assert.equal(options.preloadTools?.(), false, 'read at spawn, as kiroEnv read the spawn environment');
 });
 
-test('Kiro takes its engine from MICHI_KIRO_ENGINE; Crew stays v2 and ignores it', async (t) => {
+test('Kiro takes its engine from MICHI_KIRO_ENGINE (unset is v3); Crew stays v2 and ignores it', async (t) => {
   const deps = () => ({ bridge, mcpRegistry: fakeMcpRegistry() as any, mcpPort: 0, host: michiTestHost() });
   const runtimes: Array<{ shutdown(): Promise<void> }> = [];
   t.after(() => Promise.all(runtimes.map((runtime) => runtime.shutdown())));
-  for (const [value, kiro, crew] of [[undefined, 'v2', 'v2'], ['v3', 'v3', 'v2']] as const) {
+  for (const [value, kiro, crew] of [[undefined, 'v3', 'v2'], ['v2', 'v2', 'v2'], ['v3', 'v3', 'v2']] as const) {
     const { RUNTIME_FACTORIES } = loadFactories(value ? { MICHI_KIRO_ENGINE: value } : {});
     const create = (id: string) => {
       const runtime = RUNTIME_FACTORIES.find((factory) => factory.id === id)!.create(deps());

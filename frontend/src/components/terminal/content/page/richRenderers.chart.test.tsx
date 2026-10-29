@@ -42,6 +42,13 @@ describe('Desk-drawn chart block', () => {
     expect(items).toEqual(['Design35', 'Development45', 'Testing20']);
   });
 
+  it('keeps drawing a chart when optional view metadata is attached', async () => {
+    const { container } = draw({ ...sample('pie'), visibility: 'detail', interaction: { label: 'Explore data', action: { type: 'open-view', viewId: 'data' } } });
+    await waitFor(() => expect(container.querySelector('.desk-chart-legend')).not.toBeNull());
+    expect(container.querySelector('[data-michi-block="unknown"]')).toBeNull();
+    expect(screen.getByRole('link', { name: /Explore data/ })).toBeTruthy();
+  });
+
   it('gives a bar chart a table for screen readers', async () => {
     const { container } = draw(sample('bar'));
     await waitFor(() => expect(container.querySelector('table.desk-sr')).not.toBeNull());

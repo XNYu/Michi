@@ -47,8 +47,6 @@ const historyStore = {
   listMessages: () => { throw new Error('Run must not query node messages'); },
   getWorkspace: () => null,
   getWorkspaceInstructions: () => null,
-  hasGrant: () => false,
-  grantPermission: () => {},
 };
 
 const bridge = {
@@ -171,8 +169,6 @@ describe('Pi-specific conformance', () => {
         listMessages: () => { nodeQueried = true; throw new Error('Should not be called'); },
         getWorkspace: () => null,
         getWorkspaceInstructions: () => null,
-        hasGrant: () => false,
-        grantPermission: () => {},
       } as any,
       agentConfig,
       providerKeys: { getProviderApiKey: () => 'test-key' },

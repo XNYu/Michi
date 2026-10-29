@@ -1,55 +1,12 @@
-export type FrontendChunkName =
-  | 'react-vendor'
-  | 'editor-tiptap'
-  | 'markdown-code'
-  | 'markdown-streamdown';
+export type FrontendChunkName = 'react-vendor';
 
 /**
- * Keep the production chunk policy independently testable. In particular,
- * rehype-katex must remain on the dynamic import graph; grouping it with the
- * statically imported rehype packages makes KaTeX block every cold start.
+ * Keep React and its scheduler together; let Rollup follow actual dynamic
+ * imports for editors, highlighting, diagrams and math. Broad manual vendor
+ * groups can promote a lazy engine to the boot path when they absorb a shared
+ * helper or bundle it with a synchronous consumer (for example marked).
  */
 export function frontendManualChunk(id: string): FrontendChunkName | undefined {
-  if (id.includes('node_modules/react-dom')) return 'react-vendor';
-  // Do not manually group the markdown/unified family. Rehype-katex and its
-  // engine are dynamically imported, while the rest is static today; broad
-  // manual chunks merge those two graphs and promote KaTeX to the boot path.
-  if (
-    id.includes('node_modules/rehype-katex') ||
-    id.includes('node_modules/katex')
-  )
-    return undefined;
-
-  // TipTap + ProseMirror are only needed once the composer mounts. Keep them
-  // off the critical boot path in their own lazy chunk so cold-start parse/eval
-  // skips the entire rich-text editing stack.
-  if (
-    id.includes('node_modules/@tiptap/') ||
-    id.includes('node_modules/prosemirror-')
-  )
-    return 'editor-tiptap';
-
-  // Keep shiki langs/themes as separate Rollup-managed dynamic chunks.
-  // Only bundle shiki core+engine into markdown-code so it ships once
-  // alongside the first code block render.
-  if (
-    id.includes('node_modules/@shikijs/langs/') ||
-    id.includes('node_modules/@shikijs/themes/')
-  )
-    return undefined;
-  if (
-    id.includes('node_modules/shiki/') ||
-    id.includes('node_modules/@shikijs/')
-  )
-    return 'markdown-code';
-  if (
-    id.includes('node_modules/streamdown') ||
-    id.includes('node_modules/@streamdown') ||
-    id.includes('node_modules/marked') ||
-    id.includes('node_modules/remend') ||
-    id.includes('node_modules/mermaid')
-  )
-    return 'markdown-streamdown';
-
+  if (/\/node_modules\/(?:react|react-dom|scheduler|use-sync-external-store)\//.test(id)) return 'react-vendor';
   return undefined;
 }

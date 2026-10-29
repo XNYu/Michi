@@ -2,7 +2,7 @@ import type { DurableUserInput, UsageCharge } from 'michi-shared';
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AssistantBlock, ChatMessage, ToolCallState, SubagentInfo, UserInputRequest } from '../../state/chatTypes';
 import { turnErrorAction } from '../../state/turnErrorRecovery';
-import { isRunningStatus, formatDurationMs, toolSpanMs, summarizeWork } from './toolCallGrouping';
+import { isRunningStatus, isHiddenInternalTool, formatDurationMs, toolSpanMs, summarizeWork } from './toolCallGrouping';
 import { activityWindow, activityWindowMs } from './agentBlockTiming';
 import { ToolCallGroup } from './ToolCallGroup';
 import { PageReceipt } from './PageReceipt';
@@ -182,6 +182,7 @@ function MessageActions({
       }}
     >
       <div
+        className="t-msg-actions"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -549,7 +550,7 @@ export function TermThoughtBlock({
       ? summarizeWork(tools ?? segments?.flatMap((s) => (s.kind === 'tools' ? s.tools : [])) ?? [], subagents)
       : null;
     return (
-      <div style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
+      <div data-agent-block style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
         <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
           <div
             onClick={handleToggle}
@@ -633,7 +634,7 @@ export function TermThoughtBlock({
           : null,
     ].filter(Boolean).join(' · ');
     return (
-      <div style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
+      <div data-agent-block style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
         {streaming ? (
           <div
             onClick={handleToggle}
@@ -676,7 +677,7 @@ export function TermThoughtBlock({
   }
 
   return (
-    <div style={{ marginBottom: 8, fontSize: 'var(--fs-sm)' }}>
+    <div data-agent-block style={{ marginBottom: 8, fontSize: 'var(--fs-sm)' }}>
       <div
         onClick={handleToggle}
         style={{
@@ -1061,6 +1062,72 @@ function isToolOnlyAnswerRun(run: AssistantRun): boolean {
   return run.kind === 'answer' && run.blocks.length > 0 && run.blocks.every((b) => b.kind === 'tool');
 }
 
+const isAgentRun = (run: AssistantRun) => run.kind === 'thinking' || isClusterableAnswerRun(run);
+
+/** True when the agent-run stretch starting at `from` and walking by `step`
+ *  contains a thinking run, i.e. it renders as an agent block. */
+function agentStretchHasThinking(runs: readonly AssistantRun[], from: number, step: 1 | -1): boolean {
+  for (let i = from; i >= 0 && i < runs.length && isAgentRun(runs[i]); i += step) {
+    if (runs[i].kind === 'thinking') return true;
+  }
+  return false;
+}
+
+/** Tool blocks (and blank answer fragments between them) at one edge of a run.
+ *  Returns how many blocks to peel; 0 unless a visible tool is among them, so
+ *  hidden metadata tools never turn a "Thoughts" block into "Worked". */
+function edgeToolBlockCount(
+  blocks: readonly AssistantBlock[],
+  fromEnd: boolean,
+  byId: ReadonlyMap<string, ToolCallState>,
+): number {
+  let count = 0;
+  let visibleTool = false;
+  for (let k = 0; k < blocks.length; k++) {
+    const block = blocks[fromEnd ? blocks.length - 1 - k : k];
+    if (block.kind === 'tool') {
+      const tool = byId.get(block.toolCallId);
+      if (tool && !isHiddenInternalTool(tool.title)) visibleTool = true;
+    } else if (!(block.kind === 'answer' && !block.rawText?.trim())) {
+      break;
+    }
+    count++;
+  }
+  return visibleTool ? count : 0;
+}
+
+/**
+ * An answer run's prose and its tool calls share one run, so tools the agent
+ * ran right after saying what it would do ("Checking first:") sat in a
+ * separate group next to the following thought block. Split such edge tools
+ * off as tool-only runs when the neighbouring stretch forms an agent block,
+ * so clusterAgentRuns merges them into it. Prose keeps the run's id and carry:
+ * tool blocks contribute no text to sentinel projection.
+ */
+function detachEdgeTools(
+  runs: AssistantRun[],
+  byId: ReadonlyMap<string, ToolCallState>,
+): AssistantRun[] {
+  const out: AssistantRun[] = [];
+  runs.forEach((run, i) => {
+    if (run.kind !== 'answer' || isClusterableAnswerRun(run)) {
+      out.push(run);
+      return;
+    }
+    let { blocks } = run;
+    const lead = agentStretchHasThinking(runs, i - 1, -1) ? edgeToolBlockCount(blocks, false, byId) : 0;
+    const leading = blocks.slice(0, lead);
+    blocks = blocks.slice(lead);
+    const trail = agentStretchHasThinking(runs, i + 1, 1) ? edgeToolBlockCount(blocks, true, byId) : 0;
+    const trailing = blocks.slice(blocks.length - trail);
+    blocks = blocks.slice(0, blocks.length - trail);
+    if (leading.length > 0) out.push({ id: leading[0].id, kind: 'answer', blocks: leading });
+    out.push(leading.length > 0 || trailing.length > 0 ? { ...run, blocks } : run);
+    if (trailing.length > 0) out.push({ id: trailing[0].id, kind: 'answer', blocks: trailing });
+  });
+  return out;
+}
+
 function clusterAgentRuns(runs: AssistantRun[]): RenderCluster[] {
   const out: RenderCluster[] = [];
   let buf: AssistantRun[] = [];
@@ -1224,8 +1291,10 @@ function BlockAssistantBody({
     () =>
       variant === 'plain'
         ? runs.map((run): RenderCluster => ({ kind: 'run', run }))
-        : clusterAgentRuns(runs),
-    [runs, variant],
+        // With thoughts hidden there is no agent block to join; keep tools
+        // under the prose that introduced them.
+        : clusterAgentRuns(showThoughts ? detachEdgeTools(runs, byId) : runs),
+    [runs, variant, showThoughts, byId],
   );
   // Backward scans (no array copy). `runs` is rebuilt every chunk as blocks
   // grow, so the old [...runs].reverse().find() copied+reversed on every

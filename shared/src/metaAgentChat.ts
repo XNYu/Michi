@@ -4,6 +4,7 @@
  * and title only (never page text). Sent as `metaAgentContext` on
  * POST /api/chats/:chatId/message, accepted only for the Michi assistant's
  * conversation; the backend turns it into a bounded prefix of that turn.
+ * The Scheduled window sends `schedule` instead, for its own conversation.
  */
 
 export interface MetaAgentChatPageRef {
@@ -23,6 +24,17 @@ export interface MetaAgentChatTurnContext {
   remoteWorkspaces?: string[];
   /** The remote workspace the window is over, by name; the page on screen is then none. */
   remoteOnScreen?: string | null;
+  /**
+   * The Scheduled window's context instead of the Spaces fields: the
+   * workspace a new job goes in unless the user names another (the one New
+   * job would preselect). Accepted only for that window's conversation.
+   */
+  schedule?: MetaAgentScheduleContext;
+}
+
+export interface MetaAgentScheduleContext {
+  /** Null when the user has no workspace to schedule in. */
+  workspaceId: string | null;
 }
 
 /** The `metaAgentContext` field of POST /api/chats/:chatId/message. */
@@ -60,8 +72,15 @@ function id(value: unknown, field: string, nullable: boolean): string | null | u
 /** Validates the field; throws MetaAgentChatContextError with a message for the client. */
 export function parseMetaAgentChatTurnContext(value: unknown): MetaAgentChatTurnContext {
   if (!isRecord(value)) throw new MetaAgentChatContextError('metaAgentContext must be an object');
-  const unknown = Object.keys(value).filter((key) => !['pageId', 'blockId', 'pages', 'remoteWorkspaces', 'remoteOnScreen'].includes(key));
+  const unknown = Object.keys(value).filter((key) => !['pageId', 'blockId', 'pages', 'remoteWorkspaces', 'remoteOnScreen', 'schedule'].includes(key));
   if (unknown.length) throw new MetaAgentChatContextError(`metaAgentContext has an unknown field: ${unknown[0]}`);
+  let schedule: MetaAgentScheduleContext | undefined;
+  if (value.schedule !== undefined) {
+    if (!isRecord(value.schedule) || Object.keys(value.schedule).some((key) => key !== 'workspaceId')) {
+      throw new MetaAgentChatContextError('schedule must be {workspaceId}');
+    }
+    schedule = { workspaceId: id(value.schedule.workspaceId, 'schedule.workspaceId', true) ?? null };
+  }
   const pageId = id(value.pageId, 'pageId', true);
   const blockId = id(value.blockId, 'blockId', true);
   if (blockId && !pageId) throw new MetaAgentChatContextError('blockId needs pageId');
@@ -101,5 +120,12 @@ export function parseMetaAgentChatTurnContext(value: unknown): MetaAgentChatTurn
     ...(pages ? { pages } : {}),
     ...(remoteWorkspaces ? { remoteWorkspaces } : {}),
     ...(remoteOnScreen !== undefined ? { remoteOnScreen } : {}),
+    ...(schedule ? { schedule } : {}),
   };
+}
+
+/** True when the context carries any of the Spaces window's fields. */
+export function hasSpacesTurnContext(context: MetaAgentChatTurnContext): boolean {
+  return context.pageId !== undefined || context.blockId !== undefined || context.pages !== undefined
+    || context.remoteWorkspaces !== undefined || context.remoteOnScreen !== undefined;
 }

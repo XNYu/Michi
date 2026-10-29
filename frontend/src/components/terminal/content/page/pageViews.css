@@ -1,0 +1,14 @@
+.page-view-entry{color:var(--term-accent);cursor:pointer;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px}
+.page-view-entry[aria-disabled=true]{color:var(--term-dim);cursor:default;text-decoration-style:dotted}
+.page-view-entry:focus-visible,.page-view-back:focus-visible{outline:2px solid var(--term-accent);outline-offset:3px;border-radius:3px}
+.page-view-block-entry{margin-top:10px;font-size:var(--fs-md)}
+.page-view-content{min-width:0;min-height:0;overflow:auto;flex:1;padding:40px 24px 16px;color:var(--term-fg);font-family:var(--message-latin-font),var(--message-cjk-font)}
+.page-view-content__page[hidden]{display:none}
+.page-view-content .michi-doc-blocks{min-width:0}
+.page-view-inline{margin:12px 0 24px;padding:12px 0;border-block:1px solid var(--term-line);min-width:0}
+.page-view-inline>header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 12px}
+.page-view-inline>header h3{margin:0;font-size:var(--fs-lg);font-weight:600}
+.page-view-inline>header>div{display:flex;gap:12px}
+.page-view-back{border:0;background:transparent;color:var(--term-accent);font:inherit;font-size:var(--fs-md);cursor:pointer;padding:4px}
+.page-view-inline .page-view-content{padding:32px 0 12px}
+@media(max-width:600px){.page-view-content{padding:40px 12px 12px}.page-view-inline>header{flex-wrap:wrap}}

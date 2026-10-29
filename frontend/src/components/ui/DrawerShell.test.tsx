@@ -113,3 +113,18 @@ describe('DrawerShell modal focus', () => {
     expect(fireEvent.keyDown(field, { key: 'Tab' })).toBe(true);
   });
 });
+
+describe('DrawerShell close control', () => {
+  it('can offer onClose as a leading back button instead of the trailing ×', () => {
+    const close = vi.fn();
+    render(<DrawerShell open closeControl="back" onClose={close} title="Settings">Content</DrawerShell>);
+    const header = document.querySelector('.ui-overlay-header')!;
+    const back = screen.getByRole('button', { name: 'Back' });
+    expect(header.firstElementChild).toBe(back);
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(header.textContent).not.toContain('▸');
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
+    fireEvent.click(back);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});

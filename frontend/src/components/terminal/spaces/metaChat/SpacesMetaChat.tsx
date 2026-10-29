@@ -434,9 +434,9 @@ export function SpacesMetaChat({ controller, active, view, onOpenSource = openWi
         <AssistantConversation links={links} question={question} onClickCapture={onFollowUpCapture}
           focusToken={controller.focusToken} draftRequest={draftRequest}
           disabled={starting}
-          composerContext={<>
+          composerContext={draftHasText => <>
             {target && <span className="meta-chat-panel__target">Targeting: {target.title}<button type="button" aria-label="Clear target" onClick={() => setTarget(null)}><X size={11} aria-hidden /></button></span>}
-            <MetaChatSuggestions suggestions={suggestions} busy={busy || starting} onSuggestion={suggestion => send(suggestion.label)} />
+            {!draftHasText && <MetaChatSuggestions suggestions={suggestions} busy={busy || starting} onSuggestion={suggestion => send(suggestion.label)} />}
           </>} />
       </MetaChatDecorationsContext.Provider>
     );
@@ -488,7 +488,7 @@ function AssistantConversation({ links, question = false, onClickCapture, focusT
   onClickCapture?: (event: ReactMouseEvent<HTMLElement>) => void;
   focusToken: number;
   draftRequest: { id: number; text: string } | null;
-  composerContext: ReactNode;
+  composerContext: (draftHasText: boolean) => ReactNode;
   disabled: boolean;
 }) {
   const snap = useAssistantSnapshot();

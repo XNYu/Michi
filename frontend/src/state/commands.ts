@@ -56,8 +56,9 @@ export interface CommandContext {
    *  and by global search row activation. Wired to `selectProject` in chatStore. */
   switchProject: (projectId: string) => void;
   /** Live workspaces (excludes the active one + deleted/archived) offered as
-   *  direct jump targets in the palette. */
-  workspaces: Array<{ id: string; name: string }>;
+   *  direct jump targets in the palette. `remoteNote` names the remote backend
+   *  of a remote workspace; local ones have none. */
+  workspaces: Array<{ id: string; name: string; remoteNote?: string }>;
   /** Jump straight to a workspace: switch the active project and route to the
    *  dashboard so its active tree renders. */
   switchWorkspace: (projectId: string) => void;
@@ -136,6 +137,7 @@ export function buildCommands(ctx: CommandContext): Command[] {
       group: 'workspace',
       icon: 'workspace',
       label: `Switch to workspace ▸ ${w.name}`,
+      ...(w.remoteNote ? { meta: w.remoteNote } : {}),
       run: () => ctx.switchWorkspace(w.id),
     });
   }
@@ -158,5 +160,5 @@ export function buildCommands(ctx: CommandContext): Command[] {
 export function filterCommands(cmds: Command[], query: string): Command[] {
   const q = query.trim().toLowerCase();
   if (!q) return cmds;
-  return cmds.filter((c) => c.label.toLowerCase().includes(q));
+  return cmds.filter((c) => c.label.toLowerCase().includes(q) || !!c.meta?.toLowerCase().includes(q));
 }

@@ -12,7 +12,7 @@ import { claudeTestOptions } from './helpers/claudeTestOptions';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assistantToolProfile } from '../src/assistant/policy';
+import { restrictedChatProfile } from './helpers/restrictedChatProfile';
 import { ensureAssistant } from '../src/assistant/store';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import { closeDb, initDb } from '../src/services/db';
@@ -52,7 +52,7 @@ describe('assistant native forks', () => {
     saveWorkspace({ id: 'ws-user', name: 'Mine', cwd: tmpDir, created_at: 1, updated_at: 1, settings: null });
     const fork = { sessionId: 'n-child', parentChatId: 'n-parent', cwd: tmpDir, sourceNativeSessionId: 'native-parent' };
     try {
-      await assert.rejects(runtime.forkSession({ ...fork, workspaceId: 'ws-user', toolProfile: assistantToolProfile() } as any),
+      await assert.rejects(runtime.forkSession({ ...fork, workspaceId: 'ws-user', toolProfile: restrictedChatProfile() } as any),
         (error: unknown) => error instanceof NativeResumeUnavailableError && /assistant does not fork/.test(error.message),
         'an assistant session does not inherit an ordinary chat');
       await assert.rejects(runtime.forkSession({ ...fork, workspaceId: home.workspaceId } as any),
@@ -79,7 +79,7 @@ describe('assistant native forks', () => {
       forkSession: async (opts: { sessionId: string }) => { asked.push(opts.sessionId); throw new NativeResumeUnavailableError('stub'); } } as any;
     const homeCwd = (require('../src/services/dbRepository') as typeof import('../src/services/dbRepository')).getWorkspace(home.workspaceId)!.cwd!;
     assert.equal(await tryForkChatSession(stub, { sessionId: 'a-child', cwd: homeCwd, workspaceId: home.workspaceId } as any), null);
-    assert.equal(await tryForkChatSession(stub, { sessionId: 'u-child', cwd: tmpDir, workspaceId: 'ws-user', toolProfile: assistantToolProfile() } as any), null);
+    assert.equal(await tryForkChatSession(stub, { sessionId: 'u-child', cwd: tmpDir, workspaceId: 'ws-user', toolProfile: restrictedChatProfile() } as any), null);
     assert.deepEqual(asked, [], 'no runtime is asked to fork either');
     // An ordinary branch still reaches the runtime.
     assert.equal(await tryForkChatSession(stub, { sessionId: 'u-child', cwd: tmpDir, workspaceId: 'ws-user' } as any), null);

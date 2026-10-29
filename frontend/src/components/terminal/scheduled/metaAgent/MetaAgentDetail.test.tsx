@@ -78,11 +78,11 @@ describe('Scheduled › Meta agent detail', () => {
     detail(overview());
     expect(screen.getByRole('heading', { level: 1, name: 'Meta agent · Maintain Pages' })).toBeTruthy();
     expect(screen.getByText('Running')).toBeTruthy();
-    expect(screen.getByText('Every 60 seconds it checks each workspace for new conversations. When there’s nothing new, it doesn’t use the AI.')).toBeTruthy();
+    expect(screen.getByText('One background check every 60 seconds finds pending work across workspaces. AI runs only when there is work to process.')).toBeTruthy();
     expect(screen.getByText(/Claude · claude-opus-5\.5 · reasoning high \(follows global\)/)).toBeTruthy();
-    expect(screen.getByText('Limits: Claude’s own tools are off, and Michi checks every tool call')).toBeTruthy();
+    expect(screen.getByText('Limits: Michi checks tool access; external tools are read-only')).toBeTruthy();
     expect(screen.getByText('342')).toBeTruthy();
-    expect(screen.getByText('333 with nothing new')).toBeTruthy();
+    expect(screen.getByText('maintenance sessions started')).toBeTruthy();
     expect(screen.getByText('14')).toBeTruthy();
     expect(screen.getByText('3 suggestions for you')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -345,7 +345,7 @@ describe('Meta agent row in the Scheduled sidebar', () => {
     expect(screen.getByText('Not set up yet')).toBeTruthy();
   });
 
-  it('does not highlight the last job while the Meta agent page is open, and keeps the page when Scheduled is restored', async () => {
+  it('does not highlight the last job while the Meta agent page is open; an explicit job request always opens that job', async () => {
     jobs.list = [job('job-daily', 'Daily summary'), job('job-weekly', 'Weekly report')];
     const { onSelectJob } = await sidebar({ selectedJobId: 'job-daily' });
     const daily = screen.getByRole('button', { name: 'Daily summary' });
@@ -353,9 +353,9 @@ describe('Meta agent row in the Scheduled sidebar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Meta agent · maintain Pages/ }));
     expect(daily.getAttribute('aria-current')).toBeNull();
 
-    // Coming back to Scheduled, the shell asks for the job it remembers.
+    // A notification for the previously selected job must leave the Meta agent page.
     act(() => requestScheduledJobDetail('job-daily'));
-    expect(screen.getByTestId('open').textContent).toBe('true');
+    expect(screen.getByTestId('open').textContent).toBe('false');
 
     fireEvent.click(daily);
     expect(screen.getByTestId('open').textContent).toBe('false');

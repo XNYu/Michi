@@ -1,4 +1,5 @@
-import { deriveSandboxCwd, normalizeWorkspaceCwd } from '../agents/tools/pathSandbox';
+import { normalizeWorkspaceCwd } from '../agents/tools/pathSandbox';
+import { deriveSandboxCwd } from './workspaceSandbox';
 import type { AgentSession, NewAgentSessionOptions } from '../agents/types';
 import { getRuntime } from '../agents/registry';
 import { descriptorOf } from 'michi-runtime/internal/core/descriptors';

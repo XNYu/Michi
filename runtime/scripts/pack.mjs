@@ -7,7 +7,8 @@
 //    dependencies and the Claude Agent SDK as an optional peer.
 // 2. npm pack --ignore-scripts there; the tarball lands in .pack/.
 // 3. Checks the tarball: its files, its package.json, what its modules and
-//    declarations import, that nothing names shared or internal/*, that its
+//    declarations import, that nothing names shared or internal/*, that the
+//    Crew bundles end with the license notices of what they inline, that its
 //    declarations compile, and that every type they reach is exported by an
 //    entry or listed in REACHABLE_UNEXPORTED.
 // 4. Unpacks it into .pack/check/node_modules/, type-checks
@@ -21,7 +22,10 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { ASSETS, CREW_BUNDLES, EXCLUDED_SHARED_MODULES, PUBLIC_ENTRIES, REACHABLE_UNEXPORTED } from './packageLayout.mjs';
+import {
+  ASSETS, CREW_BUNDLES, EXCLUDED_SHARED_MODULES, LICENSE_NOTICE_ENTRY, LICENSE_NOTICES_HEADER, PUBLIC_ENTRIES,
+  REACHABLE_UNEXPORTED,
+} from './packageLayout.mjs';
 
 const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(pkgRoot, 'dist');
@@ -50,6 +54,7 @@ const MACHINE_PATHS = [...new Set([
 
 class PackError extends Error {}
 const fail = (message) => { throw new PackError(message); };
+const report = (line) => console.log(`[runtime] ${line}`);
 const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const slash = (file) => file.split(sep).join('/');
 
@@ -80,7 +85,7 @@ function validationManifest() {
   }
   return {
     name: workspace.name,
-    private: true, // Runtime remains part of Michi; local pack checks never prepare an npm release.
+    private: true, // Validation only; Runtime remains inside Michi.
     version: workspace.version,
     description: workspace.description,
     keywords: workspace.keywords,
@@ -255,6 +260,48 @@ function checkContents(manifest) {
 }
 
 /**
+ * Each Crew bundle ends with one block of license notices (scripts/build.mjs):
+ * after LICENSE_NOTICES_HEADER only `//` lines, \n their only line ending
+ * (a CR, LS or PS would end a comment and turn the rest into code), at least
+ * one package, each with the text of its file. Every package whose modules
+ * the bundle's code holds (by the path esbuild notes above each module) has
+ * a notice, and the bundles together list each dependency of the package.
+ */
+function checkLicenseNotices(manifest) {
+  const listed = new Map(); // package name -> its versions
+  const counts = [];
+  for (const rel of crewBundleFiles) {
+    const text = readFileSync(join(installed, rel), 'utf8');
+    const at = text.indexOf(`\n${LICENSE_NOTICES_HEADER}\n`);
+    if (at < 0 || text.indexOf(LICENSE_NOTICES_HEADER, at + 2) >= 0) fail(`${rel} does not end with one block of license notices`);
+    const block = text.slice(at + 1);
+    const breaks = block.match(/[\r\u2028\u2029]/g);
+    if (breaks) fail(`${rel}'s license notices hold ${breaks.length} line terminators other than \\n, which end a // comment`);
+    const lines = block.replace(/\n$/, '').split('\n').slice(1);
+    if (lines.some((line) => !line.startsWith('//'))) fail(`${rel} has code after its license notices`);
+    const entries = [];
+    for (const line of lines) {
+      const entry = LICENSE_NOTICE_ENTRY.exec(line);
+      if (entry) entries.push({ name: entry[1], version: entry[2], heading: line.slice(3), text: 0 });
+      else if (line.length > 3 && entries.length > 0) entries.at(-1).text += 1;
+    }
+    if (entries.length === 0) fail(`${rel}'s license notices list no package`);
+    const empty = entries.filter((entry) => entry.text === 0).map((entry) => entry.heading);
+    if (empty.length > 0) fail(`${rel}'s license notices have no text for ${empty.join('; ')}`);
+    const noticed = new Set(entries.map((entry) => entry.name));
+    const inCode = new Set([...text.slice(0, at).matchAll(/^\/\/ \S*node_modules\/((?:@[^/\s]+\/)?[^/\s]+)\//gm)].map((match) => match[1]));
+    const unnoticed = [...inCode].filter((name) => !noticed.has(name)).sort();
+    if (unnoticed.length > 0) fail(`${rel} holds modules of ${unnoticed.join(', ')} without their license notices`);
+    for (const entry of entries) listed.set(entry.name, [...new Set([...(listed.get(entry.name) ?? []), entry.version])]);
+    counts.push(`${rel.split('/').pop()} ${noticed.size}`);
+  }
+  const missing = Object.keys(manifest.dependencies).filter((name) => !listed.has(name));
+  if (missing.length > 0) fail(`no Crew bundle's license notices list ${missing.join(', ')}, which they inline`);
+  report(`license notices: ${counts.join(', ')} inlined packages, ${Object.keys(manifest.dependencies).sort().join(' and ')} among them: `
+    + [...listed].sort(([a], [b]) => (a < b ? -1 : 1)).map(([name, versions]) => `${name}@${versions.join('|')}`).join(', '));
+}
+
+/**
  * Compiles the public declarations as a TypeScript host would: strict,
  * skipLibCheck false, with node10 (esModuleInterop, as CommonJS hosts set it)
  * and with nodenext resolution, against the unpacked package. Offline:
@@ -301,7 +348,7 @@ function checkDeclarations(manifest) {
     if (errors.length > 0) {
       fail(`the public declarations do not compile (${name}: ${specifiers.join(', ')}; skipLibCheck false):\n${errors.join('\n')}`);
     }
-    console.log(`[runtime] declarations: ${name} compiles, without the types of ${CLAUDE_SDK}`);
+    report(`declarations: ${name} compiles, without the types of ${CLAUDE_SDK}`);
   }
 }
 
@@ -378,7 +425,7 @@ function checkPublicTypes(manifest) {
     fail(`${problems.join('\n')}\nExport such a type from a public entry, or list it in REACHABLE_UNEXPORTED `
       + '(scripts/packageLayout.mjs) with the reason; remove an entry there that no longer applies.');
   }
-  console.log(`[runtime] public types: ${exported.size} exported; the ${unexported.size} reached but unexported are REACHABLE_UNEXPORTED`);
+  report(`public types: ${exported.size} exported; the ${unexported.size} reached but unexported are REACHABLE_UNEXPORTED`);
 }
 
 const EXAMPLE = join(pkgRoot, 'examples', 'minimal-server-host.ts');
@@ -426,7 +473,7 @@ function checkExample(manifest) {
   } catch (error) {
     fail(`examples/minimal-server-host.ts does not compile against the package:\n${error.stdout ?? ''}${error.stderr ?? ''}`);
   }
-  console.log('[runtime] example: minimal-server-host.ts compiles against the public subpaths');
+  report('example: minimal-server-host.ts compiles against the public subpaths');
 
   const home = mkdtempSync(join(tmpdir(), 'michi-runtime-example-home-'));
   // Node 22.18+ and 24 strip types by default; earlier 22 releases need the flag.
@@ -446,7 +493,7 @@ function checkExample(manifest) {
   if (JSON.stringify(runtimes) !== JSON.stringify(['kiro', 'crew', 'codex', 'claude'])) fail(`--check built ${runtimes.join(', ') || 'no runtime'}`);
   const notLoopback = ready.filter((line) => !/^http:\/\/127\.0\.0\.1:\d+$/.test(line.baseUrl));
   if (notLoopback.length > 0) fail(`--check: the MCP host's base URL is not loopback: ${notLoopback.map((line) => line.baseUrl).join(', ')}`);
-  console.log(`[runtime] example: --check --runtime all exits 0 on http://127.0.0.1:<port>; `
+  report(`example: --check --runtime all exits 0 on http://127.0.0.1:<port>; `
     + ready.map((line) => `${line.runtime} ${line.available ? 'available' : 'unavailable'}`).join(', '));
 }
 
@@ -466,11 +513,12 @@ try {
   unpack(packed.tarball);
   const manifest = checkManifest();
   checkContents(manifest);
+  checkLicenseNotices(manifest);
   checkDeclarations(manifest);
   checkPublicTypes(manifest);
   checkExample(manifest);
   smoke();
-  console.log(`[runtime] packed ${relative(process.cwd(), packed.tarball)}: ${files.length} entries, `
+  report(`packed ${slash(relative(pkgRoot, packed.tarball))}: ${files.length} entries, `
     + `${packed.size} bytes (${packed.unpackedSize} unpacked), ${packed.integrity}. Not published.`);
 } catch (error) {
   if (!(error instanceof PackError)) throw error;

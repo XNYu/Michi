@@ -33,7 +33,7 @@ export function readChatPermissionSettings(userId?: string | null): ChatPermissi
   if (row) {
     try {
       const value: unknown = JSON.parse(row.value);
-      if (isChatPermissionSettings(value)) return value;
+      if (isChatPermissionSettings(value)) return normalizedSettings(value);
     } catch { /* Corrupt preferences fail closed. */ }
     return { ...DEFAULT_CHAT_PERMISSION_SETTINGS };
   }
@@ -45,9 +45,14 @@ export function readChatPermissionSettings(userId?: string | null): ChatPermissi
   return settings;
 }
 
+/** Approve for me is kept only on top of Ask. */
+function normalizedSettings(settings: ChatPermissionSettings): ChatPermissionSettings {
+  return { global: settings.global, mode: settings.mode, ...(settings.mode === 'ask' && settings.approveForMe === true ? { approveForMe: true } : {}) };
+}
+
 export function writeChatPermissionSettings(settings: ChatPermissionSettings, userId?: string | null): void {
   if (!isChatPermissionSettings(settings)) throw new Error('Invalid permission settings');
-  getDb().prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(settingsKey(userId), JSON.stringify({ global: settings.global, mode: settings.mode }));
+  getDb().prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(settingsKey(userId), JSON.stringify(normalizedSettings(settings)));
   revokeSessionTrust(settingsKey(userId));
   if (settings.mode === 'ask') {
     if (process.env.MICHI_CLOUD === '1') {
@@ -56,7 +61,8 @@ export function writeChatPermissionSettings(settings: ChatPermissionSettings, us
   }
 }
 
-export function writeNodePermissionMode(nodeId: string, mode: ChatPermissionMode, userId?: string | null, initialOnly = false): void {
+/** `approveForMe` applies on top of Ask (Kiro V3 "Approve for me"); other modes clear it. */
+export function writeNodePermissionMode(nodeId: string, mode: ChatPermissionMode, userId?: string | null, initialOnly = false, approveForMe = false): void {
   if (!isChatPermissionMode(mode)) throw new Error('Invalid permission mode');
   const node = getNode(nodeId);
   if (!node || node.kind !== 'chat' || node.deleted_at) throw new Error('Chat not found');
@@ -66,7 +72,8 @@ export function writeNodePermissionMode(nodeId: string, mode: ChatPermissionMode
   // Follow-ups already have a durable choice. Even an UPDATE matching zero
   // rows takes SQLite's writer lock, so avoid it during ordinary session setup.
   if (initialOnly && node.permission_mode != null) return;
-  getDb().prepare(`UPDATE nodes SET permission_mode = ? WHERE id = ?${initialOnly ? ' AND permission_mode IS NULL' : ''}`).run(mode, nodeId);
+  getDb().prepare(`UPDATE nodes SET permission_mode = ?, permission_approve_for_me = ? WHERE id = ?${initialOnly ? ' AND permission_mode IS NULL' : ''}`)
+    .run(mode, mode === 'ask' && approveForMe ? 1 : 0, nodeId);
   if (!initialOnly) revokeSessionTrust(`node:${nodeId}`);
   if (mode === 'ask' && !initialOnly) getDb().prepare('DELETE FROM chat_permission_grants WHERE node_id = ?').run(nodeId);
 }
@@ -89,4 +96,13 @@ export function resolveChatPermissionMode(nodeId: string, userId?: string | null
   const settings = readChatPermissionSettings(userId);
   if (settings.global) return settings.mode;
   return isChatPermissionMode(node?.permission_mode) ? node.permission_mode : 'ask';
+}
+
+/** Approve for me is on for this chat: its effective mode is Ask with the flag set. */
+export function resolveChatApproveForMe(nodeId: string, userId?: string | null): boolean {
+  const node = getNode(nodeId);
+  if (process.env.MICHI_CLOUD === '1' && (!node || !userId || getWorkspace(node.workspace_id)?.owner_user_id !== userId)) return false;
+  const settings = readChatPermissionSettings(userId);
+  if (settings.global) return settings.mode === 'ask' && settings.approveForMe === true;
+  return node?.permission_mode === 'ask' && node.permission_approve_for_me === 1;
 }

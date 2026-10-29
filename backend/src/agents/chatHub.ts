@@ -41,9 +41,10 @@ export interface HubSubscriber {
   close(): void;
 }
 
-/** Window-scoped feed for runtime-initiated turns only. */
+/** Window-scoped feed; internal consumers remain self-turn-only by default. */
 export interface BackgroundSubscriber {
-  send(chatId: string, ev: ChatStreamEvent): void;
+  send(chatId: string, ev: ChatStreamEvent, selfInitiated?: boolean): void;
+  includeForeground?: boolean;
   gap?(chatId: string, durableCursor: BackgroundCursor): void;
   close(): void;
   /** Undefined in desktop mode; fixed authenticated owner in cloud mode. */
@@ -614,6 +615,7 @@ export class ChatHub {
         assistantId,
         nodeId: args.nodeId,
         userText: args.displayText ?? args.text,
+        ...(args.userMetadata ? { userMetadata: args.userMetadata } : {}),
         startedAt: log.snapshot.startedAt,
       },
     }, false);
@@ -729,23 +731,23 @@ export class ChatHub {
       if (replayCursor) {
         const cursorLog = logs.find((log) =>
           log.turnId === replayCursor!.turnId
-          && log.selfInitiated
+          && (log.selfInitiated || sub.includeForeground)
           && log.status === 'active'
           && (sub.ownerUserId === undefined || sub.ownerUserId === log.ownerUserId),
         );
         if (cursorLog) {
           for (const event of this.pendingInteractionRecovery(cursorLog, replayCursor.seq)) {
-            sub.send(chatId, event);
+            sub.send(chatId, event, cursorLog.selfInitiated);
           }
         }
       }
       for (let index = startIndex; index < logs.length; index += 1) {
         const log = logs[index];
-        if (!log.selfInitiated) continue;
+        if (!log.selfInitiated && !sub.includeForeground) continue;
         if (sub.ownerUserId !== undefined && sub.ownerUserId !== log.ownerUserId) continue;
         const fromSeq = replayCursor && index === startIndex ? replayCursor.seq + 1 : 0;
         for (const { seq, ev } of log.events) {
-          if (seq >= fromSeq) sub.send(chatId, ev);
+          if (seq >= fromSeq) sub.send(chatId, ev, log.selfInitiated);
         }
       }
     }
@@ -1515,14 +1517,13 @@ export class ChatHub {
   }
 
   private broadcast(chatId: string, log: TurnLog, event: ChatStreamEvent): void {
-    if (log.selfInitiated) {
-      for (const sub of this.backgroundSubscribers) {
-        try {
-          if (sub.ownerUserId !== undefined && sub.ownerUserId !== log.ownerUserId) continue;
-          sub.send(chatId, event);
-        } catch {
-          // A broken background window must not stop the central runner.
-        }
+    for (const sub of this.backgroundSubscribers) {
+      if (!log.selfInitiated && !sub.includeForeground) continue;
+      try {
+        if (sub.ownerUserId !== undefined && sub.ownerUserId !== log.ownerUserId) continue;
+        sub.send(chatId, event, log.selfInitiated);
+      } catch {
+        // A broken background window must not stop the central runner.
       }
     }
     for (const sub of this.subscribers.get(chatId) ?? []) {

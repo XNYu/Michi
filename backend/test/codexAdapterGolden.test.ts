@@ -377,8 +377,7 @@ describe('Codex adapter golden', () => {
   test('chat: Trust mode turn policy', async (t) => {
     configureRuntimeDeps({
       dataDir,
-      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null,
-        hasGrant: () => false, grantPermission: () => {} },
+      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null },
       agentConfig: { getAgentConfig: () => ({ runtime: 'codex', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }),
         resolveModel: () => '', resolveReasoning: () => undefined },
       chatPermissions: { getMode: () => 'trust', hasGrant: () => false, grant: () => {}, resetToken: () => '0' },

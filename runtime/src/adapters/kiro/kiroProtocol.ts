@@ -16,12 +16,28 @@ export const KIRO_METADATA_DONE_SENTINEL = "[MICHI_METADATA_DONE]";
 /** Kiro engine generations both speak ACP protocol version 1. */
 export type KiroEngine = 'v2' | 'v3';
 
-/** The engine named by `value` (Michi: MICHI_KIRO_ENGINE); unset is v2. */
+/** The engine named by `value` (Michi: MICHI_KIRO_ENGINE); unset is v3. */
 export function resolveKiroEngine(value: string | undefined): KiroEngine {
-    if (!value || value === 'v2') return 'v2';
-    if (value === 'v3') return 'v3';
+    if (!value || value === 'v3') return 'v3';
+    if (value === 'v2') return 'v2';
     throw new Error('MICHI_KIRO_ENGINE must be v2 or v3');
 }
+
+/**
+ * Kiro V3's "Approve for me" policy preset: workspace edits and read-only
+ * shell are allowed, and its trust classifier judges what no rule settles
+ * (approve, or fall back to asking). Seeded only by session/new and
+ * session/load (`_meta.kiro.policyPreset`).
+ */
+export const KIRO_APPROVE_FOR_ME_PRESET = 'approve-for-me';
+
+/**
+ * kiro-cli 2.35 drops a classifier preset unless its process runs the trust
+ * classifier in enforce mode. The classifier runs only for a rule whose
+ * effect is `evaluate`, so a session without such a preset or rule is not
+ * judged by it.
+ */
+const KIRO_TRUST_CLASSIFIER_ENV = 'KIRO_TRUST_CLASSIFIER_MODE';
 
 export function kiroArgs(engine: KiroEngine, model?: string): string[] {
     return engine === 'v3'
@@ -29,9 +45,11 @@ export function kiroArgs(engine: KiroEngine, model?: string): string[] {
         : ['acp', '--agent-engine', 'v2', ...(model ? ['--model', model] : [])];
 }
 
-/** Copy the host environment without adding distribution-specific CLI settings. */
-export function kiroEnv(_engine: KiroEngine, env: NodeJS.ProcessEnv, _preloadTools = true): NodeJS.ProcessEnv {
-    return { ...env };
+/** Preserve caller settings; enable V3 policy classification when unspecified. */
+export function kiroEnv(engine: KiroEngine, env: NodeJS.ProcessEnv, _preloadTools = true): NodeJS.ProcessEnv {
+    const classifier = engine === 'v3' && !env[KIRO_TRUST_CLASSIFIER_ENV]?.trim()
+        ? { [KIRO_TRUST_CLASSIFIER_ENV]: 'enforce' } : {};
+    return { ...env, ...classifier };
 }
 
 /** An ACP MCP server entry with Kiro's `_meta`. */
@@ -61,6 +79,8 @@ export function michiSessionMcpServer(endpoint: McpHttpEndpoint): AcpMcpServer {
 export interface AcpSessionOptions extends AcpCoreSessionOptions {
     /** Opt this session into Kiro workflows (V3 `_kiro/workflow/*`). */
     workflowsEnabled?: boolean;
+    /** V3 policy presets seeded into the session (KIRO_APPROVE_FOR_ME_PRESET). */
+    policyPresets?: readonly string[];
 }
 
 export interface AcpInitializeResult {
@@ -70,7 +90,7 @@ export interface AcpInitializeResult {
         loadSession?: boolean;
         promptCapabilities?: { image?: boolean; embeddedContext?: boolean; audio?: boolean };
         mcpCapabilities?: { http?: boolean; sse?: boolean };
-        sessionCapabilities?: { fork?: object; list?: object; delete?: object };
+        sessionCapabilities?: { fork?: object; list?: object; delete?: object; close?: object };
         _meta?: { kiro?: { extensionMethods?: string[]; [key: string]: unknown } };
     };
     authMethods?: unknown[];
@@ -105,6 +125,7 @@ export function kiroSessionMeta(engine: KiroEngine, options: AcpSessionOptions):
         ...(options.modelId ? { modelId: options.modelId } : {}),
         ...(options.modeId ? { modeId: options.modeId } : {}),
         ...(options.workflowsEnabled ? { settings: { workflows: { enabled: true } } } : {}),
+        ...(options.policyPresets?.length ? { policyPreset: [...options.policyPresets] } : {}),
     } } };
 }
 

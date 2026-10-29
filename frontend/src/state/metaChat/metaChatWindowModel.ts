@@ -16,7 +16,6 @@ export interface MetaChatWindowState {
 export const DEFAULT_SIZE = { w: 384, h: 520 } as const;
 export const MIN_SIZE = { w: 320, h: 300 } as const;
 export const FLOAT_MARGIN = 18;
-export const TITLE_BAR_HEIGHT = 46;
 export const DOCK_EDGE = 40;
 export const DOCK_RATIO = { min: 30, max: 70, initial: 50 } as const;
 export const METACHAT_STORAGE_KEY = 'michi:metaChat:window:v1';
@@ -40,22 +39,24 @@ export function defaultRect(b: Bounds): Rect {
   }, b);
 }
 
-/**
- * The box may hang off the left, right and bottom edges, but is never wider or
- * taller than the area. Its title bar stays inside: the top edge never leaves
- * the area and at least half the bar's width stays in it, so it can always be
- * dragged back.
- */
+/** Insets shrink only when the area itself is too small to leave the normal margin. */
+function floatLimits(b: Bounds) {
+  const x = Math.min(FLOAT_MARGIN, Math.max(0, (b.width - 1) / 2));
+  const y = Math.min(FLOAT_MARGIN, Math.max(0, (b.height - 1) / 2));
+  return { x, y, width: b.width - 2 * x, height: b.height - 2 * y };
+}
+
+/** Keep the entire floating box inside the area, with a gutter on all four sides. */
 export function clampRect(r: Rect, b: Bounds): Rect {
   if (!measured(b)) return r;
-  const w = Math.round(clamp(r.w, Math.min(MIN_SIZE.w, b.width), b.width));
-  const h = Math.round(clamp(r.h, Math.min(MIN_SIZE.h, b.height), b.height));
-  const keep = Math.ceil(w / 2);
+  const limit = floatLimits(b);
+  const w = clamp(Math.round(r.w), Math.min(MIN_SIZE.w, limit.width), limit.width);
+  const h = clamp(Math.round(r.h), Math.min(MIN_SIZE.h, limit.height), limit.height);
   return {
     w,
     h,
-    x: Math.round(clamp(r.x, keep - w, b.width - keep)),
-    y: Math.round(clamp(r.y, 0, b.height - TITLE_BAR_HEIGHT)),
+    x: clamp(Math.round(r.x), limit.x, b.width - limit.x - w),
+    y: clamp(Math.round(r.y), limit.y, b.height - limit.y - h),
   };
 }
 
@@ -98,27 +99,20 @@ export function moveRect(start: Rect, dx: number, dy: number, b: Bounds): Rect {
 }
 
 export function resizeRect(start: Rect, dir: ResizeDir, dx: number, dy: number, b: Bounds): Rect {
-  let { x, y, w, h } = start;
-  if (dir.includes('e')) w = start.w + dx;
-  if (dir.includes('s')) h = start.h + dy;
-  if (dir.includes('w')) { w = start.w - dx; x = start.x + dx; }
-  if (dir.includes('n')) { h = start.h - dy; y = start.y + dy; }
-  if (w < MIN_SIZE.w) { if (dir.includes('w')) x = start.x + start.w - MIN_SIZE.w; w = MIN_SIZE.w; }
-  if (h < MIN_SIZE.h) { if (dir.includes('n')) y = start.y + start.h - MIN_SIZE.h; h = MIN_SIZE.h; }
-  // A dragged edge stops at the area's edge; an edge already past it (a box hanging off) stays where it is.
-  const left = Math.min(start.x, 0);
-  if (x < left) { w -= left - x; x = left; }
-  if (y < 0) { h += y; y = 0; }
-  if (measured(b)) {
-    w = Math.min(w, Math.max(start.x + start.w, b.width) - x, b.width);
-    h = Math.min(h, Math.max(start.y + start.h, b.height) - y, b.height);
-  }
-  return {
-    x: Math.round(x),
-    y: Math.round(y),
-    w: Math.round(Math.max(w, Math.min(MIN_SIZE.w, b.width || MIN_SIZE.w))),
-    h: Math.round(Math.max(h, Math.min(MIN_SIZE.h, b.height || MIN_SIZE.h))),
-  };
+  if (!measured(b)) return start;
+  const box = clampRect(start, b);
+  const limit = floatLimits(b);
+  const minW = Math.min(MIN_SIZE.w, limit.width);
+  const minH = Math.min(MIN_SIZE.h, limit.height);
+  let left = box.x;
+  let top = box.y;
+  let right = box.x + box.w;
+  let bottom = box.y + box.h;
+  if (dir.includes('w')) left = clamp(Math.round(box.x + dx), limit.x, right - minW);
+  if (dir.includes('e')) right = clamp(Math.round(right + dx), left + minW, b.width - limit.x);
+  if (dir.includes('n')) top = clamp(Math.round(box.y + dy), limit.y, bottom - minH);
+  if (dir.includes('s')) bottom = clamp(Math.round(bottom + dy), top + minH, b.height - limit.y);
+  return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
 /** Pointer x is relative to the main area's left edge. */

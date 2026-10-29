@@ -164,7 +164,7 @@ describe('extract a branch as an independent tree', () => {
       assert.deepEqual(await (await post()).json(), body);
       assert.equal(released, 1);
       configureRuntimeDeps({ dataDir: dir,
-        historyStore: { getNode, listMessages, getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission() {} },
+        historyStore: { getNode, listMessages, getWorkspace: () => null, getWorkspaceInstructions: () => null },
         agentConfig: { getAgentConfig: () => ({ runtime: 'extraction-test', provider: '', modelByRuntime: {}, reasoningByRuntime: {} }),
           resolveModel: () => '', resolveReasoning: () => undefined },
       });

@@ -11,15 +11,19 @@ import { AGENT_RUN_TOOL_NAMES } from '../src/agents/runToolBridge';
 import { chatOwner, runOwner } from './helpers/owners';
 
 const callbacks = { onSpawnBranches: async () => [], onSaveArtifact: () => null, onUpdateArtifact: () => null };
-const store = { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} };
+const store = { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null };
 const baseCfg = { getAgentConfig: () => ({ runtime: 'pi', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined };
-async function catalog(t: any, supplied: Record<string, unknown> = {}) {
+async function connect(t: any, supplied: Record<string, unknown> = {}) {
   const slot = new McpSlotRegistry().create('catalog', '/tmp', null, { ...callbacks, ...supplied } as any);
   const server = buildMcpServerForSlot(slot);
   const client = new Client({ name: 'catalog-fixture', version: '1' });
   const [a, b] = InMemoryTransport.createLinkedPair();
   t.after(async () => { await client.close(); await server.close(); });
   await server.connect(a); await client.connect(b);
+  return client;
+}
+async function catalog(t: any, supplied: Record<string, unknown> = {}) {
+  const client = await connect(t, supplied);
   return client.getServerCapabilities()?.tools ? (await client.listTools()).tools : [];
 }
 // Canonicalize equivalent native encodings while retaining all constraints.
@@ -80,4 +84,14 @@ test('unsupported optional MCP capabilities are absent even when explicitly allo
   const enabled = await catalog(t, { exposedToolNames: new Set(['show_image', 'ask_user']),
     onShowImage: () => ({ error: 'fixture' }), onAskUser: async () => ({}) });
   assert.deepEqual(enabled.map(tool => tool.name).sort(), ['ask_user', 'show_image']);
+});
+
+test('invalid arguments get the same text from the SDK McpServer as from the host', async t => {
+  const client = await connect(t);
+  const invalid: any = await client.callTool({ name: 'save_artifact', arguments: { name: 'bad', body: 7 } });
+  assert.equal(invalid.isError, true);
+  // mcpMountEndToEnd's text for the host: zod's issues as JSON, as with MCP SDK 1.29
+  // (1.32's McpServer would say "Invalid input: expected string, received number at body").
+  assert.equal(invalid.content.map((part: any) => part.text).join(''), 'MCP error -32602: Input validation error: Invalid arguments for tool save_artifact: '
+    + JSON.stringify([{ expected: 'string', code: 'invalid_type', path: ['body'], message: 'Invalid input: expected string, received number' }], null, 2));
 });

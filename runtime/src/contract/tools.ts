@@ -85,7 +85,9 @@ export interface BridgeSaveContextArgs {
   ownerUserId?: string | null;
   /** Sanitized to /^[A-Za-z0-9_-]+$/. The bridge enforces this. */
   name: string;
-  body: string;
+  body?: string;
+  /** Existing regular file inside the workspace, of any type. Exclusive with body. */
+  path?: string;
 }
 
 export interface BridgeContextResult {

@@ -25,7 +25,6 @@ import {
   toggledChecklist,
   updateOp,
 } from './pageEdits';
-import { NO_BLOCKS, dragBlocks, extendBlocks, selectedInOrder, toggleBlock } from './blockSelection';
 
 const md: MichiPageBlock = { type: 'markdown', id: 'md', text: 'Old words', sources: [{ sessionId: 's1' }], edit: { at: 1, anchor: null } };
 const list: MichiPageBlock = {
@@ -167,34 +166,6 @@ describe('replacing blocks on screen', () => {
     expect((out[2].tabs as Array<{ blocks: MichiPageBlock[] }>)[0].blocks[0]).toBe(heading);
     expect(out[0]).toBe(md);
     expect(replaceBlocks(page, new Map())).toBe(page);
-  });
-});
-
-describe('block selection', () => {
-  const order = ['a', 'b', 'c', 'd', 'e'];
-
-  it('toggles one block and anchors there', () => {
-    const one = toggleBlock(NO_BLOCKS, 'b');
-    expect([...one.selected]).toEqual(['b']);
-    expect(one.anchor).toBe('b');
-    expect(toggleBlock(one, 'b').selected.size).toBe(0);
-  });
-
-  it('extends from the anchor to a shift-clicked block, either way', () => {
-    const from = toggleBlock(NO_BLOCKS, 'b');
-    expect(selectedInOrder(extendBlocks(from, 'd', order), order)).toEqual(['b', 'c', 'd']);
-    expect(selectedInOrder(extendBlocks(toggleBlock(NO_BLOCKS, 'd'), 'a', order), order)).toEqual(['a', 'b', 'c', 'd']);
-    expect(selectedInOrder(extendBlocks(NO_BLOCKS, 'c', order), order)).toEqual(['c']);
-  });
-
-  it('adds the blocks a margin drag passes over to what was selected', () => {
-    const base = new Set(['e']);
-    expect(selectedInOrder(dragBlocks(base, 'b', 'c', order), order)).toEqual(['b', 'c', 'e']);
-    expect(selectedInOrder(dragBlocks(base, 'c', 'a', order), order)).toEqual(['a', 'b', 'c', 'e']);
-  });
-
-  it('lists only selected blocks still on the page, in page order', () => {
-    expect(selectedInOrder({ selected: new Set(['d', 'zz', 'a']), anchor: null }, order)).toEqual(['a', 'd']);
   });
 });
 

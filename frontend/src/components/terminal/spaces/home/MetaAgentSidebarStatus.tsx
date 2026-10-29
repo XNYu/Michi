@@ -1,7 +1,7 @@
 import React from 'react';
 import type { FirstRunProgressDto } from 'michi-shared';
 import { useMetaAgent } from '../../../../state/metaAgent/useMetaAgent';
-import { firstRunProgress, isWorkspaceHomeNew, useSpacesFirstRun } from '../../../../state/metaAgent/spacesFirstRun';
+import { firstRunProgress, useSpacesFirstRun } from '../../../../state/metaAgent/spacesFirstRun';
 import { useMetaAgentOverview } from '../../../../state/metaAgent/useMetaAgentOverview';
 import { META_AGENT_HEADLINE, metaAgentStatus } from '../../../../state/metaAgent/metaAgentStatus';
 import { metaAgentRuntimeLabel } from '../../settings/metaAgent/runtimeCopy';
@@ -42,8 +42,8 @@ export function MetaAgentSidebarStatus({ connectionId = 'local', onOpenHome }: {
   }
 }
 
-/** What a workspace row shows about its first read: progress, queued, failed, or New until opened. */
-export function WorkspaceFirstRunBadge({ connectionId, workspaceId, run }: { connectionId: string; workspaceId: string; run: FirstRunProgressDto | null | undefined }) {
+/** First-read execution progress only; completed homes do not show reminders. */
+export function WorkspaceFirstRunBadge({ run }: { run: FirstRunProgressDto | null | undefined }) {
   if (!run) return null;
   if (run.state === 'reading' || run.state === 'writing') {
     return <>
@@ -53,5 +53,5 @@ export function WorkspaceFirstRunBadge({ connectionId, workspaceId, run }: { con
   }
   if (run.state === 'queued') return <span className="spaces-side-progress">Queued</span>;
   if (run.state === 'failed') return <span className="spaces-side-progress" data-tone="danger">Not written</span>;
-  return isWorkspaceHomeNew(connectionId, workspaceId, run) ? <span className="spaces-side-new">New</span> : null;
+  return null;
 }

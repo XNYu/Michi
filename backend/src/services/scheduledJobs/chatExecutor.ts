@@ -32,6 +32,12 @@ export interface ScheduledChatHub {
 export interface ChatScheduledJobExecutorDeps {
   chatHub: ScheduledChatHub;
   ensureSession(input: { ownerUserId: string; workspaceId: string; nodeId: string; maintenance?: boolean }): Promise<AgentSession | null>;
+  /**
+   * Release a fresh maintenance node's session once its run has ended (see
+   * ChatManager.releaseMaintenanceSession); false while a turn still owns it.
+   * Absent: sessions stay open, as for ordinary scheduled threads.
+   */
+  releaseMaintenanceSession?(input: { ownerUserId: string; workspaceId: string; nodeId: string }): Promise<boolean>;
   /** Runtime lookup; defaults to the registered runtimes. */
   getRuntime?: (runtimeId: string) => AgentRuntime | undefined;
   clock?: () => number;
@@ -215,6 +221,8 @@ export class ChatScheduledJobExecutor implements ScheduledJobExecutor {
         ...(hooks.maintenanceContext ? { maintenance: true } : {}) });
       assertCurrent();
     } catch (error) {
+      // Cancelled after the session opened: it would never be used.
+      await this.releaseMaintenanceSession(job, nodeId, hooks);
       if (created) this.rollback(nodeId, job.workspaceId, treeId);
       throw error;
     }
@@ -257,6 +265,7 @@ export class ChatScheduledJobExecutor implements ScheduledJobExecutor {
       this.watchers.delete(chatId);
       releaseRunning();
       batch?.release();
+      await this.releaseMaintenanceSession(job, nodeId, hooks);
       throw error;
     }
 
@@ -276,6 +285,10 @@ export class ChatScheduledJobExecutor implements ScheduledJobExecutor {
         releaseRunning();
         batch?.release();
         if (this.watchers.get(chatId)?.turnId === turnId) this.watchers.delete(chatId);
+      })
+      .then(async (outcome) => {
+        await this.releaseMaintenanceSession(job, targetNodeId, hooks);
+        return outcome;
       });
 
     return {
@@ -285,6 +298,20 @@ export class ChatScheduledJobExecutor implements ScheduledJobExecutor {
       done,
       cancel,
     };
+  }
+
+  /**
+   * A fresh maintenance run's thread is never opened again: release its
+   * session as soon as the run ends. Never fails the run.
+   */
+  private async releaseMaintenanceSession(job: ScheduledJobRecord, nodeId: string, hooks: ScheduledRunHooks): Promise<void> {
+    if (!hooks.maintenanceContext || job.sessionMode !== 'fresh' || !this.deps.releaseMaintenanceSession) return;
+    try {
+      const released = await this.deps.releaseMaintenanceSession({ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: job.workspaceId, nodeId });
+      if (!released) log.warn('scheduler', 'maintenance session still owned by a turn; left open', { jobId: job.id, nodeId });
+    } catch (error) {
+      log.warn('scheduler', 'could not release maintenance session', { jobId: job.id, nodeId, error: String(error) });
+    }
   }
 
   /** Remove a thread this run created if its session never started. */

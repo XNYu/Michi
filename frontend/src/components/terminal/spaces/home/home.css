@@ -249,6 +249,22 @@
 .spaces-threads .michi-db-chips { padding: 0; border-bottom: 0; }
 .spaces-threads__more { margin-top: 10px; }
 
+/* Phones give the page the screen: the left gutter only holds each block's
+   select / add / ⋮⋮ margin, which moves above the block's first line instead. */
+@media (max-width: 700px) {
+  .area-settings.spaces-home .spaces-home__doc { padding: 24px 16px 120px; }
+  .spaces-home__title-row { flex-wrap: wrap; row-gap: 4px; }
+  .spaces-home__doc .michi-doc-block__margin {
+    top: -20px;
+    right: auto;
+    left: 8px;
+    z-index: 2;
+    padding: 0 2px;
+    border-radius: var(--ui-radius-sm);
+    background: var(--term-surface);
+  }
+}
+
 @media (max-width: 640px) {
   .spaces-home-section__head { flex-wrap: wrap; }
   .spaces-home-section__note { flex-basis: 100%; margin-left: 0; }

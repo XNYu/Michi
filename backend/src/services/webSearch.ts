@@ -1,6 +1,6 @@
 import { getAgentConfig } from "./agentConfig";
-import { getProviderApiKey, setProviderApiKey } from "./secrets";
-import { clearUserProviderKey, getUserProviderKey, setUserProviderKey } from "./userKeys";
+import { getProviderApiKey, storeProviderApiKey } from "./secrets";
+import { getUserProviderKey } from "./userKeys";
 import {
   getWebSearchProvider,
   isWebSearchFeatureEnabled,
@@ -52,21 +52,11 @@ export function getWebSearchApiKey(provider: WebSearchProviderId, userId?: strin
 }
 
 export function setWebSearchApiKey(provider: WebSearchProviderId, key: string, userId?: string): void {
-  const slot = webSearchKeySlot(provider);
-  if (userId) {
-    setUserProviderKey(userId, slot, key);
-    return;
-  }
-  setProviderApiKey(slot, key);
+  storeProviderApiKey(webSearchKeySlot(provider), key, userId);
 }
 
 export function clearWebSearchApiKey(provider: WebSearchProviderId, userId?: string): void {
-  const slot = webSearchKeySlot(provider);
-  if (userId) {
-    clearUserProviderKey(userId, slot);
-    return;
-  }
-  setProviderApiKey(slot, null);
+  storeProviderApiKey(webSearchKeySlot(provider), null, userId);
 }
 
 export function getWebSearchProviderStatuses(userId?: string): WebSearchProviderStatus[] {

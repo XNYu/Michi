@@ -1,3 +1,4 @@
+import { restrictedChatProfile } from './helpers/restrictedChatProfile';
 import './helpers/claudeSdkFixture';
 /**
  * Unit tests for ClaudeSession.ts
@@ -111,19 +112,12 @@ function stubDbRepository(): void {
   const mod = require(dbRepoPath);
   mod._origSetNode = mod._origSetNode ?? mod.setNodeExternalSessionId;
   mod._origGetNode = mod._origGetNode ?? mod.getNode;
-  mod._origHasGrant = mod._origHasGrant ?? mod.hasGrant;
-  mod._origGrantPermission = mod._origGrantPermission ?? mod.grantPermission;
   mod.setNodeExternalSessionId = (_nodeId: string, _sid: string) => {};
   mod.getNode = () => undefined;
-  mod.hasGrant = () => false;
   // track calls for assertions
   mod._setNodeCalls = [] as Array<[string, string]>;
-  mod._grantCalls = [] as Array<[string, string]>;
   mod.setNodeExternalSessionId = (nodeId: string, sid: string) => {
     mod._setNodeCalls.push([nodeId, sid]);
-  };
-  mod.grantPermission = (workspaceId: string, toolName: string) => {
-    mod._grantCalls.push([workspaceId, toolName]);
   };
 }
 
@@ -132,10 +126,7 @@ function restoreDbRepository(): void {
   const mod = require(dbRepoPath);
   if (mod._origSetNode) { mod.setNodeExternalSessionId = mod._origSetNode; delete mod._origSetNode; }
   if (mod._origGetNode) { mod.getNode = mod._origGetNode; delete mod._origGetNode; }
-  if (mod._origHasGrant) { mod.hasGrant = mod._origHasGrant; delete mod._origHasGrant; }
-  if (mod._origGrantPermission) { mod.grantPermission = mod._origGrantPermission; delete mod._origGrantPermission; }
   delete mod._setNodeCalls;
-  delete mod._grantCalls;
 }
 
 function makeMcpRegistry() {
@@ -1254,7 +1245,7 @@ describe('ClaudeSession', () => {
       process.env.MICHI_FOLLOW_UPS_EXPERIMENT_MODE = mode;
       const { assistantToolProfile } = require('../src/assistant/policy') as typeof import('../src/assistant/policy');
       const { MICHI_INTERNAL_MCP_NAME, MICHI_MCP_TOOL_PREFIX } = require('michi-runtime/internal/adapters/claude/claudeMcpConfig') as typeof import('michi-runtime/internal/adapters/claude/claudeMcpConfig');
-      const profile = assistantToolProfile();
+      const profile = restrictedChatProfile();
       const prompts: string[] = [];
       stubSpawnClaude(() => {
         const child = new MockClaudeChild();

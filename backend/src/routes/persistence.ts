@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { log } from '../services/logger';
 import { getDb, runInTransaction } from '../services/db';
 import { readPrefs, writePrefs, migrateFromSqlite } from '../services/prefsConfig';
-import { readChatPermissionSettings, writeChatPermissionSettings, writeNodePermissionMode, resolveChatPermissionMode } from '../services/chatPermissions';
+import { readChatPermissionSettings, writeChatPermissionSettings, writeNodePermissionMode, resolveChatPermissionMode, resolveChatApproveForMe } from '../services/chatPermissions';
 import { isChatPermissionMode, isChatPermissionSettings } from 'michi-shared';
 import { getNode } from '../services/dbRepository';
 import {
@@ -99,7 +99,7 @@ export function setupPersistenceRoutes(): express.Router {
   });
   router.put('/permissions/settings', (req, res) => {
     if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'unauthorized' });
-    if (!isChatPermissionSettings(req.body)) return res.status(400).json({ error: 'global (boolean) and mode (ask, trust, yolo) required' });
+    if (!isChatPermissionSettings(req.body)) return res.status(400).json({ error: 'global (boolean) and mode (ask, trust, yolo) required; approveForMe must be boolean' });
     writeChatPermissionSettings(req.body, req.user?.id);
     res.json(readChatPermissionSettings(req.user?.id));
   });
@@ -107,14 +107,17 @@ export function setupPersistenceRoutes(): express.Router {
     if (process.env.MICHI_CLOUD === '1' && !req.user?.id) return res.status(401).json({ error: 'unauthorized' });
     const { nodeId } = req.params;
     if (!isChatPermissionMode(req.body?.mode)) return res.status(400).json({ error: 'mode must be ask, trust, or yolo' });
+    const approveForMe = req.body?.approveForMe;
+    if (approveForMe !== undefined && typeof approveForMe !== 'boolean') return res.status(400).json({ error: 'approveForMe must be boolean' });
     try {
       if (!getNode(nodeId)) {
         const prerequisite = req.body?.graphPrerequisite;
         if (prerequisite?.node?.id !== nodeId) return res.status(409).json({ error: 'durable node prerequisite required' });
         ensureDurableGraphNode({ ...prerequisite, ownerUserId: (requestOwnerUserId(req) ?? null) });
       }
-      writeNodePermissionMode(nodeId, req.body.mode, req.user?.id);
-      res.json({ mode: req.body.mode, effectiveMode: resolveChatPermissionMode(nodeId, req.user?.id) });
+      writeNodePermissionMode(nodeId, req.body.mode, req.user?.id, false, approveForMe === true);
+      res.json({ mode: req.body.mode, approveForMe: req.body.mode === 'ask' && approveForMe === true,
+        effectiveMode: resolveChatPermissionMode(nodeId, req.user?.id), effectiveApproveForMe: resolveChatApproveForMe(nodeId, req.user?.id) });
     } catch (err) {
       const failure = domainErrorResponse(err);
       res.status(failure.status).json({ error: failure.error });
@@ -538,7 +541,7 @@ export function setupPersistenceRoutes(): express.Router {
       if (pane_width !== undefined) { sets.push('pane_width = ?'); params.push(pane_width); }
       if (sets.length === 0) return res.json({ ok: true });
       params.push(req.params.nodeId);
-      db.prepare(`UPDATE nodes SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+      db.prepare(`UPDATE nodes SET ${sets.join(', ')} WHERE id = ? AND purged_at IS NULL`).run(...params);
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -616,7 +619,8 @@ export function setupPersistenceRoutes(): express.Router {
   router.get('/prefs', (req, res) => {
     try {
       const permissions = readChatPermissionSettings(req.user?.id);
-      const permissionPrefs = { globalPermissions: permissions.global, permissionMode: permissions.mode, bypassPermissions: false };
+      const permissionPrefs = { globalPermissions: permissions.global, permissionMode: permissions.mode,
+        permissionApproveForMe: permissions.approveForMe === true, bypassPermissions: false };
       const prefs = readPrefs();
       if (!prefs) {
         // One-time migration: if config.json has no prefs yet, seed from SQLite.

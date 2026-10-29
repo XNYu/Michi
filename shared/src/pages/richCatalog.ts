@@ -7,7 +7,7 @@ export function richContentText(value: unknown): string {
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (Array.isArray(value)) return value.map(richContentText).filter(Boolean).join('\n');
   if (!value || typeof value !== 'object') return '';
-  return Object.entries(value).filter(([key]) => !['type', 'id', 'rev', 'sources', 'edit', 'kind', 'tone', 'lang', 'selected'].includes(key))
+  return Object.entries(value).filter(([key]) => !['type', 'id', 'rev', 'sources', 'edit', 'kind', 'tone', 'lang', 'selected', 'interaction', 'visibility', 'action'].includes(key))
     .map(([, item]) => richContentText(item)).filter(Boolean).join('\n');
 }
 

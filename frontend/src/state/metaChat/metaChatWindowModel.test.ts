@@ -10,7 +10,7 @@ import {
   parseStoredState,
   readStoredState,
   resizeRect,
-  TITLE_BAR_HEIGHT,
+  type ResizeDir,
 } from './metaChatWindowModel';
 
 const area = { width: 1100, height: 850 };
@@ -20,23 +20,23 @@ describe('metaChatWindowModel', () => {
     expect(defaultRect(area)).toEqual({ x: 1100 - 384 - 18, y: 850 - 520 - 18, w: 384, h: 520 });
   });
 
-  it('lets the box hang off the left, right and bottom while half its title bar stays inside', () => {
+  it('keeps the whole box inside every edge with a gutter', () => {
     const start = { x: 600, y: 300, w: 384, h: 520 };
-    expect(moveRect(start, 5000, 5000, area)).toEqual({ x: 1100 - 192, y: 850 - TITLE_BAR_HEIGHT, w: 384, h: 520 });
-    expect(moveRect(start, -5000, -5000, area)).toEqual({ x: -192, y: 0, w: 384, h: 520 });
-    expect(moveRect(start, -650, 0, area)).toMatchObject({ x: -50 });
-    expect(moveRect(start, 300, 0, area)).toMatchObject({ x: 900 });
+    expect(moveRect(start, 5000, 5000, area)).toEqual({ x: 698, y: 312, w: 384, h: 520 });
+    expect(moveRect(start, -5000, -5000, area)).toEqual({ x: 18, y: 18, w: 384, h: 520 });
   });
 
-  it('resizes a box hanging off an edge without snapping it back inside', () => {
-    const offLeft = { x: -100, y: 200, w: 384, h: 520 };
-    expect(resizeRect(offLeft, 'e', 100, 0, area)).toEqual({ x: -100, y: 200, w: 484, h: 520 });
-    expect(resizeRect(offLeft, 'w', -50, 0, area)).toEqual({ x: -100, y: 200, w: 384, h: 520 });
-    const offRight = { x: 900, y: 200, w: 384, h: 520 };
-    expect(resizeRect(offRight, 'w', -100, 0, area)).toEqual({ x: 800, y: 200, w: 484, h: 520 });
-    const offBottom = { x: 300, y: 600, w: 384, h: 520 };
-    expect(resizeRect(offBottom, 'e', 40, 0, area)).toEqual({ x: 300, y: 600, w: 424, h: 520 });
-    expect(resizeRect(offBottom, 'n', 0, -40, area)).toEqual({ x: 300, y: 560, w: 384, h: 560 });
+  it('fits below the normal minimum size when the main area is small', () => {
+    expect(clampRect({ x: 100, y: 100, w: 384, h: 520 }, { width: 280, height: 240 }))
+      .toEqual({ x: 18, y: 18, w: 244, h: 204 });
+  });
+
+  it('keeps every resize direction inside a smaller area', () => {
+    for (const dir of ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'] as ResizeDir[]) {
+      const bounds = { width: 280, height: 240 };
+      expect(resizeRect({ x: 900, y: 800, w: 384, h: 520 }, dir, 5000, -5000, bounds))
+        .toEqual({ x: 18, y: 18, w: 244, h: 204 });
+    }
   });
 
   it('resizes from every edge and corner without going below 320×300', () => {
@@ -47,8 +47,8 @@ describe('metaChatWindowModel', () => {
     expect(resizeRect(start, 's', 0, 50, area)).toMatchObject({ y: 200, h: 570 });
     expect(resizeRect(start, 'se', -500, -500, area)).toEqual({ x: 400, y: 200, w: 320, h: 300 });
     expect(resizeRect(start, 'nw', 500, 500, area)).toEqual({ x: 400 + 384 - 320, y: 200 + 520 - 300, w: 320, h: 300 });
-    expect(resizeRect(start, 'ne', 5000, -5000, area)).toEqual({ x: 400, y: 0, w: 700, h: 720 });
-    expect(resizeRect(start, 'sw', -5000, 5000, area)).toEqual({ x: 0, y: 200, w: 784, h: 650 });
+    expect(resizeRect(start, 'ne', 5000, -5000, area)).toEqual({ x: 400, y: 18, w: 682, h: 702 });
+    expect(resizeRect(start, 'sw', -5000, 5000, area)).toEqual({ x: 18, y: 200, w: 766, h: 632 });
   });
 
   it('shows the dock hint only with the pointer at the right edge', () => {
@@ -65,7 +65,7 @@ describe('metaChatWindowModel', () => {
 
   it('clamps a stored box to a smaller area', () => {
     expect(clampRect({ x: 1500, y: 1200, w: 900, h: 900 }, { width: 800, height: 600 }))
-      .toEqual({ x: 400, y: 600 - TITLE_BAR_HEIGHT, w: 800, h: 600 });
+      .toEqual({ x: 18, y: 18, w: 764, h: 564 });
   });
 
   it('reads valid stored values and falls back field by field', () => {

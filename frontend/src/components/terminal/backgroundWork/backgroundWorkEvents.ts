@@ -2,9 +2,10 @@ import { createContext, useContext } from 'react';
 
 /**
  * The one way to open the Background work drawer. TerminalShell owns the
- * drawer and listens for this window event; the pane-title badge and the
- * in-chat subagent / workflow cards dispatch it on a user click. Nothing
- * else may dispatch it: background progress never opens the drawer.
+ * drawer and listens for this window event; the pane-title badge, the
+ * top-bar background work button and the in-chat subagent / workflow cards
+ * dispatch it on a user click. Nothing else may dispatch it: background
+ * progress never opens the drawer.
  */
 export const OPEN_BACKGROUND_WORK_EVENT = 'michi:open-background-work';
 

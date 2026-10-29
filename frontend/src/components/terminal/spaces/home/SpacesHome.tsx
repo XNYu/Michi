@@ -145,7 +145,7 @@ export function SpacesHomeView({ backendConnectionId = 'local', now, meta, onUpd
   const homeScope: SpaceConversationScope = { backendConnectionId, pageId: page?.id ?? null, workspaceId: null, workspaceName: null, pageTitle: 'Home' };
 
   return (
-    <main ref={rootRef} className="area-settings michi-doc space-doc spaces-home" aria-labelledby="spaces-home-title" onClick={onBlocksClick}>
+    <main ref={rootRef} className="area-settings michi-doc space-doc spaces-home term-scrollbar" aria-labelledby="spaces-home-title" onClick={onBlocksClick}>
       <div className="area-settings__doc spaces-home__doc">
         <NewChatSheetSlot scope={homeScope} />
         <header className="spaces-home__head">

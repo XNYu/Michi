@@ -7,6 +7,7 @@ import {
   firstUserSnippet,
 } from './derive';
 import type { Project, ChatNodeState } from '../../../state/chatTypes';
+import type { DigestState } from '../../../state/digest';
 
 function mkProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -140,10 +141,33 @@ describe('Meta agent maintenance runs and page helpers', () => {
 });
 
 describe('deriveDigests', () => {
+  function mkDigest(overrides: Partial<DigestState> = {}): DigestState {
+    return {
+      sources: [],
+      sourceFingerprints: {},
+      content: '',
+      generatedAt: 0,
+      viewedAt: 0,
+      status: 'idle',
+      ...overrides,
+    };
+  }
+
   it('filters by project, kind, and not-deleted', () => {
-    const project = mkProject({ chatIds: ['d1', 'd2', 'd3'] });
+    const project = mkProject({
+      chatIds: ['c1', 'c2', 'd1', 'd2', 'd3'],
+      trees: [{ id: 't1', rootNodeId: 'c1', createdAt: 0, lastActiveAt: 0 }],
+      edges: [{ source: 'c1', target: 'c2', kind: 'branch' }],
+    });
     const nodes: Record<string, ChatNodeState> = {
-      d1: mkNode({ nodeId: 'd1', kind: 'digest', title: 'A', digest: { content: 'one two three', sourceCount: 2, generatedAt: 100 } as any }),
+      c1: mkNode({ nodeId: 'c1' }),
+      c2: mkNode({ nodeId: 'c2' }),
+      d1: mkNode({
+        nodeId: 'd1',
+        kind: 'digest',
+        title: 'A',
+        digest: mkDigest({ sources: ['c1', 'c2'], content: 'one two three', generatedAt: 100 }),
+      }),
       d2: mkNode({ nodeId: 'd2', kind: 'chat', title: 'B' }),
       d3: mkNode({ nodeId: 'd3', kind: 'digest', deletedAt: 1, title: 'C' }),
     };
@@ -151,6 +175,26 @@ describe('deriveDigests', () => {
     expect(out).toHaveLength(1);
     expect(out[0].nodeId).toBe('d1');
     expect(out[0].excerpt.length).toBeGreaterThan(0);
+    expect(out[0].sourceCount).toBe(2);
+    expect(out[0].updatedAt).toBe(100);
+  });
+
+  it('counts sources like the digest detail view, including chats branched after generation', () => {
+    const project = mkProject({
+      chatIds: ['c1', 'c2', 'c3', 'd1'],
+      trees: [{ id: 't1', rootNodeId: 'c1', createdAt: 0, lastActiveAt: 0 }],
+      edges: [
+        { source: 'c1', target: 'c2', kind: 'branch' },
+        { source: 'c1', target: 'c3', kind: 'branch' },
+      ],
+    });
+    const nodes: Record<string, ChatNodeState> = {
+      c1: mkNode({ nodeId: 'c1' }),
+      c2: mkNode({ nodeId: 'c2' }),
+      c3: mkNode({ nodeId: 'c3' }),
+      d1: mkNode({ nodeId: 'd1', kind: 'digest', digest: mkDigest({ sources: ['c1', 'c2'] }) }),
+    };
+    expect(deriveDigests(project, nodes)[0].sourceCount).toBe(3);
   });
 });
 

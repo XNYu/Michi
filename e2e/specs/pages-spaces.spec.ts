@@ -1,3 +1,4 @@
+import type { PageChangeDto } from 'michi-shared';
 import { expect, test, type Page } from '@playwright/test';
 import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
 import { createPagesMockController } from '../fixtures/pagesFixtures';
@@ -420,4 +421,55 @@ test('block handles persist pointer sorting, cancel drags, and expose native blo
   await expect(second).toHaveCount(0);
   expect(mock.pages.get('page-1')?.blocks.some(block => block.id === ids[1])).toBe(false);
   expect(errors).toEqual([]);
+});
+
+
+test('database configuration suggestions show field changes and apply only after acceptance', async ({ page }) => {
+  const mock = createPagesMockController();
+  let suggestion: PageChangeDto | null = null;
+  let accepted = false;
+  await installMockApi(page, { custom: async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const database = mock.databases.get('database-1');
+    if (database && /\/pages\/[^/]+\/changes$/.test(path)) {
+      if (!suggestion) {
+        const after = { ...database, revision: database.revision + 1,
+          columns: database.columns.map((column, index) => index === 0 ? { ...column, name: 'Ticket / CR' } : column) };
+        suggestion = { id: 'schema-suggestion', seq: 1, batchId: 'schema-batch', target: { kind: 'database', databaseId: database.id }, op: 'schema',
+          before: { kind: 'database', exists: true, database: structuredClone(database) }, after: { kind: 'database', exists: true, database: after },
+          forward: { kind: 'database', op: 'replace', database: after }, inverse: { kind: 'database', op: 'replace', database: structuredClone(database) },
+          baseRev: database.revision, appliedRev: null, previousHeadId: null,
+          source: { kind: 'chat', nodeId: 'assistant', turnId: 'turn', assistantId: 'answer' },
+          proposalState: 'pending', applicationState: null, createdAt: Date.now(), resolvedAt: null };
+      }
+      await route.fulfill({ json: { changes: [suggestion], nextAfter: 1, nextBefore: null, hasMore: false } });
+      return true;
+    }
+    if (database && suggestion && path.endsWith('/page-changes/schema-suggestion/accept')) {
+      if (suggestion.forward.kind !== 'database') throw new Error('Expected database suggestion');
+      mock.databases.set(database.id, { ...database, columns: suggestion.forward.database.columns, revision: database.revision + 1 });
+      suggestion = { ...suggestion, proposalState: 'accepted', applicationState: 'applied', appliedRev: database.revision + 1, resolvedAt: Date.now() };
+      accepted = true;
+      await route.fulfill({ json: suggestion });
+      return true;
+    }
+    return mock.handle(route);
+  } });
+  await bootWithWorkspace(page, 'Database suggestions');
+  await closeNewWorkspaceDialog(page);
+  await openSpaces(page);
+  const create = await newSpace(page);
+  await create.getByLabel('Name').fill('Ticket dashboard');
+  await create.getByLabel('Starting point').selectOption('release');
+  await create.getByRole('button', { name: 'Create page' }).click();
+  const database = page.locator('[data-native-database][data-database-id="database-1"]');
+  await database.getByRole('tab', { name: 'Table', exact: true }).click();
+  const proposal = page.locator('.page-change-prop').filter({ has: page.getByRole('list', { name: 'Proposed database changes' }) });
+  await expect(proposal).toContainText(/Task \(text\).*→ Ticket \/ CR \(text\)/);
+  await expect(database.getByRole('columnheader', { name: 'Task', exact: true })).toBeVisible();
+  expect(accepted).toBe(false);
+  await proposal.getByRole('button', { name: 'Accept', exact: true }).click();
+  await expect(database.getByRole('columnheader', { name: 'Ticket / CR', exact: true })).toBeVisible();
+  await expect(database.getByText('Draft launch checklist', { exact: true })).toBeVisible();
+  expect(accepted).toBe(true);
 });

@@ -145,7 +145,7 @@ function scheduler(model: FakeModel, instanceId = 'first-run-test'): ScheduledJo
 }
 
 const homeOf = (workspaceId: string) => listWorkspaceHomes(OWNER).find((home) => home.workspaceId === workspaceId)!.homePageId!;
-const idle = (sched: ScheduledJobScheduler) => sched.listJobs().every((job) => job.activeRunId === null);
+const idle = (sched: ScheduledJobScheduler) => new ScheduledJobsRepository().listMaintenanceExecutions().every((job) => sched.getJob(job.id).activeRunId === null);
 
 /** A model that reads the listed history and writes one home. */
 function writesHome(run: ModelRun, label: string) {
@@ -234,6 +234,11 @@ test('first run writes each workspace home newest first, then the Spaces Home an
     if (run.job.workspaceId === 'ws-a' && model.started.length === 1) {
       assert.match(run.job.prompt, /First-time generation of the default home page for the workspace "Workspace A"/);
       assert.match(run.job.prompt, /Lead with the release risks/);
+      assert.match(run.job.prompt, /Layout preferences for this page only\. They come before the block choices in step 3/);
+      // Blocks follow what was read, not a fixed template, and never count the page's own inputs.
+      assert.match(run.job.prompt, /chosen by the shape of what you read/);
+      assert.match(run.job.prompt, /Never count conversations, messages or turns/);
+      assert.doesNotMatch(run.job.prompt, /title "Next steps"|title "Progress"|2 to 4 real counts/);
       assert.doesNotMatch(run.job.prompt, /Compare decisions across workspaces/);
       // The workspace home lists its conversations itself, so the agent writes no second list of them.
       assert.doesNotMatch(run.job.prompt, /Related conversations/);
@@ -266,6 +271,7 @@ test('first run writes each workspace home newest first, then the Spaces Home an
     if (run.job.workspaceId === 'ws-b' && /First-time/.test(run.job.prompt)) { writesHome(current, 'B'); return; }
     if (/Spaces Home summary/.test(run.job.prompt)) {
       assert.match(run.job.prompt, /Compare decisions across workspaces/);
+      assert.match(run.job.prompt, /They come before the block list in step 3/);
       assert.doesNotMatch(run.job.prompt, /Lead with the release risks/);
       const result = writesSummary(current, now - 3 * DAY);
       // Written but not settled: another job's tick must neither rerun nor settle it.

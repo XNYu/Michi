@@ -1,19 +1,24 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { runCrewAcpServer, type CrewAcpServerOptions } from '../src/adapters/crew/acp/acpServer';
+import { MICHI_CREW_FOLDER } from '../src/adapters/crew/acp/crewFolders';
 
 import { CrewMcpBindings } from '../src/adapters/crew/crewMcpBinding';
-import type {
-    CreateSlotInput,
-    CrewChatEvent,
-    CrewChatFrame,
-    CrewGateway,
-    CrewModel,
-    CrewSlotInfo,
-    CrewSlotDetail,
-    CrewAgent,
-    CrewEvent,
+import {
+    CrewGatewayError,
+    type CreateSlotInput,
+    type CrewChatEvent,
+    type CrewChatFrame,
+    type CrewFolder,
+    type CrewGateway,
+    type CrewModel,
+    type CrewSlotInfo,
+    type CrewSlotDetail,
+    type CrewAgent,
+    type CrewEvent,
 } from '../src/adapters/crew/acp/gatewayTypes';
 
 type Call = { method: string; args: unknown[] };
@@ -461,8 +466,10 @@ describe('Crew ACP server: settings and Kiro commands', () => {
 
         assert.deepEqual((await exec('compact', { instructions: 'short' })).result, {
             success: false,
-            message: 'compact is not supported by Kiro Crew',
+            message: 'Kiro Crew /compact takes no instructions',
         });
+        // Without the slot history API there is no compaction notice to read.
+        assert.deepEqual((await exec('compact')).result, { success: false, message: 'compact is not supported by Kiro Crew' });
         assert.deepEqual((await exec('rewind')).result, { success: false, message: 'rewind is not supported by Kiro Crew' });
         assert.equal((await exec('anything')).result.success, false);
         await s.close();
@@ -795,6 +802,313 @@ describe('Official Crew approvals', () => {
         s.input.write(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { outcome: { outcome: 'selected', optionId: 'allow_once' } } }) + '\n');
         assert.deepEqual((await approved.promise).slice(0, 3), [sessionId, approval, true]);
         assert.equal((await prompt).result.stopReason, 'end_turn');
+        await s.close();
+    });
+});
+
+/** A FakeGateway with a folder tree; folders it creates belong to the App. */
+class FolderGateway extends FakeGateway {
+    folders: CrewFolder[] = [];
+    listError?: Error;
+    /** Called after each create, before the next list: lets a test add a racing folder. */
+    afterCreate?: (made: CrewFolder) => void;
+    /** Folder ids createSlot refuses as gone once. */
+    readonly goneOnce = new Set<string>();
+    private seq = 0;
+
+    listFolders: NonNullable<CrewGateway['listFolders']> = async () => {
+        this.calls.push({ method: 'listFolders', args: [] });
+        if (this.listError) throw this.listError;
+        return this.folders.map((folder) => ({ ...folder }));
+    };
+
+    createFolder: NonNullable<CrewGateway['createFolder']> = async (name, parentId) => {
+        this.calls.push({ method: 'createFolder', args: [name, parentId] });
+        const made: CrewFolder = { id: `f${++this.seq}`, name, parentId: parentId ?? '', own: true, createdAt: 100 + this.seq };
+        this.folders.push(made);
+        this.afterCreate?.(made);
+        return { ...made };
+    };
+
+    hideFolder: NonNullable<CrewGateway['hideFolder']> = async (id) => {
+        this.calls.push({ method: 'hideFolder', args: [id] });
+    };
+
+    override async createSlot(input: CreateSlotInput): Promise<CrewSlotInfo> {
+        if (input.folder_id && this.goneOnce.delete(input.folder_id)) {
+            this.calls.push({ method: 'createSlot', args: [input] });
+            throw new CrewGatewayError('Crew gateway POST /api/chat/slots failed (HTTP 400): folder not found', 400, 'folder_not_found');
+        }
+        return super.createSlot(input);
+    }
+
+    /** The folder_id of each created slot, '' when created at the top level. */
+    filed(): string[] {
+        return this.callsTo('createSlot').map(([input]) => (input as CreateSlotInput).folder_id ?? '');
+    }
+}
+
+describe('Crew ACP server: sidebar folders', () => {
+    async function open(s: ReturnType<typeof startServer>, workspaceName?: string, cwd = '/work/project'): Promise<string> {
+        const reply = await s.request('session/new', { cwd, mcpServers: [], ...(workspaceName === undefined ? {} : { _meta: { crew: { workspaceName } } }) });
+        assert.ok(reply.result, `session/new failed: ${JSON.stringify(reply.error)}`);
+        return reply.result.sessionId;
+    }
+
+    async function turn(gw: FakeGateway, s: ReturnType<typeof startServer>, sessionId: string): Promise<void> {
+        gw.streams.push(scripted([frame('chunk', 'ok')]));
+        assert.deepEqual((await s.prompt(sessionId, 'hi')).result, { stopReason: 'end_turn' });
+    }
+
+    test('files new sessions in Michi Crew / <workspace>, creating each folder once', async () => {
+        const gw = new FolderGateway();
+        const s = startServer(gw);
+        await turn(gw, s, await open(s, 'rabbitholes'));
+        await turn(gw, s, await open(s, ' rabbitholes '));
+        await turn(gw, s, await open(s, 'Agent Desk'));
+
+        assert.deepEqual(gw.callsTo('createFolder'), [[MICHI_CREW_FOLDER, undefined], ['rabbitholes', 'f1'], ['Agent Desk', 'f1']]);
+        assert.deepEqual(gw.filed(), ['f2', 'f2', 'f3']);
+        assert.equal(gw.callsTo('listFolders').length, 6, 'one list before and one after each create; the second session is cached');
+        assert.deepEqual(gw.callsTo('hideFolder'), []);
+        await s.close();
+    });
+
+    test('reuses a moved Michi Crew and a person-made subfolder, not a same-named nested folder', async () => {
+        const gw = new FolderGateway();
+        gw.folders = [
+            { id: 'nested', name: 'michi crew', parentId: 'root', own: true, createdAt: 1 },
+            { id: 'person', name: 'Michi', parentId: '', own: false },
+            { id: 'root', name: 'Michi Crew', parentId: 'person', own: true, createdAt: 5 },
+            { id: 'theirs', name: 'Michi Crew', parentId: '', own: false, createdAt: 0 },
+            { id: 'child', name: 'RabbitHoles', parentId: 'root', own: false },
+        ];
+        const s = startServer(gw);
+        await turn(gw, s, await open(s, 'rabbitholes'));
+        assert.deepEqual(gw.callsTo('createFolder'), []);
+        assert.deepEqual(gw.filed(), ['child']);
+        await s.close();
+    });
+
+    test('settles on the earliest folder when another adapter created the same one, and hides its own', async () => {
+        const gw = new FolderGateway();
+        gw.afterCreate = (made) => {
+            if (made.name === MICHI_CREW_FOLDER) gw.folders.push({ id: 'racer', name: MICHI_CREW_FOLDER, parentId: '', own: true, createdAt: 1 });
+        };
+        const s = startServer(gw);
+        await turn(gw, s, await open(s, 'rabbitholes'));
+        assert.deepEqual(gw.callsTo('hideFolder'), [['f1']]);
+        assert.deepEqual(gw.callsTo('createFolder'), [[MICHI_CREW_FOLDER, undefined], ['rabbitholes', 'racer']]);
+        assert.deepEqual(gw.filed(), ['f2']);
+        await s.close();
+    });
+
+    test('no workspace, a temporary project or a Gateway without folders leaves the session at the top level', async () => {
+        const gw = new FolderGateway();
+        const s = startServer(gw);
+        await turn(gw, s, await open(s));
+        await turn(gw, s, await open(s, '   '));
+        await turn(gw, s, await open(s, 'live-test', path.join(os.tmpdir(), 'michi-live-x')));
+        assert.deepEqual(gw.callsTo('listFolders'), []);
+        assert.deepEqual(gw.filed(), ['', '', '']);
+        await s.close();
+
+        const bare = new FakeGateway();
+        const s2 = startServer(bare);
+        await turn(bare, s2, await open(s2, 'rabbitholes'));
+        assert.deepEqual(bare.callsTo('createSlot'), [[{ name: 'michi-000000000001', memory_mode: 'persistent' }]]);
+        await s2.close();
+    });
+
+    test('a folder failure never fails the session, and the next session tries again', async () => {
+        const gw = new FolderGateway();
+        gw.listError = new Error('folders unavailable');
+        const s = startServer(gw);
+        await turn(gw, s, await open(s, 'rabbitholes'));
+        assert.deepEqual(gw.filed(), ['']);
+        assert.ok(s.logs.some((line) => line.includes('Could not file the session in a Crew folder: folders unavailable')));
+
+        gw.listError = undefined;
+        await turn(gw, s, await open(s, 'rabbitholes'));
+        assert.deepEqual(gw.filed(), ['', 'f2']);
+        await s.close();
+    });
+
+    test('a folder deleted in Crew is forgotten: that session goes to the top level, the next to a new folder', async () => {
+        const gw = new FolderGateway();
+        const s = startServer(gw);
+        await turn(gw, s, await open(s, 'rabbitholes'));
+        gw.folders = gw.folders.filter((folder) => folder.id !== 'f2');
+        gw.goneOnce.add('f2');
+        await turn(gw, s, await open(s, 'rabbitholes'));
+        await turn(gw, s, await open(s, 'rabbitholes'));
+        assert.deepEqual(gw.filed(), ['f2', 'f2', '', 'f3']);
+        assert.deepEqual(gw.callsTo('createFolder').at(-1), ['rabbitholes', 'f1']);
+        await s.close();
+    });
+});
+
+/**
+ * Official Gateway 0.11.0.1 App-caller behavior, from the isolated-Gateway
+ * probes (VALIDATION.md, 2026-10-29): the shapes of `/compact`'s tagged
+ * notice, the stop handler's `stop_event` row and `meta.turn_stats`.
+ */
+describe('Crew ACP server: Gateway compaction and stop record', () => {
+    type Row = { role: string; content?: string; cls?: string; meta?: Record<string, unknown>; ts?: string };
+    function history(gw: FakeGateway, rows: Row[] = [], state = { running: false }) {
+        gw.getSlot = async (slot: string, limit = 500) => {
+            gw.calls.push({ method: 'getSlot', args: [slot, limit] });
+            const page = rows.slice(-limit);
+            return { key: slot, messages: page, running: state.running, total: rows.length, has_more: rows.length > page.length } as CrewSlotDetail;
+        };
+        return { rows, state };
+    }
+    async function promptedSession(gw: FakeGateway, s: ReturnType<typeof startServer>, rows: Row[]): Promise<string> {
+        gw.streams.push(async function* () {
+            rows.push({ role: 'user', content: 'hello' }, { role: 'assistant', content: 'hi', meta: { mid: 'm-1' } });
+            yield frame('chunk', 'hi');
+        });
+        const sessionId = await s.newSession();
+        assert.deepEqual((await s.prompt(sessionId, 'hello')).result, { stopReason: 'end_turn' });
+        return sessionId;
+    }
+    const exec = (s: ReturnType<typeof startServer>, sessionId: string, command: string, args: unknown = {}) =>
+        s.request('_kiro.dev/commands/execute', { sessionId, command: { command, args } });
+    const statuses = (s: ReturnType<typeof startServer>) => s.messages.filter((m) => m.method === '_kiro.dev/compaction/status').map((m) => m.params);
+
+    test('compact sends /compact to the idle slot and reports Kiro compaction completion with the summary', async () => {
+        const gw = new FakeGateway();
+        const { rows } = history(gw);
+        const s = startServer(gw);
+        const sessionId = await promptedSession(gw, s, rows);
+        gw.streams.push(async function* () {
+            rows.push({ role: 'user', content: '/compact' },
+                { role: 'assistant', content: '✅ Conversation compacted: ## Overview\nA warm-up exchange.', meta: { kind: 'compaction', mid: 'm-2' } });
+            yield { kind: 'frame', frame: { type: 'context_usage', content: '{"pct": 0.0, "reset": true}' } } as CrewChatEvent;
+            yield frame('assistant', '✅ Conversation compacted: ## Overview\nA warm-up exchange.');
+        });
+        assert.deepEqual((await exec(s, sessionId, 'compact')).result, { success: true, message: 'Conversation compacted' });
+        assert.deepEqual(gw.callsTo('streamChat').at(-1), [sessionId, '/compact']);
+        assert.deepEqual(statuses(s), [
+            { sessionId, status: { type: 'started' } },
+            { sessionId, status: { type: 'completed' }, summary: '## Overview\nA warm-up exchange.' },
+        ]);
+        // The session stays usable for the next prompt.
+        gw.streams.push(scripted([frame('chunk', 'again')]));
+        assert.deepEqual((await s.prompt(sessionId, 'next')).result, { stopReason: 'end_turn' });
+        await s.close();
+    });
+
+    test('a failure, a refusal or an untagged reply leaves the session usable and never claims completion', async () => {
+        for (const [reply, meta] of [
+            ['❌ Compaction failed: context too large', { kind: 'compaction' }],
+            ['Nothing to compact yet: the restored history is delivered with your next message.', { kind: 'compaction' }],
+            ['This backend manages compaction itself.', {}],
+        ] as const) {
+            const gw = new FakeGateway();
+            const { rows } = history(gw);
+            const s = startServer(gw);
+            const sessionId = await promptedSession(gw, s, rows);
+            gw.streams.push(async function* () {
+                rows.push({ role: 'user', content: '/compact' }, { role: 'assistant', content: reply, meta: { ...meta } });
+                yield frame('assistant', reply);
+            });
+            assert.deepEqual((await exec(s, sessionId, 'compact')).result, { success: false, message: reply });
+            assert.deepEqual(statuses(s).map((p) => p.status.type), ['started']);
+            await s.close();
+        }
+    });
+
+    test('compact refuses a never-used session, a running slot and a queued /compact', async () => {
+        const gw = new FakeGateway();
+        const { rows, state } = history(gw);
+        const s = startServer(gw);
+        const fresh = await s.newSession();
+        assert.deepEqual((await exec(s, fresh, 'compact')).result, { success: false, message: 'Nothing to compact yet' });
+        assert.deepEqual(gw.callsTo('createSlot'), [], 'compaction never creates a slot');
+
+        const sessionId = await promptedSession(gw, s, rows);
+        state.running = true;
+        assert.equal((await exec(s, sessionId, 'compact')).error.code, -32000);
+        state.running = false;
+        gw.streams.push(scripted([{ kind: 'receipt', receipt: { ok: true, queued: true, queue_id: 'q1' } }]));
+        assert.deepEqual((await exec(s, sessionId, 'compact')).result,
+            { success: false, message: 'Kiro Crew queued /compact behind other work in this session' });
+        await s.close();
+    });
+
+    test('cancel_status returns the Gateway stop record of the cancelled prompt', async () => {
+        const gw = new FakeGateway();
+        const { rows } = history(gw);
+        const firstChunk = deferred();
+        gw.streams.push(async function* (_slot, _message, signal) {
+            rows.push({ role: 'user', content: 'long task' });
+            yield frame('chunk', 'working');
+            firstChunk.resolve();
+            await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        });
+        gw.stopImpl = async () => {
+            // An older turn's stop must not answer for this one.
+            const old = JSON.stringify({ kind: 'stop_event', id: 'stop-old', state: 'stopped', outcome: 'soft', ts_start: new Date(Date.now() - 60_000).toISOString() });
+            const card = JSON.stringify({ kind: 'stop_event', id: 'stop-1', state: 'stopped', outcome: 'soft', ts_start: new Date().toISOString() });
+            rows.splice(0, 0, { role: 'system', content: old, cls: old });
+            rows.push({ role: 'system', content: card, cls: card });
+        };
+        const s = startServer(gw, { cancelGraceMs: 2_000 });
+        const sessionId = await s.newSession();
+        assert.deepEqual((await exec(s, sessionId, 'cancel_status')).result,
+            { success: false, message: 'No Kiro Crew stop was requested for this session' });
+        const pending = s.prompt(sessionId, 'long task');
+        await firstChunk.promise;
+        s.notify('session/cancel', { sessionId });
+        assert.deepEqual((await exec(s, sessionId, 'cancel_status')).result,
+            { success: true, data: { confirmed: true, state: 'stopped', outcome: 'soft' } });
+        assert.deepEqual((await pending).result, { stopReason: 'cancelled' });
+        await s.close();
+    });
+
+    test('a stop that found the slot already idle stops looking for a record', async () => {
+        const gw = new FakeGateway();
+        const { rows, state } = history(gw);
+        const firstChunk = deferred();
+        gw.streams.push(async function* (_slot, _message, signal) {
+            rows.push({ role: 'user', content: 'short task' });
+            yield frame('chunk', 'done already');
+            firstChunk.resolve();
+            await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+        });
+        // The Gateway answers {info: "no active turn"} and opens no stop_event.
+        gw.stopImpl = async () => { state.running = false; };
+        const s = startServer(gw, { cancelGraceMs: 5_000 });
+        const sessionId = await s.newSession();
+        const pending = s.prompt(sessionId, 'short task');
+        await firstChunk.promise;
+        const started = Date.now();
+        s.notify('session/cancel', { sessionId });
+        assert.deepEqual((await exec(s, sessionId, 'cancel_status')).result, { success: true, data: { confirmed: false } });
+        assert.ok(Date.now() - started < 1_500, 'no wait for a record that will not come');
+        assert.deepEqual((await pending).result, { stopReason: 'cancelled' });
+        await s.close();
+    });
+
+    test('a stop with no record before the grace ends is reported unconfirmed', async () => {
+        const gw = new FakeGateway();
+        const { rows } = history(gw);
+        const firstChunk = deferred();
+        gw.streams.push(async function* () {
+            rows.push({ role: 'user', content: 'long task' });
+            yield frame('chunk', 'working');
+            firstChunk.resolve();
+            await new Promise(() => undefined);
+        });
+        gw.stopImpl = () => new Promise(() => undefined);
+        const s = startServer(gw, { cancelGraceMs: 80 });
+        const sessionId = await s.newSession();
+        const pending = s.prompt(sessionId, 'long task');
+        await firstChunk.promise;
+        s.notify('session/cancel', { sessionId });
+        assert.deepEqual((await exec(s, sessionId, 'cancel_status')).result, { success: true, data: { confirmed: false } });
+        assert.deepEqual((await pending).result, { stopReason: 'cancelled' });
         await s.close();
     });
 });

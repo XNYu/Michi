@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { BorderBtn } from '../../primitives';
 import { signOutAndReset } from '../../../../services/signOut';
+import { SettingsRow, SettingsSection } from './SettingsSection';
 
 export function AccountPane({ user }: { user: { email: string; name?: string; image?: string | null } }) {
   const [busy, setBusy] = useState(false);
@@ -18,38 +19,25 @@ export function AccountPane({ user }: { user: { email: string; name?: string; im
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, fontSize: 'var(--fs-md)' }}>
-      <div>
-        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>
-          signed in as
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {user.image ? (
-            <img
-              src={user.image}
-              alt=""
-              width={32}
-              height={32}
-              style={{ borderRadius: '50%', objectFit: 'cover' }}
-            />
-          ) : null}
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {user.name ? <span style={{ fontWeight: 600 }}>{user.name}</span> : null}
-            <span style={{ color: 'var(--term-muted)' }}>{user.email}</span>
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <BorderBtn onClick={onSignOut} disabled={busy}>
-          {busy ? 'Signing out…' : 'Sign out'}
-        </BorderBtn>
-        {error && (
-          <div style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', marginTop: 6 }}>
-            {error}
-          </div>
-        )}
-      </div>
-    </div>
+    <SettingsSection title="Account">
+      <SettingsRow
+        label={
+          <span className="settings-account">
+            {user.image ? <img src={user.image} alt="" width={32} height={32} /> : null}
+            <span className="settings-account__who">
+              <span>{user.name || user.email}</span>
+              {user.name ? <span className="settings-account__email">{user.email}</span> : null}
+            </span>
+          </span>
+        }
+        control={
+          <BorderBtn onClick={onSignOut} disabled={busy}>
+            {busy ? 'Signing out…' : 'Sign out'}
+          </BorderBtn>
+        }
+      >
+        {error && <p className="settings-row__note" role="alert">{error}</p>}
+      </SettingsRow>
+    </SettingsSection>
   );
 }

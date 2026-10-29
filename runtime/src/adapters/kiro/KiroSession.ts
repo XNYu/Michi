@@ -21,6 +21,7 @@ import {
     kiroV2RosterEntry,
     kiroV2SummaryResult,
     kiroV3DelegationEntry,
+    subagentPermissionTitle,
 } from "./kiroSubagents";
 import type {
     AgentSession,
@@ -39,7 +40,7 @@ import { ACPRequestNotSentError, type AcpClient, type AcpPromptBlock, type AcpUp
 import type { KiroRuntime } from "./KiroRuntime";
 import { KIRO_FLAVOR, type KiroFlavor } from "./kiroFlavor";
 import { injectedHostEvent } from "./kiroHostEvents";
-import { KIRO_METADATA_DONE_SENTINEL } from "./kiroProtocol";
+import { KIRO_APPROVE_FOR_ME_PRESET, KIRO_METADATA_DONE_SENTINEL } from "./kiroProtocol";
 import { imageMimeType, prepareAttachments, type ResolvedAttachment } from "../../core/attachments";
 import { classifyAcpError, isRetryable, KiroCancelRecoveryBusyError, needsRespawn, retryReason, toErrorKind } from "./acpErrors";
 import { HEARTBEAT_INTERVAL_MS } from "../../core/constants";
@@ -334,6 +335,7 @@ export class KiroSession implements AgentSession {
         this.turnPermissionMode = this.runtime.host.permissions.mode(this.owner);
         const turn = new AbortController();
         this.activeTurn = turn;
+        this.pendingCancelAck = null;
         const pageTurnAttribution = this.owner?.mode === 'interactive' && input?.turnId && input.assistantMessageId
             ? { turnId: input.turnId, assistantId: input.assistantMessageId } : null;
         this.history.push({ role: "user", content: text });
@@ -343,7 +345,7 @@ export class KiroSession implements AgentSession {
         // Non-image attachments have no ACP block type, so name them by path
         // instead of dropping them silently; kiro-cli can read them itself.
         const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
-        const turnSuffix = metaAgent || maintenanceContext ? '' : this.runtime.host.prompt.turnSuffix({
+        const turnSuffix = metaAgent || this.toolProfile?.assistant || maintenanceContext ? '' : this.runtime.host.prompt.turnSuffix({
             metadataChannel: this.flavor.prompt.metadataChannel,
             userTurnCount,
             enableFollowUps: this.enableFollowUps,
@@ -368,6 +370,12 @@ export class KiroSession implements AgentSession {
                 if (ev.kind === "chunk") buf.push(ev.text);
                 if (ev.kind === 'turn_end' && ev.stopReason !== 'cancelled' && ev.stopReason !== 'error' && input?.assistantMessageId) {
                     await this.runtime.recordForkAnchor?.(this.id, this.nativeSessionId, input);
+                }
+                // The host hears this turn's cancel ack before its end: the
+                // ack settles with the prompt, ahead of the end it yields.
+                const cancelAck = this.pendingCancelAck as Promise<CancelAck> | null;
+                if (ev.kind === 'turn_end' && ev.stopReason === 'cancelled' && this.activeTurn === turn && cancelAck) {
+                    await cancelAck.catch(() => undefined);
                 }
                 yield ev;
                 if (ev.kind === "turn_end") break;
@@ -566,6 +574,7 @@ export class KiroSession implements AgentSession {
             return;
         }
         if (this.stateListeners.size) this.observeClient(c);
+        await this.reconcilePolicyPresets(c);
         let endMcpTurn: (() => void) | undefined;
         try {
             // Recovery can replace the MCP group. Activate the rebuilt binding
@@ -574,6 +583,40 @@ export class KiroSession implements AgentSession {
             yield* this.translateUpdates(c.prompt(this.nativeSessionId, text, imageBlocks, signal), signal);
         } finally {
             endMcpTurn?.();
+        }
+    }
+
+    /**
+     * Kiro V3 seeds Approve for me only when it opens a session, so this
+     * reopens the session when a turn in Ask needs the preset and lacks it,
+     * or must not keep one from an earlier choice. Trust and YOLO approve
+     * everything anyway and leave the session as it is. Not removing it fails
+     * the turn: its classifier would approve what the person asked to review.
+     */
+    private async reconcilePolicyPresets(c: AcpClient): Promise<void> {
+        if (this.turnPermissionMode !== 'ask' || !this.runtime.approveForMe) return;
+        const current = c.policyPresets?.(this.nativeSessionId);
+        if (current === undefined) return;
+        const has = current.includes(KIRO_APPROVE_FOR_ME_PRESET);
+        const wants = this.runtime.policyPresetsFor(this.owner, this.ownerUserId, this.toolProfile).includes(KIRO_APPROVE_FOR_ME_PRESET);
+        if (has === wants) return;
+        const presets = current.filter((preset) => preset !== KIRO_APPROVE_FOR_ME_PRESET).concat(wants ? [KIRO_APPROVE_FOR_ME_PRESET] : []);
+        try {
+            // Closing the session could end a workflow Kiro runs for it.
+            if (c.hasOpenWorkflowRuns?.()) throw new Error('a Kiro workflow is running in this process');
+            await c.reopenWithPolicyPresets(this.nativeSessionId, presets);
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            const intact = !c.needsSessionRecovery?.(this.nativeSessionId) && c.policyPresets(this.nativeSessionId) === current;
+            // Still without the preset, Kiro asks for everything, as Ask does.
+            if (intact && !has) {
+                this.runtime.host.observability.log('warn', 'acp', 'Kiro could not turn on Approve for me; asking as in Ask', { sessionId: this.nativeSessionId, error: detail });
+                return;
+            }
+            // The next message restores a session left closed, with the current choice.
+            throw new Error(has
+                ? `Kiro could not turn off Approve for me for this chat: ${detail}. Send the message again, or choose Approve for me.`
+                : `Kiro could not turn on Approve for me for this chat: ${detail}. Send the message again.`);
         }
     }
 
@@ -799,7 +842,7 @@ export class KiroSession implements AgentSession {
                             kind: "permission_request" as const,
                             requestId: update.requestId,
                             toolCallId: update.toolCall?.toolCallId,
-                            title: update.toolCall?.title ?? "Tool call",
+                            title: subagentPermissionTitle(update, update.toolCall?.title ?? "Tool call"),
                             options: rawOptions,
                             source: "acp_permission",
                         };
@@ -824,7 +867,7 @@ export class KiroSession implements AgentSession {
                         kind: "permission_request" as const,
                         requestId: update.requestId,
                         toolCallId: update.toolCall?.toolCallId,
-                        title: toolName ? `Approve ${toolName}?` : update.toolCall?.title ?? "Tool call",
+                        title: subagentPermissionTitle(update, toolName ? `Approve ${toolName}?` : update.toolCall?.title ?? "Tool call"),
                         detail: typeof update.toolCall?.rawInput === 'string' ? update.toolCall.rawInput
                             : update.toolCall?.rawInput != null ? JSON.stringify(update.toolCall.rawInput) : undefined,
                         options,
@@ -854,6 +897,7 @@ export class KiroSession implements AgentSession {
                 const pending = narration.boundary(subagentSessionId);
                 if (pending) yield* narrationEvents([pending]);
                 if (child) {
+                    toolCallNames.remember(child);
                     yield { kind: "subagent_tool_activity" as const, ...kiroChildToolActivity(subagentSessionId, child) };
                     const result = kiroV2SummaryResult(child);
                     if (result) yield { kind: "subagent_list_update" as const, subagents: [kiroV2ResultPatch(subagentSessionId, result)] };
@@ -963,27 +1007,56 @@ export class KiroSession implements AgentSession {
     }
 
     /**
-     * ACP `session/cancel` is a notification, so there is no protocol response
-     * to wait on. We report `acknowledged` once the cancel was actually
-     * dispatched for a session this client owns, tagged `inferred` because
-     * dispatch is a proxy for the agent stopping, not proof of it. The 5s
-     * cancel watchdog in AcpClient is what turns a non-stopping agent into a
-     * quarantined session, and the hub's force-finish timer bounds the UI.
+     * `session/cancel` is a notification, so the ack comes from the flavor's
+     * KiroCancelAck. kiro-cli settles the pending `session/prompt` with
+     * stopReason "cancelled" (2.35.1: 0-30 ms on both engines); that answer
+     * within the cancel deadline is a native acknowledgement. Kiro Crew's
+     * Gateway records the stop, read after the dispatch. Any other outcome
+     * (no prompt out, another stopReason, a failed prompt, no record, the
+     * deadline) reports only that the cancel was dispatched, tagged
+     * `inferred`. The cancel watchdog in AcpClient still quarantines a
+     * session whose agent does not stop, and the hub's force-finish timer
+     * bounds the UI.
      */
-    async cancel(): Promise<CancelAck> {
+    cancel(): Promise<CancelAck> {
         // Only a turn Kiro started on its own is running: stop that one. A
         // prompt cancel would also mark the session's next prompt cancelled.
         if (!this.activeTurn && this.agentTurn) return this.cancelAgentTurn();
+        const ack = this.cancelPrompt();
+        // The turn's end waits for the ack (see send): ChatHub drops an ack
+        // that arrives after the turn has ended.
+        this.pendingCancelAck = ack;
+        return ack;
+    }
+
+    /** The ack of this turn's cancel, held until the turn's end is passed on (see send). */
+    private pendingCancelAck: Promise<CancelAck> | null = null;
+
+    private async cancelPrompt(): Promise<CancelAck> {
         this.runtime.endMcpSessionTurn?.(this.nativeSessionId);
         this.activeTurn?.abort();
         const c = this.runtime.getClient(this.cwd);
-        const dispatched = (await c?.cancel(this.nativeSessionId, { spareOvertakenWake: true })) === true;
-        return {
+        const inferred = (dispatched: boolean): CancelAck => ({
             acknowledged: dispatched,
             source: "inferred",
             confidence: "unknown",
             nativeMethod: "session/cancel",
-        };
+        });
+        if (!c) return inferred(false);
+        const by = this.flavor.cancelAck;
+        if (by?.kind === 'prompt-settlement') {
+            const settled = await c.cancelAndSettle(this.nativeSessionId, { spareOvertakenWake: true });
+            if (settled.dispatched && settled.stopReason === 'cancelled') {
+                return { acknowledged: true, source: "native", confidence: "native", nativeMethod: "session/cancel + stopReason cancelled" };
+            }
+            return inferred(settled.dispatched);
+        }
+        const dispatched = (await c.cancel(this.nativeSessionId, { spareOvertakenWake: true })) === true;
+        if (dispatched && by?.kind === 'agent-record') {
+            const confirmed = await by.confirm(c, this.nativeSessionId).catch(() => undefined);
+            if (confirmed) return confirmed;
+        }
+        return inferred(dispatched);
     }
 
     async steer(text: string): Promise<SteerResult> {

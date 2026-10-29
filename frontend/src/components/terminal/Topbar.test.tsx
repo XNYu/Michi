@@ -6,7 +6,7 @@ import { ChatProvider } from '../../state/chatStore';
 import { PrefsProvider } from '../../state/prefs';
 
 // Avoid hitting the version endpoint in tests but keep the rest of the API
-// surface (chatStore needs listAgentModes/listModels/etc.).
+// surface (chatStore needs listAgentModes/etc.).
 vi.mock('../../services/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/api')>();
   return {
@@ -14,7 +14,6 @@ vi.mock('../../services/api', async (importOriginal) => {
     checkVersion: vi.fn().mockResolvedValue({ updateAvailable: false }),
     triggerUpdate: vi.fn(),
     listAgentModes: vi.fn().mockResolvedValue({ availableModes: [], defaultModeId: null }),
-    listModels: vi.fn().mockResolvedValue({ models: [], defaultModel: null }),
   };
 });
 

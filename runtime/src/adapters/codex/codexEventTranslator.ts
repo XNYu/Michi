@@ -39,6 +39,13 @@ const N = {
 const TOOL_ITEM_TYPES = new Set(['commandExecution', 'fileChange', 'mcpToolCall', 'dynamicToolCall', 'webSearch']);
 
 /**
+ * The proposed plan of a Plan-mode turn. Codex streams it as `item/plan/delta`
+ * but says the deltas need not add up to the completed item, so the answer
+ * shows the completed item's text.
+ */
+const PLAN_ITEM_TYPE = 'plan';
+
+/**
  * ThreadItem's compaction variant is camelCase `contextCompaction`. The
  * snake_case spellings live on ResponseItem (delivered via
  * `rawResponseItem/completed`, which we do not subscribe to) and are kept here
@@ -443,6 +450,15 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
             ...(failed && errors ? { output: truncatePayload(errors) } : {}),
           });
           if (roster.length > 0) emit({ kind: 'subagent_list_update', subagents: roster });
+          break;
+        }
+        if (itemType === PLAN_ITEM_TYPE) {
+          const text = typeof item['text'] === 'string' ? item['text'] : '';
+          if (!text.trim()) break;
+          const itemId = typeof item['id'] === 'string' && item['id'] ? item['id'] : PLAN_ITEM_TYPE;
+          if (lastAgentMessageItemId !== undefined && itemId !== lastAgentMessageItemId) emit({ kind: 'chunk', text: '\n\n' });
+          lastAgentMessageItemId = itemId;
+          emit({ kind: 'chunk', text });
           break;
         }
         if (!TOOL_ITEM_TYPES.has(itemType)) break;

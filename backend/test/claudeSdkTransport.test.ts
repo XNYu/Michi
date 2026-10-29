@@ -1,3 +1,4 @@
+import { restrictedChatProfile } from './helpers/restrictedChatProfile';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -154,7 +155,7 @@ test('synchronous SDK startup failure retires the process before Session owns it
 /** The options ClaudeSession hands the transport for the ⌘J assistant (ClaudeSession.doSpawn). */
 function assistantTransportOptions(): Partial<ClaudeSdkTransportOptions> {
   const { claudeSpawnPolicy, assistantToolProfile } = require('../src/assistant/policy') as typeof import('../src/assistant/policy');
-  const policy = claudeSpawnPolicy({ ownerMode: 'interactive', permissionMode: 'yolo', toolProfile: assistantToolProfile() });
+  const policy = claudeSpawnPolicy({ ownerMode: 'interactive', permissionMode: 'yolo', toolProfile: restrictedChatProfile() });
   return {
     tools: [...policy.tools!], disallowedTools: [...policy.disallowedTools!], restricted: true,
     isolateSettings: policy.isolateSettings, restrictedMode: policy.restrictedMode,

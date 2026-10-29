@@ -60,8 +60,8 @@ import {
     SUBMIT_AGENT_RESULT_TOOL,
     type RunWorkerToolProfile,
 } from "../runs/runWorkerTools";
-import { ASSISTANT_TOOLS, runAssistantTool } from "../../assistant/tools";
-import { isAssistantWorkspace } from "../../assistant/identity";
+import { assistantToolsFor, runAssistantTool } from "../../assistant/tools";
+import { assistantPurposeOf, isAssistantWorkspace } from "../../assistant/identity";
 import { PAGE_TOOL_NAMES, type ActivePageTurnAttributionGetter, type PageToolName } from '../pageToolNames';
 import { runPageTool } from '../pageTools';
 import { isMaintenanceProfile } from '../maintenancePolicy';
@@ -99,7 +99,8 @@ export interface BuildPiToolsOpts {
     /**
      * Better-Auth user id of the chat owner. Forwarded to executeBash so cloud
      * mode can apply an explicit env allowlist (hiding MICHI_ENCRYPTION_KEY etc.).
-     * Null / undefined on desktop — falls through to full process.env.
+     * Required in cloud mode: without it bash refuses to run. Null / undefined
+     * on desktop, where bash keeps the full process.env.
      */
     ownerUserId?: string | null;
     /**
@@ -207,8 +208,9 @@ function buildPiAssistantTools(opts: BuildPiToolsOpts): any[] {
     const owner = opts.owner;
     const nodeId = chatNodeOf(owner) ?? null;
     const requestApproval = opts.requestThreadMessageApproval;
+    const requestJobApproval = opts.requestScheduledJobApproval;
     // No Desk tools while Agent Desk is off.
-    return ASSISTANT_TOOLS.map((tool) => ({
+    return assistantToolsFor(assistantPurposeOf(nodeId)).map((tool) => ({
         name: tool.name,
         label: tool.label,
         description: tool.description,
@@ -223,12 +225,18 @@ function buildPiAssistantTools(opts: BuildPiToolsOpts): any[] {
                 approveThreadMessage: requestApproval
                     ? (request) => requestApproval(request, signal)
                     : async () => ({ approved: false, reason: "unavailable" }),
+                approveScheduledJob: requestJobApproval
+                    ? (request) => requestJobApproval(request, signal)
+                    : async () => ({ approved: false, reason: "unavailable" }),
                 getActivePageTurnAttribution: opts.getActivePageTurnAttribution,
             }, input);
             return { ...result, details: result };
         },
     }));
 }
+
+/** Pi's own tools for files and commands; the Scheduled window keeps these beside its Michi catalog. */
+const PI_NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set(["read", "ls", "grep", "find", "write", "edit", "bash", "web_search"]);
 
 export function buildPiTools(opts: BuildPiToolsOpts): any[] {
     // The assistant's catalog needs the profile and a chat in the assistant's
@@ -256,6 +264,8 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
             case 'read_page':
             case 'edit_page':
             case 'create_page':
+            case 'create_database':
+            case 'configure_database':
             case 'read_database':
             case 'edit_database':
             case 'list_page_components':
@@ -271,7 +281,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     label: name.replaceAll('_', ' '),
                     description: t.description,
                     parameters,
-                    ...(['edit_home', 'edit_page', 'create_page', 'edit_database', 'save_page_component', 'configure_database_view', 'open_task_database'].includes(name) ? { executionMode: 'sequential' as const } : {}),
+                    ...(['edit_home', 'edit_page', 'create_page', 'create_database', 'configure_database', 'edit_database', 'save_page_component', 'configure_database_view', 'open_task_database'].includes(name) ? { executionMode: 'sequential' as const } : {}),
                     execute: async (_id: string, args: any) => {
                         const { __tool_use_purpose: _purpose, ...input } = (args ?? {}) as Record<string, unknown>;
                         const result = runPageTool(name, {
@@ -330,6 +340,7 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                             ownerUserId: opts.ownerUserId,
                             name: args.name,
                             body: args.body,
+                            path: args.path,
                         });
                         if (!result) {
                             throw new Error(`Invalid context name: ${args.name}`);
@@ -817,6 +828,17 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
     const tools = opts.agentRunTools
         ? [...builtinTools, ...buildPiAgentRunTools(opts.agentRunTools, Type)]
         : builtinTools;
+    if (opts.toolProfile?.assistant) {
+        if (chatNodeOf(opts.owner) === undefined || !isAssistantWorkspace(opts.workspaceId)) return [];
+        const assistantTools = buildPiAssistantTools(opts);
+        const names = new Set(assistantTools.map((tool) => tool.name));
+        // The Scheduled window keeps only Pi's native tools beside its own
+        // catalog: none of the ordinary Michi tools (Pages, artifacts, branches,
+        // Agent Runs) bound to the assistant's hidden workspace.
+        const scheduling = assistantPurposeOf(chatNodeOf(opts.owner)) === "schedule";
+        const kept = tools.filter((tool) => !names.has(tool.name) && (!scheduling || PI_NATIVE_TOOL_NAMES.has(tool.name)));
+        return [...kept, ...assistantTools];
+    }
     const worker = runWorkerProfile(opts.owner, opts.toolProfile);
     return worker ? [...tools, buildSubmitAgentResultTool(opts.owner!, worker, Type)] : tools;
 }

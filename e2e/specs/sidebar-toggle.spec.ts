@@ -46,10 +46,10 @@ for (const view of ['activity', 'structure'] as const) {
     await page.setViewportSize({ width: 600, height: 850 });
     await page.getByRole('button', { name: 'Open sidebar', exact: true }).click();
     await expect(inner).toBeVisible();
-    expect((await inner.boundingBox())!.width).toBeCloseTo(320, 0);
-    // The overlay opens beside the area rail, which keeps Settings in reach.
-    const rail = (await page.getByRole('navigation', { name: 'Areas' }).boundingBox())!;
-    await expect.poll(async () => (await inner.boundingBox())!.x).toBe(rail.x + rail.width);
+    // A narrow window has no rail: the overlay starts at the edge, takes most
+    // of the screen (inside its 1px edge) and carries the areas, Settings included.
+    expect((await inner.boundingBox())!.width).toBeCloseTo(Math.min(600 * 0.85, 340) - 1, 0);
+    await expect.poll(async () => (await inner.boundingBox())!.x).toBe(0);
     await expect(areaButton(page, 'settings')).toBeVisible();
     await page.screenshot({ path: info.outputPath(`${view}-narrow.png`) });
     await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();

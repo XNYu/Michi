@@ -21,11 +21,13 @@ describe('capabilityDescriptor', () => {
     }
   });
 
-  test('crew keeps Kiro basics but hides Kiro private extensions', () => {
+  test('crew keeps Kiro basics; compaction goes through its Gateway, and App callers cannot steer', () => {
     assert.equal(describeRuntimeCapabilities('kiro'), KIRO_DESCRIPTOR);
     assert.equal(describeRuntimeCapabilities('crew'), CREW_DESCRIPTOR);
     assert.equal(KIRO_DESCRIPTOR.compact.availability, 'native');
-    assert.equal(CREW_DESCRIPTOR.compact.availability, 'invisible');
+    // Gateway /compact on the App's own idle slot, not Kiro's private extension.
+    assert.equal(CREW_DESCRIPTOR.compact.availability, 'native');
+    assert.equal(CREW_DESCRIPTOR.compact.confidence, 'projected');
     assert.equal(CREW_DESCRIPTOR.steer.availability, 'invisible');
   });
 

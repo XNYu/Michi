@@ -2,6 +2,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import path from 'path';
 import { runMigrations as runSqlMigrations } from './migrate';
 import { getMichiDataDir } from './dataDir';
+import { instrumentDatabase, timedSync } from './performanceDiagnostics';
 
 declare const __MICHIBUNDLE__: boolean | undefined;
 
@@ -34,7 +35,7 @@ export function getDbPath(): string {
 
 export function initDb(): DatabaseSync {
   if (_db) return _db;
-  _db = new DatabaseSync(getDbPath());
+  _db = instrumentDatabase(new DatabaseSync(getDbPath()), 'main-db');
   _db.exec('PRAGMA journal_mode = WAL');
   _db.exec('PRAGMA synchronous = NORMAL');
   _db.exec('PRAGMA foreign_keys = ON');
@@ -94,7 +95,7 @@ export function getAuditDbPath(): string {
  */
 export function getAuditDb(): DatabaseSync {
   if (_auditDb) return _auditDb;
-  _auditDb = new DatabaseSync(getAuditDbPath());
+  _auditDb = instrumentDatabase(new DatabaseSync(getAuditDbPath()), 'audit-db');
   _auditDb.exec('PRAGMA journal_mode = WAL');
   _auditDb.exec('PRAGMA foreign_keys = ON');
   // Same multi-window prereq as initDb: audit rows are written on the hot path
@@ -126,7 +127,7 @@ export function runInTransaction<T>(fn: () => T): T {
       if (isSqliteBusy(err) && attempt < maxRetries) {
         // Exponential backoff: 100ms, 200ms, 400ms.
         // Uses Atomics.wait on a dummy SharedArrayBuffer for sync sleep.
-        sleepSyncMs(100 * Math.pow(2, attempt));
+        timedSync('main-db.busy-backoff', () => sleepSyncMs(100 * Math.pow(2, attempt)));
         continue;
       }
       throw err;

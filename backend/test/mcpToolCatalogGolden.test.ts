@@ -115,6 +115,7 @@ function kiroChatCallbacks(): McpSlotCallbacks {
         onSpawnBranches: async () => [],
         onSaveArtifact: () => null,
         onUpdateArtifact: () => null,
+        onShowImage: () => ({ error: 'unsupported in test' }),
         onSetFollowUps: () => {},
         onSetBranchOverview: () => {},
         metadataDoneSentinel: '<michi-metadata-done/>',

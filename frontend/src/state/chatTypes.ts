@@ -1,15 +1,43 @@
 import type { AgentSessionState, ChatStreamEnvelope, ChatStreamPayloads, SteerMessageOptions } from 'michi-shared';
 import type { AgentCommand, AgentReasoning, PlanEntry, RuntimeId, SessionMode } from '../services/api';
-import type { AgentStatus } from '../services/api';
+import type { AgentStatus, PermissionRequest } from '../services/api';
 import type { MentionRecord } from '../components/mentions';
 import type { AttachmentRef } from '../lib/composerAttachments';
-import type { DigestState } from './digest';
 import type { UserInputAnswer, UserInputQuestion } from '../services/chatStreamEvents';
-import type { BranchOverviewEntry, SteeringReport, PermissionOption } from 'michi-shared';
+import type { BranchOverviewEntry, SteeringReport } from 'michi-shared';
 import type { DurableMessageMetadata, ThreadMessageSource } from 'michi-shared';
 import type { PaneItem, PaneLauncherChoice } from './paneItems';
 
-export type { AgentStatus } from '../services/api';
+export type { AgentStatus, PermissionRequest } from '../services/api';
+
+export interface DigestState {
+  /** Chat node ids whose transcripts feed the digest. */
+  sources: string[];
+  /** Snapshot of each source's fingerprint at generation time. */
+  sourceFingerprints: Record<string, string>;
+  /** The generated markdown. Empty string until the first generation completes. */
+  content: string;
+  /** Epoch ms when content was last written. 0 = never. */
+  generatedAt: number;
+  /**
+   * Epoch ms when the user last opened the digest detail view. Used to drive
+   * the unread indicator: a digest is unread iff `generatedAt > viewedAt`.
+   * 0 = never viewed.
+   */
+  viewedAt: number;
+  /** Mirror of chat status: 'streaming' while a generation/refresh is in flight. */
+  status: 'idle' | 'streaming' | 'error';
+  /** Last error message, if status === 'error'. */
+  error?: string;
+  /** Optional user-supplied prompt appended to the digest preamble. */
+  customPrompt?: string;
+  /** Ephemeral generation activity, never persisted or included in the result. */
+  generation?: {
+    startedAt: number;
+    thought: string;
+    activity: string;
+  };
+}
 
 export type Theme = 'light' | 'dark';
 
@@ -118,10 +146,12 @@ export interface UserSendMeta {
   onRejected?: () => void;
   crewMemoryMode?: import('michi-shared').CrewMemoryMode;
   permissionMode?: import('michi-shared').ChatPermissionMode;
+  /** Approve for me on top of `permissionMode: 'ask'` (Kiro V3). */
+  approveForMe?: boolean;
   /** Quoted passage for this turn. Rendered as a chip in the bubble. */
   quotedText?: string;
   /** Where quotedText came from (ChatMessage.quoteSource), for a retry's framing. */
-  quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
+  quoteSource?: import('../lib/quoteSource').AnyQuoteSource;
   /** File attachments for this turn. Rendered as decorative pills. */
   attachments?: MessageAttachment[];
   /** Pending reply-to-selection comments for this turn. Rendered as chips. */
@@ -192,7 +222,7 @@ export interface ChatMessage {
    * assistant's attached context), so a retry frames it the same way. In
    * memory only: not persisted.
    */
-  quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
+  quoteSource?: import('../lib/quoteSource').AnyQuoteSource;
   /**
    * File attachments the user dropped/pasted onto this turn. Decorative in
    * the transcript; the wire payload still carries them via the
@@ -220,15 +250,6 @@ export interface ChatMessage {
    * thread's agent (send_to_thread). `text` then holds only the relayed body.
    */
   threadMessage?: ThreadMessageSource;
-}
-
-export interface PermissionRequest {
-  requestId: number;
-  toolCallId?: string;
-  title: string;
-  detail?: string;
-  options: PermissionOption[];
-  source?: string;
 }
 
 export interface UserInputRequest {
@@ -273,7 +294,7 @@ export interface ComposerDraft {
   mentions: ComposerMention[];
   /** Selection quote the composer is replying to. Attachments are intentionally not persisted. */
   quotedText?: string;
-  quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
+  quoteSource?: import('../lib/quoteSource').AnyQuoteSource;
 }
 
 /**
@@ -308,6 +329,8 @@ export interface ChatNodeState {
    * Hydrated read-only, never written back by workspace sync. */
   maintenanceJobId?: string | null;
   permissionMode?: import('michi-shared').ChatPermissionMode;
+  /** Approve for me on top of `permissionMode: 'ask'` (Kiro V3). Server-owned, like permissionMode. */
+  permissionApproveForMe?: boolean;
   /** Stable id used as the key in the nodes map. */
   nodeId: string;
   /** 'chat' for normal agent-backed threads; 'digest' for generated markdown docs. */
@@ -559,7 +582,7 @@ export interface PendingComment {
   /** Unix ms when added; kept for UI ordering / potential future sorting. */
   createdAt: number;
   /** When the comment targets an artifact file, carries source metadata. */
-  source?: import('../lib/quoteFormat').QuoteSource;
+  source?: import('../lib/quoteSource').QuoteSource;
 }
 
 /**
@@ -584,7 +607,7 @@ export interface PendingQueuedMessage {
   /** Quoted-selection text active at queue time, if any. */
   quotedText?: string;
   /** Where quotedText came from, when not a selection from a reply (the ⌘J assistant's attached context). */
-  quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
+  quoteSource?: import('../lib/quoteSource').AnyQuoteSource;
   /** Pre-formatted comment block (from formatCommentsBlock) active at queue time. */
   commentBlock?: string;
   /** Structured source metadata retained when this queue is flushed. */
@@ -719,7 +742,7 @@ export interface Project {
 
 export type ChatAction =
   | { type: 'create'; nodeId: string; projectId: string; parentNodeId?: string; mergeSources?: string[]; modeId?: string }
-  | { type: 'set-permission-mode'; nodeId: string; mode: import('michi-shared').ChatPermissionMode }
+  | { type: 'set-permission-mode'; nodeId: string; mode: import('michi-shared').ChatPermissionMode; approveForMe?: boolean }
   | {
       type: 'bind-chat';
       nodeId: string;
@@ -743,7 +766,7 @@ export type ChatAction =
       mentions?: Array<{ kind: 'context' | 'node'; refId: string; label: string }>;
       /** Not a composer send: the composer draft stays (UserSendMeta.keepDraft). */
       keepDraft?: boolean;
-      quoteSource?: import('../lib/quoteFormat').AnyQuoteSource;
+      quoteSource?: import('../lib/quoteSource').AnyQuoteSource;
     }
   | { type: 'chunk'; nodeId: string; assistantId: string; text: string; observedAt?: number }
   | { type: 'steering-report'; nodeId: string; assistantId: string; reports: SteeringReport[] }
@@ -1165,7 +1188,7 @@ export interface ChatContextValue {
   toggleSelection: (nodeId: string) => void;
   clearSelection: () => void;
   createThread: (modeId?: string) => string | null;
-  setChatPermissionMode: (nodeId: string, mode: import('michi-shared').ChatPermissionMode) => Promise<void>;
+  setChatPermissionMode: (nodeId: string, choice: import('michi-shared').ChatPermissionChoice) => Promise<void>;
   archiveTree: (treeId: string) => void;
   unarchiveTree: (treeId: string) => void;
   pinTree: (treeId: string) => void;
@@ -1224,7 +1247,7 @@ export interface ChatContextValue {
    * flushes on the next outgoing prompt. `quotedText` is the selected
    * passage, `body` is the user's reply.
    */
-  addPendingComment: (nodeId: string, quotedText: string, body: string, source?: import('../lib/quoteFormat').QuoteSource, context?: import('./fileFeedback').FileFeedbackTarget) => boolean;
+  addPendingComment: (nodeId: string, quotedText: string, body: string, source?: import('../lib/quoteSource').QuoteSource, context?: import('./fileFeedbackTypes').FileFeedbackTarget) => boolean;
   /** Update the body text of a pending comment. No-op if the id is unknown. */
   editPendingComment: (nodeId: string, commentId: string, body: string) => void;
   /** Drop one pending comment by id. No-op if the id is unknown. */

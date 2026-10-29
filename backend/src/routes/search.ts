@@ -374,6 +374,7 @@ function searchNodesByTitleFts(
     JOIN workspaces w ON n.workspace_id = w.id
     WHERE nodes_fts MATCH ?
       AND n.deleted_at IS NULL AND n.page_id IS NULL AND n.maintenance_job_id IS NULL AND n.kind != 'digest'
+      AND n.purged_at IS NULL AND w.purged_at IS NULL
       AND n.title IS NOT NULL AND TRIM(n.title) != ''
   `;
   const params: (string | number)[] = [ftsQuery];
@@ -452,6 +453,7 @@ function searchNodesByTitleLike(
     FROM nodes n
     JOIN workspaces w ON n.workspace_id = w.id
     WHERE n.deleted_at IS NULL AND n.page_id IS NULL AND n.maintenance_job_id IS NULL AND n.kind != 'digest'
+      AND n.purged_at IS NULL AND w.purged_at IS NULL
       AND n.title IS NOT NULL AND TRIM(n.title) != ''
       AND ${likeClauses.join(' AND ')}
   `;

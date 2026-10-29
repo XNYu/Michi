@@ -1,3 +1,6 @@
+import { readMetaAgentMetrics } from '../services/metaAgentMetrics';
+import { LOCAL_AGENT_OWNER_ID } from '../services/agentOwner';
+import { decideToolApproval } from '../services/metaAgent/toolApprovals';
 import { Router } from 'express';
 import type { Response } from 'express';
 import type { MetaAgentSettingsPatch, MetaAgentToolset } from 'michi-shared';
@@ -6,8 +9,8 @@ import { log } from '../services/logger';
 import { META_AGENT_TOOLSETS, retryMetaAgentGuard } from '../services/metaAgent/guardStatus';
 import { MetaAgentSettingsError, metaAgentInfo, updateMetaAgentSettings } from '../services/metaAgent/settings';
 
-/** The Meta agent reads every workspace: like the assistant, only this machine's own app may configure it. */
-const metaAgentLocalOnly = localOnlyGuard('The Meta agent is local-only');
+/** The Meta agent reads every workspace: only this machine's app or its authenticated remote owner may configure it. */
+const metaAgentLocalOnly = localOnlyGuard('The Meta agent requires local or authenticated remote access', { allowAuthenticatedRemote: true });
 
 const FIELDS = ['runtimeId', 'providerId', 'modelId', 'reasoning', 'writeWorkspaceHomes', 'maintainSpacesHome', 'firstRunDays'] as const;
 
@@ -36,7 +39,7 @@ function retryToolsets(body: unknown): readonly MetaAgentToolset[] {
 /**
  * The Meta agent's one settings record (services/metaAgent/settings.ts) and
  * its restriction check results (services/metaAgent/guardStatus.ts).
- * Local-only; never mounted in cloud mode or on a remotely exposed backend.
+ * Available locally and to the authenticated remote owner; never mounted in cloud mode.
  *
  *   GET /api/meta-agent           → MetaAgentInfo
  *   PUT /api/meta-agent/settings  {runtimeId?, providerId?, modelId?, reasoning?,
@@ -48,6 +51,10 @@ function retryToolsets(body: unknown): readonly MetaAgentToolset[] {
  */
 export function setupMetaAgentRoutes(): Router {
   const router = Router();
+  const info = async () => {
+    const usage = await readMetaAgentMetrics(LOCAL_AGENT_OWNER_ID).then(value => value.usage, () => null);
+    return metaAgentInfo(undefined, Date.now(), usage);
+  };
   router.use('/meta-agent', ...metaAgentLocalOnly);
 
   const fail = (res: Response, err: unknown, what: string) => {
@@ -59,30 +66,43 @@ export function setupMetaAgentRoutes(): Router {
     res.status(500).json({ error: 'The Meta agent settings are not available' });
   };
 
-  router.get('/meta-agent', (_req, res) => {
+  router.get('/meta-agent', async (_req, res) => {
     try {
-      res.json(metaAgentInfo());
+      res.json(await info());
     } catch (err) {
       fail(res, err, 'read');
     }
   });
 
-  router.put('/meta-agent/settings', (req, res) => {
+  router.put('/meta-agent/settings', async (req, res) => {
     try {
       updateMetaAgentSettings(settingsPatch(req.body));
-      res.json(metaAgentInfo());
+      res.json(await info());
     } catch (err) {
       fail(res, err, 'settings update');
     }
   });
 
-  router.post('/meta-agent/retry', (req, res) => {
+  router.post('/meta-agent/retry', async (req, res) => {
     try {
       retryMetaAgentGuard(retryToolsets(req.body));
-      res.json(metaAgentInfo());
+      res.json(await info());
     } catch (err) {
       fail(res, err, 'retry');
     }
+  });
+
+  router.post('/meta-agent/tool-approvals/:id', async (req, res) => {
+    const state = req.body?.state;
+    if (!['approved', 'denied', 'revoked'].includes(state)) {
+      res.status(400).json({ error: 'state must be approved, denied or revoked' }); return;
+    }
+    try {
+      if (!decideToolApproval(req.params.id, state)) {
+        res.status(404).json({ error: 'Tool approval request not found' }); return;
+      }
+      res.json(await info());
+    } catch (err) { fail(res, err, 'tool approval'); }
   });
 
   return router;

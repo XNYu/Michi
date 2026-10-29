@@ -1,3 +1,4 @@
+import { restrictedChatProfile } from './helpers/restrictedChatProfile';
 import { michiTestHost } from './helpers/michiTestHost';
 import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
 import { michiKiroRestrictedAgent } from '../src/agents/kiro/kiroMetaAgent';
@@ -65,7 +66,7 @@ async function main() {
             for (const toolset of ['chat', 'maintenance'] as const) {
                 const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry, { mcpPort: port }), defaultCwd: dataDir, modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({ engine, sidecarTitles: false }) });
                 const id = toolset === 'chat' ? assistant.nodeId : `n-maint-${engine}`;
-                const profile: RuntimeToolProfile = toolset === 'chat' ? assistantToolProfile() : maintenanceToolProfile();
+                const profile: RuntimeToolProfile = toolset === 'chat' ? restrictedChatProfile() : maintenanceToolProfile();
                 const started = Date.now();
                 try {
                     await runtime.newSession({
@@ -88,7 +89,7 @@ async function main() {
             // A Michi slot that wrongly exposes one more tool than the profile allows must stop the session.
             const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry, { mcpPort: port }), defaultCwd: dataDir, modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({ engine, sidecarTitles: false }) });
             const narrowed: RuntimeToolProfile = {
-                ...assistantToolProfile(), allowedToolNames: assistantToolProfile().allowedToolNames!.filter((name) => name !== EXTRA_TOOL),
+                ...restrictedChatProfile(), allowedToolNames: restrictedChatProfile().allowedToolNames!.filter((name) => name !== EXTRA_TOOL),
             };
             const create = registry.create.bind(registry);
             registry.create = ((...args: Parameters<typeof registry.create>) => {

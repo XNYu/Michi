@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { closeDb, getDb, initDb } from '../src/services/db';
+import { PageMaintenanceConfigService } from '../src/services/pages/maintenanceConfig';
 import { createLocalOriginGuard } from '../src/routes/middleware/localControl';
 
 import { ScheduledJobEventBus } from '../src/services/scheduledJobs/events';
@@ -148,6 +149,18 @@ describe('scheduled job routes', () => {
     const removed = await request('DELETE', `/api/scheduled-jobs/${created.body.id}`);
     assert.equal(removed.status, 204);
     assert.equal((await request('GET', `/api/scheduled-jobs/${created.body.id}`)).status, 404);
+  });
+
+  test('maintenance is absent from ordinary jobs and their controls cannot delete its progress', async () => {
+    await startServer(true);
+    const { job, config } = new PageMaintenanceConfigService(scheduler!).enable({ workspaceId: 'ws-1', ownerUserId: 'local-user' });
+    const listed = await request('GET', '/api/scheduled-jobs');
+    assert.deepEqual(listed.body.jobs, []);
+    for (const [method, suffix] of [['GET', ''], ['PATCH', ''], ['DELETE', ''], ['POST', '/run'], ['POST', '/cancel']]) {
+      assert.equal((await request(method, `/api/scheduled-jobs/${job.id}${suffix}`, { body: method === 'PATCH' ? { enabled: false } : undefined })).status, 404);
+    }
+    assert.equal(getDb().prepare('SELECT job_id FROM page_maintenance_configs WHERE workspace_id=?').get('ws-1')!.job_id, config.jobId);
+    assert.equal(scheduler!.getJob(job.id).nextRunAt, null);
   });
 
   test('startup upgrades already-applied legacy claims so Scheduled can load', async () => {

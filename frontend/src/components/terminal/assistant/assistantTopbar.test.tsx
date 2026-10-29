@@ -13,7 +13,6 @@ vi.mock('../../../services/api', async (importOriginal) => ({
   checkVersion: vi.fn().mockResolvedValue({ updateAvailable: false }),
   triggerUpdate: vi.fn(),
   listAgentModes: () => Promise.resolve({ availableModes: [], defaultModeId: null }),
-  listModels: () => Promise.resolve({ models: [], defaultModel: null }),
   fetchAgentStatus: () => Promise.resolve(null),
   fetchPrefs: () => Promise.resolve(null),
   savePrefs: () => Promise.resolve(),

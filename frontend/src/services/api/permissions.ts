@@ -1,5 +1,15 @@
 import { backendFetch } from './backendRequest';
 import { nodeBackendApiBase } from '../../config/backendConnections';
+import type { PermissionOption } from 'michi-shared';
+
+export interface PermissionRequest {
+  requestId: number;
+  toolCallId?: string;
+  title: string;
+  detail?: string;
+  options: PermissionOption[];
+  source?: string;
+}
 
 // ── Permission Response API ──
 

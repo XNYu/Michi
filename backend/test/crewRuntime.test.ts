@@ -79,11 +79,17 @@ const ORIGINAL_KIRO_CAPABILITIES = {
 };
 
 describe('crew runtime registration', () => {
-  test('crew descriptor hides unsupported steer and compact and labels Gateway fork as projected', () => {
+  test('crew descriptor hides App-refused steer, offers Gateway compaction, stop record, roster and credits', () => {
     const runtime = createCrew();
     const d = runtime.descriptor.harness;
+    // Official Gateway 0.11.0.1: App sends with steer:true are queued, not steered.
     assert.equal(d.steer.availability, 'invisible');
-    assert.equal(d.compact.availability, 'invisible');
+    assert.equal(d.compact.availability, 'native');
+    assert.equal(d.interruptAck.availability, 'native');
+    assert.equal(d.subagents.availability, 'native');
+    assert.match(d.subagents.notes ?? '', /Crew dashboard/);
+    assert.equal(d.usage.availability, 'native');
+    assert.equal(runtime.descriptor.topology.cancel, 'native-ack');
     assert.equal(d.sessionFork.availability, 'native');
     assert.equal(d.sessionFork.confidence, 'projected');
     assert.deepEqual(d, CREW_DESCRIPTOR);
@@ -292,6 +298,31 @@ describe('crew native fork and sessions', () => {
       }
       assert.match(prompt, /\[BRANCH-OVERVIEW:/);
     }
+  });
+
+  test('a Crew cancel reports the Gateway stop record as a native ack; without one it stays inferred', async () => {
+    const calls: string[] = [];
+    let report: unknown = { confirmed: true, state: 'stopped', outcome: 'soft' };
+    const client = {
+      cancel: async () => { calls.push('session/cancel'); return true; },
+      executeCommand: async (_sid: string, command: string) => { calls.push(command); return { success: true, data: report }; },
+    };
+    const runtime = { host: michiTestHost(), id: 'crew', getClient: () => client, endMcpSessionTurn: () => {} } as unknown as KiroRuntime;
+    const crew = new KiroSession('node', 'sid', runtime, '/tmp', { runtimeId: 'crew', flavor: CREW_KIRO_FLAVOR });
+    assert.deepEqual(await crew.cancel(), { acknowledged: true, source: 'native', confidence: 'native', nativeMethod: 'Crew stop_event stopped' });
+    assert.deepEqual(calls, ['session/cancel', 'cancel_status']);
+
+    report = { confirmed: false, state: 'stop_declined_compacting' };
+    assert.deepEqual(await crew.cancel(), { acknowledged: true, source: 'inferred', confidence: 'unknown', nativeMethod: 'session/cancel' });
+    client.executeCommand = async () => { throw new Error('adapter gone'); };
+    assert.equal((await crew.cancel()).source, 'inferred');
+
+    // kiro-cli's ack is the prompt's settlement: it never asks for a stop record.
+    calls.length = 0;
+    const settling = { ...client, cancelAndSettle: async () => { calls.push('session/cancel'); return { dispatched: true }; } };
+    const kiro = new KiroSession('node', 'sid', { ...runtime, id: 'kiro', getClient: () => settling } as unknown as KiroRuntime, '/tmp', { runtimeId: 'kiro' });
+    assert.equal((await kiro.cancel()).source, 'inferred');
+    assert.deepEqual(calls, ['session/cancel']);
   });
 
   test('crew newSession returns a session with the crew runtime id', async () => {

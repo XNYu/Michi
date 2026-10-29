@@ -1,6 +1,6 @@
 {
   "name": "michi-runtime",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "license": "ISC",
   "description": "Run Kiro-CLI, Kiro Crew, Codex and Claude Code agents from a server-side Node host behind one AgentRuntime / AgentSession contract.",
@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "michi-shared": "file:../shared",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "ws": "^8.21.3"
   },
   "peerDependencies": {

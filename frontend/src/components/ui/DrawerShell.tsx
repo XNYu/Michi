@@ -30,6 +30,10 @@ export interface DrawerShellProps {
   /** Handle Escape at the drawer level. Set false when a nested overlay (e.g. a
    *  lightbox) should consume Escape first. Default true. */
   closeOnEscape?: boolean;
+  /** How the header offers onClose. 'close' (default) is the trailing ×.
+   *  'back' puts a back chevron before the title instead, for a drawer that
+   *  fills a phone screen and reads as a page. */
+  closeControl?: 'close' | 'back';
   /** Override the default CSS width (440px). Applied as an inline style. */
   width?: number;
   /** Default true. False keeps the page usable beside the drawer: no scrim,
@@ -49,6 +53,7 @@ export function DrawerShell({
   headerActions,
   titleBadge,
   closeOnEscape = true,
+  closeControl = 'close',
   width,
   modal = true,
   children,
@@ -125,19 +130,35 @@ export function DrawerShell({
         }}
       >
         <div className="ui-overlay-header">
-          <span className="ui-overlay-title">▸ {title}</span>
+          {closeControl === 'back' && (
+            <button
+              type="button"
+              className="ui-overlay-close drawer-shell-back"
+              onClick={onClose}
+              title="Back (esc)"
+              aria-label="Back"
+            >
+              <svg width={18} height={18} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6}
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M10 3L5 8l5 5" />
+              </svg>
+            </button>
+          )}
+          <span className="ui-overlay-title">{closeControl === 'back' ? title : <>▸ {title}</>}</span>
           {titleBadge}
           <span style={{ flex: 1 }} />
           {headerActions}
-          <button
-            type="button"
-            className="ui-overlay-close"
-            onClick={onClose}
-            title="Close (esc)"
-            aria-label="Close"
-          >
-            ×
-          </button>
+          {closeControl === 'close' && (
+            <button
+              type="button"
+              className="ui-overlay-close"
+              onClick={onClose}
+              title="Close (esc)"
+              aria-label="Close"
+            >
+              ×
+            </button>
+          )}
         </div>
         {children}
       </div>

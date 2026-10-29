@@ -11,16 +11,16 @@ import {
 } from '../../../state/assistant/assistantStore';
 import { getAssistantComposer, resetAssistantComposerForTests } from '../../../state/assistant/assistantComposer';
 
-const api = vi.hoisted(() => ({ fetchAssistant: vi.fn() }));
+const api = vi.hoisted(() => ({ fetchAssistant: vi.fn(), resetAssistant: vi.fn() }));
 vi.mock('../../../services/api/assistant', async () => {
   const actual = await vi.importActual<typeof import('../../../services/api/assistant')>('../../../services/api/assistant');
-  return { ...actual, fetchAssistant: api.fetchAssistant };
+  return { ...actual, fetchAssistant: api.fetchAssistant, resetAssistant: api.resetAssistant };
 });
 vi.mock('../../../services/api/persistence', () => ({ fetchWorkspace: vi.fn(), fetchTreeMessages: vi.fn() }));
 
 vi.mock('../TPane', () => ({
-  default: ({ nodeId, embedded }: { nodeId: string; embedded?: boolean }) => (
-    <div data-testid="tpane" data-node={nodeId} data-embedded={String(!!embedded)}>
+  default: ({ nodeId, embedded, composerDisabled }: { nodeId: string; embedded?: boolean; composerDisabled?: boolean }) => (
+    <div data-testid="tpane" data-node={nodeId} data-embedded={String(!!embedded)} data-composer-disabled={String(!!composerDisabled)}>
       <div contentEditable suppressContentEditableWarning data-testid="composer" />
     </div>
   ),
@@ -59,6 +59,7 @@ function node(id: string, status = 'idle') {
 
 beforeEach(() => {
   api.fetchAssistant.mockReset().mockResolvedValue(INFO);
+  api.resetAssistant.mockReset();
   for (const fn of Object.values(chat.actions)) fn.mockReset();
   navigateToNode.mockReset();
   chat.nodes = { n1: node('n1') };
@@ -89,6 +90,46 @@ function deferred<T>() {
 }
 
 describe('AssistantPanelHost', () => {
+  it('follows another window that already started over instead of failing', async () => {
+    const elsewhere = { ...INFO, nodeId: 'n2', treeId: 't2' };
+    api.resetAssistant.mockRejectedValue(new AssistantApiError(409, 'The assistant already started over', false, elsewhere));
+    chat.nodes = { n1: node('n1'), n2: node('n2') };
+    await openPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    await waitFor(() => expect(screen.getByTestId('tpane').getAttribute('data-node')).toBe('n2'));
+    expect(getAssistantSnapshot().info?.nodeId).toBe('n2');
+  });
+
+  it('starts a new conversation from its header, not while the assistant answers', async () => {
+    const fresh = { ...INFO, nodeId: 'n2', treeId: 't2' };
+    api.resetAssistant.mockResolvedValue(fresh);
+    chat.nodes = { n1: node('n1', 'streaming'), n2: node('n2') };
+    const resets: unknown[] = [];
+    const onReset = (event: Event) => resets.push((event as CustomEvent).detail);
+    window.addEventListener(MICHI_ASSISTANT_RESET_EVENT, onReset);
+    try {
+      const view = await openPanel();
+      const button = screen.getByRole('button', { name: 'New conversation' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      chat.nodes = { ...chat.nodes, n1: node('n1') };
+      view.rerender(<AssistantPanelHost page="threads" />);
+      expect(button.disabled).toBe(false);
+      const pending = deferred<typeof fresh>();
+      api.resetAssistant.mockReturnValue(pending.promise);
+      fireEvent.click(button);
+      // No message goes to the conversation being archived.
+      expect(screen.getByTestId('tpane').getAttribute('data-composer-disabled')).toBe('true');
+      await act(async () => { pending.resolve(fresh); });
+      await waitFor(() => expect(screen.getByTestId('tpane').getAttribute('data-node')).toBe('n2'));
+      expect(screen.getByTestId('tpane').getAttribute('data-composer-disabled')).toBe('false');
+      expect(api.resetAssistant).toHaveBeenCalledWith('n1');
+      expect(resets).toEqual([fresh]);
+      expect(getAssistantSnapshot().info?.nodeId).toBe('n2');
+    } finally {
+      window.removeEventListener(MICHI_ASSISTANT_RESET_EVENT, onReset);
+    }
+  });
+
   it('renders nothing until opened, then the assistant conversation', async () => {
     const answer = deferred<typeof INFO>();
     api.fetchAssistant.mockReturnValue(answer.promise);

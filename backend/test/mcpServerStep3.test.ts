@@ -221,3 +221,19 @@ describe('approve MCP tool', () => {
         assert.equal(tools.approve, undefined);
     });
 });
+
+test('save_artifact forwards a file path without requiring a Markdown body', async () => {
+    const registry = new McpSlotRegistry();
+    let received: unknown[] = [];
+    const slot = registry.create('file-chat', '/tmp', null, {
+        ...makeCallbacks(),
+        onSaveArtifact: (name, body, path) => {
+            received = [name, body, path];
+            return { name, filePath: path!, size: 5 };
+        },
+    });
+    const handler = getToolHandler(registry, slot.slotId, 'save_artifact');
+    await handler({ name: 'shot', path: '.attachments/shot.png' });
+    assert.deepEqual(received, ['shot', undefined, '.attachments/shot.png']);
+    await assert.rejects(() => handler({ name: 'shot', path: 'shot.png', body: 'text' }), /exactly one/);
+});

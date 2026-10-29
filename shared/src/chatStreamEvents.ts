@@ -1,6 +1,6 @@
-import { parseSessionState, type AgentSessionState } from './sessionState';
+import { parseSessionState, type AgentCommand, type AgentSessionState } from './sessionState';
 import { parseSteeringReports, type SteeringReport } from './kiroSteering';
-import type { DurableMessageMetadata } from './turnProjection';
+import type { ThreadMessageSource } from './threadMessage';
 import {
   parseSubagentActivityPayload,
   parseSubagentPatches,
@@ -9,6 +9,23 @@ import {
 } from './subagents';
 
 export type { SubagentInfo, SubagentPatch, SubagentActivityPayload } from './subagents';
+
+export interface DurableMessageMetadata {
+  /** Server-generated scheduled input; excluded from ordinary conversation increments. */
+  scheduledJobId?: string;
+  usageSummary?: ChatStreamPayloads['usage_summary'];
+  warnings?: ChatStreamPayloads['warning'][];
+  /** The runtime accepted this user message as input to an existing turn. */
+  steered?: boolean;
+  steeringReports?: SteeringReport[];
+  quotedText?: string;
+  /** Opaque JSON provenance for the quote, interpreted by the rendering client. */
+  quoteSource?: unknown;
+  attachments?: Array<{ name: string; absPath: string }>;
+  comments?: Array<Record<string, unknown>>;
+  /** This user message was relayed, with user approval, from another thread. */
+  threadMessage?: ThreadMessageSource;
+}
 
 export interface SteerMessageOptions {
   displayText?: string;
@@ -20,12 +37,6 @@ export interface PlanEntry {
   content: string;
   priority: "high" | "medium" | "low";
   status: "pending" | "in_progress" | "completed";
-}
-
-export interface AgentCommand {
-  name: string;
-  description?: string;
-  input?: { type: string };
 }
 
 export interface ToolCallStreamPayload {

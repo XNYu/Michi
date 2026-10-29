@@ -1,6 +1,2 @@
-/**
- * Largest JSON request body the backend accepts, in bytes (50 MiB): the limit
- * of server.ts's express.json and of the MCP host behind it (mcpServer.ts),
- * so a large save_artifact body is refused by neither before the other.
- */
-export const JSON_BODY_LIMIT_BYTES = 50 * 1024 * 1024;
+// The JSON body limit lives in the runtime, beside the Crew relay that sizes its stdio buffer by it.
+export { JSON_BODY_LIMIT_BYTES } from 'michi-runtime/internal/core/constants';

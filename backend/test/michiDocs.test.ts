@@ -55,6 +55,16 @@ test('rejects paths, unknown IDs, missing parameters and unbounded pagination', 
     ]) assert.equal(michiDocsTool(args as any).isError, true, JSON.stringify(args));
 });
 
+test('agents can discover optional page interactions without a mandatory page layout', () => {
+    for (const query of ['interactions', '页面交互']) {
+        assert.ok(queryMichiDocs({ action: 'search', query }).results!.some(result => result.id === 'page-interactions'));
+    }
+    const guide = queryMichiDocs({ action: 'read', docId: 'page-interactions', startLine: 1, limit: 160 });
+    assert.match(guide.text, /Static pages are valid/);
+    assert.match(guide.text, /inline.*drawer.*modal/);
+    assert.match(guide.text, /server-assigned IDs/);
+});
+
 test('bundled docs explain All tasks and how maintenance keeps a task database', () => {
     for (const [query, id] of [
         ['maintenance_list_tasks', 'pages-maintenance'],

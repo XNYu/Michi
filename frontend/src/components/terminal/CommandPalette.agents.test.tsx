@@ -9,7 +9,6 @@ vi.mock('../../state/chatStore', () => ({
   selectAllChats: () => [],
 }));
 vi.mock('../../state/prefs', () => ({ usePrefs: () => ({ prefs: { bypassPermissions: false }, setPref: vi.fn() }) }));
-vi.mock('../../state/useServerSearch', () => ({ useServerSearch: () => ({ matches: [], truncated: false, totalUnbounded: 0 }) }));
 vi.mock('../../state/navigateToNode', () => ({ navigateToNode: vi.fn() }));
 vi.mock('../../lib/digestPrompt', () => ({ requestDigest: vi.fn() }));
 

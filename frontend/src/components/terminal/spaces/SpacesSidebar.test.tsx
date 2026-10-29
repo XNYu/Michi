@@ -140,7 +140,7 @@ describe('SpacesSidebar', () => {
     renderSidebar();
     const home = screen.getByRole('button', { name: /^Home/ });
     expect(home.getAttribute('aria-current')).toBe('page');
-    expect(home.textContent).toContain('3');
+    expect(home.textContent).toBe('Home');
     expect(screen.queryByRole('button', { name: /All threads/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Assistant' })).toBeTruthy();
     expect(screen.getByText('Pages')).toBeTruthy();
@@ -166,10 +166,14 @@ describe('SpacesSidebar', () => {
     expect(JSON.parse(localStorage.getItem('michi.spaces-sidebar.expanded')!)).toEqual(['local:ws-a']);
   });
 
-  it('marks a workspace with waiting suggestions and hides system workspaces', () => {
+  it('keeps workspace navigation neutral despite suggestions and hides system workspaces', () => {
     renderSidebar();
     const alpha = screen.getByRole('button', { name: 'Alpha' });
-    expect(alpha.querySelector('[data-tone="waiting"]')).not.toBeNull();
+    expect(alpha.querySelector('[data-tone="calm"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Home' }).querySelector('.area-side__count')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Alpha' }));
+    expect(screen.getByRole('button', { name: 'Release' }).querySelector('.area-side__count')).toBeNull();
+    expect(screen.queryByLabelText(/waiting/)).toBeNull();
     expect(screen.getByRole('button', { name: 'Beta' }).querySelector('[data-tone="calm"]')).not.toBeNull();
     expect(screen.queryByRole('button', { name: 'Assistant workspace' })).toBeNull();
     expect(document.querySelectorAll('[data-workspace]')).toHaveLength(2);
@@ -230,29 +234,29 @@ describe('SpacesSidebar', () => {
         onOpenAssistant={vi.fn()} onNewSpace={vi.fn()} />);
       const home = screen.getByRole('button', { name: /^Home/ });
       expect(home.querySelector('.agent-spinner')).toBeNull();
-      expect(screen.getByLabelText('3 waiting')).toBeTruthy();
+      expect(screen.queryByLabelText('3 waiting')).toBeNull();
       expect(screen.queryByText('Meta agent · Claude · checks new conversations every 60 s')).toBeNull();
       expect(screen.queryByText(/Meta agent is reading/)).toBeNull();
       view.unmount();
     }
   });
 
-  it('marks a home the first run wrote as New until it is opened', () => {
+  it('leaves generated homes without New reminders before and after opening', () => {
     data.firstRun = status(run('ws-a', 'done', 21, 21, 50), run('ws-b', 'done', 0, 0, 50), 'done');
     renderSidebar();
-    expect(document.querySelector('[data-workspace="ws-a"]')!.textContent).toContain('New');
+    expect(document.querySelector('[data-workspace="ws-a"]')!.textContent).not.toContain('New');
     expect(document.querySelector('[data-workspace="ws-b"]')!.textContent).not.toContain('New');
     act(() => markWorkspaceHomeOpened('local', 'ws-a', 50));
     expect(document.querySelector('[data-workspace="ws-a"]')!.textContent).not.toContain('New');
   });
 
-  it('colours each workspace by its Michi conversations: waiting first, then stalled, else calm', () => {
+  it('does not colour workspace navigation for waiting or stalled conversations', () => {
     data.spaces = [];
     data.sections = { waiting: { items: [], total: 1 }, stalled: { items: [], total: 1 }, done: { items: [], total: 0 }, conversations: { available: true },
       byWorkspace: { 'ws-a': { waiting: 0, stalled: 2 }, 'ws-b': { waiting: 1, stalled: 4 } } };
     renderSidebar();
-    expect(screen.getByRole('button', { name: /^Alpha/ }).querySelector('[data-tone="stalled"]')).not.toBeNull();
-    expect(screen.getByRole('button', { name: /^Beta/ }).querySelector('[data-tone="waiting"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /^Alpha/ }).querySelector('[data-tone="calm"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /^Beta/ }).querySelector('[data-tone="calm"]')).not.toBeNull();
   });
 
   it('hides empty homes, including a successful empty run, while preserving explicitly created pages', () => {
@@ -293,7 +297,7 @@ describe('SpacesSidebar', () => {
     expect(screen.getByRole('button', { name: 'Beta' })).toBeTruthy();
   });
 
-  it('turns a workspace red for a suggestion waiting on its home, not only on its Spaces', () => {
+  it('keeps workspace navigation neutral when its home has pending suggestions', () => {
     data.spaces = [];
     const homes = status(run('ws-a', 'done', 1, 1), run('ws-b', 'done', 1, 1), 'done') as { workspaces: Array<Record<string, unknown>> };
     homes.workspaces[1]!.pendingProposals = 2;
@@ -301,7 +305,7 @@ describe('SpacesSidebar', () => {
     data.firstRun = homes;
     renderSidebar();
     expect(screen.getByRole('button', { name: /^Alpha/ }).querySelector('[data-tone="calm"]')).not.toBeNull();
-    expect(screen.getByRole('button', { name: /^Beta/ }).querySelector('[data-tone="waiting"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /^Beta/ }).querySelector('[data-tone="calm"]')).not.toBeNull();
   });
 
   it('hides a workspace from Spaces through its row menu and lists it under Hidden, where it can be shown again', async () => {

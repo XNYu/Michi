@@ -1,5 +1,5 @@
 import { DomainError } from './domainErrors';
-import type { EnsureDurableGraphNodeInput } from './graphCommands';
+import type { EnsureDurableGraphNodeInput } from './graphCommandTypes';
 
 function invalid(message: string): never {
   throw new DomainError('invalid_argument', 'invalid_graph_prerequisite', message);

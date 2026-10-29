@@ -9,11 +9,9 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 
 vi.mock('../../services/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/api')>()),
-  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-aw-${++i}`); })(),
   allocateNodeIdsLocal: (() => { let i = 0; return (count = 1) => Array.from({ length: count }, () => `n-aw-${++i}`); })(),
   listAgentModes: () => Promise.resolve({ availableModes: [], defaultModeId: null }),
   fetchAgentStatus: () => Promise.resolve(null),
-  listModels: () => Promise.resolve({ models: [], defaultModel: null }),
   fetchPrefs: () => Promise.resolve(null),
   savePrefs: () => Promise.resolve(),
   warmCwd: () => Promise.resolve({ ok: true }),

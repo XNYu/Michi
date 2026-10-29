@@ -28,6 +28,7 @@ const DESCRIPTIONS: Readonly<Record<MetaAgentToolset, string>> = {
 
 const PROMPT = 'You are Michi. Only the michi tools exist: you cannot read or write files, run commands or reach the network.';
 
+
 /** The agent config Kiro runs a Meta agent session with: Michi's tools in `toolNames` and nothing else. */
 export function kiroMetaAgentConfig(toolset: MetaAgentToolset, toolNames: readonly string[]): Record<string, unknown> {
     const names = [...new Set(toolNames)];
@@ -158,13 +159,16 @@ export async function verifyKiroMetaAgentCatalog(input: KiroMetaAgentCatalogChec
         observed = kiroV3MetaAgentCatalog(state.tags);
     }
     assertMetaAgentToolCatalog({ runtimeId: input.runtimeId, profile: input.profile, observed });
-    if (observed.length === 0) throw metaAgentCatalogUnavailable(input.runtimeId, toolset, 'Kiro listed none of the Michi tools');
+    const michiTools = new Set(input.profile.allowedToolNames ?? []);
+    if (!observed.some((name) => michiTools.has(name))) throw metaAgentCatalogUnavailable(input.runtimeId, toolset, 'Kiro listed none of the Michi tools');
     return observed;
 }
 
 export const michiKiroRestrictedAgent = {
+    isRestrictedMode: (modeId: string) => Object.values(KIRO_META_AGENT_NAMES).includes(modeId),
     ensure: (dataDir: string, toolset: string, names: readonly string[]) => ensureKiroMetaAgent(dataDir, toolset as MetaAgentToolset, names),
     clientOptions: kiroMetaAgentClientOptions,
     catalog: kiroV3MetaAgentCatalog,
+
     verify: verifyKiroMetaAgentCatalog,
 };

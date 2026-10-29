@@ -82,7 +82,7 @@ describe('TerminalShell hydration gate', () => {
   it('allows settings to open before workspace hydration', async () => {
     renderShell();
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(await screen.findByText('Appearance pane')).toBeTruthy();
+    expect(screen.getByText('Appearance pane')).toBeTruthy();
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
     expect(screen.getByRole('status', { name: 'Loading workspaces' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Runtime (global)' }));

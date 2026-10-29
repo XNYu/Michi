@@ -87,7 +87,7 @@ export default tseslint.config(
   },
   {
     // Agent Desk's block code, mirrored verbatim so Desk's diffs apply to it
-    // (desk/page/desk-src/README.md). It keeps Desk's style; the hooks and
+    // (`${VENDOR_BLOCKS}/README.md`). It keeps Desk's style; the hooks and
     // safety rules above still apply. Michi's own shims there are linted as usual.
     files: vendorVerbatim,
     rules: {

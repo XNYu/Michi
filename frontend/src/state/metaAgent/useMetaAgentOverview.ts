@@ -104,5 +104,5 @@ export function useMetaAgentSettingsAlert(): boolean {
   const agent = useMetaAgentSnapshot();
   const overview = useMetaAgentOverview();
   const firstRun = useSpacesFirstRun('local');
-  return metaAgentStatus({ info: agent.info, infoStatus: agent.status, firstRun, overview: overview.overview }).settingsAlert;
+  return !!agent.info?.toolApprovals?.some(request => request.state === 'pending') || metaAgentStatus({ info: agent.info, infoStatus: agent.status, firstRun, overview: overview.overview }).settingsAlert;
 }

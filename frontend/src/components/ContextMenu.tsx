@@ -59,6 +59,10 @@ export interface ContextMenuProps {
    * way its height is capped to that side so it never covers the trigger.
    */
   anchorBottom?: number;
+  /** With `anchorBottom`: prefer below the trigger instead, flipping above
+   *  when there is clearly more room there. For triggers under the composer
+   *  (its tray), whose menus would otherwise cover what is being written. */
+  preferBelow?: boolean;
   /** The element that opened the menu. Presses on it are not "outside" clicks,
    *  so the trigger's own click can toggle the menu closed instead of the menu
    *  closing on mousedown and reopening on click. */
@@ -113,6 +117,8 @@ function MenuDetailCard({ menuRef, rowTop, title, text }: {
 }
 
 const DETAIL_DELAY_MS = 250;
+/** Below this many rows a touch menu is scanned, not filtered. */
+const TOUCH_FILTER_MIN_ITEMS = 8;
 
 /**
  * Shell-neutral right-click menu. Positions itself at the cursor, flips
@@ -133,11 +139,17 @@ export default function ContextMenu({
   searchable,
   searchPlaceholder,
   anchorBottom,
+  preferBelow = false,
   trigger,
   className,
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  // On a touch screen a focused field raises the keyboard over the list (and
+  // iOS zooms into it), so a short list shows no filter and none takes focus.
+  const [touch] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none) and (pointer: coarse)').matches);
+  const itemCount = sections.reduce((count, section) => count + (section.pinned ? 0 : section.items.length), 0);
+  const showSearch = !!searchable && !(touch && itemCount <= TOUCH_FILTER_MIN_ITEMS);
   // cap: max height when anchored to a toolbar trigger (space on the chosen side).
   const [pos, setPos] = useState<{ x: number; y: number; cap?: number }>({ x, y });
   // Hovered (or arrow-selected) row whose clamped description is shown in full.
@@ -203,7 +215,10 @@ export default function ContextMenu({
         // makes a long list scroll instead of sliding over the trigger.
         const aboveSpace = Math.min(anchorBottom, vh) - 8;
         const belowSpace = vh - 8 - y;
-        const above = aboveSpace >= Math.min(240, vh / 2) || aboveSpace >= belowSpace;
+        const enough = Math.min(240, vh / 2);
+        const above = preferBelow
+          ? belowSpace < enough && aboveSpace > belowSpace
+          : aboveSpace >= enough || aboveSpace >= belowSpace;
         cap = Math.max(80, Math.min(above ? aboveSpace : belowSpace, vh - 16));
         const height = Math.min(rect.height, cap);
         ny = above ? anchorBottom - height : y;
@@ -225,7 +240,7 @@ export default function ContextMenu({
     ro.observe(el);
     window.addEventListener('resize', reposition);
     return () => { ro.disconnect(); window.removeEventListener('resize', reposition); };
-  }, [x, y, anchorBottom]);
+  }, [x, y, anchorBottom, preferBelow]);
 
   useEffect(() => {
     const onDocDown = (e: MouseEvent) => {
@@ -243,7 +258,7 @@ export default function ContextMenu({
       // Single-letter accelerators (e.g. R/E/D/A). Skip while the filter input
       // owns the keystroke, and ignore when modifier keys are held so we don't
       // intercept browser shortcuts like ⌘R.
-      if (searchable) return;
+      if (showSearch) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.length !== 1) return;
       const k = e.key.toUpperCase();
@@ -271,7 +286,7 @@ export default function ContextMenu({
       document.removeEventListener('mousedown', onDocDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [searchable, fireWithBlink, dismiss]);
+  }, [showSearch, fireWithBlink, dismiss]);
 
   const run = (item: MenuItem) => fireWithBlink(item);
 
@@ -302,8 +317,8 @@ export default function ContextMenu({
   }, [activeIdx]);
 
   useEffect(() => {
-    if (searchable) searchRef.current?.focus();
-  }, [searchable]);
+    if (showSearch && !touch) searchRef.current?.focus();
+  }, [showSearch, touch]);
 
   // Reset active index when the filter changes so Enter always fires the
   // top match. Start at 0 (first item highlighted) once the user types.
@@ -393,7 +408,7 @@ export default function ContextMenu({
       onContextMenu={(e) => e.preventDefault()}
       style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', userSelect: 'none' }}
     >
-      {searchable && (
+      {showSearch && (
         <div className="michi-menu-search">
           <input
             ref={searchRef}
@@ -438,7 +453,7 @@ export default function ContextMenu({
                   {section.items.map((item) => {
                     // Only enabled items participate in keyboard navigation.
                     const myFlatIdx = item.disabled ? -1 : flatIdx++;
-                    const isActive = searchable && myFlatIdx >= 0 && myFlatIdx === activeIdx;
+                    const isActive = showSearch && myFlatIdx >= 0 && myFlatIdx === activeIdx;
                     return (
                       <MenuRow
                         key={item.id}
@@ -449,7 +464,7 @@ export default function ContextMenu({
                         active={isActive}
                         className={blinkingId === item.id ? 'ui-menu-blink' : undefined}
                         onMouseEnter={(e) => {
-                          if (searchable && myFlatIdx >= 0) setActiveIdx(myFlatIdx);
+                          if (showSearch && myFlatIdx >= 0) setActiveIdx(myFlatIdx);
                           if (item.sublabel) showDetailFor(item.id, e.currentTarget);
                           else hideDetail();
                         }}

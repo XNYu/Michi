@@ -40,11 +40,9 @@ test('expired SSH authentication opens the native sign-in terminal and retries c
   await expect(auth).toBeVisible();
   await expect(auth.getByText(REMOTE_CREDENTIALS.localAction, { exact: false })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as any).nativeAuth.creates.length)).toBe(1);
+  await page.screenshot({ path: testInfo.outputPath('sign-in-terminal.png') });
   await auth.locator('.xterm-helper-textarea').press('Enter');
   await expect.poll(() => attempts).toBe(2);
-  await expect(auth.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath('sign-in-terminal.png') });
-  await auth.getByRole('button', { name: 'Done', exact: true }).click();
   await expect(auth).toBeHidden();
   await expect(settings.getByText('Connected to Test remote', { exact: true })).toBeVisible();
 });
@@ -94,6 +92,6 @@ test('remote sign-in prompt can be cancelled, reopened and completed without sen
   await page.getByRole('button', { name: remoteSignInLabel(), exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).nativeAuth.creates.length)).toBe(2);
   await auth.locator('.xterm-helper-textarea').press('Enter');
-  await expect(auth.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
+  await expect(auth).toBeHidden();
   expect(recoveries).toBe(1); expect(sends).toBe(0);
 });

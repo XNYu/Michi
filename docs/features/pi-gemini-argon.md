@@ -1,5 +1,9 @@
 # Gemini 4 Argon in Pi
 
+更新：2026-10-14 · 阶段：已合入
+
+实现已包含在当前源码中；已安装版本：未核对。
+
 Select **Pi → Google AI → Gemini 4 Argon** in Settings → Model or the Composer.
 Configure a paid Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
 in Settings, or supply `GEMINI_API_KEY` to the backend. API billing is separate

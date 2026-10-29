@@ -14,64 +14,101 @@ export interface ScheduledJobsState {
   unavailable: boolean;
 }
 
-/** Job list with light polling, refreshed immediately on run and job-change events. */
-export function useScheduledJobs() {
-  const [state, setState] = React.useState<ScheduledJobsState>({
-    jobs: [], scheduler: null, loading: true, error: null, unavailable: false,
+const INITIAL: ScheduledJobsState = { jobs: [], scheduler: null, loading: true, error: null, unavailable: false };
+let state = INITIAL;
+let updatedAt = 0;
+let generation = 0;
+let inFlight: Promise<void> | null = null;
+let refreshAgain = false;
+const listeners = new Set<() => void>();
+let stop: (() => void) | null = null;
+
+function publish(next: ScheduledJobsState) {
+  state = next;
+  for (const listener of listeners) listener();
+}
+
+function refresh(): Promise<void> {
+  if (inFlight) return inFlight;
+  const current = generation;
+  const request = Promise.resolve().then(() => listScheduledJobs()).then(result => {
+    if (current !== generation) return;
+    updatedAt = Date.now();
+    publish({ jobs: result.jobs, scheduler: result.scheduler, loading: false, error: null, unavailable: false });
+  }, (reason: unknown) => {
+    if (current !== generation) return;
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const unavailable = /not available|404/.test(message);
+    publish({ ...state, loading: false, unavailable, error: unavailable ? null : message });
+  }).finally(() => {
+    if (inFlight !== request) return;
+    inFlight = null;
+    if (refreshAgain) { refreshAgain = false; void refresh(); }
   });
-  const mounted = React.useRef(true);
-  const inFlight = React.useRef<AbortController | null>(null);
+  inFlight = request;
+  return request;
+}
 
-  const refresh = React.useCallback(async () => {
-    inFlight.current?.abort();
-    const controller = new AbortController();
-    inFlight.current = controller;
-    try {
-      const result = await listScheduledJobs(controller.signal);
-      if (!mounted.current || controller.signal.aborted) return;
-      setState({ jobs: result.jobs, scheduler: result.scheduler, loading: false, error: null, unavailable: false });
-    } catch (reason) {
-      if (!mounted.current || controller.signal.aborted) return;
-      const message = reason instanceof Error ? reason.message : String(reason);
-      const unavailable = /not available|404/.test(message);
-      setState((current) => ({ ...current, loading: false, unavailable, error: unavailable ? null : message }));
-    }
-  }, []);
+function invalidate() {
+  generation++;
+  updatedAt = 0;
+  if (inFlight) refreshAgain = true;
+}
 
-  React.useEffect(() => {
-    mounted.current = true;
-    void refresh();
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  if (listeners.size === 1) {
+    if (state.loading || Date.now() - updatedAt >= POLL_MS) void refresh();
     const poll = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refresh();
+      if (document.visibilityState === 'visible' && !state.unavailable) void refresh();
     }, POLL_MS);
     let debounce: number | undefined;
-    const onRun = () => {
+    const onChange = () => {
+      invalidate();
       window.clearTimeout(debounce);
-      debounce = window.setTimeout(() => { void refresh(); }, 200);
+      debounce = window.setTimeout(() => { if (updatedAt === 0) void refresh(); }, 200);
     };
-    window.addEventListener(SCHEDULED_JOB_RUN_WINDOW_EVENT, onRun);
-    window.addEventListener(SCHEDULED_JOBS_CHANGED_WINDOW_EVENT, onRun);
-    return () => {
-      mounted.current = false;
-      inFlight.current?.abort();
+    window.addEventListener(SCHEDULED_JOB_RUN_WINDOW_EVENT, onChange);
+    window.addEventListener(SCHEDULED_JOBS_CHANGED_WINDOW_EVENT, onChange);
+    stop = () => {
       window.clearInterval(poll);
       window.clearTimeout(debounce);
-      window.removeEventListener(SCHEDULED_JOB_RUN_WINDOW_EVENT, onRun);
-      window.removeEventListener(SCHEDULED_JOBS_CHANGED_WINDOW_EVENT, onRun);
+      window.removeEventListener(SCHEDULED_JOB_RUN_WINDOW_EVENT, onChange);
+      window.removeEventListener(SCHEDULED_JOBS_CHANGED_WINDOW_EVENT, onChange);
+      // Events may be missed while unmounted: keep the snapshot, revalidate on return.
+      updatedAt = 0;
     };
-  }, [refresh]);
+  }
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) { stop?.(); stop = null; }
+  };
+}
 
-  const upsert = React.useCallback((job: ScheduledJobDto) => {
-    setState((current) => {
-      const index = current.jobs.findIndex((candidate) => candidate.id === job.id);
-      const jobs = index < 0 ? [...current.jobs, job] : current.jobs.map((candidate) => (candidate.id === job.id ? job : candidate));
-      return { ...current, jobs };
-    });
-  }, []);
+function upsert(job: ScheduledJobDto) {
+  invalidate();
+  const found = state.jobs.some(candidate => candidate.id === job.id);
+  publish({ ...state, jobs: found ? state.jobs.map(candidate => candidate.id === job.id ? job : candidate) : [...state.jobs, job] });
+}
+function remove(jobId: string) {
+  invalidate();
+  publish({ ...state, jobs: state.jobs.filter(job => job.id !== jobId) });
+}
 
-  const remove = React.useCallback((jobId: string) => {
-    setState((current) => ({ ...current, jobs: current.jobs.filter((job) => job.id !== jobId) }));
-  }, []);
+/** One local-backend snapshot and poll shared by the sidebar and Scheduled page.
+ * Cached content remains visible during revalidation and transient failures.
+ * Sign-out reloads the renderer, so this in-memory cache cannot cross accounts.
+ */
+export function useScheduledJobs() {
+  const snapshot = React.useSyncExternalStore(subscribe, () => state, () => INITIAL);
+  return { ...snapshot, refresh, upsert, remove };
+}
 
-  return { ...state, refresh, upsert, remove };
+export function resetScheduledJobsStore(): void {
+  generation++;
+  state = INITIAL;
+  updatedAt = 0;
+  inFlight = null;
+  refreshAgain = false;
+  for (const listener of listeners) listener();
 }

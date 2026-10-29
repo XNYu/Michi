@@ -3,7 +3,7 @@
 Michi launches its bundled ACP adapter and authenticates as the `michi-crew-runtime`
 App against the unmodified official Kiro Crew Gateway. No Crew source patch,
 companion Gateway, owner token, or `/app-runtime` API is required.
-Originally validated against **0.8.0-insider.14** on 2026-10-07; App **0.6.0** install/Sync, official broker updates and native approvals were validated on macOS with **0.9.0-insider.6** on 2026-10-13. See the getting-started guide for the exact acceptance scope.
+Originally validated against **0.8.0-insider.14** on 2026-10-07; App **0.6.0** install/Sync, official broker updates and native approvals were validated on macOS with **0.9.0-insider.6** on 2026-10-13. App-caller steer, cancel, compaction, subagent and usage behavior was probed against **0.11.0.1** on 2026-10-29. See the getting-started guide for the exact acceptance scope.
 
 中文接入步骤见 [Michi × KiroCrew 接入教程](GETTING_STARTED.zh-CN.md)。
 For an installed Michi application, including the public installer at `~/Michi`, see the
@@ -27,6 +27,12 @@ For an installed Michi application, including the public installer at `~/Michi`,
    审批卡在 Michi 显示，Crew 只提供后端。
 5. 首次接入必须按下方流程同时完成 Michi MCP 和 `sessionApproval` 授权。
    默认全部加入；未完成时显示 **Crew setup required** 并阻止新任务。
+6. 新建的 Crew 会话放在 Crew 侧栏的 **Michi Crew / <workspace 名>** 文件夹里。
+   两层文件夹都由 App 创建；**Michi Crew** 可以拖进你自己的文件夹，之后照常使用。
+   文件夹按名字对应：workspace 改名后，新会话进新名字的文件夹，旧会话不动。
+   fork 出来的会话跟着原会话的文件夹。项目目录在系统临时目录下的会话（live 测试）
+   不放进文件夹。整理失败只记日志，会话照常建在顶层。App 不能删除文件夹，
+   不需要的文件夹请在 Crew 里手动删除。
 
 Memory 控制的是 Crew 的长期学习，不等于删除聊天记录。Michi 自己仍保存对话。
 Crew 模板、治理策略和绑定身份也可能限制 Memory 工具。
@@ -147,7 +153,8 @@ guarantee. Daily approval decisions are made in Michi.
 |---|---|
 | Text/thinking | Gateway SSE through ACP into Michi |
 | Tool input/output | Running cards plus own-slot WS enrichment and bounded reconciliation |
-| Titles/plans/context | Native Gateway snapshots/events; no invented credit or cost totals |
+| Titles/plans/context | Native Gateway snapshots/events |
+| Usage | Per-turn credits from the Gateway's `turn_stats` (kiro-cli metering) plus context %; no token or cost totals |
 | Model/reasoning | Gateway selections, including reset to Crew default |
 | Agent templates | Composer template modes; private Member identities are not switchable templates |
 | Resume | Same owned Gateway slot across adapter restarts |
@@ -155,9 +162,10 @@ guarantee. Daily approval decisions are made in Michi.
 | Memory | Native learning/recall, configured in Settings for new Crew chats |
 | In-app approval | Required official grant; approval decisions in Michi, limitations above |
 | Michi MCP | Included by default; required official App relay and Stub launch approval |
-| Same-turn steer | **Unsupported for official App callers**; busy sends are queued follow-ups |
-| Compact | Crew automatic compaction; no adapter command for manual compact |
-| Subagents | Crew's native tools work; no dedicated Michi roster/control stream |
+| Same-turn steer | **Unsupported for official App callers**: 0.11.0.1 answers an App's `steer: true` with `queued: true`; busy sends are queued follow-ups |
+| Cancel | The adapter stops the slot and reads the Gateway's `stop_event` record; `stopped` / `stop_failed_reset` is a native acknowledgement, otherwise inferred |
+| Compact | Automatic Crew compaction, and Michi `/compact` on an idle session (sent to the App's own slot; result from the Gateway's tagged notice). `/compact` takes no instructions |
+| Subagents | Roster from the Gateway's `subagent_spawn/tool/chunk/done` events. Crew asks for each spawn on a Crew **dashboard** tab: Michi cannot answer it, and with no dashboard tab open the spawn is refused. No Michi control of running subagents |
 | Images/audio | Not advertised by the adapter; unsupported blocks are marked omitted |
 
 Send a correction after the current turn, or stop it first. A queued follow-up is

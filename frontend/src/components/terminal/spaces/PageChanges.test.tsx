@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { PageChangeDto } from 'michi-shared';
+import type { PageChangeDto, PageDatabase } from 'michi-shared';
 import { ChangeCard } from './ChangeCard';
 import { PageChanges } from './PageChanges';
 
@@ -18,6 +18,23 @@ function blockChange(overrides: Partial<PageChangeDto> = {}): PageChangeDto {
 }
 
 describe('native page change presentation', () => {
+  it.each(['card', 'inline'] as const)('shows database field changes before accepting a %s suggestion', (variant) => {
+    const before: PageDatabase = { id: 'db', workspaceId: 'ws', title: 'Tracker', revision: 1, updatedAt: 1,
+      columns: [{ id: 'number', name: 'Number', type: 'text' }], views: [], rows: [] };
+    const after = { ...before, revision: 2, columns: [{ ...before.columns[0]!, name: 'Ticket / CR' }, { id: 'owner', name: 'Owner', type: 'text' as const }] };
+    const change = blockChange({ target: { kind: 'database', databaseId: 'db' }, op: 'schema',
+      before: { kind: 'database', exists: true, database: before }, after: { kind: 'database', exists: true, database: after },
+      forward: { kind: 'database', op: 'replace', database: after }, inverse: { kind: 'database', op: 'replace', database: before } });
+    const onAccept = vi.fn();
+    render(<ChangeCard change={change} variant={variant} showTarget onAccept={onAccept} onDismiss={vi.fn()} onReopen={vi.fn()} onRevert={vi.fn()} onRedo={vi.fn()} onOpenSource={vi.fn()} />);
+    expect(screen.getByRole('list', { name: 'Proposed database changes' })).toBeTruthy();
+    expect(screen.getByText('Column: Number (text) → Ticket / CR (text)')).toBeTruthy();
+    expect(screen.getByText('Add column: Owner (text)')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Edit & accept' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+    expect(onAccept).toHaveBeenCalledWith(change);
+  });
+
   it('keeps an edit draft visible after a stale 409 and allows dismissal', () => {
     const onDismiss = vi.fn();
     render(<ChangeCard change={blockChange()} onAccept={vi.fn()} onDismiss={onDismiss} onReopen={vi.fn()} onRevert={vi.fn()} onRedo={vi.fn()} onOpenSource={vi.fn()} error="409 proposal_stale" />);

@@ -1,7 +1,7 @@
 import { backendFetch, backendRequestOptions } from './backendRequest';
 import { backendRequestUrl, connectionIdFromApiUrl, mapBackendPayload } from '../../config/backendIdentity';
 import { backendConnectionGeneration, backendConnectionUnavailable, markBackendConnectionUnavailable } from '../../config/backendConnectionState';
-import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { workspaceBackendApiBase, backendConnectionIdForWorkspace, LOCAL_BACKEND_CONNECTION_ID } from '../../config/backendConnections';
 
 export type UploadPhase = 'preparing' | 'uploading' | 'copying';
 
@@ -240,7 +240,7 @@ export async function importWorkspaceFileUpload(
   // <input>) to its absolute disk path. We POST just the path; the backend
   // does fs.copyFile — zero base64, zero JSON bloat, no main-thread stall.
   const electron = typeof window !== 'undefined' ? window.electron : undefined;
-  if (electron?.getPathForFile) {
+  if (electron?.getPathForFile && backendConnectionIdForWorkspace(workspaceId) === LOCAL_BACKEND_CONNECTION_ID) {
     const absPath = electron.getPathForFile(file);
     if (absPath) {
       options?.onProgress?.({

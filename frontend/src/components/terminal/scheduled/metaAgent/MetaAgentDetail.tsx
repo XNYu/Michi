@@ -90,7 +90,6 @@ export function MetaAgentDetail({ overview, status: given, now, busy, onTogglePa
   const status = given ?? metaAgentStatus({ overview });
   const tag = metaAgentStateTag(status, overview);
   const paused = overview.state === 'paused';
-  const others = Math.max(0, today.checks - today.modelCalls);
   const stopped = status.kind === 'stopped' || status.kind === 'guard-failed';
   const stop = status.stop;
   return (
@@ -108,7 +107,8 @@ export function MetaAgentDetail({ overview, status: given, now, busy, onTogglePa
             </Button>
           )}
           <h1 id="meta-sched-title" className="area-settings__title meta-sched__title">{META_AGENT_PAGE_TITLE}</h1>
-          <p className="meta-sched__line">Every 60 seconds it checks each workspace for new conversations. When there’s nothing new, it doesn’t use the AI.</p>
+          <p className="meta-sched__line">One background check every 60 seconds finds pending work across workspaces. AI runs only when there is work to process.</p>
+          {overview.lastCheckedAt != null && <p className="meta-sched__line">Last checked {lastSeen(overview.lastCheckedAt, now)} · no AI used for checks</p>}
           {stopped && (
             <p className="meta-sched__status" role="alert">
               {META_AGENT_HEADLINE.stopped}: {status.reason ?? 'reason unknown'}
@@ -140,7 +140,7 @@ export function MetaAgentDetail({ overview, status: given, now, busy, onTogglePa
           </div>
           <div className="meta-sched__metric">
             <dt>AI calls</dt><dd className="meta-sched__value">{today.modelCalls}</dd>
-            <dd>{`${others} with nothing new`}</dd>
+            <dd>maintenance sessions started</dd>
           </div>
           <div className="meta-sched__metric">
             <dt>Page changes</dt><dd className="meta-sched__value">{today.writes}</dd>

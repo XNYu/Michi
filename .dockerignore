@@ -47,6 +47,9 @@ coverage
 docs
 *.md
 !README.md
+# Help docs that backend:build bundles from outside backend/src/docs
+# (backend/src/docs/catalog.json; checked by scripts/dockerignore-docs.test.mjs).
+!docs/remote-backend.md
 
 # electron build outputs
 electron/dist

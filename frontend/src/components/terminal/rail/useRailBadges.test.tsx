@@ -120,16 +120,17 @@ describe('useRailBadges', () => {
       'Meta agent finished: 2 workspace homes + the Pages Home (1 not written); from now on it reads only new conversations',
     );
   });
-  it('counts Spaces as the Spaces Home’s Waiting on you total, read from the local backend', async () => {
+  it('suppresses Pages reminders without fetching Home sections for a badge', async () => {
     api.fetchMetaAgent.mockResolvedValue(INFO);
     const section = (total: number) => ({ items: [], total });
     api.sections = { waiting: section(5), stalled: section(2), done: section(1), conversations: { available: true } };
     const { result } = renderHook(() => useRailBadges());
     await flush();
-    expect(result.current.spacesWaiting).toBe(5);
-    expect(api.sectionsSince).toContainEqual(['local']);
+    expect(result.current.spacesWaiting).toBe(0);
+    expect(api.sectionsSince).toEqual([]);
     render(<AreaRail area="conversations" onSelect={() => {}} badges={result.current} />);
-    expect(screen.getByRole('button', { name: 'Pages, 5 waiting' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pages' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Pages,.*waiting/ })).toBeNull();
   });
 
   it('shows no Spaces count until the Home sections are read', async () => {

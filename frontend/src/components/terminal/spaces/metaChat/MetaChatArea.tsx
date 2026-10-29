@@ -13,6 +13,7 @@ import {
 import { Sparkle } from 'lucide-react';
 import {
   clampDockRatio,
+  clampRect,
   dockRatioFromPointer,
   effectiveRect,
   firstOpenPlacement,
@@ -35,6 +36,10 @@ export interface MetaChatAreaProps extends MetaChatContentProps {
   visible?: boolean;
   /** Listen for ⌘J / Ctrl+J. Turn off when the host routes the shortcut to toggleMinimized itself. */
   shortcut?: boolean;
+  /** Text beside the minimized pill's sparkle ("Create with agent"); the pill is the bare icon without it. */
+  pillLabel?: string;
+  /** The pill's dot also shows while the Meta agent's first run reads (Spaces). Off where that run is not this window's. */
+  firstRunDot?: boolean;
   /** The page. It is never remounted by form changes. */
   children: ReactNode;
 }
@@ -78,9 +83,9 @@ export function useMetaChatDocked(): boolean {
 }
 
 /** The minimized pill's dot: the window's answer is streaming, or the Meta agent's first run is reading in the background. */
-function PillWorkingDot({ busy }: { busy: boolean }) {
+function PillWorkingDot({ busy, firstRun: withFirstRun = true }: { busy: boolean; firstRun?: boolean }) {
   const firstRun = useSpacesFirstRun('local');
-  if (!busy && !firstRunActive(firstRun.data)) return null;
+  if (!busy && !(withFirstRun && firstRunActive(firstRun.data))) return null;
   return <span className="meta-chat-pill__dot" role="status" aria-label="Assistant is working" />;
 }
 
@@ -93,6 +98,8 @@ export function MetaChatArea({
   controller,
   visible = true,
   shortcut = true,
+  pillLabel,
+  firstRunDot = true,
   children,
   ...content
 }: MetaChatAreaProps) {
@@ -167,9 +174,9 @@ export function MetaChatArea({
     const c = controllerRef.current;
     if (op.kind === 'move') {
       if (last.hint) c.dock();
-      else if (last.rect) c.setRect(last.rect);
+      else if (last.rect) c.setRect(clampRect(last.rect, boundsRef.current));
     } else if (op.kind === 'resize') {
-      if (last.rect) c.setRect(last.rect);
+      if (last.rect) c.setRect(clampRect(last.rect, boundsRef.current));
     } else if (last.ratio !== undefined) {
       c.setDockRatio(last.ratio);
     }
@@ -243,7 +250,7 @@ export function MetaChatArea({
   const floating = state.form === 'float' && !fullscreen;
   const docked = visible && !minimized && state.form === 'dock' && !fullscreen;
   const ratio = live?.ratio ?? state.dockRatio;
-  const rect = live?.rect ?? committedRect;
+  const rect = live?.rect ? clampRect(live.rect, bounds) : committedRect;
   const panelStyle = floating
     ? rect
       ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h }
@@ -300,12 +307,14 @@ export function MetaChatArea({
         <button
           type="button"
           className="meta-chat-pill"
-          aria-label="Ask assistant"
-          title={`Ask assistant (${MINIMIZE_KEYS})`}
+          data-labelled={pillLabel ? '' : undefined}
+          aria-label={pillLabel ?? 'Ask assistant'}
+          title={pillLabel ?? `Ask assistant (${MINIMIZE_KEYS})`}
           onClick={controller.restore}
         >
-          <Sparkle className="meta-chat-pill__icon" size={20} aria-hidden />
-          <PillWorkingDot busy={Boolean(content.busy)} />
+          <Sparkle className="meta-chat-pill__icon" size={pillLabel ? 16 : 20} aria-hidden />
+          {pillLabel ? <span className="meta-chat-pill__label">{pillLabel}</span> : null}
+          <PillWorkingDot busy={Boolean(content.busy)} firstRun={firstRunDot} />
         </button>
       ) : null}
     </div>

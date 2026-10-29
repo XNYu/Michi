@@ -155,3 +155,30 @@ for (const sidebarView of ['activity', 'structure'] as const) {
     expect(errors).toEqual([]);
   });
 }
+
+
+test('local conversations open while connection discovery is stalled', async ({ page }) => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  let discoveryStarted = false;
+  await installMockApi(page, { workspaces: [workspace], custom: async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/backend-connections') { discoveryStarted = true; await pending; }
+    if (path.endsWith('/trees/tree-a/messages')) {
+      await route.fulfill({ json: { messages: messages('a') } });
+      return true;
+    }
+    return false;
+  } });
+  await page.addInitScript(() => localStorage.setItem('michi:v1:prefs', JSON.stringify({
+    onboardingCompletedAt: 1, sidebarCollapsed: false, sidebarView: 'structure',
+    sidebarExpanded: { workspaces: { 'boot-ws': true }, threads: {}, branches: {} },
+  })));
+  try {
+    await page.goto('/');
+    await expect.poll(() => discoveryStarted).toBe(true);
+    await page.locator('.terminal-sidebar [data-sidebar-row="a"]').click();
+    await expect(page.locator('.terminal-dashboard').getByText('Conversation A is ready', { exact: true })).toBeVisible();
+    await expect(page.getByRole('status', { name: 'Loading workspaces' })).toHaveCount(0);
+  } finally { release(); }
+});

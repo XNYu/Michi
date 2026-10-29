@@ -13,6 +13,7 @@ describe('looseTitle', () => {
     expect(looseTitle({ type: 'x', question: 'Which route?' })).toBe('Which route?');
     expect(looseTitle({ type: 'x', id: 'abc', url: 'https://a.b', summary: 'Words' })).toBe('Words');
     expect(looseTitle({ type: 'divider', id: 'b1' })).toBe('');
+    expect(looseTitle({ type: 'component', componentId: 'c', visibility: 'detail', interaction: { label: 'More' } })).toBe('');
   });
 });
 

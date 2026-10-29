@@ -23,6 +23,7 @@ import { confirmDialog } from '../../../ui/ConfirmDialog';
 import { RemoteDesktopConnect } from '../../../RemoteDesktopConnect';
 import { RemoteUpdateNotice } from '../../../RemoteUpdateNotice';
 import { useRemoteWorkspaces, type RemoteWorkspacesState } from './useRemoteWorkspaces';
+import { SettingsSection } from './SettingsSection';
 
 type ConnectionDraft = {
   id?: string;
@@ -144,13 +145,9 @@ export function ConnectionsPane({ projects, onOpenWorkspace }: { projects: Proje
     }
   };
 
-  return (
-    <div className="remote-connections">
-      <h1>Connected machines</h1>
-      <p className="remote-connections__intro">
-        Work locally or connect a remote machine. Choose a machine when creating a workspace.
-      </p>
-
+  return (<>
+    <SettingsSection className="remote-connections" title="Connected machines"
+      intro="Work locally or connect a remote machine. Choose a machine when creating a workspace.">
       <ul className="remote-connections__list" aria-label="Machines">
         <ConnectionRow connection={LOCAL_BACKEND_CONNECTION} local />
         {connections.map(connection => (
@@ -268,8 +265,9 @@ export function ConnectionsPane({ projects, onOpenWorkspace }: { projects: Proje
         className="remote-connection-notice" data-tone={message.kind === 'ok' ? 'success' : 'error'}>
         {message.text}
       </div>}
-    </div>
-  );
+    </SettingsSection>
+
+  </>);
 }
 
 interface ConnectionRowProps {

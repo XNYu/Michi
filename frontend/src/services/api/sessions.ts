@@ -13,24 +13,6 @@ import { startupMark } from '../startupTrace';
 import type { RuntimeId, AgentReasoning } from './agentRuntime';
 import { reportRemoteCredentialError } from '../../state/remoteAuthentication';
 
-export interface ModelInfo {
-  model_id: string;
-  model_name: string;
-  description?: string;
-  context_window_tokens?: number;
-}
-
-export async function listModels(): Promise<{ models: ModelInfo[]; defaultModel: string | null }> {
-  try {
-    const res = await backendFetch(`${activeBackendApiBase()}/models`);
-    if (!res.ok) throw new Error(`status ${res.status}`);
-    const body = await res.json();
-    return { models: body.models || [], defaultModel: body.default_model ?? null };
-  } catch {
-    return { models: [], defaultModel: null };
-  }
-}
-
 export interface SessionMode {
   id: string;
   name: string;
@@ -149,6 +131,8 @@ export interface EnsureSessionOptions {
   agentDefinitionId?: string;
   crewMemoryMode?: import('michi-shared').CrewMemoryMode;
   permissionMode?: import('michi-shared').ChatPermissionMode;
+  /** Approve for me on top of permissionMode 'ask' for a new chat. */
+  approveForMe?: boolean;
 }
 
 export interface PrimaryAgentDefinitionOption {
@@ -236,26 +220,6 @@ export function allocateNodeIdsLocal(count = 1): string[] {
   return Array.from({ length: count }, () => `n-${crypto.randomUUID()}`);
 }
 
-/**
- * Allocate node IDs from the backend. Retained for cases where server-side
- * coordination is genuinely needed (currently none). Prefer
- * `allocateNodeIdsLocal` for all normal UI-driven node creation.
- */
-export async function allocateNodeIds(count = 1, connectionId?: string): Promise<string[]> {
-  const base = connectionId ? backendApiBase(connectionId) : activeBackendApiBase();
-  const res = await backendFetch(`${base}/node-ids/allocate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ count }),
-  });
-  if (!res.ok) throw new Error(`allocateNodeIds failed: ${res.status}`);
-  const body = await res.json();
-  if (!Array.isArray(body.nodeIds) || body.nodeIds.length !== count) {
-    throw new Error('allocateNodeIds returned an invalid response');
-  }
-  return body.nodeIds as string[];
-}
-
 export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureSessionResult> {
   const startedAt = Date.now();
   startupMark('ensure_session_start', { nodeId: opts.nodeId, chatId: opts.chatId, cwd: opts.cwd, workspaceId: opts.workspaceId });
@@ -274,6 +238,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   if (opts.modeId) body.modeId = opts.modeId;
   if (opts.crewMemoryMode) body.crewMemoryMode = opts.crewMemoryMode;
   if (opts.permissionMode) body.permissionMode = opts.permissionMode;
+  if (opts.permissionMode === 'ask' && opts.approveForMe) body.approveForMe = true;
   if (opts.providerId) body.providerId = opts.providerId;
   if (opts.modelId) body.modelId = opts.modelId;
   if (opts.reasoning !== undefined) body.reasoning = opts.reasoning;

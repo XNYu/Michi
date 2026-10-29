@@ -1,4 +1,7 @@
-import { execSync } from "child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
+import { log } from "./logger";
+const execAsync = promisify(exec);
 import type { BedrockCredentials } from "./bedrockCredentials";
 
 // ---------------------------------------------------------------------------
@@ -19,13 +22,30 @@ interface RefreshState {
     lastRefreshAt: number;
     lastError: string | null;
     cooldownMs: number;
+    inFlight: Promise<boolean> | null;
 }
 
-const state: RefreshState = {
-    lastRefreshAt: 0,
-    lastError: null,
-    cooldownMs: 0,
-};
+const states = new Map<string, RefreshState>();
+let refreshTimeoutMs = REFRESH_TIMEOUT_MS;
+
+/** Test-only: forget earlier refreshes and optionally shorten the command timeout. */
+export function __resetBedrockRefreshStateForTest(options: { timeoutMs?: number } = {}): void {
+    states.clear();
+    refreshTimeoutMs = options.timeoutMs ?? REFRESH_TIMEOUT_MS;
+}
+
+function stateFor(command: string): RefreshState {
+    let state = states.get(command);
+    if (!state) {
+        if (states.size >= 16) {
+            const idle = [...states].find(([, value]) => !value.inFlight);
+            if (idle) states.delete(idle[0]);
+        }
+        state = { lastRefreshAt: 0, lastError: null, cooldownMs: 0, inFlight: null };
+        states.set(command, state);
+    }
+    return state;
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -48,6 +68,8 @@ export async function refreshBedrockCredentialsIfNeeded(
 ): Promise<void> {
     if (!creds.authRefreshCommand) return;
 
+    const state = stateFor(creds.authRefreshCommand);
+    if (state.inFlight) { await state.inFlight; return; }
     const now = Date.now();
     // Respect cooldown from a recent failure
     if (now - state.lastRefreshAt < state.cooldownMs) return;
@@ -71,6 +93,8 @@ export async function refreshOnAuthFailure(
 ): Promise<boolean> {
     if (!creds.authRefreshCommand) return false;
 
+    const state = stateFor(creds.authRefreshCommand);
+    if (state.inFlight) return state.inFlight;
     const now = Date.now();
     if (now - state.lastRefreshAt < MIN_COOLDOWN_MS) return false;
 
@@ -96,31 +120,38 @@ export function isBedrockAuthError(ev: any): boolean {
 // ---------------------------------------------------------------------------
 
 async function executeRefresh(command: string): Promise<boolean> {
-    try {
-        console.log(
-            `[bedrock] refreshing credentials: ${command.length > 80 ? command.slice(0, 77) + "..." : command}`,
-        );
-        execSync(command, {
-            timeout: REFRESH_TIMEOUT_MS,
-            stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env },
-        });
-        state.lastRefreshAt = Date.now();
-        state.lastError = null;
-        state.cooldownMs = 0;
-        console.log("[bedrock] credential refresh succeeded");
-        return true;
-    } catch (err) {
-        state.lastRefreshAt = Date.now();
-        state.lastError = err instanceof Error ? err.message : String(err);
-        state.cooldownMs = Math.min(
-            Math.max(state.cooldownMs * 2 || MIN_COOLDOWN_MS, MIN_COOLDOWN_MS),
-            MAX_COOLDOWN_MS,
-        );
-        console.warn(
-            `[bedrock] credential refresh failed (next cooldown ${state.cooldownMs}ms):`,
-            state.lastError,
-        );
-        return false;
-    }
+    const state = stateFor(command);
+    if (state.inFlight) return state.inFlight;
+    const started = performance.now();
+    state.inFlight = (async () => {
+        try {
+            // The configured command can contain credentials. Never log it or
+            // child output; only outcome and elapsed time are diagnostic data.
+            log.info("auth", "refreshing Bedrock credentials");
+            const run = execAsync(command, {
+                timeout: refreshTimeoutMs,
+                maxBuffer: 1024 * 1024,
+                windowsHide: true,
+                env: { ...process.env },
+            });
+            run.child.stdin?.end();
+            await run;
+            state.lastRefreshAt = Date.now();
+            state.lastError = null;
+            state.cooldownMs = 0;
+            log.info("auth", "Bedrock credential refresh succeeded", { durationMs: Math.round(performance.now() - started) });
+            return true;
+        } catch (err) {
+            state.lastRefreshAt = Date.now();
+            state.lastError = "Credential refresh failed";
+            state.cooldownMs = Math.min(Math.max(state.cooldownMs * 2 || MIN_COOLDOWN_MS, MIN_COOLDOWN_MS), MAX_COOLDOWN_MS);
+            const error = err as { code?: string | number; signal?: string };
+            log.warn("auth", "Bedrock credential refresh failed", {
+                durationMs: Math.round(performance.now() - started), cooldownMs: state.cooldownMs,
+                code: error.code, signal: error.signal,
+            });
+            return false;
+        } finally { state.inFlight = null; }
+    })();
+    return state.inFlight;
 }

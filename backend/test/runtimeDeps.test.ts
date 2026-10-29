@@ -9,8 +9,6 @@ const fakeStore: HistoryStore = {
   listMessages: () => [],
   getWorkspace: () => null,
   getWorkspaceInstructions: () => null,
-  hasGrant: () => false,
-  grantPermission: () => {},
 };
 const fakeConfig = {
   getAgentConfig: () => ({ runtime: "pi", provider: "anthropic", modelByRuntime: {}, reasoningByRuntime: {} }),

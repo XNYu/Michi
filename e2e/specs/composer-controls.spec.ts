@@ -108,6 +108,8 @@ test('compact controls keep their geometry and respect reduced motion', async ({
   await editor.fill('Check compact controls');
   const frame = (await composer.boundingBox())!;
   for (const control of await composer.locator('.t-toolbar-chip, .t-action-btn.is-outline').all()) {
+    // A phone has no @ chip; typing @ still mentions.
+    if (!await control.isVisible()) continue;
     await finishHover(control);
     await expect(control).toHaveCSS('border-radius', '4px');
     await expect(control).toHaveCSS('border-width', '0px');

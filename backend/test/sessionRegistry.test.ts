@@ -16,7 +16,7 @@ function storeWith(nodes: Record<string, { parent: string | null; msgs: Array<{ 
   return {
     getNode: (id) => (nodes[id] ? { parent_node_id: nodes[id].parent, workspace_id: null } : null),
     listMessages: (id) => (nodes[id]?.msgs ?? []).map((m) => ({ role: m.role, content: m.content, created_at: 0 })),
-    getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {},
+    getWorkspace: () => null, getWorkspaceInstructions: () => null,
   };
 }
 

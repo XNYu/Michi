@@ -1,3 +1,4 @@
+import { artifactTypeForPath } from 'michi-shared';
 import React from 'react';
 import type { ArtifactEntry } from '../../../state/chatTypes';
 import { manageFileType, MANAGE_COLORS } from './tokens';
@@ -14,7 +15,7 @@ interface Props {
   onAdd: () => void;
 }
 
-/** Artifact type → display group. Absent type falls back to url→link else doc. */
+/** Artifact type → display group. Absent type is inferred from the URL or file extension. */
 const TYPE_GROUPS: Array<{ key: 'doc' | 'file' | 'image' | 'link'; title: string }> = [
   { key: 'doc', title: 'Documents' },
   { key: 'file', title: 'Files' },
@@ -24,7 +25,7 @@ const TYPE_GROUPS: Array<{ key: 'doc' | 'file' | 'image' | 'link'; title: string
 
 function artifactType(c: ArtifactEntry): 'doc' | 'file' | 'image' | 'link' {
   if (c.type) return c.type;
-  return c.url ? 'link' : 'doc';
+  return c.url ? 'link' : artifactTypeForPath(c.filePath);
 }
 
 function fmtBytes(n: number | undefined): string {
@@ -331,7 +332,7 @@ function RowActions({
     >
       <IconBtn
         ariaLabel={`preview ${contextName}`}
-        title="Open in OS default app"
+        title="Open or download file"
         onClick={onPreview}
       >
         <FolderOpenIcon />

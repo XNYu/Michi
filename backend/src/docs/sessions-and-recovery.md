@@ -25,7 +25,7 @@ The composer follows current session capabilities.
 | Kiro CLI | Steering at a supported agent boundary; engine/version matters |
 | Pi | Steering at the next assistant-turn boundary |
 | Codex | Native `turn/steer` |
-| Claude | Queues for the next Michi turn; no integrated same-turn steer |
+| Claude | Native steer in chats: joins the running turn at its next tool round, or runs right after it within the same Michi turn. Agent Runs queue for the next turn |
 | Crew | Queues for the next turn; official App callers cannot same-turn steer |
 
 Steering does not instantly roll back an executing command. If execution must stop, use Stop, inspect actual effects, then send the corrected request. Queueing and steering do not undo prior effects.

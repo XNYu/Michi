@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import fs from 'node:fs';
+import { readTypedEvents } from './jsonl-events.mjs';
 
 const files = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
@@ -9,42 +9,8 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-function parseLine(line) {
-  const direct = tryParse(line);
-  if (direct?.type === 'startup') return direct;
-
-  const taggedStart = line.indexOf('{"type":"startup"');
-  if (taggedStart !== -1) {
-    const tagged = tryParse(line.slice(taggedStart));
-    if (tagged?.type === 'startup') return tagged;
-  }
-
-  const firstBrace = line.indexOf('{');
-  if (firstBrace !== -1) {
-    const sliced = tryParse(line.slice(firstBrace));
-    if (sliced?.type === 'startup') return sliced;
-  }
-
-  return null;
-}
-
-function tryParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-const rows = files
-  .flatMap((file) => {
-    const text = fs.readFileSync(file, 'utf8');
-    return text
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map(parseLine)
-      .filter((row) => row && typeof row.t === 'number');
-  })
+const rows = readTypedEvents(files, 'startup')
+  .filter((row) => typeof row.t === 'number')
   .sort((a, b) => a.t - b.t);
 
 if (rows.length === 0) {

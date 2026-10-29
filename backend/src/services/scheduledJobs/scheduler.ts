@@ -1,3 +1,4 @@
+import { MaintenanceCoordinator, maintenanceHasWork, maintenanceCoordinatorState } from '../metaAgent/maintenanceCoordinator';
 import { getScheduledJobSettings } from './settings';
 import { randomUUID } from 'node:crypto';
 import {
@@ -104,7 +105,7 @@ export interface ScheduledJobExecutor {
 
 export class ScheduledJobNotFoundError extends Error {}
 export class ScheduledJobConflictError extends Error {}
-export type ScheduledJobStartRefusal = 'running' | 'capacity' | 'unresolved_execution' | 'lease_lost' | 'stopping';
+export type ScheduledJobStartRefusal = 'running' | 'capacity' | 'unresolved_execution' | 'lease_lost' | 'stopping' | 'no_work' | 'paused';
 export { JobValidationError };
 
 export interface ScheduledJobSchedulerDeps {
@@ -178,6 +179,7 @@ export class ScheduledJobScheduler {
   private readonly maxConcurrentRuns: number;
   private readonly notifierGraceMs: number;
   private readonly cancelGraceMs: number;
+  private readonly maintenance = new MaintenanceCoordinator();
   private readonly active = new Map<string, ActiveRun>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private ticking: Promise<void> | null = null;
@@ -259,6 +261,14 @@ export class ScheduledJobScheduler {
     };
   }
 
+  now(): number { return this.clock(); }
+
+  /** Reject ordinary job controls for internal maintenance execution identities. */
+  requirePromptJob(id: string): void {
+    const record = this.repo.getJob(id)?.record;
+    if (!record || record.executionKind === 'maintenance') throw new ScheduledJobNotFoundError('Scheduled job not found; open Meta agent maintenance');
+  }
+
   listJobs(): ScheduledJobDto[] {
     return this.repo.listJobs().map(({ record, activeRunId }) => toJobDto(record, activeRunId));
   }
@@ -298,18 +308,28 @@ export class ScheduledJobScheduler {
   }
 
   createJob(raw: unknown): ScheduledJobDto {
-    const fields = this.validateCreate(raw);
+    return this.createExecution(raw);
+  }
+
+  /** Internal ledger entry: no public job, recurring due time or job quota. */
+  createMaintenanceExecution(raw: unknown, ownerUserId: string): ScheduledJobDto {
+    return this.createExecution(raw, ownerUserId);
+  }
+
+  private createExecution(raw: unknown, maintenanceOwner?: string): ScheduledJobDto {
+    const fields = maintenanceOwner === undefined ? this.validateCreate(raw) : parseJobCreate(raw, this.validationContext());
     const { conversationUpdates, ...jobFields } = fields;
     const now = this.clock();
     const record: ScheduledJobRecord = {
       id: this.createId(),
-      ownerUserId: null,
+      ownerUserId: maintenanceOwner ?? null,
+      executionKind: maintenanceOwner === undefined ? 'scheduled' : 'maintenance',
       ...jobFields,
       conversationCursor: conversationUpdates ? conversationCompletionCounter(fields.workspaceId) : null,
       persistentNodeId: null,
       autoPaused: false,
       consecutiveFailures: 0,
-      nextRunAt: fields.enabled ? computeNextRun(fields.schedule, now) : null,
+      nextRunAt: maintenanceOwner === undefined && fields.enabled ? computeNextRun(fields.schedule, now) : null,
       lastRunAt: null,
       lastStatus: null,
       lastError: null,
@@ -365,7 +385,9 @@ export class ScheduledJobScheduler {
     if (profileChanged || (patch.sessionMode !== undefined && patch.sessionMode !== current.sessionMode)) {
       update.persistentNodeId = null;
     }
+    if (current.executionKind === 'maintenance') update.nextRunAt = null;
     this.repo.updateJob(id, update);
+    this.maintenance.wake();
     this.rearm();
     // A moved job disappears from one workspace and appears in another.
     if (patch.workspaceId && patch.workspaceId !== current.workspaceId) {
@@ -478,6 +500,12 @@ export class ScheduledJobScheduler {
     const refuse = (refused: ScheduledJobStartRefusal, message: string) => ({ refused, message, activeRunId: this.repo.getJob(jobId)?.activeRunId ?? null });
     if (this.stopped) return refuse('stopping', 'The scheduler is stopping');
     const now = this.clock();
+    if (found.record.executionKind === 'maintenance') {
+      const owner = found.record.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
+      if (maintenanceCoordinatorState(owner).paused) return refuse('paused', 'Automatic maintenance is paused');
+      if (found.activeRunId) return refuse('running', 'Already updating this workspace');
+      if (!maintenanceHasWork(found.record.workspaceId, owner, now)) return refuse('no_work', 'Already up to date');
+    }
     if (!this.acquireOwnership(now)) return refuse('lease_lost', 'Another Michi process owns scheduled execution');
     const result = this.launch(found.record, 'manual', now);
     if (result.run) return { run: summaryOf(result.run) };
@@ -487,19 +515,12 @@ export class ScheduledJobScheduler {
     return refuse('running', 'This job is already running');
   }
 
-  /** Makes managed jobs due now, in the given order, so pending first runs start without waiting a minute. */
-  wakeJobs(jobIds: readonly string[]): void {
-    const now = this.clock();
-    jobIds.forEach((jobId, index) => {
-      const job = this.repo.getJob(jobId)?.record;
-      const at = now - jobIds.length + index;
-      if (job?.enabled && !job.autoPaused && (job.nextRunAt === null || job.nextRunAt > at)) {
-        this.repo.updateJob(jobId, { nextRunAt: at, updatedAt: now });
-      }
-    });
-    // A tick already in progress listed the jobs before this change: run another after it.
+  /** Wake the global coordinator. Durable cursors and plans retain the work. */
+  wakeJobs(_jobIds: readonly string[]): void {
+    this.maintenance.wake();
     if (this.running) void (this.ticking ?? Promise.resolve()).then(() => this.tick(), () => this.tick());
   }
+
 
   cancelActiveRun(jobId: string): boolean {
     let cancelled = false;
@@ -583,6 +604,11 @@ export class ScheduledJobScheduler {
           this.repo.updateJob(job.id, { nextRunAt: this.nextAfterScheduledRun(job, now), updatedAt: now });
         }
       }
+      this.maintenance.check(now, this.repo.listMaintenanceExecutions(), (record) => {
+        if (this.activeCount() >= this.maxConcurrentRuns || this.heldByMetaAgentGuard(record)
+          || !maintenanceRuntimeAvailability(resolveMetaAgentRuntime(record.ownerUserId ?? LOCAL_AGENT_OWNER_ID).runtimeId).available) return false;
+        return !!this.launch(record, 'scheduled', now).run;
+      });
     } catch (error) {
       log.warn('scheduler', 'tick failed', { error: error instanceof Error ? error.message : String(error) });
     }
@@ -591,7 +617,7 @@ export class ScheduledJobScheduler {
   private rearm(): void {
     if (this.stopped || (!this.running && this.active.size === 0)) return;
     if (this.timer) clearTimeout(this.timer);
-    let delay = Math.min(this.pollIntervalMs, Math.max(1, Math.floor(this.leaseTtlMs / 3)));
+    let delay = Math.min(this.pollIntervalMs, 60_000, Math.max(1, Math.floor(this.leaseTtlMs / 3)));
     try {
       if (this.running && this.lease && this.activeCount() < this.maxConcurrentRuns) {
         const next = this.repo.listScheduledJobs()[0]?.nextRunAt ?? null;
@@ -651,14 +677,13 @@ export class ScheduledJobScheduler {
   /** After a retry one managed maintenance run starts now; the others follow their schedule. */
   private retryHeldMaintenance(ownerKey: string): void {
     try {
-      const job = this.repo.listScheduledJobs().find((candidate) => {
+      const job = this.repo.listMaintenanceExecutions().find((candidate) => {
         const owner = candidate.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
         return metaAgentGuardOwnerKey(owner) === ownerKey && getMaintenanceConfig(candidate.workspaceId, owner)?.jobId === candidate.id;
       });
       if (!job) return;
-      this.runNow(job.id).catch((error: unknown) => {
-        log.info('scheduler', 'maintenance retry waits for the next scheduled run', { jobId: job.id, error: error instanceof Error ? error.message : String(error) });
-      });
+      this.startNow(job.id);
+      this.maintenance.wake();
     } catch (error) {
       log.warn('scheduler', 'could not start maintenance after a Meta agent retry', { error: error instanceof Error ? error.message : String(error) });
     }
@@ -686,8 +711,8 @@ export class ScheduledJobScheduler {
       lease: this.lease,
       maxConcurrentRuns: this.maxConcurrentRuns,
       processExitStopsExecution: this.deps.executor.processExitStopsExecution === true,
-      nextRunAt: trigger === 'scheduled' ? this.nextAfterScheduledRun(job, now) : undefined,
-      requireDue: trigger === 'scheduled',
+      nextRunAt: job.executionKind === 'maintenance' ? null : trigger === 'scheduled' ? this.nextAfterScheduledRun(job, now) : undefined,
+      requireDue: job.executionKind !== 'maintenance' && trigger === 'scheduled',
     });
     if (!result.run) return result;
     const active: ActiveRun = {
@@ -911,6 +936,7 @@ export class ScheduledJobScheduler {
   }
 
   private releaseEndedExecution(active: ActiveRun): void {
+    this.maintenance.wake();
     try {
       this.repo.releaseExecution(active.run.id, active.lease);
       this.active.delete(active.run.id);

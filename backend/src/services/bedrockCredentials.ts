@@ -217,8 +217,10 @@ export function getBedrockConfigSanitized(): BedrockConfigSanitized {
 /**
  * Save Bedrock config to `~/.michi/config.json`.
  * Merges into the existing file — does not overwrite other fields.
+ * With `keepAuthRefreshCommand`, the command already on disk is kept and the
+ * one in `cfg` is ignored: cloud operators set it by editing config.json.
  */
-export function saveBedrockConfig(cfg: BedrockConfig): void {
+export function saveBedrockConfig(cfg: BedrockConfig, options: { keepAuthRefreshCommand?: boolean } = {}): void {
     const bedrock: Record<string, unknown> = {};
 
     if (cfg.region) bedrock.region = cfg.region;
@@ -227,9 +229,15 @@ export function saveBedrockConfig(cfg: BedrockConfig): void {
     if (cfg.accessKeyId) bedrock.accessKeyId = cfg.accessKeyId;
     if (cfg.secretAccessKey) bedrock.secretAccessKey = cfg.secretAccessKey;
     if (cfg.profile) bedrock.profile = cfg.profile;
-    if (cfg.authRefreshCommand !== undefined) bedrock.authRefreshCommand = cfg.authRefreshCommand;
+    if (!options.keepAuthRefreshCommand && cfg.authRefreshCommand !== undefined) {
+        bedrock.authRefreshCommand = cfg.authRefreshCommand;
+    }
 
-    updateJsonConfig(CONFIG_PATH, (disk) => ({ ...disk, bedrock }));
+    updateJsonConfig(CONFIG_PATH, (disk) => {
+        const kept = disk.bedrock?.authRefreshCommand;
+        if (options.keepAuthRefreshCommand && kept !== undefined) bedrock.authRefreshCommand = kept;
+        return { ...disk, bedrock };
+    });
 }
 
 /**

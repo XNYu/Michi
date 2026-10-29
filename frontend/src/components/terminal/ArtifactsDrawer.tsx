@@ -1,12 +1,12 @@
-import { serverEntityId } from '../../config/backendIdentity';
+import { artifactTypeForPath as typeForPath, artifactHasImagePreview } from 'michi-shared';
+import { artifactImageUrl, downloadArtifactFile } from '../../services/api/artifacts';
 import { openPreferredUrl } from '../../services/openUrl';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState, useRef } from 'react';
 import { useChatStore } from '../../state/chatStore';
 import type { ArtifactEntry } from '../../state/chatTypes';
 import { sanitizeContextName } from '../../lib/sanitizeContextName';
 import { getElectron } from '../../lib/electronBridge';
-import { importWorkspaceFile, linkWorkspaceFile } from '../../services/api';
-import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { importWorkspaceFile, importWorkspaceFileUpload, linkWorkspaceFile } from '../../services/api';
 import { relativeTime } from '../../lib/relativeTime';
 import { Lightbox } from './Lightbox';
 import { manageFileType, MANAGE_COLORS } from './manage/tokens';
@@ -43,7 +43,7 @@ const TYPE_GROUPS: Array<{ key: ArtifactType; title: string }> = [
 
 function artifactType(c: ArtifactEntry): ArtifactType {
   if (c.type) return c.type;
-  return c.url ? 'link' : 'doc';
+  return c.url ? 'link' : typeForPath(c.filePath);
 }
 
 /** Host + trimmed path, for a compact link meta line. Falls back to the raw url. */
@@ -54,16 +54,6 @@ function linkLabel(url: string): string {
   } catch {
     return url;
   }
-}
-
-const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic', 'avif']);
-
-/** Classify a picked file path into an artifact type by extension. */
-function typeForPath(path: string): 'doc' | 'file' | 'image' {
-  const ext = path.toLowerCase().match(/\.([^./\\]+)$/)?.[1] ?? '';
-  if (IMAGE_EXTS.has(ext)) return 'image';
-  if (ext === 'md' || ext === 'mdx' || ext === 'markdown' || ext === 'txt') return 'doc';
-  return 'file';
 }
 
 export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChange }: Pick<DrawerShellProps, 'open' | 'onClose' | 'motion' | 'onPresenceChange'>) {
@@ -77,6 +67,8 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
     openArtifactPane,
   } = useChatStore();
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
   const [filter, setFilter] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<ArtifactType>>(() => new Set());
@@ -209,12 +201,11 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
         openViaOS(c);
         return;
       }
-      if (t === 'image') {
+      if (t === 'image' && artifactHasImagePreview(c.filePath)) {
         // Embedded image (e.g. .attachments/...) — serve via the workspace
         // image route, which resolves within cwd.
         if (activeProject?.id) {
-          const rel = c.filePath.replace(/^\/+/, '');
-          setLightbox({ src: `${workspaceBackendApiBase(activeProject.id)}/files/${serverEntityId(activeProject.id)}/${rel}`, name: c.name });
+          setLightbox({ src: artifactImageUrl(activeProject.id, c.filePath), name: c.name });
         }
         return;
       }
@@ -230,8 +221,10 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
         }
         return;
       }
-      // Embedded file → hand off to the OS default app.
-      openViaOS(c);
+      if (activeProject?.id) {
+        try { await downloadArtifactFile(activeProject.id, c.filePath); }
+        catch (err) { setPasteErr((err as Error).message); setAdding(true); }
+      }
     },
     [absPath, activeProject?.id, openArtifactPane, onClose, openViaOS],
   );
@@ -290,18 +283,31 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
     }
   }, [pasteVal, artifacts, activeProject?.id, cwd, createContext]);
 
-  // Pick file(s) from disk → file/image reference artifacts (Electron only).
-  // Mirrors the old Contexts "+" behavior; on web there's no native picker so
-  // the button falls back to just toggling the paste bar.
-  const handlePickFile = useCallback(async () => {
-    if (activeProject?.backendConnectionId) {
-      setPasteErr('Remote workspaces cannot link local paths. Drag the file into a chat to upload it to the remote server.');
+  const uploadFiles = async (files: File[]) => {
+    if (!activeProject?.id || !cwd || uploading) return;
+    setUploading(true);
+    setPasteErr(null);
+    try {
+      for (const file of files) {
+        const result = await importWorkspaceFileUpload(activeProject.id, cwd, file);
+        createContext(result.name, result.filePath, { size: result.size, type: typeForPath(result.filePath), kind: 'embedded', source: 'user' });
+      }
+    } catch (err) {
+      setPasteErr((err as Error).message);
       setAdding(true);
-      return;
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
+  };
+
+  const handlePickFile = useCallback(async () => {
     const electron = getElectron();
-    if (!electron?.chooseFiles) {
-      setAdding((v) => !v);
+    if (activeProject?.backendConnectionId || !electron?.chooseFiles) {
+      if (!cwd) {
+        setPasteErr('Uploading files needs a workspace folder.');
+        setAdding(true);
+      } else fileInputRef.current?.click();
       return;
     }
     setPasteErr(null);
@@ -362,6 +368,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
             type="button"
             className="ws-action-btn"
             onClick={handlePickFile}
+            disabled={uploading}
             title="Add file from disk"
             aria-label="Add file"
             style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
@@ -382,6 +389,9 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
       }
     >
       <>
+        <input ref={fileInputRef} type="file" multiple hidden aria-label="Upload artifact files"
+          onChange={(event) => void uploadFiles(Array.from(event.target.files ?? []))} />
+        {uploading && <div role="status">Uploading files…</div>}
         {/* Search */}
         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--term-line)' }}>
           <input

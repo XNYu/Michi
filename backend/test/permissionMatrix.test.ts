@@ -76,8 +76,6 @@ function configureHost() {
     dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'michi-permission-matrix-')),
     historyStore: {
       getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null,
-      hasGrant: () => { throw new Error('chats must not consult workspace grants'); },
-      grantPermission: () => { throw new Error('workspace grants must not be written'); },
     },
     agentConfig: {
       getAgentConfig: () => ({ runtime: 'pi', provider: 'deepseek', modelByRuntime: {}, reasoningByRuntime: {} }),

@@ -18,9 +18,11 @@ function loopbackHost(req: Request): boolean {
  * refuse hosts that are not loopback names (DNS rebinding), then requests
  * the local-control check refuses. Both answer 403 with `message` (the
  * shared middleware's own text is about Custom Agents). Mount in this order.
+ * Owner-scoped desktop routes may explicitly allow authenticated remote access.
  */
-export function localOnlyGuard(message: string): readonly [RequestHandler, RequestHandler] {
+export function localOnlyGuard(message: string, options: { allowAuthenticatedRemote?: boolean } = {}): readonly [RequestHandler, RequestHandler] {
   const host = (req: Request, res: Response, next: NextFunction): void => {
+    if (options.allowAuthenticatedRemote && res.locals?.remoteAccessAuthenticated === true) return next();
     if (!loopbackHost(req)) {
       res.status(403).json({ error: message });
       return;

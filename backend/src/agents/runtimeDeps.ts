@@ -19,6 +19,8 @@ export interface RuntimeDeps {
   onSessionStateChanged?: (session: AgentSession, ownerUserId: string | null, state: AgentSessionState) => void;
   chatPermissions?: {
     getMode(nodeId: string, ownerUserId?: string | null): ChatPermissionMode;
+    /** Approve for me on top of Ask (Kiro V3 trust classifier). Absent: off. */
+    getApproveForMe?(nodeId: string, ownerUserId?: string | null): boolean;
     hasGrant(nodeId: string, toolKey: string, ownerUserId?: string | null): boolean;
     grant(nodeId: string, toolKey: string, ownerUserId?: string | null): void;
     /** Changes on explicit permission updates, revoking temporary session trust. */

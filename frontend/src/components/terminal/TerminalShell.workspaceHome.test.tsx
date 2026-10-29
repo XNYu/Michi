@@ -79,10 +79,12 @@ describe('TerminalShell: a workspace home requested from anywhere', () => {
 
     act(() => requestWorkspaceHome({ workspaceId: 'ws-1', backendConnectionId: 'local' }));
     expect((await screen.findByTestId('spaces-main')).textContent).toBe('workspace home ws-1');
-    expect(rail('spaces').getAttribute('aria-current')).toBe('page');
     expect(screen.queryByLabelText('Pages navigation')).toBeNull();
     await waitFor(() => expect(crumb()).toBe('PAGES›rabbitholes'));
     expect(readHeldWorkspaceHome()).toBeNull();
+    // A narrow window has no rail: the drawer's area row names the current area.
+    fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }));
+    expect(rail('spaces').getAttribute('aria-current')).toBe('page');
   });
 
   it('marks the workspace current in the Spaces sidebar and returns to Home from the rail', async () => {

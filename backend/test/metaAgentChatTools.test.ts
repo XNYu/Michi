@@ -166,6 +166,31 @@ describe('Meta agent chat window tools', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test('Assistant MCP creates a custom tracker, fills it and embeds a native view with source receipts', async () => {
+    const made = await call(meta, 'create_database', { workspaceId: 'ws-b', title: 'Ticket tracker', columns: [
+      { name: 'Number', type: 'text' }, { name: 'Status', type: 'select', options: [{ value: 'open' }] },
+    ] });
+    assert.equal(made.isError, false, made.text);
+    const db = made.body.database;
+    assert.equal(made.body.michiPageWrite.workspaceId, 'ws-b');
+    assert.equal(made.body.result.applied[0].source.nodeId, assistant.nodeId);
+    assert.equal((await call(ordinary, 'configure_database', { databaseId: db.id, revision: db.revision,
+      ops: [{ op: 'column.add', column: { name: 'Forbidden', type: 'text' } }] })).isError, true);
+    const populated = await call(meta, 'edit_database', { databaseId: db.id, ops: [
+      { op: 'row.add', values: { [db.columns[0].id]: 'CR-123', [db.columns[1].id]: 'open' } },
+    ] });
+    assert.equal(populated.isError, false, populated.text);
+    const view = await call(meta, 'configure_database', { databaseId: db.id, revision: populated.body.result.revision,
+      ops: [{ op: 'view.save', view: { name: 'Status board', type: 'board', config: { filters: [], match: 'all', sorts: [], group: db.columns[1].id } } }] });
+    assert.equal(view.isError, false, view.text);
+    const page = createPage({ workspaceId: 'ws-b', ownerUserId: OWNER, title: 'Dashboard' });
+    const shown = await call(meta, 'edit_page', { pageId: page.id, ops: [{ op: 'insert', after: null,
+      block: { type: 'database-ref', databaseId: db.id, viewId: view.body.database.views[1].id } }] });
+    assert.equal(shown.isError, false, shown.text);
+    assert.equal(getPage(page.id, OWNER).blocks[0]?.type, 'database-ref');
+    assert.equal(getDatabase(db.id, OWNER).rows.length, 1);
+  });
+
   test('page reads reach every workspace for the Meta agent and stay in one for an ordinary chat', async () => {
     const pageA = createPage({ workspaceId: 'ws-a', ownerUserId: OWNER, title: 'Alpha notes' });
     const pageB = createPage({ workspaceId: 'ws-b', ownerUserId: OWNER, title: 'Beta plan' });

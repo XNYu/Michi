@@ -1,0 +1,28 @@
+# Layer dependency baseline (backend/scripts/dependencyRules.cjs).
+# <rule>\t<from>\t<to>: an import that breaks a layering rule
+# One entry per line, byte-sorted; # lines are comments. New entries fail
+# npm run check:deps and backend/test/dependencyRules.test.ts. Remove entries as edges go away.
+# Regenerate with: node backend/scripts/dependencyRules.cjs --write
+agents-to-chatHub	backend/src/agents/agentRunAssembly.ts	backend/src/agents/chatHub.ts
+agents-to-chatHub	backend/src/agents/michiRuntimeHost.ts	backend/src/agents/chatHub.ts
+agents-to-chatHub	backend/src/agents/threadMessageTool.ts	backend/src/agents/chatHub.ts
+agents-to-db	backend/src/agents/agentRunAssembly.ts	backend/src/services/db.ts
+agents-to-db	backend/src/agents/chatHub.ts	backend/src/services/db.ts
+agents-to-db	backend/src/agents/pageTools.ts	backend/src/services/db.ts
+agents-to-db	backend/src/agents/threadMessageTool.ts	backend/src/services/db.ts
+routes-to-db	backend/src/routes/admin.ts	backend/src/services/db.ts
+routes-to-db	backend/src/routes/backup.ts	backend/src/services/db.ts
+routes-to-db	backend/src/routes/chatReplay.ts	backend/src/services/db.ts
+routes-to-db	backend/src/routes/middleware/agentOwnership.ts	backend/src/services/db.ts
+routes-to-db	backend/src/routes/pages.ts	backend/src/services/db.ts
+routes-to-db	backend/src/routes/persistence.ts	backend/src/services/db.ts
+routes-to-db	backend/src/routes/search.ts	backend/src/services/db.ts
+state-to-components	frontend/src/state/chatStore.tsx	frontend/src/components/mentions.ts
+state-to-components	frontend/src/state/chatStore.tsx	frontend/src/components/terminal/tokens.ts
+state-to-components	frontend/src/state/chatTypes.ts	frontend/src/components/mentions.ts
+state-to-components	frontend/src/state/metaChat/spacesPages.ts	frontend/src/components/terminal/spaces/SpacesPage.tsx
+state-to-components	frontend/src/state/pages/usePageMaintenance.ts	frontend/src/components/terminal/scheduled/scheduledNav.ts
+state-to-components	frontend/src/state/prefs.tsx	frontend/src/components/terminal/paneMotion.ts
+state-to-components	frontend/src/state/prefs.tsx	frontend/src/components/terminal/sidebarRowStyle.ts
+state-to-components	frontend/src/state/prefs.tsx	frontend/src/components/terminal/tokens.ts
+state-to-components	frontend/src/state/queueFlush.ts	frontend/src/components/mentions.ts

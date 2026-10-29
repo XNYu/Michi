@@ -123,11 +123,11 @@ export interface RuntimeToolProfile {
    * the network natively, whatever the chat's permission mode; each adapter
    * enforces it on its own runtime or refuses the session (see
    * SessionProfilePort.isRestricted, which must honor it). Set only by the
-   * host, never from a request. Michi: its assistant, a chat that reads and
-   * coordinates other threads but is not a worker (backend/src/assistant).
+   * host, never from a request. Michi uses this for background maintenance;
+   * the interactive Assistant's identity marker does not imply restrictions.
    */
   restricted?: boolean;
-  /** Legacy host marker for Michi assistant profiles. */
+  /** Host identity marker for Michi Assistant profiles; does not restrict tools. */
   assistant?: boolean;
   /** Server-created hard-restricted scheduled Pages maintenance profile. */
   maintenance?: true;
@@ -355,6 +355,11 @@ export type RuntimeResumeBinding = Pick<HostNodeRecord, 'acp_session_id' | 'exte
 
 export interface AgentRuntime {
   readonly nativeEngine?: string;
+  /**
+   * Interactive chats can use Approve for me: in Ask, the runtime's own trust
+   * classifier approves what no rule settles (PermissionPolicyPort.approveForMe).
+   */
+  readonly approveForMe?: boolean;
   id: RuntimeId;
   label: string;
   /**

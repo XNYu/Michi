@@ -115,7 +115,11 @@ export function setupPageMaintenanceRoutes(deps: { scheduler: ScheduledJobSchedu
     const config = configs().get(workspaceId, ownerUserId);
     if (!config) throw new PageWriteError(404, 'not_found', 'Maintenance is not configured');
     if (!config.enabled || config.paused) throw new PageWriteError(409, 'stale_revision', 'Maintenance is paused');
-    res.status(202).json({ run: await scheduler().runNow(config.jobId) });
+    const result = scheduler().startNow(config.jobId);
+    if ('run' in result) { res.status(202).json({ run: result.run }); return; }
+    if (result.refused === 'no_work') { res.json({ run: null }); return; }
+    if (result.refused === 'capacity') { scheduler().wakeJobs([config.jobId]); res.status(202).json({ run: null }); return; }
+    throw new PageWriteError(409, 'stale_revision', result.message);
   }));
 
   router.post('/workspaces/:workspaceId/maintenance/plans/:planId/reconsider', route((req, res) => {

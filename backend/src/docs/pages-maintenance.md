@@ -1,12 +1,14 @@
 # Pages automatic updates and the Meta agent
 
-Applies to: native Pages and the local Meta agent in this backend source. Source checked: 2026-10-26. Runtime support below is a source contract, not live provider or installed-app acceptance. See `pages-and-components` for editing and `page-component-design` for component styling.
+The interactive Assistant uses the selected runtime's native tools, configured MCP servers and ordinary permission settings. Its Michi tools retain workspace ownership and protected-page edit rules. Background maintenance can modify Michi state and use external read-only MCP tools through its checked tool gateway. These background restrictions do not apply to interactive Assistant chat.
+
+Applies to: native Pages and the local Meta agent in this backend source. Source checked: 2026-10-29. Runtime support below is a source contract, not live provider or installed-app acceptance. See `pages-and-components` for editing and `page-component-design` for component styling.
 
 ## Three kinds of work
 
 | Path | What it reads | What it changes |
 | --- | --- | --- |
-| Pages Assistant | Accessible Michi work requested in the conversation, using its restricted chat tools | Requested pages/rows; protected content becomes a suggestion; new ordinary conversations require the start-conversation approval flow |
+| Pages Assistant | Accessible Michi work requested in the conversation, using Michi integration tools plus the selected runtime tools | Requested pages/rows; protected content becomes a suggestion; new ordinary conversations require the start-conversation approval flow |
 | Initial workspace-home generation | Eligible conversations in that workspace within the configured initial look-back | Only its assigned workspace home, citing messages actually read |
 | Automatic conversation maintenance | Newly completed, readable conversation turns in an enrolled workspace | Eligible pages/databases through verified write/proposal receipts, or explicit no-change decisions |
 
@@ -14,15 +16,25 @@ Pages Home also has a separate summary pass. It reads workspace home pages, not 
 
 ## Runtime and scope
 
-The Pages Assistant, initial generation and maintenance use the shared configuration in **Settings → Meta agent**. Pi, Claude, Codex and Kiro are approved for this restricted profile. **Kiro Crew is not supported for the Meta agent**; that does not remove Crew's ordinary chat capability. Every session must pass its adapter's actual tool-catalog check; an unsupported or unexpectedly broad catalog fails with a restriction error instead of silently running with more permissions.
+Initial generation and maintenance use the configuration in **Settings → Meta agent**. The Pages Assistant runs on **Settings → Runtime (global)**; a runtime, model or reasoning picked in an Assistant conversation's composer stays with that conversation. Pi, Claude, Codex and Kiro support these paths. **Kiro Crew is not supported for the Meta agent**; that does not remove Crew's ordinary chat capability. Initial generation and background maintenance must pass their adapter's actual tool-catalog check; an unsupported or unexpectedly broad catalog fails with a restriction error. Interactive Assistant chat does not use that closed-catalog check.
 
-The profile restricts tools and data access. It does not become a general coding session when the ordinary chat permission mode is Trust/YOLO. Maintenance cannot use arbitrary shell/network, manage jobs, save component-library code or accept its own proposals. The Assistant has a separate allowed chat catalog, including documentation and native Page/component tools. Tool availability for an ordinary chat or Agent Run does not imply availability in maintenance.
+The maintenance profile grants Michi state operations and external read-only access through maintenance_list_tools and maintenance_call_tool. The gateway discovers external tools from the local MCP configuration used by Pi, independently of the selected AI runtime; it does not import CLI-private MCP configurations. External tools need readOnlyHint=true and must not declare destructiveHint=true; unknown/write-capable tools return a recoverable approval request after fresh discovery, without execution. Settings → Meta agent → Tool approvals shows pending requests with persistent approve, deny and revoke actions; the app also shows a toast and Settings badge. Approval covers all valid arguments for that tool and is bound to its definition and connection configuration hash. Changed definitions/configurations require fresh approval. The agent must try permitted alternatives or explain the needed approval, and must not mark blocked work complete. Internal tools retain their ownership, validation and active-run checks. Starting or messaging unrestricted workers is not a Michi-only effect and is not exposed. It does not become a general coding session when the ordinary chat permission mode is Trust/YOLO. Maintenance cannot run arbitrary shell/code; external writes require an explicit saved tool approval. It can create and modify Pages, databases and component-library content through Michi tools. Batch source decisions still use the maintenance writers so receipts and completion accounting remain correct. The Assistant keeps its Michi integration catalog, including documentation and native Page/component tools, alongside ordinary runtime tools and configured MCP servers. Tool availability for an ordinary chat or Agent Run does not imply availability in maintenance.
 
 The current Pages/Meta agent UI is local-only. Remote workspaces are displayed unavailable and are not queued or read by this interface. Processing requires the backend, scheduler, selected runtime and provider to be available. Closing the Page or Assistant pane does not stop backend maintenance; stopping its backend does. A configured background service can keep a supported packaged backend running after the app closes; see `configuration`.
 
+## Background coordination
+
+One backend coordinator checks for pending maintenance every 60 seconds, and can be woken by an explicit check or completed execution. Checks query local state and do not create an AI session or an empty run record. Only pending history generation, conversation work, catch-up/reconsideration, recovery, or a changed Home summary starts an execution. No new conversation does not necessarily mean no pending work.
+
+Maintenance appears once in Scheduled. It is not a recurring prompt job: ordinary scheduled jobs keep their existing execution semantics. For migration and recovery, maintenance retains internal execution identities in the shared execution ledger, with their old IDs, plans, cursors, receipts and fenced claims intact. These records have no next scheduled time, do not consume the ordinary job quota, and cannot be edited or deleted through the ordinary job API.
+
+Maintenance shares the host execution lease and overall capacity with scheduled jobs. At most one maintenance execution runs at a time, with least recently served workspaces selected first. Failed executions back off; the existing repeated-failure stop and tool restriction checks still apply. Global pause prevents new executions and lets current work finish; it preserves each workspace's separate pause and progress. Resume does not unpause locally paused workspaces.
+
+The UI distinguishes the last database check from actual update runs. Historical empty checks remain readable; new empty checks only update the coordinator's timestamp and daily counter.
+
 ## Enable, pause and catch up
 
-Use a page's **Conversation maintenance** panel. Maintenance is enabled for a workspace and considers all its undeleted page trees except those explicitly excluded. New-page creation offers **Keep up to date from this workspace’s conversations**, which controls the new tree's exclusion. Check existing trees' exclusion settings when enabling workspace maintenance; the current checkbox helper text about existing pages is not an enrollment allowlist. The panel links to **Change in Settings › Meta agent**, rather than owning a separate runtime profile. It exposes status, pause/resume/run controls and **Open job** for the managed scheduler job.
+Use a page's **Conversation maintenance** panel. Maintenance is enabled for a workspace and considers all its undeleted page trees except those explicitly excluded. New-page creation offers **Keep up to date from this workspace’s conversations**, which controls the new tree's exclusion. Check existing trees' exclusion settings when enabling workspace maintenance; the current checkbox helper text about existing pages is not an enrollment allowlist. The panel links to **Change in Settings › Meta agent**, rather than owning a separate runtime profile. It exposes status and workspace pause/resume/run controls; **View automatic maintenance** opens the single Meta agent system entry in Scheduled.
 
 Enabling incremental maintenance starts at the current completion position. It does not silently scan all historical conversations. The explicit initial-home read and its configured look-back are a separate path. Native maintenance pause, disable and re-enable preserve its saved cursor. Generic `conversationUpdates` consumers have separate cursor-reset rules when toggled; do not apply those rules to the native managed configuration.
 
@@ -36,7 +48,9 @@ Page-tree exclusion records the completion interval it missed. Re-enabling makes
 | Last update failed / Status unavailable | Inspect the recorded error or restore connectivity; a missing status is not proof of completion |
 | Up to date | Available inputs have durable decisions; suggestions can still await review, and model relevance judgments can be wrong |
 
-Saving **Layout preferences** alone does not enqueue a model turn or rearrange content. Each maintenance/initial-generation read uses the target page's own preferences and rules; global Home preferences do not propagate to workspace or child pages. Program-applied section limits remain authoritative.
+Saving **Layout preferences** alone does not enqueue a model turn or rearrange content. Each maintenance/initial-generation read uses the target page's own preferences and rules; global Home preferences do not propagate to workspace or child pages. A page's preferences take precedence over the default block choices in the initial-generation, Home summary and maintenance prompts; only program-applied section limits override them.
+
+Initial generation has no fixed block set. It opens a workspace home with a short status callout (at most two sentences), then picks two to five blocks to fit what it read, such as next steps with owners, a dated timeline, an open comparison or conflict, checks with states, milestones or reference facts. It titles each block in the page's language, and adds metrics only for numbers the work itself produced, never counts of conversations or messages. Later maintenance keeps blocks in shape instead of only appending to them. When a block's content no longer fits its type, maintenance replaces the block with one of a fitting type. It replaces only blocks no person edited; a block a person edited is updated in place as a suggestion. An initial generation that already succeeded does not run again, so new preferences apply through later maintenance.
 
 ## Evidence, ownership and progress
 
@@ -69,7 +83,7 @@ On the workspace's board the cards an update added or changed read **New** or **
 1. Check that the workspace is local, workspace maintenance is enabled, the page tree is not excluded and the backend/scheduler is running.
 2. Inspect the Meta agent runtime/model and any restriction or provider error; changing ordinary chat permissions does not fix an unavailable profile.
 3. Check whether the source was a new eligible completed turn, part of an explicit initial read, or requires a catch-up period.
-4. Check page exclusion, **Ignore** protection, pending suggestions, unresolved sources and **Open job** history.
+4. Check page exclusion, **Ignore** protection, pending suggestions, unresolved sources and automatic maintenance history.
 5. Read the saved page/receipt and exact Sources before claiming the content changed. A pending proposal or consumed no-change decision may explain the visible result.
 
 ## Storage and backup

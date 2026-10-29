@@ -210,13 +210,14 @@ function describeTest(): void {
     }
   });
 
-  test('an empty managed wakeup advances the cursor without creating a plan or opening a model turn', async () => {
+  test('an empty managed wakeup creates neither a run nor a plan nor a model turn', async () => {
     const { scheduler, executor, jobId } = fixture();
     try {
-      await scheduler.runNow(jobId);
+      assert.equal((scheduler.startNow(jobId) as { refused: string }).refused, 'no_work');
       await until(() => scheduler.getJob(jobId).activeRunId === null);
       assert.equal(executor.started.length, 0);
-      assert.equal(scheduler.getJob(jobId).lastStatus, 'succeeded');
+      assert.equal(scheduler.getJob(jobId).lastStatus, null);
+      assert.equal(scheduler.listRuns(jobId).length, 0);
       assert.equal(scheduler.getJob(jobId).conversationCursor, 0);
       assert.equal((getDb().prepare('SELECT completion_cursor FROM page_maintenance_configs WHERE job_id=?').get(jobId) as { completion_cursor: number }).completion_cursor, 0);
       assert.equal((getDb().prepare('SELECT COUNT(*) AS n FROM page_maintenance_plans WHERE job_id=?').get(jobId) as { n: number }).n, 0);

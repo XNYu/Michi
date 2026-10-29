@@ -8,6 +8,7 @@
  */
 import { RICH_BLOCK_CATALOG, richContentText } from './richCatalog';
 import { richBlockJsonSchema, richChartSchema } from './richBlocks';
+import { PAGE_VIEW_PRESENTATIONS } from './viewInteractions';
 import {
   BLOCK_TONES, CHART_KINDS, CRITERION_STATES, FORGOT_STATES, METRIC_TONES, NEXT_STEP_WHO, PAGE_BLOCK_LIMITS as LIMITS,
   parsePageBlockInput, type CriterionState, type PageBlockInput, type PlanActualAmount, type PlanActualSpan,
@@ -63,6 +64,9 @@ const object = (properties: Record<string, unknown>, required: string[], descrip
   ({ type: 'object', ...(description ? { description } : {}), properties, required, additionalProperties: false });
 const block = (type: PageBlockType, describe: string, properties: Record<string, unknown>, required: string[]) =>
   object({ type: { type: 'string', enum: [type] }, ...properties }, ['type', ...required], describe);
+const viewId = { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_-]{0,79}$' };
+const viewAction = object({ type: { const: 'open-view' }, viewId, presentation: { type: 'string', enum: [...PAGE_VIEW_PRESENTATIONS] } }, ['type', 'viewId']);
+const interaction = object({ label: { ...title, minLength: 1 }, action: viewAction }, ['label', 'action']);
 
 // ── Plain text ──────────────────────────────────────────────────────────────
 
@@ -148,9 +152,9 @@ export const PAGE_BLOCK_CATALOG: { readonly [T in PageBlockType]: PageBlockCatal
     type: 'metrics', label: 'Metrics', category: 'data',
     blurb: 'A few key numbers, each with a short note.',
     describe: 'Figures in a row: label above, the value large, an optional note below. tone accent highlights a value.',
-    fields: '{items: [{label, value, tone?: default|accent, note?}]} (at most 12)',
+    fields: '{items: [{label, value, tone?: default|accent, note?, action?: {type:"open-view",viewId,presentation?:inline|drawer|modal}}]} (at most 12; action is optional)',
     schema: block('metrics', 'Figures in a row: label above, the value large, an optional note below. tone accent highlights a value.', {
-      items: list(object({ label: str(LIMITS.title), value: str(LIMITS.value), tone: { type: 'string', enum: [...METRIC_TONES] }, note: str(LIMITS.title) }, ['label', 'value']), LIMITS.metricsItems),
+      items: list(object({ label: str(LIMITS.title), value: str(LIMITS.value), tone: { type: 'string', enum: [...METRIC_TONES] }, note: str(LIMITS.title), action: viewAction }, ['label', 'value']), LIMITS.metricsItems),
     }, ['items']),
     example: { type: 'metrics', items: [{ label: 'Planned', value: '10 days', note: 'Oct 10 → Oct 24' }, { label: 'Tasks', value: '14 / 22', note: '64% done' }, { label: 'ETA', value: 'Oct 27', note: '3 days late', tone: 'accent' }] },
     title: () => '',
@@ -430,10 +434,33 @@ export const PAGE_BLOCK_CATALOG: { readonly [T in PageBlockType]: PageBlockCatal
     example: { type: 'tabs', tabs: [{ label: 'Plan', blocks: [{ type: 'markdown', text: 'What we planned.' }] }, { label: 'Actual', blocks: [{ type: 'markdown', text: 'Where we are.' }] }] },
     title: () => '', text: (b) => b.tabs.map((tab) => lines(tab.label, ...tab.blocks.map(pageBlockText))).join('\n'),
   },
+  view: {
+    type: 'view', label: 'Named view', category: 'references', blurb: 'Compose extra information from existing page blocks.',
+    describe: 'An optional named view, opened by view-link, a block interaction, a metric action or Markdown [label](#view/name). blockIds are real top-level block IDs from this page, in display order; they may include text, containers, charts, task views, database references and components, but not view definitions. Save content first and read its assigned IDs. Set visibility:"detail" on content that should only appear when opened; omit it to also show content on the page. Opening is local and does not run an agent. Static pages are equally valid.',
+    fields: '{viewId (stable page-local name), title, blockIds: [existing content block ID]}',
+    schema: block('view', 'A named view referencing existing page content. No extra content store or permissions.', { viewId, title: { ...title, minLength: 1 }, blockIds: { ...list(id, 40, 1), uniqueItems: true } }, ['viewId', 'title', 'blockIds']),
+    title: own, text: b => b.title,
+  },
+  'view-link': {
+    type: 'view-link', label: 'View link', category: 'references', blurb: 'Open an explanation, comparison, visualization or live data view.',
+    describe: 'An optional text link to a named view in this page. action is {type:"open-view",viewId,presentation?:inline|drawer|modal}; drawer is the default. Inline expands below the entry; drawer keeps the page usable; modal opens a dialog. Choose when it helps the current activity; no mandatory drill-down or task-page structure.',
+    fields: '{label, action: {type:"open-view", viewId, presentation?: inline|drawer|modal}}',
+    schema: block('view-link', 'Open agent-composed information on this page.', { label: { ...title, minLength: 1 }, action: viewAction }, ['label', 'action']),
+    title: b => b.label, text: b => b.label,
+  },
 };
 
 /** Every block type, in the order tools list them. */
 export const PAGE_BLOCK_TYPES = Object.keys(PAGE_BLOCK_CATALOG) as PageBlockType[];
+
+/** Decorate every root schema, including rich chart alternatives, without loosening its closed fields. */
+function withInteraction(schema: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...schema };
+  if (schema.properties) result.properties = { ...(schema.properties as Record<string, unknown>), interaction, visibility: { const: 'detail', description: 'Top-level content only: render this block only inside a named view.' } };
+  for (const key of ['oneOf', 'anyOf']) if (Array.isArray(schema[key])) result[key] = (schema[key] as Record<string, unknown>[]).map(withInteraction);
+  return result;
+}
+for (const type of PAGE_BLOCK_TYPES) if (type !== 'view') PAGE_BLOCK_CATALOG[type].schema = withInteraction(PAGE_BLOCK_CATALOG[type].schema);
 
 export function pageBlockEntry<T extends PageBlockType>(type: T): PageBlockCatalogEntry<T> {
   return PAGE_BLOCK_CATALOG[type] as PageBlockCatalogEntry<T>;
@@ -463,7 +490,8 @@ export function pageBlockInputSchema(): { oneOf: Array<Record<string, unknown>> 
 
 /** Every block's content in brief, for a tool description: `heading {text}; markdown {text}; …`. */
 export function pageBlockFieldsDoc(): string {
-  return PAGE_BLOCK_TYPES.map((type) => `${type} ${PAGE_BLOCK_CATALOG[type].fields}`).join('; ');
+  return PAGE_BLOCK_TYPES.map((type) => `${type} ${PAGE_BLOCK_CATALOG[type].fields}`).join('; ')
+    + '. Optional on any content block: interaction:{label,action:{type:"open-view",viewId,presentation?:inline|drawer|modal}} adds a view entry. Top-level visibility:"detail" keeps content off the main page until opened. Named views reference real blockIds; create content first, then views and entries. Use these capabilities only when helpful; static summaries, comparisons and visualizations remain valid';
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);

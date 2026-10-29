@@ -138,3 +138,67 @@ describe('Topbar background work badges', () => {
     expect(badgeOf('n3')?.getAttribute('aria-label')).toBe('1 workflow running. Show background work');
   });
 });
+
+describe('Topbar background work button', () => {
+  function mount(nodes: Record<string, ChatNodeState>) {
+    const store = nodeStore(nodes);
+    const handlers: Array<Parameters<WorkflowDomainApi['subscribe']>[1]> = [];
+    const api: WorkflowDomainApi = {
+      list: vi.fn(), get: vi.fn(), act: vi.fn(), answer: vi.fn(),
+      subscribe: vi.fn((_workspaceId, options) => { handlers.push(options); return () => {}; }),
+    };
+    const view = render(
+      <PrefsProvider>
+        <ChatNodeStoreContext.Provider value={store.value}>
+          <WorkflowDomainProvider api={api}>
+            <Subscribe />
+            <TerminalTopbar page="dashboard" onNav={() => {}} sidebarCollapsed={false} onToggleSidebar={() => {}} />
+          </WorkflowDomainProvider>
+        </ChatNodeStoreContext.Provider>
+      </PrefsProvider>,
+    );
+    const button = () => view.container.querySelector<HTMLElement>('[data-testid="topbar-background-work"]');
+    return { store, handlers, button };
+  }
+
+  it("speaks for the focused conversation's crew: running, waiting for approval, then finished", () => {
+    const crew = (status: SubagentInfo['status'], outcome?: SubagentInfo['outcome']) =>
+      ['a', 'b', 'c'].map((sessionId) => subagent({ sessionId, status, ...(outcome ? { outcome } : {}) }));
+    const { store, button } = mount({ n1: node('n1', { status: 'streaming' }, crew('working')), n2: node('n2'), n3: node('n3') });
+    expect(button()?.dataset.state).toBe('running');
+    expect(button()?.textContent).toBe('◆3');
+    expect(button()?.getAttribute('aria-label')).toBe('3 subagents running. Show background work');
+
+    // A subagent's approval is shown in the parent's chat.
+    act(() => store.set({ ...store.value.getNodes(), n1: node('n1', {
+      status: 'streaming', pendingPermission: { requestId: 1, title: 'Running: ls (subagent probe)', options: [] },
+    }, crew('working')) }));
+    expect(button()?.dataset.state).toBe('waiting');
+    expect(button()?.getAttribute('aria-label')).toBe('3 subagents running · waiting for your approval. Show background work');
+
+    // The turn ended: what it started stays listed, muted.
+    act(() => store.set({ ...store.value.getNodes(), n1: node('n1', {}, crew('terminated', 'completed')) }));
+    expect(button()?.dataset.state).toBe('done');
+    expect(button()?.textContent).toBe('◆3');
+    expect(button()?.getAttribute('aria-label')).toBe('3 background items finished. Show background work');
+
+    const opened: unknown[] = [];
+    const listener = (event: Event) => opened.push((event as CustomEvent).detail);
+    window.addEventListener('michi:open-background-work', listener);
+    act(() => button()!.click());
+    window.removeEventListener('michi:open-background-work', listener);
+    expect(opened).toEqual([{ nodeId: 'n1' }]);
+  });
+
+  it('falls back to another open conversation with running work, and hides when there is none', () => {
+    const { store, handlers, button } = mount({ n1: node('n1'), n2: node('n2'), n3: node('n3') });
+    expect(button()).toBeNull();
+    act(() => handlers[0].onRun(run({ id: 'wf', nodeId: 'n3' })));
+    expect(button()?.getAttribute('aria-label')).toBe('1 workflow running. Show background work');
+    act(() => handlers[0].onRun(run({ id: 'wf', nodeId: 'n3', status: 'completed', actions: [], revision: 2 })));
+    // n3 is not focused and nothing of it runs any more.
+    expect(button()).toBeNull();
+    act(() => store.set({ ...store.value.getNodes(), d1: node('d1', { kind: 'digest', status: 'streaming' }, [subagent({ sessionId: 'x' })]) }));
+    expect(button()).toBeNull();
+  });
+});

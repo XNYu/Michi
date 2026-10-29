@@ -48,6 +48,7 @@ export interface PageOutlineEntry { id: string; text: string; depth: 1 | 2 }
 export function pageOutline(blocks: readonly PageBlock[]): PageOutlineEntry[] {
   let underHeading = false;
   return blocks.flatMap((block): PageOutlineEntry[] => {
+    if (block.visibility === 'detail') return [];
     if (block.type === 'heading') {
       const text = block.text.trim();
       if (!text) return [];

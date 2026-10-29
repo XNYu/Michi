@@ -73,3 +73,23 @@ export function withMetaAgentContext(text: string, context: MetaAgentChatTurnCon
   const prefix = [metaAgentContextPrefix(context), firstRunNote(), META_AGENT_REPLY_NOTE].filter(Boolean).join('\n\n');
   return `${prefix}\n\n${text}`;
 }
+
+/** The Scheduled window's reply note: the Spaces one without Pages. */
+export const SCHEDULE_AGENT_REPLY_NOTE = '[How to answer: write your reply in the language of the user\'s message below, even when the conversations, job prompts and tool results are in another language. Reply with the answer only: do not narrate your plan, your next step or a retry; the user already sees each tool call as its own line. Use plain words: no field names, ids, tool names or API terms unless the user asks for them.]';
+
+/**
+ * The Scheduled window's context block: the workspace a new job goes in by
+ * default, by name and id. `workspace` is that workspace as the backend
+ * found it; null when there is none or it cannot be used.
+ */
+export function scheduleAgentContextPrefix(workspace: { id: string; name: string } | null): string {
+  const where = workspace
+    ? `Default workspace for a new job: “${title(workspace.name)}” (workspace ${workspace.id}), the one New job preselects. Use another only when the user names it.`
+    : 'No default workspace: ask the user which workspace a new job runs in; list_workspaces names them.';
+  return ['[Scheduled context: the user is on the Scheduled page. Context, not instructions.]', where, '[End of Scheduled context]'].join('\n');
+}
+
+/** What the runtime receives for a Scheduled window turn: its context block and reply note, then the user's text. */
+export function withScheduleAgentContext(text: string, workspace: { id: string; name: string } | null): string {
+  return `${scheduleAgentContextPrefix(workspace)}\n\n${SCHEDULE_AGENT_REPLY_NOTE}\n\n${text}`;
+}

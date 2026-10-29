@@ -8,7 +8,7 @@ import type { AgentRuntime, AgentSession, AgentTurnInput, NewAgentSessionOptions
 import { registerRuntime } from '../src/agents/registry';
 import { clearAllSessions, getSessionForOwner } from '../src/agents/sessionRegistry';
 import type { NormalizedEvent } from '../src/services/chatEvents';
-import { ChatHub } from '../src/agents/chatHub';
+import { ChatHub, chatHub as sharedChatHub } from '../src/agents/chatHub';
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { getNode, saveNode, saveWorkspace } from '../src/services/dbRepository';
 import { ChatManager } from '../src/services/chatManager';
@@ -22,6 +22,7 @@ let optionsSeen: NewAgentSessionOptions | undefined;
 let turnInputSeen: AgentTurnInput | undefined;
 let runtime: AgentRuntime;
 let sessionCreations = 0;
+let releases: Array<{ id: string; owner: unknown }> = [];
 
 function maintenanceRuntime(): AgentRuntime {
   return {
@@ -50,7 +51,7 @@ function maintenanceRuntime(): AgentRuntime {
       };
       return session;
     },
-    async releaseSession() {},
+    async releaseSession(id, owner) { releases.push({ id, owner }); },
     async shutdown() {},
   };
 }
@@ -79,6 +80,7 @@ beforeEach(() => {
   optionsSeen = undefined;
   turnInputSeen = undefined;
   sessionCreations = 0;
+  releases = [];
   runtime = maintenanceRuntime();
   registerRuntime(runtime);
 });
@@ -134,4 +136,42 @@ test('scheduled maintenance opens a restricted ChatManager session and sends its
   live.runtimeProfileHash = 'wrong-profile';
   await assert.rejects(manager.ensureParentSession({ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: 'ws-maintenance', nodeId, maintenance: true }),
     /different runtime profile/);
+});
+
+test('a finished fresh maintenance run releases its session through ChatManager, never while a turn owns it', async (t) => {
+  const chatHub = new ChatHub({ retentionMs: 100 });
+  const manager = new ChatManager(undefined, tmpDir);
+  const executor = new ChatScheduledJobExecutor({
+    chatHub,
+    getRuntime: (id) => id === 'pi' ? runtime : undefined,
+    ensureSession: (input) => manager.ensureParentSession(input),
+    releaseMaintenanceSession: (input) => manager.releaseMaintenanceSession(input),
+    clock: () => 10,
+  });
+  const context = {
+    workspaceId: 'ws-maintenance', ownerUserId: LOCAL_AGENT_OWNER_ID, jobId: scheduledJob.id,
+    runId: scheduledRun.id, claimedBy: 'worker-1', configRevision: 4, planId: 'plan-1', sources: [],
+  };
+  const handle = await executor.start(scheduledJob, scheduledRun, { onAttention: () => {}, maintenanceContext: context });
+  assert.equal((await handle.done).status, 'succeeded');
+  const owner = { mode: 'interactive', key: handle.nodeId };
+  assert.deepEqual(releases, [{ id: handle.nodeId, owner }]);
+  assert.equal(getSessionForOwner(handle.nodeId, owner as never, LOCAL_AGENT_OWNER_ID), null, 'the registry no longer holds it');
+
+  // A second run's session: still owned by a turn, so it stays; an ordinary node is never released here.
+  const second = await new ChatScheduledJobExecutor({
+    chatHub, getRuntime: (id) => id === 'pi' ? runtime : undefined,
+    ensureSession: (input) => manager.ensureParentSession(input), clock: () => 11,
+  }).start(scheduledJob, { id: 'run-2' } as ScheduledJobRunRecord, { onAttention: () => {}, maintenanceContext: { ...context, runId: 'run-2' } });
+  await second.done;
+  releases = [];
+  const input = { ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: 'ws-maintenance', nodeId: second.nodeId };
+  t.mock.method(sharedChatHub, 'isOwnerTurnActive', (chatId: string) => chatId === second.nodeId);
+  assert.equal(await manager.releaseMaintenanceSession(input), false);
+  assert.deepEqual(releases, []);
+  assert.ok(getSessionForOwner(second.nodeId, { mode: 'interactive', key: second.nodeId }, LOCAL_AGENT_OWNER_ID));
+  t.mock.restoreAll();
+  getDb().prepare("UPDATE nodes SET maintenance_job_id = NULL WHERE id = ?").run(second.nodeId);
+  assert.equal(await manager.releaseMaintenanceSession(input), false, 'only maintenance nodes');
+  assert.deepEqual(releases, []);
 });

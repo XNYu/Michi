@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { electronDevEnvironment } from './electron-dev-env.mjs';
+import { fileURLToPath } from 'node:url';
+import { devDataEnvironment, electronDevEnvironment } from './electron-dev-env.mjs';
 
 test('same-named checkouts get different Electron user data and instance locks', () => {
   const main = electronDevEnvironment(path.resolve('main', 'rabbitholes'), {});
@@ -42,4 +45,37 @@ test('an explicit instance name selects its profile beneath the selected data di
     electronDevEnvironment(path.resolve('rabbitholes'), env).MICHI_ELECTRON_USER_DATA_DIR,
     path.join(env.MICHI_DATA_DIR, 'electron-crew-preview'),
   );
+});
+
+test('run as a script, it prints the variables it sets for shell launchers', () => {
+  const root = path.resolve('rabbitholes');
+  const dataDir = path.resolve('preview-data');
+  const { MICHI_CONFIG_DIR, MICHI_DEV_INSTANCE_ID, MICHI_ELECTRON_USER_DATA_DIR, ...env } = process.env;
+  const output = execFileSync(process.execPath, [fileURLToPath(new URL('./electron-dev-env.mjs', import.meta.url)), root], {
+    encoding: 'utf8',
+    env: { ...env, MICHI_DATA_DIR: dataDir, MICHI_CONFIG_DIR: '' },
+  });
+  const expected = electronDevEnvironment(root, { MICHI_DATA_DIR: dataDir });
+  assert.deepEqual(output.trim().split('\n').sort(), [
+    `MICHI_CONFIG_DIR=${expected.MICHI_CONFIG_DIR}`,
+    `MICHI_DEV_INSTANCE_ID=${expected.MICHI_DEV_INSTANCE_ID}`,
+    `MICHI_ELECTRON_USER_DATA_DIR=${expected.MICHI_ELECTRON_USER_DATA_DIR}`,
+  ]);
+});
+
+test('development data defaults treat an empty variable as unset, like the old shell defaults', () => {
+  const home = path.join(os.homedir(), '.michi-dev');
+  assert.deepEqual(devDataEnvironment({}), { MICHI_DATA_DIR: home, MICHI_CONFIG_DIR: home });
+  assert.deepEqual(devDataEnvironment({ MICHI_DATA_DIR: '', MICHI_CONFIG_DIR: '' }), { MICHI_DATA_DIR: home, MICHI_CONFIG_DIR: home });
+  const env = { MICHI_DATA_DIR: path.resolve('preview-data'), MICHI_CONFIG_DIR: path.resolve('preview-config'), PORT: '3010' };
+  assert.deepEqual(devDataEnvironment(env), env);
+});
+
+test('root dev scripts apply the data defaults in Node, not with POSIX-only shell syntax', () => {
+  // npm runs package.json scripts with cmd.exe on Windows.
+  const { scripts } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const name of ['dev', 'backend:dev']) {
+    assert.doesNotMatch(scripts[name], /\$\{|MICHI_(DATA|CONFIG)_DIR=/, name);
+    assert.match(scripts[name], /node scripts\/dev\.mjs/, name);
+  }
 });

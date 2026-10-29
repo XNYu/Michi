@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { npm, run } from "./lib/proc.mjs";
 import { prepareElectronBinary } from "./prepare-electron-binary.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
 // node-pty is an N-API module, so the pty.node it ships in prebuilds/ loads in
 // Electron without recompiling. On these platforms a failed Electron rebuild
@@ -72,30 +72,13 @@ export async function rebuildNativeModules({
   }
 }
 
-function run(command, args, env = process.env) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
-      cwd: root,
-      env,
-      stdio: "inherit",
-      shell: process.platform === "win32",
-      windowsHide: true,
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`${command} ${args.join(" ")} exited ${code}`));
-    });
-  });
-}
-
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;
 if (invokedPath === import.meta.url) {
   await prepareElectronBinary({ rootDir: root, log: console.log });
   const env = nativeBuildEnvironment();
   await rebuildNativeModules({
     rootDir: root,
-    installAppDeps: () => run(npm, ["exec", "--", "electron-builder", "install-app-deps"], env),
+    installAppDeps: () => run(npm, ["exec", "--", "electron-builder", "install-app-deps"], { env }),
   });
   await import("./prepare-node-pty.mjs");
 }

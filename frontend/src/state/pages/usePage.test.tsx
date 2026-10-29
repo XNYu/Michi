@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { usePage } from './usePage';
-import { notifyPageChanged } from './pageEvents';
+import { notifyPageChanged, subscribePageChanges } from './pageEvents';
 
 const api = vi.hoisted(() => ({
   acknowledgePageActivity: vi.fn(),
@@ -20,6 +20,24 @@ vi.mock('../../services/api/pages', async (importOriginal) => ({
 afterEach(() => vi.clearAllMocks());
 
 describe('usePage activity acknowledgement', () => {
+  it.each(['database', 'row'] as const)('refreshes the specific database immediately after accepting a %s suggestion', async (kind) => {
+    const identity = { backendConnectionId: 'local', workspaceId: `schema-${kind}`, pageId: `schema-${kind}-page` };
+    api.fetchPage.mockReset().mockResolvedValue({ id: identity.pageId, workspaceId: identity.workspaceId, revision: 1, viewVersion: 1, blocks: [] });
+    api.listPageChanges.mockResolvedValue({ changes: [], nextAfter: 0, nextBefore: null, hasMore: false });
+    api.fetchPageActivitySeen.mockResolvedValue({ lastSeenChangeSeq: 0 });
+    api.changePageChange.mockResolvedValue({ id: 'schema-change', seq: 1, target: { kind, databaseId: 'db-target' }, proposalState: 'accepted' });
+    const { result } = renderHook(() => usePage(identity));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    const refreshed = vi.fn(), unrelated = vi.fn();
+    const stop = subscribePageChanges({ backendConnectionId: identity.backendConnectionId, workspaceId: identity.workspaceId, databaseId: 'db-target' }, refreshed);
+    const stopOther = subscribePageChanges({ backendConnectionId: identity.backendConnectionId, workspaceId: identity.workspaceId, databaseId: 'db-other' }, unrelated);
+    try {
+      await act(async () => result.current.accept('schema-change'));
+      expect(refreshed).toHaveBeenCalledWith({ ...identity, databaseId: 'db-target' });
+      expect(unrelated).not.toHaveBeenCalled();
+    } finally { stop(); stopOther(); }
+  });
+
   it('keeps committed milestones while refreshing and rejects older reads and 304s below the receipt version', async () => {
     const identity = { backendConnectionId: 'local', workspaceId: 'live-version', pageId: 'live-version-page' };
     const page = { id: identity.pageId, workspaceId: identity.workspaceId, revision: 1, viewVersion: 1, blocks: [] };

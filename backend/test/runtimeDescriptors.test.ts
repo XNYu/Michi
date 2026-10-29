@@ -71,7 +71,8 @@ function create(id: string, deps: Partial<RuntimeFactoryDeps> = {}): AgentRuntim
 
 const KIRO_TOPOLOGY: RuntimeTopology = {
   identityTiming: 'on-open',
-  cancel: 'inferred-keep-session',
+  // kiro-cli settles a cancelled prompt with stopReason "cancelled".
+  cancel: 'native-ack',
   toolDelivery: ['mcp-http'],
   historyReplay: 'preamble',
   backgroundTurns: false,
@@ -130,6 +131,12 @@ describe('runtime descriptors', () => {
 
   test('under default configuration an instance describes itself as its static descriptor', () => {
     for (const { id, staticDescriptor } of RUNTIME_FACTORIES) {
+      // Kiro starts v3 by default; its static descriptor stays the v2 table.
+      if (id === 'kiro') {
+        assert.equal(create(id).nativeEngine, 'v3');
+        assert.deepEqual(create(id).descriptor, kiro({ engine: 'v3' }, { mcp: true }).descriptor, id);
+        continue;
+      }
       assert.deepEqual(create(id).descriptor, staticDescriptor, id);
     }
   });
@@ -168,7 +175,8 @@ describe('runtime descriptors', () => {
     const crew = create('crew');
     // Crew titles its own sessions, so Kiro's opt-in for host titles does not apply.
     const { hostTitleRequiresOptIn: _kiroOnly, ...crewTopology } = KIRO_TOPOLOGY;
-    assert.deepEqual(crew.descriptor?.topology, { ...crewTopology, toolDelivery: ['mcp-relay'], titles: 'native-update' });
+    // The Gateway's stop record acknowledges a cancel (probed on 0.11.0.1).
+    assert.deepEqual(crew.descriptor?.topology, { ...crewTopology, cancel: 'native-ack', toolDelivery: ['mcp-relay'], titles: 'native-update' });
     assert.equal(crew.descriptor?.run, null);
     assert.deepEqual(create('crew', { mcpRegistry: undefined }).descriptor?.topology.toolDelivery, []);
     const underV3 = withEnv({ MICHI_KIRO_ENGINE: 'v3' }, () => track(factory('crew').create({ bridge, mcpRegistry, mcpPort: 0, host: michiTestHost() })));

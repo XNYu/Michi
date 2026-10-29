@@ -93,6 +93,24 @@ export function isCodexSubagentSpawn(item: Item): boolean {
   return item['kind'] === 'started' && !!str(item['agentThreadId']);
 }
 
+/**
+ * Whether a parent-thread item starts a sub-agent: a `subAgentActivity`
+ * spawn (the child exists) or a `spawnAgent` collab call (older
+ * app-servers; the child may not exist yet). `childThreadId` is the child
+ * when the item names one.
+ */
+export function codexSpawnSignal(item: Item): { childThreadId: string | null } | null {
+  if (item['type'] === CODEX_SUBAGENT_ACTIVITY_ITEM) {
+    return item['kind'] === 'started' ? { childThreadId: str(item['agentThreadId']) ?? null } : null;
+  }
+  if (item['type'] === CODEX_COLLAB_ITEM && item['tool'] === 'spawnAgent') {
+    const receivers = Array.isArray(item['receiverThreadIds']) ? item['receiverThreadIds'] as unknown[] : [];
+    const first = receivers.find((id): id is string => typeof id === 'string' && !!id);
+    return { childThreadId: first ?? null };
+  }
+  return null;
+}
+
 function agentPathName(agentPath: string | undefined): string | undefined {
   const segments = (agentPath ?? '').split('/').filter(Boolean);
   const last = segments.at(-1);

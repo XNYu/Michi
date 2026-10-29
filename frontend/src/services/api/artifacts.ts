@@ -6,6 +6,7 @@ import { workspaceBackendApiBase } from '../../config/backendConnections';
 
 export interface ArtifactReadResult {
   content: string;
+  imageMime?: string;
   path: string;
   basename: string;
   extension: string;
@@ -16,8 +17,9 @@ export interface ArtifactReadResult {
 export async function fetchArtifactContent(
   workspaceId: string,
   filePath: string,
+  preview = false,
 ): Promise<ArtifactReadResult> {
-  const url = `${workspaceBackendApiBase(workspaceId)}/artifacts/${encodeURIComponent(serverEntityId(workspaceId))}/read?path=${encodeURIComponent(filePath)}`;
+  const url = `${workspaceBackendApiBase(workspaceId)}/artifacts/${encodeURIComponent(serverEntityId(workspaceId))}/read?path=${encodeURIComponent(filePath)}${preview ? '&preview=1' : ''}`;
   const res = await backendFetch(url);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
@@ -58,4 +60,23 @@ export async function postArtifactWatchPaths(
   }
   const body = (await res.json().catch(() => ({}))) as { watching?: string[] };
   return body.watching ?? [];
+}
+
+/** Authenticated download also works for remote gateways requiring headers. */
+export async function downloadArtifactFile(workspaceId: string, filePath: string): Promise<void> {
+  const url = `${workspaceBackendApiBase(workspaceId)}/artifacts/${encodeURIComponent(serverEntityId(workspaceId))}/download?path=${encodeURIComponent(filePath)}`;
+  const response = await backendFetch(url);
+  if (!response.ok) throw new Error(`Could not download file (${response.status})`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  anchor.download = filePath.split('/').pop() || 'artifact';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
+export function artifactImageUrl(workspaceId: string, filePath: string): string {
+  return `${workspaceBackendApiBase(workspaceId)}/files/${encodeURIComponent(serverEntityId(workspaceId))}/${filePath.split('/').map(encodeURIComponent).join('/')}`;
 }

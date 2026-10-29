@@ -2,7 +2,7 @@ import { createSseObserver } from "../services/httpSse";
 import express, { Request, Response } from "express";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { NotFoundError } from "../agents/tools/pathSandbox";
+import { NotFoundError } from "../services/workspaceSandbox";
 import { resolveWorkspaceFileRoot as resolveRoot, resolveWorkspaceRegularFile, WORKSPACE_FILE_ID_RE } from "../services/workspaceFiles";
 import {
   declareArtifactWatchPaths,
@@ -31,6 +31,25 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
   const subscribe = deps.subscribe ?? subscribeArtifactWatch;
   const router = express.Router();
 
+  // Arbitrary files are downloads, never active same-origin HTML/SVG content.
+  router.get("/artifacts/:workspaceId/download", (req: Request, res: Response) => {
+    const workspaceId = req.params.workspaceId;
+    if (typeof workspaceId !== 'string' || !WORKSPACE_FILE_ID_RE.test(workspaceId)
+      || typeof req.query.path !== 'string') return res.status(404).end();
+    try {
+      const root = resolveWorkspaceRoot(req, workspaceId);
+      const { realPath } = resolveWorkspaceRegularFile(req.query.path, root);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.download(realPath, path.basename(realPath), (error) => {
+        if (error && !res.headersSent) res.status(404).end();
+      });
+    } catch {
+      res.status(404).end();
+    }
+  });
+
   router.get("/artifacts/:workspaceId/read", (req: Request, res: Response) => {
     const workspaceId = req.params.workspaceId;
     if (typeof workspaceId !== "string" || !WORKSPACE_FILE_ID_RE.test(workspaceId)) {
@@ -51,10 +70,20 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
       return res.status(500).end();
     }
 
+    const preview = req.query.preview === '1';
     let real: string;
     let stat: fs.Stats;
     try {
-      ({ realPath: real, stat } = resolveWorkspaceRegularFile(relPath, root));
+      // The owner desktop/remote API has host filesystem access, like the
+      // Electron file viewer. Cloud previews always retain workspace isolation.
+      if (preview && path.isAbsolute(relPath) && process.env.MICHI_CLOUD !== '1') {
+        real = fs.realpathSync(relPath);
+        stat = fs.statSync(real);
+        if (!stat.isFile()) return res.status(404).end();
+      } else {
+        const relative = preview && path.isAbsolute(relPath) ? path.relative(root, relPath) : relPath;
+        ({ realPath: real, stat } = resolveWorkspaceRegularFile(relative, root));
+      }
     } catch {
       return res.status(404).end();
     }
@@ -65,10 +94,22 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
       return res.status(413).json({ error: `File too large (${sizeMB}MB > 5MB) — open externally` });
     }
 
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    const imageMime = preview ? ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' } as Record<string, string>)[path.extname(real).toLowerCase()] : undefined;
+    if (imageMime) {
+      try {
+        return res.json({ content: `data:${imageMime};base64,${fs.readFileSync(real).toString('base64')}`, imageMime,
+          path: relPath, basename: path.basename(real), extension: path.extname(real).slice(1), size: stat.size, modifiedAt: stat.mtimeMs });
+      } catch { return res.status(500).json({ error: 'Failed to read image' }); }
+    }
+
     // 5. Read as UTF-8 text
     let content: string;
     try {
-      content = fs.readFileSync(real, "utf-8");
+      const bytes = fs.readFileSync(real);
+      if (preview && bytes.includes(0)) return res.status(415).json({ error: 'This binary file cannot be previewed.' });
+      content = bytes.toString('utf-8');
     } catch {
       return res.status(500).json({ error: "Failed to read file" });
     }

@@ -72,7 +72,12 @@ export function isMetaAgentInfo(value: unknown): value is SharedMetaAgentInfo & 
     && typeof resolved.followsGlobal === 'boolean'
     && isAvailability(value.availability)
     && isGuardStatus(guard.maintenance ?? null) && isGuardStatus(guard.chat ?? null)
-    && isUsage(value.usageToday);
+    && isUsage(value.usageToday)
+    && (value.toolApprovals === undefined || (Array.isArray(value.toolApprovals) && value.toolApprovals.every(request =>
+      isObject(request) && typeof request.id === 'string' && typeof request.server === 'string'
+      && typeof request.tool === 'string' && typeof request.description === 'string'
+      && ['pending', 'approved', 'denied', 'revoked'].includes(String(request.state))
+      && count(request.requestedAt) && count(request.updatedAt))));
 }
 
 function errorMessage(body: unknown, status: number): string {
@@ -127,4 +132,8 @@ export function updateMetaAgentSettings(patch: MetaAgentSettingsPatch): Promise<
  */
 export function retryMetaAgentGuard(toolset?: MetaAgentToolset): Promise<MetaAgentInfo> {
   return metaAgentJson('/retry', { method: 'POST', body: toolset ? { toolset } : {} });
+}
+
+export function decideMetaAgentToolApproval(id: string, state: 'approved' | 'denied' | 'revoked'): Promise<MetaAgentInfo> {
+  return metaAgentJson(`/tool-approvals/${encodeURIComponent(id)}`, { method: 'POST', body: { state } });
 }

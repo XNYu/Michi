@@ -6,6 +6,7 @@ import type { Project } from '../../../../state/chatTypes';
 import { setKnownBackendConnections } from '../../../../config/backendConnections';
 import { backendEntityId } from '../../../../config/backendIdentity';
 
+
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   test: vi.fn(),

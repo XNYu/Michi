@@ -16,6 +16,7 @@ import {
     type CreateSlotInput,
     type CrewChatEvent,
     type CrewChatFrame,
+    type CrewFolder,
     type CrewGateway,
     type CrewGatewayConfig,
     type CrewModel,
@@ -27,6 +28,7 @@ import {
 } from './gatewayTypes';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const FOLDER_TIMEOUT_MS = 5_000;
 const IDLE_POLL_INTERVAL_MS = 100;
 const TOKEN_MAX_AGE_MS = 50 * 60 * 1000;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
@@ -73,6 +75,8 @@ export class CrewGatewayClient implements CrewGateway {
     private token: CachedToken | undefined;
     private exchanging: Promise<string> | undefined;
     private readonly timeoutSignal: SignalFactory = () => AbortSignal.timeout(this.timeoutMs);
+    /** Filing a session in a folder is optional, so it must not hold up the session for long. */
+    private readonly folderSignal: SignalFactory = () => AbortSignal.timeout(Math.min(this.timeoutMs, FOLDER_TIMEOUT_MS));
 
     constructor(private readonly config: CrewGatewayConfig, deps: CrewGatewayClientDeps = {}) {
         const url = parseLoopbackUrl(config.baseUrl);
@@ -213,11 +217,32 @@ export class CrewGatewayClient implements CrewGateway {
         if (input.agent_kind) body.agent_kind = input.agent_kind;
         if (input.model !== undefined) body.model = input.model;
         if (input.memory_mode) body.memory_mode = input.memory_mode;
+        if (input.folder_id) body.folder_id = input.folder_id;
         const result = await this.json('POST', '/api/chat/slots', body);
         if (!isRecord(result) || typeof result.key !== 'string' || !result.key) {
             throw gatewayError('Crew gateway created a slot without a key');
         }
         return result as CrewSlotInfo;
+    }
+
+    async listFolders(): Promise<CrewFolder[]> {
+        const result = await this.json('GET', '/api/chat/folders', undefined, {}, this.folderSignal);
+        if (!Array.isArray(result)) throw gatewayError('Crew returned an invalid folder list');
+        return result.flatMap((row) => {
+            const folder = toCrewFolder(row, this.config.appName);
+            return folder ? [folder] : [];
+        });
+    }
+
+    async createFolder(name: string, parentId?: string): Promise<CrewFolder> {
+        const result = await this.json('POST', '/api/chat/folders', { name, ...(parentId ? { parent_id: parentId } : {}) }, {}, this.folderSignal);
+        const folder = toCrewFolder(result, this.config.appName);
+        if (!folder) throw gatewayError('Crew created a folder without an id');
+        return folder;
+    }
+
+    async hideFolder(id: string): Promise<void> {
+        await this.json('PATCH', `/api/chat/folders/${encodeURIComponent(id)}`, { hidden: true }, {}, this.folderSignal);
     }
 
     async slotExists(slot: string): Promise<boolean> {
@@ -560,6 +585,20 @@ function toCrewModel(item: unknown): CrewModel | null {
     const name = nonEmpty(item.display_name) ?? nonEmpty(item.name) ?? modelId;
     const description = nonEmpty(item.description);
     return description ? { modelId, name, description } : { modelId, name };
+}
+
+/** One `GET /api/chat/folders` row (kiro_crew dashboard/chat_folders.py `create_folder_record`). */
+function toCrewFolder(row: unknown, appName: string): CrewFolder | null {
+    if (!isRecord(row)) return null;
+    const id = nonEmpty(row.id);
+    if (!id || typeof row.name !== 'string') return null;
+    return {
+        id,
+        name: row.name,
+        parentId: typeof row.parent_id === 'string' ? row.parent_id : '',
+        own: row.owner_app === appName,
+        ...(typeof row.created_at === 'number' ? { createdAt: row.created_at } : {}),
+    };
 }
 
 function parseToken(text: string): string | undefined {

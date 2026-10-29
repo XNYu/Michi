@@ -202,7 +202,7 @@ function goldenBridge(label: string): AgentToolBridge {
         title: topic.title, prompt: topic.prompt, chatId: `${label}-child-chat-${index + 1}`, nodeId: `${label}-child-node-${index + 1}`,
       }));
     },
-    saveContext: (args) => ({ id: `${label}-ctx-1`, name: args.name, filePath: `.contexts/${args.name}.md`, size: args.body.length }),
+    saveContext: (args) => ({ id: `${label}-ctx-1`, name: args.name, filePath: `.contexts/${args.name}.md`, size: args.body?.length ?? 0 }),
     // No durable id: the event carries no contextId.
     updateContext: (args) => ({ name: args.name, filePath: `.contexts/${args.name}.md`, size: args.body.length }),
   };
@@ -268,14 +268,13 @@ async function michiMcp(): Promise<{
 
 /**
  * Michi's tools with an effect on the session, called over MCP in the order
- * every scenario uses. Kiro offers no show_image.
+ * every scenario uses.
  */
-async function callMichiTools(callTool: CallTool, { images = true } = {}): Promise<void> {
+async function callMichiTools(callTool: CallTool): Promise<void> {
   await callTool('spawn_branches', { topics: TOPICS });
   await callTool('spawn_branches', { topics: [{ title: 'Gamma', prompt: 'Explore gamma' }] });
   await callTool('save_artifact', { name: 'notes', body: 'saved body' });
   await callTool('update_artifact', { name: 'notes', body: 'updated body' });
-  if (!images) return;
   await callTool('show_image', { path: 'chart.png', caption: 'Quarterly chart' });
   await callTool('show_image', { path: 'chart.png' });
 }
@@ -310,12 +309,11 @@ function stubClaude(): { children: MockClaudeChild[]; restore: () => void } {
   const children: MockClaudeChild[] = [];
   const binary = require('michi-runtime/internal/adapters/claude/claudeBinary');
   const db = require('../src/services/dbRepository');
-  const saved = { spawnClaude: binary.spawnClaude, preflight: binary.preflightClaudeAuth, setNode: db.setNodeExternalSessionId, getNode: db.getNode, hasGrant: db.hasGrant };
+  const saved = { spawnClaude: binary.spawnClaude, preflight: binary.preflightClaudeAuth, setNode: db.setNodeExternalSessionId, getNode: db.getNode };
   binary.preflightClaudeAuth = () => {};
   binary.spawnClaude = () => { const child = new MockClaudeChild(); children.push(child); return child; };
   db.setNodeExternalSessionId = () => {};
   db.getNode = () => undefined;
-  db.hasGrant = () => false;
   return {
     children,
     restore: () => {
@@ -323,7 +321,6 @@ function stubClaude(): { children: MockClaudeChild[]; restore: () => void } {
       binary.preflightClaudeAuth = saved.preflight;
       db.setNodeExternalSessionId = saved.setNode;
       db.getNode = saved.getNode;
-      db.hasGrant = saved.hasGrant;
     },
   };
 }
@@ -447,7 +444,7 @@ test('Kiro: Michi tools called over MCP inject updates that the session reports 
   slotId = slot.slotId;
   try {
     const callTool = await mcp.tools(slot);
-    await callMichiTools(callTool, { images: false });
+    await callMichiTools(callTool);
     setTurnMetadata(slot);
   } finally {
     rt.pool.clear();
@@ -477,7 +474,7 @@ test('Kiro: Michi tools called over MCP inject updates that the session reports 
 
 test('Pi: tool results and show_image report the same events', async (t) => {
   configureRuntimeDeps({
-    historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} } as any,
+    historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null } as any,
     agentConfig: { getAgentConfig: () => ({ runtime: 'pi', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined } as any,
     dataDir: cwd,
   });

@@ -30,7 +30,7 @@ test('local boot, fonts, drawers and optional pages do not produce console error
 
   const settings = await openSettings(page);
   await expect(settings).toBeVisible();
-  for (const name of ['Appearance', 'Runtime (global)', 'General', 'Meta agent', 'Assistant', 'Components', 'Data & backup'] as const) {
+  for (const name of ['Appearance', 'Runtime (global)', 'General', 'Meta agent', 'Components', 'Data & backup'] as const) {
     await openSettings(page, name);
     await expect(settings.getByRole('region', { name, exact: true })).toBeVisible();
   }

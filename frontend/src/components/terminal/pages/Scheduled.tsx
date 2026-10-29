@@ -25,7 +25,8 @@ import { ScheduledJobEditor, formValueFromJob, type JobFormValue } from '../sche
 import { ScheduledJobDetail, StatusDot } from '../scheduled/ScheduledJobDetail';
 import { ScheduledJobMenu } from '../scheduled/ScheduledJobMenu';
 import { ScheduledBlockedExecutions } from '../scheduled/ScheduledBlockedExecutions';
-import { OPEN_SCHEDULED_JOB_EVENT, takePendingScheduledJob } from '../scheduled/scheduledNav';
+import { ScheduledAgentChat } from '../scheduled/ScheduledAgentChat';
+import { openScheduledHome, requestScheduledJobDetail, useScheduledRoute } from '../scheduled/scheduledNav';
 import { RUN_STATUS_LABELS, defaultScheduleDraft, describeSchedule, relativePastTime, relativeTime } from '../scheduled/scheduleModel';
 import { openMetaAgentDetail } from '../scheduled/metaAgent/metaAgentNav';
 import { pauseMetaAgentMaintenance, useMetaAgentOverview } from '../scheduled/metaAgent/useMetaAgentOverview';
@@ -56,7 +57,7 @@ export default function TerminalScheduled({ onNav }: { onNav?: (page: PageId) =>
   const { projects, activeProject, hydrated } = useChatProjects();
   const { revealBackendNode } = useChatActions();
   const { jobs: allJobs, scheduler, loading, error, unavailable, refresh, upsert, remove } = useScheduledJobs();
-  // Every workspace's Space maintenance job is the Meta agent's one system task, pinned above the list.
+  // Backend excludes maintenance execution records. Keep the ID filter for older backends.
   const metaAgent = useMetaAgentOverview();
   const metaOverview = metaAgent.kind === 'ready' ? metaAgent.overview : null;
   const managedIds = metaOverview?.managedJobIds ?? NO_JOB_IDS;
@@ -69,7 +70,8 @@ export default function TerminalScheduled({ onNav }: { onNav?: (page: PageId) =>
   const [query, setQuery] = useState('');
   const [openingEditor, setOpeningEditor] = useState(false);
   const [editor, setEditor] = useState<EditorState>(null);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  const scheduledRoute = useScheduledRoute();
+  const detailId = scheduledRoute.kind === 'job' ? scheduledRoute.jobId : null;
   const [menu, setMenu] = useState<{ jobId: string; anchor: HTMLButtonElement } | null>(null);
   const [busyJobs, setBusyJobs] = useState<Set<string>>(new Set());
   const [now, setNow] = useState(Date.now);
@@ -78,18 +80,6 @@ export default function TerminalScheduled({ onNav }: { onNav?: (page: PageId) =>
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
-  }, []);
-
-  // Notification fallbacks ask for a job's details (see scheduledNav.ts).
-  useEffect(() => {
-    const pending = takePendingScheduledJob();
-    if (pending) setDetailId(pending);
-    const onOpen = (event: Event) => {
-      const jobId = (event as CustomEvent<{ jobId?: string }>).detail?.jobId;
-      if (jobId) { takePendingScheduledJob(); setDetailId(jobId); }
-    };
-    window.addEventListener(OPEN_SCHEDULED_JOB_EVENT, onOpen);
-    return () => window.removeEventListener(OPEN_SCHEDULED_JOB_EVENT, onOpen);
   }, []);
 
   // The ⌘J assistant's hidden workspace is not a place to schedule work.
@@ -125,7 +115,6 @@ export default function TerminalScheduled({ onNav }: { onNav?: (page: PageId) =>
   // A request for a maintenance job's details shows the Meta agent's page instead.
   useEffect(() => {
     if (detailId && managedIds.includes(detailId)) {
-      setDetailId(null);
       openMetaAgentDetail();
     }
   }, [detailId, managedIds]);
@@ -162,7 +151,7 @@ export default function TerminalScheduled({ onNav }: { onNav?: (page: PageId) =>
     await withBusy(job.id, async () => {
       await deleteScheduledJob(job.id);
       remove(job.id);
-      if (detailId === job.id) setDetailId(null);
+      if (detailId === job.id) openScheduledHome();
     });
   };
   const createJob = async () => {
@@ -185,7 +174,7 @@ export default function TerminalScheduled({ onNav }: { onNav?: (page: PageId) =>
     if (!run.nodeId) return;
     const opened = await revealBackendNode(run.workspaceId, run.nodeId);
     if (!opened) toast.error('That thread is no longer available');
-    else setDetailId(null);
+    else openScheduledHome();
   };
   const setMetaPaused = (paused: boolean) => {
     setMetaBusy(true);
@@ -209,136 +198,141 @@ export default function TerminalScheduled({ onNav }: { onNav?: (page: PageId) =>
     ? 'Runs in the background, even when Michi is closed'
     : service.available ? 'Runs while Michi is open' : 'Runs while the Michi server is running';
 
+  // "Create with agent" is New job's conversational twin: offered wherever New job is.
+  const agentAvailable = hydrated && !loading && !unavailable && localProjects.length > 0;
+
   return (
-    <div className="terminal-scheduled term-scrollbar" style={{ background: pageBackground('scheduled') }} aria-busy={loading || !hydrated}>
-      <div className="sched-content">
-        <header className="sched-heading">
-          <div>
-            <div className="sched-heading-title"><h1>Scheduled</h1>{total > 0 && <span aria-label={plural(total, 'job')}>{total}</span>}</div>
-            <p className="sched-subtitle"><Clock3 size={13} aria-hidden="true" />{subtitle}</p>
-          </div>
-          <Button variant="primary" size="sm" disabled={unavailable || localProjects.length === 0 || openingEditor} onClick={() => void createJob()}>
-            <Plus size={14} aria-hidden="true" />New job
-          </Button>
-        </header>
-
-        <ScheduledBlockedExecutions executions={scheduler?.blockedExecutions ?? []} jobs={jobs}
-          workspaceName={(workspaceId) => projectById.get(workspaceId)?.name ?? 'Unavailable workspace'} now={now} onReleased={refresh} />
-
-        {service.available && service.status?.supported && !service.status.running && total > 0 && (
-          <div className="sched-banner" role="note">
-            <span>Jobs only run while Michi is open. Keep Michi running in the background so they run on schedule.</span>
-            <Button size="sm" disabled={service.busy} onClick={() => { void enableService(); }}>
-              {service.busy ? 'Starting…' : 'Run in background'}
+    <ScheduledAgentChat enabled={agentAvailable} defaultWorkspaceId={defaultWorkspaceId || null}>
+      <div className="terminal-scheduled term-scrollbar" style={{ background: pageBackground('scheduled') }} aria-busy={loading || !hydrated}>
+        <div className="sched-content">
+          <header className="sched-heading">
+            <div>
+              <div className="sched-heading-title"><h1>Scheduled</h1>{total > 0 && <span aria-label={plural(total, 'job')}>{total}</span>}</div>
+              <p className="sched-subtitle"><Clock3 size={13} aria-hidden="true" />{subtitle}</p>
+            </div>
+            <Button variant="primary" size="sm" disabled={unavailable || localProjects.length === 0 || openingEditor} onClick={() => void createJob()}>
+              <Plus size={14} aria-hidden="true" />New job
             </Button>
-          </div>
-        )}
-        {service.error && <div className="sched-error" role="alert"><span>{service.error}</span></div>}
+          </header>
 
-        {total > 0 && (
-          <div className="sched-toolbar">
-            <label className="trash-search"><Search size={14} aria-hidden="true" />
-              <input ref={search} type="search" aria-label="Search scheduled jobs" placeholder="Search jobs..."
-                value={query} onChange={(event) => setQuery(event.target.value)} />
-              {query && <button type="button" aria-label="Clear search" onClick={() => { setQuery(''); search.current?.focus(); }}><X size={14} aria-hidden="true" /></button>}
-            </label>
-            <span className="sched-result-count" role="status">{needle ? plural(filtered.length + (systemShown ? 1 : 0), 'result') : ''}</span>
-          </div>
-        )}
+          <ScheduledBlockedExecutions executions={scheduler?.blockedExecutions ?? []} jobs={jobs}
+            workspaceName={(workspaceId) => projectById.get(workspaceId)?.name ?? 'Unavailable workspace'} now={now} onReleased={refresh} />
 
-        {error && <div className="sched-error" role="alert"><span>Could not load scheduled jobs: {error}</span>
-          <Button size="sm" variant="ghost" onClick={() => { void refresh(); }}>Retry</Button></div>}
-
-        {loading || !hydrated ? (
-          <div className="sched-loading" role="status" aria-label="Loading scheduled jobs"><span /><span /><span /></div>
-        ) : unavailable ? (
-          <div className="sched-empty">
-            <CalendarClock size={30} aria-hidden="true" />
-            <h2>Scheduled jobs are not available</h2>
-            <p>This Michi server does not run scheduled jobs.</p>
-          </div>
-        ) : <>
-        {systemShown && metaOverview && (
-          <section className="trash-group" aria-label="System task">
-            <h2 className="trash-group-heading">
-              <Layers size={15} aria-hidden="true" />
-              <span className="trash-group-name">All workspaces</span>
-            </h2>
-            <div className="trash-group-rows">
-              <SystemTaskRow overview={metaOverview} now={now} query={query} busy={metaBusy}
-                onOpen={() => openMetaAgentDetail()} onToggle={(on) => setMetaPaused(!on)} />
+          {service.available && service.status?.supported && !service.status.running && total > 0 && (
+            <div className="sched-banner" role="note">
+              <span>Jobs only run while Michi is open. Keep Michi running in the background so they run on schedule.</span>
+              <Button size="sm" disabled={service.busy} onClick={() => { void enableService(); }}>
+                {service.busy ? 'Starting…' : 'Run in background'}
+              </Button>
             </div>
-          </section>
-        )}
-        {total === 0 ? (
-          <div className="sched-empty">
-            <CalendarClock size={30} aria-hidden="true" />
-            <h2>{systemShown ? 'No jobs of your own yet' : 'No scheduled jobs'}</h2>
-            <p>Run a prompt on a schedule. Results appear in the job’s conversation, and Michi lets you know when it finishes.</p>
-            {localProjects.length > 0
-              ? <Button size="sm" disabled={openingEditor} onClick={() => void createJob()}><Plus size={14} aria-hidden="true" />New job</Button>
-              : <Button size="sm" variant="ghost" onClick={() => onNav?.('workspaces')}>Create a workspace first</Button>}
-          </div>
-        ) : filtered.length === 0 ? (systemShown ? null : (
-          <div className="sched-empty">
-            <Search size={30} aria-hidden="true" />
-            <h2>No matching jobs</h2>
-            <p>Nothing matches “{query.trim()}”.</p>
-          </div>
-        )) : groups.map((group) => (
-          <section className="trash-group" key={group.workspaceId}>
-            <h2 className="trash-group-heading">
-              <Folder size={15} aria-hidden="true" style={{ color: group.project ? workspaceAccent(group.project.id) : undefined }} />
-              <span className="trash-group-name">{group.project?.name ?? 'Unavailable workspace'}</span>
-              <span className="trash-group-count">{group.jobs.length}</span>
-            </h2>
-            <div className="trash-group-rows">
-              {group.jobs.map((job) => (
-                <JobRow key={job.id} job={job} now={now} query={query} busy={busyJobs.has(job.id)} runBlocked={runsBlocked}
-                  menuOpen={menu?.jobId === job.id}
-                  onOpen={() => setDetailId(job.id)}
-                  onRunNow={() => { void runNow(job); }}
-                  onStop={() => { void stop(job); }}
-                  onToggle={(enabled) => { void setEnabled(job, enabled); }}
-                  onMenu={(anchor) => setMenu((current) => current?.jobId === job.id ? null : { jobId: job.id, anchor })} />
-              ))}
-            </div>
-          </section>
-        ))}
-        </>}
-      </div>
+          )}
+          {service.error && <div className="sched-error" role="alert"><span>{service.error}</span></div>}
 
-      {menu && menuJob && (
-        <ScheduledJobMenu anchor={menu.anchor} paused={!menuJob.enabled || menuJob.autoPaused} onClose={() => setMenu(null)} actions={{
-          onEdit: () => setEditor({ job: menuJob }),
-          onRuns: () => setDetailId(menuJob.id),
-          onToggle: () => { void setEnabled(menuJob, !menuJob.enabled || menuJob.autoPaused); },
-          onDuplicate: () => duplicate(menuJob),
-          onDelete: () => { void removeJob(menuJob); },
-        }} />
-      )}
-      {detailJob && !editor && (
-        <ScheduledJobDetail job={detailJob} now={now} busy={busyJobs.has(detailJob.id)} runBlocked={runsBlocked}
-          workspaceName={projectById.get(detailJob.workspaceId)?.name ?? 'Unavailable workspace'}
-          onClose={() => setDetailId(null)}
-          onEdit={() => setEditor({ job: detailJob })}
-          onRunNow={() => { void runNow(detailJob); }}
-          onCancelRun={() => { void stop(detailJob); }}
-          onDelete={() => { void removeJob(detailJob); }}
-          onOpenRun={(run) => { void openRun(run); }} />
-      )}
-      {editor && (
-        <ScheduledJobEditor job={editor.job} initial={editor.initial} projects={editorProjects(localProjects, editor.job, projectById)}
-          defaultWorkspaceId={defaultWorkspaceId}
-          onClose={() => setEditor(null)}
-          onSaved={(saved) => {
-            upsert(saved);
-            setEditor(null);
-            toast.success(editor.job ? 'Job saved' : `Scheduled “${saved.name}”`);
-            void refresh();
+          {total > 0 && (
+            <div className="sched-toolbar">
+              <label className="trash-search"><Search size={14} aria-hidden="true" />
+                <input ref={search} type="search" aria-label="Search scheduled jobs" placeholder="Search jobs..."
+                  value={query} onChange={(event) => setQuery(event.target.value)} />
+                {query && <button type="button" aria-label="Clear search" onClick={() => { setQuery(''); search.current?.focus(); }}><X size={14} aria-hidden="true" /></button>}
+              </label>
+              <span className="sched-result-count" role="status">{needle ? plural(filtered.length + (systemShown ? 1 : 0), 'result') : ''}</span>
+            </div>
+          )}
+
+          {error && <div className="sched-error" role="alert"><span>Could not load scheduled jobs: {error}</span>
+            <Button size="sm" variant="ghost" onClick={() => { void refresh(); }}>Retry</Button></div>}
+
+          {loading || !hydrated ? (
+            <div className="sched-loading" role="status" aria-label="Loading scheduled jobs"><span /><span /><span /></div>
+          ) : unavailable ? (
+            <div className="sched-empty">
+              <CalendarClock size={30} aria-hidden="true" />
+              <h2>Scheduled jobs are not available</h2>
+              <p>This Michi server does not run scheduled jobs.</p>
+            </div>
+          ) : <>
+          {systemShown && metaOverview && (
+            <section className="trash-group" aria-label="System task">
+              <h2 className="trash-group-heading">
+                <Layers size={15} aria-hidden="true" />
+                <span className="trash-group-name">All workspaces</span>
+              </h2>
+              <div className="trash-group-rows">
+                <SystemTaskRow overview={metaOverview} now={now} query={query} busy={metaBusy}
+                  onOpen={() => openMetaAgentDetail()} onToggle={(on) => setMetaPaused(!on)} />
+              </div>
+            </section>
+          )}
+          {total === 0 ? (
+            <div className="sched-empty">
+              <CalendarClock size={30} aria-hidden="true" />
+              <h2>{systemShown ? 'No jobs of your own yet' : 'No scheduled jobs'}</h2>
+              <p>Run a prompt on a schedule. Results appear in the job’s conversation, and Michi lets you know when it finishes.</p>
+              {localProjects.length > 0
+                ? <Button size="sm" disabled={openingEditor} onClick={() => void createJob()}><Plus size={14} aria-hidden="true" />New job</Button>
+                : <Button size="sm" variant="ghost" onClick={() => onNav?.('workspaces')}>Create a workspace first</Button>}
+            </div>
+          ) : filtered.length === 0 ? (systemShown ? null : (
+            <div className="sched-empty">
+              <Search size={30} aria-hidden="true" />
+              <h2>No matching jobs</h2>
+              <p>Nothing matches “{query.trim()}”.</p>
+            </div>
+          )) : groups.map((group) => (
+            <section className="trash-group" key={group.workspaceId}>
+              <h2 className="trash-group-heading">
+                <Folder size={15} aria-hidden="true" style={{ color: group.project ? workspaceAccent(group.project.id) : undefined }} />
+                <span className="trash-group-name">{group.project?.name ?? 'Unavailable workspace'}</span>
+                <span className="trash-group-count">{group.jobs.length}</span>
+              </h2>
+              <div className="trash-group-rows">
+                {group.jobs.map((job) => (
+                  <JobRow key={job.id} job={job} now={now} query={query} busy={busyJobs.has(job.id)} runBlocked={runsBlocked}
+                    menuOpen={menu?.jobId === job.id}
+                    onOpen={() => requestScheduledJobDetail(job.id)}
+                    onRunNow={() => { void runNow(job); }}
+                    onStop={() => { void stop(job); }}
+                    onToggle={(enabled) => { void setEnabled(job, enabled); }}
+                    onMenu={(anchor) => setMenu((current) => current?.jobId === job.id ? null : { jobId: job.id, anchor })} />
+                ))}
+              </div>
+            </section>
+          ))}
+          </>}
+        </div>
+
+        {menu && menuJob && (
+          <ScheduledJobMenu anchor={menu.anchor} paused={!menuJob.enabled || menuJob.autoPaused} onClose={() => setMenu(null)} actions={{
+            onEdit: () => setEditor({ job: menuJob }),
+            onRuns: () => requestScheduledJobDetail(menuJob.id),
+            onToggle: () => { void setEnabled(menuJob, !menuJob.enabled || menuJob.autoPaused); },
+            onDuplicate: () => duplicate(menuJob),
+            onDelete: () => { void removeJob(menuJob); },
           }} />
-      )}
-    </div>
+        )}
+        {detailJob && !editor && (
+          <ScheduledJobDetail job={detailJob} now={now} busy={busyJobs.has(detailJob.id)} runBlocked={runsBlocked}
+            workspaceName={projectById.get(detailJob.workspaceId)?.name ?? 'Unavailable workspace'}
+            onClose={() => openScheduledHome()}
+            onEdit={() => setEditor({ job: detailJob })}
+            onRunNow={() => { void runNow(detailJob); }}
+            onCancelRun={() => { void stop(detailJob); }}
+            onDelete={() => { void removeJob(detailJob); }}
+            onOpenRun={(run) => { void openRun(run); }} />
+        )}
+        {editor && (
+          <ScheduledJobEditor job={editor.job} initial={editor.initial} projects={editorProjects(localProjects, editor.job, projectById)}
+            defaultWorkspaceId={defaultWorkspaceId}
+            onClose={() => setEditor(null)}
+            onSaved={(saved) => {
+              upsert(saved);
+              setEditor(null);
+              toast.success(editor.job ? 'Job saved' : `Scheduled “${saved.name}”`);
+              void refresh();
+            }} />
+        )}
+      </div>
+    </ScheduledAgentChat>
   );
 }
 
@@ -425,7 +419,7 @@ function SystemTaskRow({ overview, now, query, busy, onOpen, onToggle }: {
         <span className="trash-row-content">
           <span className="trash-row-title"><TrashHighlight text={SYSTEM_TASK_NAME} query={query} /> <span className="area-side__tag">System</span></span>
           <span className="trash-row-meta">
-            <span>Every 60 s</span>
+            <span>Checks every 60 s · AI only for pending work</span>
             <span className="sched-next" data-tone={overview.state === 'error' ? 'danger' : undefined}>
               <span aria-hidden="true"> · </span>
               {overview.state === 'error' ? 'Error' : !active ? 'Paused' : workspaces === 0 ? 'No workspace yet' : plural(workspaces, 'workspace')}
@@ -436,7 +430,7 @@ function SystemTaskRow({ overview, now, query, busy, onOpen, onToggle }: {
       <div className="sched-last" title={overview.error}>
         {lastRun
           ? <span className="sched-last-time">{relativePastTime(lastRun.at, now)}</span>
-          : <span className="sched-last-time">Never run</span>}
+          : <span className="sched-last-time">{overview.lastCheckedAt != null ? `Checked ${relativePastTime(overview.lastCheckedAt, now)}` : 'Waiting for first check'}</span>}
       </div>
       {/* Empty slots where a job's Run and More buttons sit, so the switches line up. */}
       <div className="trash-row-actions">

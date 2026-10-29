@@ -1,3 +1,4 @@
+import { requestToolApproval, listToolApprovals } from '../src/services/metaAgent/toolApprovals';
 import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime';
 // Must stay first: agentConfig would otherwise persist these fixtures to ~/.michi/config.json.
 import './isolatedConfigDir';
@@ -13,7 +14,6 @@ import {
   CHAT_STREAM_EVENTS, META_AGENT_GUARD_ERROR_CODE, encodeChatStreamEvent, parseChatStreamEvent,
 } from 'michi-shared';
 import { ChatHub } from '../src/agents/chatHub';
-import { recordAssistantGuardCheck } from '../src/assistant/binding';
 import { ensureAssistant } from '../src/assistant/store';
 import {
   META_AGENT_GUARD_ERROR_CODE as GUARD_CODE, MetaAgentGuardError, metaAgentCatalogUnavailable, type MetaAgentGuardViolation,
@@ -147,7 +147,7 @@ describe('Meta agent restriction check results', () => {
 
       updateMetaAgentSettings({ runtimeId: null });
       recordMetaAgentGuardCheck({ toolset: 'chat', profile: resolvedNow(), failure: failureOf(VIOLATIONS[4]) });
-      assert.equal(metaAgentInfo().guard.chat?.state, 'failed');
+      assert.equal(metaAgentInfo().guard.chat, null);
       updateAgentConfig({ runtime: 'claude' });
       assert.equal(metaAgentInfo().guard.chat, null);
       updateAgentConfig({ runtime: 'kiro' });
@@ -199,7 +199,7 @@ describe('Meta agent restriction check results', () => {
       seedFailures();
       const before = await call('GET', '/api/meta-agent');
       assert.equal(before.body.guard.maintenance.state, 'failed');
-      assert.equal(before.body.guard.chat.detail, VIOLATIONS[4].detail);
+      assert.equal(before.body.guard.chat, null);
 
       const chatOnly = await call('POST', '/api/meta-agent/retry', { toolset: 'chat' });
       assert.equal(chatOnly.status, 200, JSON.stringify(chatOnly.body));
@@ -222,7 +222,20 @@ describe('Meta agent restriction check results', () => {
       assert.equal((await call('POST', '/api/meta-agent/retry', {})).body.guard.maintenance, null);
     });
 
-    test('a settings change through PUT clears a failure', async () => {
+    test('tool approvals require local control and persist approve, deny and revoke decisions', async () => {
+      const request = requestToolApproval({ serverName: 'mail', command: 'mail-mcp' }, { name: 'send', inputSchema: { type: 'object' } })!;
+      const path = `/api/meta-agent/tool-approvals/${request.id}`;
+      assert.equal((await call('POST', path, { state: 'approved' }, { origin: 'https://evil.example' })).status, 403);
+      assert.equal(listToolApprovals()[0].state, 'pending');
+      assert.equal((await call('POST', path, { state: 'anything' })).status, 400);
+      for (const state of ['approved', 'revoked', 'denied']) {
+        const response = await call('POST', path, { state });
+        assert.equal(response.status, 200);
+        assert.equal(response.body.toolApprovals[0].state, state);
+      }
+    });
+
+    test('a settings change through PUT clears a failure' , async () => {
       seedFailures();
       const set = await call('PUT', '/api/meta-agent/settings', { runtimeId: 'codex' });
       assert.deepEqual(set.body.guard, { maintenance: null, chat: null });
@@ -273,20 +286,9 @@ describe('Meta agent restriction check results', () => {
       getDb().prepare("INSERT INTO nodes(id,workspace_id,kind,status,created_at) VALUES('plain-node','ws-plain','chat','idle',1)").run();
       const guardError = new MetaAgentGuardError({ runtimeId: 'kiro', toolset: 'chat', unexpectedTools: ['fs_write'] });
 
-      recordAssistantGuardCheck('plain-node', guardError);
-      recordAssistantGuardCheck(assistant.nodeId, new Error('Kiro is not signed in'));
-      assert.equal(metaAgentInfo().guard.chat, null);
-
-      recordAssistantGuardCheck(assistant.nodeId, guardError.message);
-      assert.deepEqual(metaAgentInfo().guard.chat,
-        { state: 'failed', runtimeId: 'kiro', toolset: 'chat', unexpectedTools: ['fs_write'], checkedAt: metaAgentInfo().guard.chat!.checkedAt });
+      recordMetaAgentGuardCheck({ toolset: 'chat', profile: resolveMetaAgentRuntime(), failure: { runtimeId: 'kiro', unexpectedTools: ['fs_write'] } });
+      assert.equal(metaAgentInfo().guard.chat, null, 'legacy chat failures do not block the unrestricted Assistant');
       assert.equal(metaAgentInfo().guard.maintenance, null);
-
-      recordAssistantGuardCheck(assistant.nodeId, new MetaAgentGuardError({ runtimeId: 'claude', toolset: 'chat', unexpectedTools: ['x'] }));
-      assert.deepEqual(metaAgentInfo().guard.chat?.unexpectedTools, ['fs_write'], 'a failure from another runtime is not this profile\'s');
-
-      recordAssistantGuardCheck(assistant.nodeId, null);
-      assert.equal(metaAgentInfo().guard.chat?.state, 'ok');
     });
   });
 

@@ -36,6 +36,14 @@ const turnIdentity = {
 beforeEach(() => resetTurnPageReceiptInvalidationForTests());
 
 describe('parseTurnPageReceipt', () => {
+  it.each(['create_database', 'configure_database'])('recognizes %s receipts and refreshes the owning workspace', (name) => {
+    const write = { ...receipt, workspaceId: 'ws-data', revision: 2, created: name === 'create_database' };
+    const parsed = parseTurnPageReceipt(pageTool(write, `mcp__michi__${name}`), 'local');
+    expect(parsed).toMatchObject({ tool: name, resourceKind: 'database', resourceId: 'db-1', workspaceId: 'ws-data', created: name === 'create_database' });
+    const events = capturePageChanges(() => invalidateTurnPageReceipt(parsed!, turnIdentity, name));
+    expect(events).toEqual([{ backendConnectionId: 'local', workspaceId: 'ws-data', databaseId: 'db-1' }]);
+  });
+
   it('normalizes MCP/Codex names and nested JSON text wrappers with backend identities', () => {
     const parsed = parseTurnPageReceipt({
       title: 'michi_tools____edit_database', status: 'completed',

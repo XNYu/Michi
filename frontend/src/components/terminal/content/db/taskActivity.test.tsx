@@ -4,8 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import type { MichiDatabase, MichiDbEditOp, MichiDbRow, PageChangeDto } from 'michi-shared';
 import { TASK_VIEW } from 'michi-shared';
 import { DatabaseView } from './DatabaseView';
-import { applyOpsLocally } from './dbRead';
-import { taskDatabase } from './dbTestData';
+import { applyOpsLocally, taskDatabase } from './dbTestData';
 import { LiveThreadsContext, type LiveThreads } from './liveThreads';
 import { originText, suggestionSummary, TaskActivityContext, TaskUpkeepLine, upkeepSummary, type TaskActivityView } from './taskActivity';
 

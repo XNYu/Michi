@@ -1,4 +1,4 @@
-import { CODEX_HOST_MCP_SERVER } from './codexProtocol';
+import { CODEX_HOST_MCP_SERVER, codexDisableMcpServers, codexOpenUserMcpServers } from './codexProtocol';
 
 /**
  * How a Codex session enforces the host's restricted profile
@@ -6,8 +6,10 @@ import { CODEX_HOST_MCP_SERVER } from './codexProtocol';
  * host's own tools. Its turns run read-only and offline, its thread starts
  * read-only with Codex's shell, plugins and other tools off and every MCP
  * server but the host's disabled, and every approval or elicitation is
- * declined. The thread config and MCP check below are Michi's assistant
- * lockdown (assistant/policy.ts re-exports them).
+ * declined. Codex refuses its sub-agent spawns (CODEX_RESTRICTED_FEATURES_OFF),
+ * and CodexSession stops the turn if a child starts anyway. The thread config
+ * and MCP check below are Michi's assistant lockdown (assistant/policy.ts
+ * re-exports them).
  */
 
 export interface CodexTurnPolicy {
@@ -31,11 +33,18 @@ export function codexThreadSandbox(restricted: boolean): 'read-only' | 'workspac
  * 0.156.1 lists them in `codex features list`): the shell and exec tools,
  * the JavaScript REPL and code mode (code execution a user may have turned
  * on), the node REPL host, freeform apply_patch, plugins and apps (which
- * bring their own MCP servers), browser / computer use, sub-agents and tool
- * suggestions. image_generation is set off too, though 0.156.1 still offers
- * its image tool (which neither edits files nor runs commands).
+ * bring their own MCP servers), browser / computer use, sub-agents, tool
+ * suggestions and goals (which every Michi thread turns off). image_generation
+ * is set off too, though 0.156.1 still offers its image tool (which neither
+ * edits files nor runs commands). codex 0.165 still offers the multi-agent v2
+ * `collaboration.*` tools with both multi_agent flags off, so multi_agent_v2
+ * is the table form: off, and with a limit of one thread per session, which
+ * the root thread already uses. spawn_agent then fails with "agent thread
+ * limit reached" before any child thread exists (probed on codex 0.165.0).
  */
-export const CODEX_RESTRICTED_FEATURES_OFF: Readonly<Record<string, false>> = Object.freeze({
+export const CODEX_RESTRICTED_MULTI_AGENT_V2 = Object.freeze({ enabled: false, max_concurrent_threads_per_session: 1 });
+
+export const CODEX_RESTRICTED_FEATURES_OFF: Readonly<Record<string, false | Readonly<Record<string, unknown>>>> = Object.freeze({
   shell_tool: false,
   unified_exec: false,
   js_repl: false,
@@ -52,9 +61,10 @@ export const CODEX_RESTRICTED_FEATURES_OFF: Readonly<Record<string, false>> = Ob
   in_app_browser: false,
   image_generation: false,
   multi_agent: false,
-  multi_agent_v2: false,
+  multi_agent_v2: CODEX_RESTRICTED_MULTI_AGENT_V2,
   tool_suggest: false,
   skill_mcp_dependency_install: false,
+  goals: false,
 });
 
 /**
@@ -69,15 +79,12 @@ export function codexRestrictedThreadConfig(
   configuredMcpServers: readonly string[],
 ): Record<string, unknown> {
   const baseServers = isPlainObject(base.mcp_servers) ? base.mcp_servers : {};
-  const disabled = Object.fromEntries(configuredMcpServers
-    .filter((name) => name !== CODEX_HOST_MCP_SERVER)
-    .map((name) => [name, { enabled: false }]));
   const baseFeatures = isPlainObject(base.features) ? base.features : {};
   return {
     ...base,
     features: { ...baseFeatures, ...CODEX_RESTRICTED_FEATURES_OFF },
     web_search: 'disabled',
-    mcp_servers: { ...disabled, ...baseServers },
+    mcp_servers: codexDisableMcpServers({ mcp_servers: baseServers }, configuredMcpServers).mcp_servers,
   };
 }
 
@@ -98,9 +105,7 @@ export function codexRestrictedMcpCheck(
   if (!statuses.some((status) => status.name === CODEX_HOST_MCP_SERVER)) {
     return { ok: false, open: [], fatal: true, reason: 'Michi\'s own MCP server is missing from the thread' };
   }
-  const open = statuses
-    .filter((status) => status.name !== CODEX_HOST_MCP_SERVER && status.runtimeStatus !== 'disabled')
-    .map((status) => String(status.name ?? '(unnamed)'));
+  const open = codexOpenUserMcpServers(statuses);
   if (open.length === 0) return { ok: true };
   return { ok: false, open, fatal: false, reason: `MCP servers Michi could not turn off: ${open.join(', ')}` };
 }

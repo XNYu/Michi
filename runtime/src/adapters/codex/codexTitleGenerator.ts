@@ -22,6 +22,8 @@ export interface GenerateCodexTitleOptions {
   instructions: string;
   userText: string;
   timeoutMs?: number;
+  /** The title thread's config (the session's: user MCP servers disabled, goals off). */
+  config?: Record<string, unknown>;
   onThreadStarted?: (threadId: string) => void;
   onTurnStarted?: (threadId: string, turnId: string) => void;
   signal?: AbortSignal;
@@ -95,6 +97,7 @@ export async function generateCodexTitle(opts: GenerateCodexTitleOptions): Promi
     approvalPolicy: 'never',
     sandbox: 'read-only',
     ephemeral: true,
+    ...(opts.config ? { config: opts.config } : {}),
   }) as Record<string, unknown>;
   const threadId = threadIdFrom(startResult);
   if (!threadId) throw new Error('codex title thread/start did not return a threadId');

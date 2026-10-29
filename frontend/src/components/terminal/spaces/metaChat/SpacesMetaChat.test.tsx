@@ -80,7 +80,7 @@ vi.mock('../layoutRules/useLayoutRules', () => ({
 
 /** Stands in for the conversation: each message with its links, tool lines and divider, two fixed source links, and the follow-up rows. */
 vi.mock('../../TPane', () => ({
-  default: function TPaneStub({ nodeId, spacesAssistant, composerPreBlocks, draftRequest }: { nodeId: string; spacesAssistant?: boolean; composerPreBlocks?: ReactNode; draftRequest?: { id: number; text: string } | null }) {
+  default: function TPaneStub({ nodeId, spacesAssistant, composerPreBlocks, draftRequest }: { nodeId: string; spacesAssistant?: boolean; composerPreBlocks?: ReactNode | ((draftHasText: boolean) => ReactNode); draftRequest?: { id: number; text: string } | null }) {
     const [draft, setDraft] = useState('');
     useEffect(() => { if (draftRequest) setDraft(draftRequest.text); }, [draftRequest]);
     const decorations = useContext(MetaChatDecorationsContext);
@@ -88,7 +88,7 @@ vi.mock('../../TPane', () => ({
     const node = store.nodes[nodeId];
     return (
       <div data-testid="tpane" data-shared-composer={spacesAssistant ? '' : undefined}>
-        {composerPreBlocks}
+        {typeof composerPreBlocks === 'function' ? composerPreBlocks(Boolean(draft.trim())) : composerPreBlocks}
         <textarea aria-label="Message the assistant" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => {
           if (event.key !== 'Enter') return;
           requestAssistantSend(nodeId, draft);
@@ -300,6 +300,11 @@ describe('SpacesMetaChat', () => {
   it('hides starter questions after a typed first message and keeps them hidden from the restored transcript', async () => {
     const view = render(<Host />);
     const input = await screen.findByLabelText('Message the assistant');
+    expect(screen.getByRole('group', { name: 'Suggested questions' })).toBeTruthy();
+    fireEvent.change(input, { target: { value: '请你' } });
+    expect(screen.queryByRole('group', { name: 'Suggested questions' })).toBeNull();
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.getByRole('group', { name: 'Suggested questions' })).toBeTruthy();
     fireEvent.change(input, { target: { value: 'What should I focus on?' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(takeAssistantSends('n-a').map((s) => s.prompt)).toEqual(['What should I focus on?']);

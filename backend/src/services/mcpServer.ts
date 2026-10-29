@@ -1,3 +1,5 @@
+import { assertMaintenanceAuthority } from './pages/maintenanceRepository';
+import { createMaintenanceAccessTools } from './metaAgent/maintenanceAccess';
 import { openUrlTool } from '../agents/openUrlTool';
 import { readConversationUpdatesTool } from '../agents/conversationUpdatesTool';
 import { isRunOwner, chatNodeOf, hostOwner, runIdOfOwner } from '../agents/ownerMapping';
@@ -9,7 +11,6 @@ import express, { Request, Response } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import {
-    getParseErrorMessage,
     normalizeObjectSchema,
     objectFromShape,
     safeParseAsync,
@@ -41,8 +42,8 @@ import {
     type ParamObjectShape,
     type ParamSpec,
 } from "../agents/builtinTools";
-import { isAssistantWorkspace } from "../assistant/identity";
-import { ASSISTANT_TOOLS, runAssistantTool } from "../assistant/tools";
+import { assistantPurposeOf, isAssistantWorkspace } from "../assistant/identity";
+import { assistantToolsFor, runAssistantTool } from "../assistant/tools";
 import {
     inspectPaneTool,
     readPaneOutputTool,
@@ -346,12 +347,8 @@ function isToolExposed(slot: McpSlot, toolName: string): boolean {
     return slot.exposedToolNames.has(toolName);
 }
 
-/**
- * Which catalog a slot gets. The assistant's needs both markers: the slot is
- * bound to a chat in the Michi assistant's workspace (the database, read on
- * every request) and was created by a session running the assistant profile
- * (`slot.restricted`). With only one of the two the session was not set up as
- * the assistant, or is outside its home, so the slot gets neither catalog.
+/** Assistant catalogs follow the persisted workspace identity, independently
+ * of native runtime restrictions. Restricted slots outside that home remain fenced.
  */
 function slotCatalog(slot: McpSlot): "assistant" | "maintenance" | "fenced" | "chat" {
     if (slot.maintenance === true) {
@@ -359,8 +356,8 @@ function slotCatalog(slot: McpSlot): "assistant" | "maintenance" | "fenced" | "c
     }
     const home = !isRunOwner(slot.owner) && isAssistantWorkspace(resolveSlotBinding(slot).workspaceId);
     const profile = slot.restricted === true;
-    if (home && profile) return "assistant";
-    return home || profile ? "fenced" : "chat";
+    if (home) return "assistant";
+    return profile ? "fenced" : "chat";
 }
 
 function maintenanceJsonSchemaToZod(schema: Record<string, unknown>): z.ZodTypeAny {
@@ -453,7 +450,26 @@ function maintenanceJsonSchemaShape(schema: Record<string, unknown>): z.ZodTypeA
 
 function registerMaintenanceTools(registerTool: AddTool, slot: McpSlot): void {
     if (!slot.getActiveMaintenanceExecutionContext) return;
-    const tools = createMaintenanceTools(() => slot.getActiveMaintenanceExecutionContext?.() ?? null, {});
+    const getContext = () => slot.getActiveMaintenanceExecutionContext?.() ?? null;
+    const tools = [...createMaintenanceTools(getContext, {}), ...createMaintenanceAccessTools(getContext, {
+        internalTools: (context) => michiToolCatalog({
+            ...slot, maintenance: false, restricted: false, exposedToolNames: undefined,
+            nodeId: context.execution.nodeId, workspaceId: context.workspaceId, ownerUserId: context.ownerUserId,
+            getActiveMaintenanceExecutionContext: undefined,
+            getActivePageTurnAttribution: () => context.execution,
+        }).map(tool => ({
+            name: tool.name, description: tool.config.description,
+            inputSchema: wireInputSchema(toolZodSchema(tool.config.inputSchema)),
+            execute: async (args, signal) => {
+                const parsed = await safeParseAsync(toolZodSchema(tool.config.inputSchema), args);
+                if (!parsed.success) throw new Error('Invalid Michi tool arguments');
+                signal?.throwIfAborted();
+                if (getContext()?.execution.turnId !== context.execution.turnId) throw new Error('Maintenance turn changed');
+                assertMaintenanceAuthority(context, Date.now());
+                return await tool.handler(parsed.data, { signal }) as import('@modelcontextprotocol/sdk/types.js').CallToolResult;
+            },
+        })),
+    })];
     for (const tool of tools) {
         if (!META_AGENT_MAINTENANCE_TOOL_NAMES.includes(tool.name) || !isToolExposed(slot, tool.name)) continue;
         const properties = Object.fromEntries(Object.entries(tool.parameters.properties).map(([key, schema]) =>
@@ -461,9 +477,9 @@ function registerMaintenanceTools(registerTool: AddTool, slot: McpSlot): void {
         const required = new Set(tool.parameters.required);
         const inputSchema: Record<string, z.ZodTypeAny> = Object.fromEntries(Object.entries(properties).map(([key, field]) =>
             [key, required.has(key) ? field : field.optional()]));
-        registerTool(tool.name, { description: tool.description, inputSchema }, async (args) => {
-            const result = tool.execute(args);
-            return { content: result.content, ...(result.isError ? { isError: true } : {}) };
+        registerTool(tool.name, { description: tool.description, inputSchema }, async (args, extra) => {
+            const result = await tool.execute(args, extra?.signal);
+            return result;
         });
     }
 }
@@ -476,8 +492,11 @@ function registerMaintenanceTools(registerTool: AddTool, slot: McpSlot): void {
  * sends into an existing conversation is offered.
  */
 function registerAssistantTools(registerTool: AddTool, slot: McpSlot): void {
+    // The conversation's purpose picks the catalog: the Spaces window's, or
+    // the Scheduled window's (scheduled jobs, approved through ask_user).
+    const purpose = assistantPurposeOf(resolveSlotBinding(slot).nodeId);
     // No Desk tools while Agent Desk is off, whatever the slot's allow-list says.
-    for (const tool of ASSISTANT_TOOLS) {
+    for (const tool of assistantToolsFor(purpose)) {
         if (!isToolExposed(slot, tool.name)) continue;
         registerTool(tool.name, { description: tool.description, inputSchema: paramObjectToZodShape(tool.parameters) }, async (args) => {
             const binding = resolveSlotBinding(slot);
@@ -486,6 +505,7 @@ function registerAssistantTools(registerTool: AddTool, slot: McpSlot): void {
                 workspaceId: binding.workspaceId,
                 nodeId: binding.nodeId,
                 approveThreadMessage: askUserThreadMessageApprover(slot.onAskUser),
+                approveScheduledJob: askUserScheduledJobApprover(slot.onAskUser),
                 getActivePageTurnAttribution: slot.getActivePageTurnAttribution,
             }, args);
         });
@@ -577,7 +597,7 @@ function michiToolCatalog(slot: McpSlot): MichiTool[] {
             inputSchema: builtinToZodShape(tool),
             annotations: {
                 readOnlyHint: name === 'read_home' || name === 'list_pages' || name === 'read_page' || name === 'read_database' || name === 'list_page_components' || name === 'read_page_component' || name === 'list_tasks',
-                destructiveHint: name === 'edit_home' || name === 'edit_page' || name === 'edit_database' || name === 'create_page' || name === 'save_page_component' || name === 'configure_database_view',
+                destructiveHint: name === 'edit_home' || name === 'edit_page' || name === 'edit_database' || name === 'create_page' || name === 'create_database' || name === 'configure_database' || name === 'save_page_component' || name === 'configure_database_view',
                 openWorldHint: false,
             },
         }, async (args) => {
@@ -635,11 +655,11 @@ function michiToolCatalog(slot: McpSlot): MichiTool[] {
                     }
                     case "save_artifact": {
                         const name = typeof args?.name === "string" ? args.name.trim() : "";
-                        if (!name || typeof args?.body !== "string") {
-                            throw new Error("save_artifact requires name and body");
+                        if (!name || (typeof args?.body === "string") === (typeof args?.path === "string")) {
+                            throw new Error("save_artifact requires name and exactly one of body or path");
                         }
                         if (!slot.onSaveArtifact) throw new Error("save_artifact is unavailable");
-                        const result = slot.onSaveArtifact(name, args.body);
+                        const result = slot.onSaveArtifact(name, args.body, args.path);
                         if (!result) throw new Error(`Could not save artifact: @${name}`);
                         report({ type: "artifact_saved", payload: artifactPayload(result) });
                         return { content: [{ type: "text", text: `Saved artifact: @${result.name}` }] };
@@ -959,10 +979,11 @@ function michiToolCatalog(slot: McpSlot): MichiTool[] {
         },
     );
 
-    // Scheduled Job management: ordinary chat threads only (never the Michi
-    // assistant's catalog, nor a fenced slot), workspace from the slot
-    // binding, and every change except pausing approved by the user through
-    // ask_user (permission modes cannot skip it). See agents/scheduledJobTools.ts.
+    // Scheduled Job management: ordinary chat threads only (not a fenced
+    // slot; the Spaces window has none and the Scheduled window gets the
+    // assistant's version above), workspace from the slot binding, and every
+    // change except pausing approved by the user through ask_user
+    // (permission modes cannot skip it). See agents/scheduledJobTools.ts.
     if (!isRunOwner(slot.owner)) {
         for (const spec of listEnabledBuiltinTools()) {
             if (!isScheduledJobToolName(spec.name) || !exposes(spec.name)) continue;
@@ -1072,9 +1093,37 @@ function wireInputSchema(schema: AnySchema): JsonSchemaObject {
 }
 
 /**
+ * Why a tool call's arguments failed their zod schema, as agents read it
+ * while Michi ran MCP SDK 1.29, whose getParseErrorMessage this is: the zod
+ * error's message (a zod 4 ZodError's is its issues as JSON), else the first
+ * issue's message, else the error as JSON. 1.32's lists "<message> at
+ * <path>" lines instead, so Michi keeps the earlier text here.
+ */
+function argumentErrorReason(error: unknown): string {
+    if (error && typeof error === "object") {
+        if ("message" in error && typeof error.message === "string") return error.message;
+        if ("issues" in error && Array.isArray(error.issues) && error.issues.length > 0) {
+            const first: unknown = error.issues[0];
+            if (first && typeof first === "object" && "message" in first) return String(first.message);
+        }
+        try {
+            return JSON.stringify(error);
+        } catch {
+            return String(error);
+        }
+    }
+    return String(error);
+}
+
+/** McpServer's InvalidParams error for arguments that failed their zod schema, with argumentErrorReason's reason. */
+function argumentError(toolName: string, error: unknown): McpError {
+    return new McpError(ErrorCode.InvalidParams, `Input validation error: Invalid arguments for tool ${toolName}: ${argumentErrorReason(error)}`);
+}
+
+/**
  * A catalog entry as a host tool: tools/list gets the JSON Schema McpServer
  * would render, and tools/call validates arguments with the zod schema the
- * way McpServer does (parsed values to the handler, the same error otherwise).
+ * way McpServer does: parsed values to the handler, otherwise argumentError.
  * The handler also gets the call's signal and the slot's session sink.
  */
 function hostToolDef(tool: MichiTool): HostToolDef<McpSlot> {
@@ -1087,8 +1136,7 @@ function hostToolDef(tool: MichiTool): HostToolDef<McpSlot> {
         async handler(args, ctx) {
             const parsed = await safeParseAsync(normalizeObjectSchema(schema) ?? schema, args);
             if (!parsed.success) {
-                const reason = getParseErrorMessage("error" in parsed ? parsed.error : "Unknown error");
-                const error = new McpError(ErrorCode.InvalidParams, `Input validation error: Invalid arguments for tool ${tool.name}: ${reason}`);
+                const error = argumentError(tool.name, "error" in parsed ? parsed.error : "Unknown error");
                 return { content: [{ type: "text", text: error.message }], isError: true };
             }
             return await tool.handler(parsed.data, { signal: ctx.signal, sink: ctx.sink }) as ToolResult;
@@ -1103,15 +1151,43 @@ function hostToolDef(tool: MichiTool): HostToolDef<McpSlot> {
  * (McpSlotRegistry, mountMcp), built from the same catalog. With
  * `sessionAnchor` every tool also requires session_id to equal it, as the
  * session group's routing argument. There is no session sink here, so
- * tools report nothing to a session.
+ * tools report nothing to a session. Invalid arguments get the host's text
+ * (keepArgumentErrorText).
  */
 export function buildMcpServerForSlot(slot: McpSlot, sessionAnchor?: string): McpServer {
     const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION });
+    keepArgumentErrorText(server);
     for (const tool of michiToolCatalog(slot)) {
         const { config, handler } = sessionAnchor === undefined ? tool : anchoredTool(tool, sessionAnchor);
         server.registerTool(tool.name, config as Parameters<McpServer["registerTool"]>[1], handler as never);
     }
     return server;
+}
+
+/** McpServer's private check of a tool call's arguments, which runs before the tool's handler. */
+interface ToolInputValidator {
+    validateToolInput(tool: { inputSchema?: AnySchema }, args: unknown, toolName: string): Promise<unknown>;
+}
+
+/**
+ * Has `server` word arguments that fail their zod schema as hostToolDef does
+ * (argumentError), not in its SDK's text. McpServer checks them in a private
+ * method before the handler runs, so this wraps it: valid calls and its
+ * other refusals are unchanged.
+ */
+function keepArgumentErrorText(server: McpServer): void {
+    const validator = server as unknown as ToolInputValidator;
+    const validate = validator.validateToolInput.bind(server);
+    validator.validateToolInput = async (tool, args, toolName) => {
+        try {
+            return await validate(tool, args, toolName);
+        } catch (error) {
+            if (!tool.inputSchema) throw error;
+            const parsed = await safeParseAsync(normalizeObjectSchema(tool.inputSchema) ?? tool.inputSchema, args ?? {});
+            if (parsed.success) throw error;
+            throw argumentError(toolName, "error" in parsed ? parsed.error : "Unknown error");
+        }
+    };
 }
 
 function anchoredTool(tool: MichiTool, sessionAnchor: string): Pick<MichiTool, "config" | "handler"> {

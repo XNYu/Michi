@@ -4,7 +4,7 @@ import type { RuntimeObservability } from "../../contract/host";
 import { HEARTBEAT_INTERVAL_MS } from "../../core/constants";
 import { ACPError, ACPProcessExitedError, ACPRequestNotSentError, ACPNotRunningError, ACPSessionRecoveryRequiredError } from "./errors";
 import type {
-    AcpAgentCapabilities, AcpCancelOptions, AcpConfigOption, AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest,
+    AcpAgentCapabilities, AcpCancelOptions, AcpCancelSettlement, AcpConfigOption, AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest,
     AcpInitializeResult, AcpMcpServer, AcpPermissionRequest, AcpProfile, AcpPromptBlock, AcpRpcErrorPayload, AcpSessionInfo, AcpSessionOptions,
     AcpUpdate, AcpUserAnswer,
 } from "./types";
@@ -183,6 +183,8 @@ export class AcpClient {
     protected readonly loadingSessions = new Set<string>();
     protected readonly activePrompts = new Set<string>();
     protected readonly cancelledPrompts = new Set<string>();
+    /** How each session's outstanding session/prompt RPC settles (see cancelAndSettle). */
+    protected readonly promptOutcomes = new Map<string, Promise<{ stopReason?: string }>>();
     protected lastMetadata = new Map<string, any>();
     private lastPromptSessionId: string | null = null;
     private nextIncomingUserInputId = 0;
@@ -879,6 +881,15 @@ export class AcpClient {
             this.cancelledPrompts.delete(sessionId);
             promptToken = this.onPromptStart(sessionId);
             this.activePrompts.add(sessionId);
+            // Settled before the turn's end is queued, so a cancel waiting on
+            // it (cancelAndSettle) hears the result before the consumer does.
+            let settleOutcome!: (outcome: { stopReason?: string }) => void;
+            const outcome = new Promise<{ stopReason?: string }>((resolve) => { settleOutcome = resolve; });
+            this.promptOutcomes.set(sessionId, outcome);
+            const recordOutcome = (result: { stopReason?: string }) => {
+                settleOutcome(result);
+                if (this.promptOutcomes.get(sessionId) === outcome) this.promptOutcomes.delete(sessionId);
+            };
             sendPromise = this.send(
                 "session/prompt",
                 { sessionId, prompt: [{ type: "text", text }, ...extraBlocks] },
@@ -888,12 +899,14 @@ export class AcpClient {
                 .then((r) => {
                     this.settlePrompt(sessionId);
                     promptResult = r;
+                    recordOutcome(typeof r?.stopReason === "string" ? { stopReason: r.stopReason } : {});
                     q.push({ update: { sessionUpdate: "__send_complete__" } });
                 })
                 .catch((e) => {
                     this.settlePrompt(sessionId);
                     promptError = e as Error;
                     promptRejected = true;
+                    recordOutcome({});
                     q.push({ update: { sessionUpdate: "__send_complete__" } });
                 });
             let firstRealUpdateSeen = false;
@@ -1163,6 +1176,30 @@ export class AcpClient {
         // A blocked stdin callback must not block the HTTP cancel response.
         void this.notify("session/cancel", { sessionId }).catch(() => {});
         return true;
+    }
+
+    /**
+     * cancel(), then wait up to `timeoutMs` (default: the cancel deadline)
+     * for the session/prompt that was out to settle. ACP has the agent end a
+     * cancelled prompt with stopReason "cancelled": that answer is the
+     * agent's own acknowledgement. Only the stopReason is reported; whether
+     * it counts as one is the caller's to decide.
+     */
+    async cancelAndSettle(sessionId: string, options: AcpCancelOptions = {}, timeoutMs = this.cancelTimeoutMs): Promise<AcpCancelSettlement> {
+        const outcome = this.promptOutcomes.get(sessionId);
+        const dispatched = await this.cancel(sessionId, options);
+        if (!dispatched || !outcome) return { dispatched };
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const deadline = new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => resolve(undefined), timeoutMs);
+            timer.unref?.();
+        });
+        try {
+            const settled = await Promise.race([outcome, deadline]);
+            return settled?.stopReason !== undefined ? { dispatched, stopReason: settled.stopReason } : { dispatched };
+        } finally {
+            clearTimeout(timer);
+        }
     }
 
     destroySession(sessionId: string): void {

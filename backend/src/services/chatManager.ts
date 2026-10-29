@@ -103,7 +103,7 @@ export function primaryAgentSessionOptions(binding: PrimaryAgentBinding | null):
 /**
  * Thin facade that brokers chat-creation requests to KiroRuntime and
  * registers the resulting AgentSession with sessionRegistry. Used by
- * digestGenerator / exportSummary which still take a ChatManager handle —
+ * digestGenerator, which still takes a ChatManager handle —
  * routes/michi.ts now goes through sessionRegistry directly.
  *
  * KiroRuntime is constructed by RUNTIME_FACTORIES in server.ts; ChatManager
@@ -309,6 +309,29 @@ export class ChatManager {
         const release = await acquireSessionRestoreLock(input.nodeId);
         try {
             return await this.restoreParentSession(input);
+        } finally {
+            release();
+        }
+    }
+
+    /**
+     * Release the live session of a fresh scheduled maintenance node once its
+     * run has ended. Only its managed job opens such a node and every run
+     * gets a new one, so the session is never used again; keeping it would
+     * hold a Meta agent session (on Kiro, a kiro-cli) for the backend's life.
+     * Returns false, leaving the session alone, while any turn still owns it.
+     */
+    async releaseMaintenanceSession(input: { ownerUserId: string; workspaceId: string; nodeId: string }): Promise<boolean> {
+        const release = await acquireSessionRestoreLock(input.nodeId);
+        try {
+            const node = getNode(input.nodeId);
+            if (!node || node.workspace_id !== input.workspaceId || !node.maintenance_job_id) return false;
+            const live = sessionRegistry.getSessionForOwner(input.nodeId, chatOwner(input.nodeId), input.ownerUserId);
+            if (!live) return true;
+            if (chatHub.isActive(input.nodeId) || chatHub.isOwnerTurnActive(input.nodeId)) return false;
+            await getRuntime(live.runtimeId)?.releaseSession(live.id, live.owner ?? chatOwner(input.nodeId));
+            sessionRegistry.dropSession(live.id);
+            return true;
         } finally {
             release();
         }

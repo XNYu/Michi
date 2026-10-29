@@ -19,6 +19,9 @@ import { AREA_RAIL_WIDTH } from './rail/AreaRail';
 import PaneCaption from './PaneCaption';
 import PaneLauncher from './PaneLauncher';
 import PaneTabStrip from './PaneTabStrip';
+import { MobilePaneSwitcher } from './MobilePaneSwitcher';
+import { ResponsiveToolbar } from './ResponsiveToolbar';
+import { usePhoneLayout } from '../../hooks/usePhoneLayout';
 import BrowserLauncher from './BrowserLauncher';
 import { HeaderTooltip } from './WorkspaceMenuButton';
 import { selectUnreadTotal } from '../../state/sidebarSelectors';
@@ -41,6 +44,7 @@ import { Button } from '../ui/controls';
 import './spaces/conversation/conversation.css';
 import { selectArchivedGroupCountForPage } from '../../state/topbarSelectors';
 import { usePaneBackgroundWorkCounts } from './backgroundWork/usePaneBackgroundWork';
+import BackgroundWorkButton from './backgroundWork/BackgroundWorkButton';
 import { isSystemWorkspace, systemWorkspaceIds } from '../../state/assistant/systemWorkspace';
 
 const ASSISTANT_TITLE = 'Assistant';
@@ -91,6 +95,7 @@ export default function TerminalTopbar({
   remoteRecoveryControl,
   spacesCrumb,
   areaCrumb,
+  onAreaHome,
   spacesAssistant,
   navigation,
 }: {
@@ -111,6 +116,8 @@ export default function TerminalTopbar({
   spacesCrumb?: string;
   /** What Settings and Scheduled show after their label: the open section or page; none on the job list. */
   areaCrumb?: string;
+  /** Direct parent navigation, independent of back/forward history. */
+  onAreaHome?: () => void;
   /** The Meta agent window's toggle (⌘J) in the Spaces area. */
   spacesAssistant?: { open: boolean; onToggle: () => void };
 }) {
@@ -122,6 +129,7 @@ export default function TerminalTopbar({
     canNavForward,
   } = useChatProjects();
   const { openPanes: activePanes, tabPanes, pagePane, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const phone = usePhoneLayout();
   const paneScope = paneScopeKey(activeProject, pagePane);
   const { focusedPane: visualFocus } = usePresentedPaneFocus(focusedPane);
   const { paneIds: presentedPanes, paneItems, exitingIds: allExitingIds } = usePresentedPanes(activePanes, activeItems);
@@ -215,8 +223,8 @@ export default function TerminalTopbar({
   ]));
   retainedCaptionFocus.current = captionFocus;
   // Single-page mode swaps the caption cells for a browser-style tab bar.
-  const showTabs = workspaceReady && page === 'dashboard' && !!tabPanes?.length;
-  const showPaneCells = workspaceReady && page === 'dashboard' && openPanes.length > 0 && !tabPanes;
+  const showTabs = !phone && workspaceReady && page === 'dashboard' && !!tabPanes?.length;
+  const showPaneCells = !phone && workspaceReady && page === 'dashboard' && openPanes.length > 0 && !tabPanes;
   const paneLayout = usePaneLayout(cellsStripRef, {
     paneIds: openPanes, customWidths: paneWidths, mode: prefs.paneWidthMode, exitingIds,
     defaultPaneWidth: prefs.defaultPaneWidth, enabled: showPaneCells,
@@ -607,6 +615,7 @@ export default function TerminalTopbar({
             : 'padding-left var(--t-enter) cubic-bezier(0,0,.2,1)',
         }}
       >
+        {phone && workspaceReady && page === 'dashboard' && <div className="mobile-pane-title">{paneTitles[openPanes.indexOf(focusedPane ?? '')] || paneTitles[0] || 'Michi'}</div>}
         {showPaneCells && (
           <div
             ref={cellsStripRef}
@@ -759,7 +768,7 @@ export default function TerminalTopbar({
               </BreadcrumbBackButton>
             )}
             {page !== 'workspace-manage' && page !== 'agent-manage' && (
-              <span
+              areaCrumb && onAreaHome ? <BreadcrumbBackButton onClick={onAreaHome} title="Back to Scheduled">{pageLabel}</BreadcrumbBackButton> : <span
                 style={{
                   fontSize: 'var(--fs-xs)',
                   letterSpacing: 'var(--ls-caps-wide)',
@@ -957,6 +966,10 @@ export default function TerminalTopbar({
           )}
           {(page === 'space' || page === 'spaces') && <SpaceTopbarActions page={page} assistant={spacesAssistant} />}
           {showWorkspaceControls && workspaceReady && !!activeProject && !inAssistant && (
+            <BackgroundWorkButton paneIds={activePanes} paneItems={activeItems} focusedId={focusedPane} />
+          )}
+          {showWorkspaceControls && <ResponsiveToolbar>
+          {showWorkspaceControls && workspaceReady && !!activeProject && !inAssistant && (
             <>
               {!showTabs && <PaneLauncher />}
               <BrowserLauncher />
@@ -1000,6 +1013,8 @@ export default function TerminalTopbar({
               <ArtifactsIcon size={14} />
             </TopbarIconToggle>
           )}
+          </ResponsiveToolbar>}
+          {phone && workspaceReady && page === 'dashboard' && <MobilePaneSwitcher />}
       </div>
     </div>
   );
@@ -1090,7 +1105,7 @@ function BrandHomeButton({ onClick }: { onClick: () => void }) {
       } as React.CSSProperties}
     >
       <img
-        src="/michi-icon.png"
+        src="/favicon.png"
         alt=""
         width={26}
         height={26}
@@ -1138,18 +1153,23 @@ function CrumbTitle({ title }: { title: string }) {
 /**
  * Spaces actions: Start a task opens the sheet on the page on screen, a page
  * (not a home) opens beside the chat, and every Spaces page toggles the
- * assistant window.
+ * assistant window. A phone shows one pane at a time, so it has no beside.
  */
 function SpaceTopbarActions({ page, assistant }: { page: PageId; assistant?: { open: boolean; onToggle: () => void } }) {
   const space = useSpaceTopbar();
   const scope = useCurrentSpaceScope();
-  const beside = page === 'space' ? space?.onOpenBeside : undefined;
+  const phone = usePhoneLayout();
+  const beside = page === 'space' && !phone ? space?.onOpenBeside : undefined;
   if (!scope && !beside && !assistant) return null;
   return (
     <>
-      {scope && (
+      {scope && (phone ? (
+        <TopbarIconToggle onClick={() => openNewChatSheet()} active={false} label="Start a task from this page" tooltip="Start a task">
+          <Plus size={16} strokeWidth={1.7} />
+        </TopbarIconToggle>
+      ) : (
         <TopbarTextButton onClick={() => openNewChatSheet()} label="Start a task" ariaLabel="Start a task from this page" icon={<Plus size={13} strokeWidth={1.7} aria-hidden="true" />} />
-      )}
+      ))}
       {beside && (
         <TopbarTextButton onClick={beside} label="Open beside chat" icon={<Columns2 size={13} strokeWidth={1.6} aria-hidden="true" />} />
       )}

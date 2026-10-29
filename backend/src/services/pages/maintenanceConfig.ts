@@ -27,7 +27,7 @@ function refuseRuntimeProfile(input: RuntimeProfileInput): void {
   }
 }
 
-/** Creates/updates the one ordinary scheduled job bound to a workspace maintenance config. */
+/** Creates/updates the internal execution identity bound to a workspace maintenance config. */
 export class PageMaintenanceConfigService {
   constructor(private readonly scheduler: ScheduledJobScheduler, private readonly clock: () => number = Date.now) {}
 
@@ -44,17 +44,17 @@ export class PageMaintenanceConfigService {
     const now = this.clock();
     if (!current) {
       if (input.expectedRevision !== undefined) throw new Error('Maintenance config does not exist');
-      const job = this.scheduler.createJob({
+      const job = this.scheduler.createMaintenanceExecution({
         workspaceId: input.workspaceId, name: 'Space maintenance', prompt: MANAGED_PROMPT,
         schedule: { kind: 'every', everySeconds: 60 } satisfies ScheduledJobSchedule,
         ...NO_RUNTIME_PROFILE,
         permissionMode: 'trust', sessionMode: 'fresh', notify: false, enabled: input.enabled !== false && input.paused !== true,
         timeoutSeconds: 3600, conversationUpdates: true,
-      });
+      }, input.ownerUserId);
       try {
         const config = createMaintenanceConfig({ workspaceId: input.workspaceId, ownerUserId: input.ownerUserId,
           jobId: job.id, now, enabled: input.enabled !== false, paused: input.paused === true });
-        return { config, job };
+        return { config, job: this.scheduler.getJob(job.id) };
       } catch (error) {
         this.scheduler.deleteJob(job.id);
         throw error;

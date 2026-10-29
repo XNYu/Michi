@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { pageBlockText, parsePageBlockInput } from 'michi-shared';
-import type { ChangeReadScope, PageBlockInput, PageChangeDto, PageDatabaseRow } from 'michi-shared';
+import type { ChangeReadScope, PageBlockInput, PageChangeDto, PageDatabaseColumn, PageDatabaseRow, PageDatabaseView } from 'michi-shared';
 import MarkdownContent from '../../MarkdownContent';
 import { MICHI_MARKDOWN_FEATURES, InlineMarkdownParagraphs } from '../content/page/blocks/text';
 import { joinMarkdown, splitMarkdown } from '../content/page/markdownSegments';
@@ -65,6 +65,35 @@ function canEditProposal(change: PageChangeDto): boolean {
   return proposedBlock(change) !== null || proposedRow(change) !== null;
 }
 
+function DatabaseConfigurationPreview({ change }: { change: PageChangeDto }) {
+  if (change.op !== 'schema' || change.before?.kind !== 'database' || !change.before.exists ||
+    change.after?.kind !== 'database' || !change.after.exists) return null;
+  const before = change.before.database, after = change.after.database;
+  const columnText = (column: PageDatabaseColumn) => `${column.name} (${column.type})${column.options?.length ? ` · ${column.options.map((option) => `${option.label && option.label !== option.value ? `${option.label} [${option.value}]` : option.value}${option.color ? ` (${option.color})` : ''}`).join(', ')}` : ''}${column.editable === false ? ' · Read only' : ''}${column.width ? ` · Width ${column.width}` : ''}`;
+  const columnName = (id: string) => after.columns.find((column) => column.id === id)?.name ?? id;
+  const viewText = (view: PageDatabaseView) => [
+    `${view.name} (${view.type})`,
+    view.config.group && `Group: ${columnName(view.config.group)}`,
+    view.config.date && `Date: ${columnName(view.config.date)}`,
+    view.config.planDate && `Planned date: ${columnName(view.config.planDate)}`,
+    view.config.cover && `Cover: ${columnName(view.config.cover)}`,
+    view.config.visible && `Columns: ${view.config.visible.map(columnName).join(', ')}`,
+    view.config.filters.length > 0 && `Filter (${view.config.match}): ${view.config.filters.map((filter) => `${columnName(filter.column)} ${filter.op} ${filter.value == null ? '' : JSON.stringify(filter.value)}`).join('; ')}`,
+    view.config.sorts.length > 0 && `Sort: ${view.config.sorts.map((sort) => `${columnName(sort.column)} ${sort.dir}`).join(', ')}`,
+  ].filter(Boolean).join(' · ');
+  const lines = [
+    ...after.columns.flatMap((column) => {
+      const old = before.columns.find((item) => item.id === column.id);
+      return !old ? [`Add column: ${columnText(column)}`] : JSON.stringify(old) === JSON.stringify(column) ? [] : [`Column: ${columnText(old)} → ${columnText(column)}`];
+    }),
+    ...after.views.flatMap((view) => {
+      const old = before.views.find((item) => item.id === view.id);
+      return !old ? [`Add view: ${viewText(view)}`] : JSON.stringify(old) === JSON.stringify(view) ? [] : [`View: ${viewText(old)} → ${viewText(view)}`];
+    }),
+  ];
+  return <ul aria-label="Proposed database changes">{lines.map((line, index) => <li key={index}>{line}</li>)}</ul>;
+}
+
 function targetName(change: PageChangeDto): string {
   if (change.target.kind === 'block') {
     const snapshot = change.after?.kind === 'block' && change.after.exists ? change.after.block : change.before?.kind === 'block' && change.before.exists ? change.before.block : null;
@@ -82,6 +111,7 @@ function targetName(change: PageChangeDto): string {
 }
 
 function operationLabel(change: PageChangeDto): string {
+  if (change.op === 'schema') return 'Suggested database configuration';
   if (change.op === 'delete') return change.target.kind === 'row' ? 'Suggested row deletion' : `Suggested deletion of ${targetName(change)}`;
   if (change.op === 'move') return 'Suggested move';
   if (change.target.kind === 'row') return 'Suggested field update';
@@ -278,7 +308,7 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
       ? (shownSource ? changeOrigin(shownSource) : null)
       : changeOrigin(source);
     const from = !quiet && origin && <OriginLine origin={origin} sourceLabel={sourceLabel} onOpenSource={onOpenSource} separator />;
-    if (change.proposalState === 'pending' && showTarget) {
+    if (change.proposalState === 'pending' && showTarget && change.op !== 'schema') {
       return (
         <div className="page-change-line" data-state="pending">
           <Sparkles size={12} strokeWidth={1.7} aria-hidden="true" />
@@ -297,9 +327,10 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
         <article className="page-change-prop" data-state="pending" aria-label={operationLabel(change)}>
           <header className="page-change-prop__head">
             <Sparkles size={13} strokeWidth={1.7} aria-hidden="true" />
-            <strong>{change.op === 'delete' ? 'Suggested removal' : change.op === 'move' ? 'Suggested move' : change.target.kind === 'row' ? 'Suggested field update' : 'Suggested rewrite'}</strong>
-            <span>· You edited this, so it asks first</span>
+            <strong>{change.op === 'schema' ? 'Suggested database configuration' : change.op === 'delete' ? 'Suggested removal' : change.op === 'move' ? 'Suggested move' : change.target.kind === 'row' ? 'Suggested field update' : 'Suggested rewrite'}</strong>
+            <span>{change.op === 'schema' ? '· Review changes to existing columns or views' : '· You edited this, so it asks first'}</span>
           </header>
+          <DatabaseConfigurationPreview change={change} />
           {!editing && diff && (
             <div className="page-change-prop__body">
               {diff.removed.length > 0 && <del className="page-change-prop__old"><Pieces pieces={diff.removed} /></del>}
@@ -356,7 +387,8 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
         <time dateTime={new Date(change.createdAt).toISOString()}>{relativeTime(change.createdAt)}</time>
       </header>
 
-      {change.proposalState === 'pending' && <p className="page-change-card__why">You edited this content, so it asks first.</p>}
+      {change.proposalState === 'pending' && <p className="page-change-card__why">{change.op === 'schema' ? 'Review changes to existing columns or views before applying them.' : 'You edited this content, so it asks first.'}</p>}
+      {isProposal && <DatabaseConfigurationPreview change={change} />}
       {change.op === 'delete' && <p className="page-change-card__why">Accepting removes {change.target.kind === 'row' ? 'the row' : 'the block'}.</p>}
       {change.op === 'move' && <p className="page-change-card__why">Accepting moves this block to the proposed position.</p>}
       {isProposal && blockValue && <pre className="page-change-preview">{previewText(blockValue)}</pre>}

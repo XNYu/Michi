@@ -10,8 +10,8 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('native rich content', () => {
   it('keeps a renderer for every persisted content type drawn by MichiBlock', () => {
-    // NativePageDocument renders resource links, sandboxed components and live Home sections.
-    for (const type of PAGE_BLOCK_TYPES.filter((type) => !['page-link', 'component', 'home-section'].includes(type))) expect(rendererFor(type), type).toBeTypeOf('function');
+    // NativePageDocument handles definitions, resource links, components and Home sections; MichiBlock handles view entries directly.
+    for (const type of PAGE_BLOCK_TYPES.filter((type) => !['page-link', 'component', 'home-section', 'view', 'view-link'].includes(type))) expect(rendererFor(type), type).toBeTypeOf('function');
   });
 
   it('adapts existing charts without changing their stored values or metadata', () => {

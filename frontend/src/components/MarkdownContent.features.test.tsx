@@ -85,6 +85,22 @@ describe('MarkdownContent optional Streamdown-parity features', () => {
     expect(clipboard.mock.calls[0][0]).toContain('| A | B |');
   });
 
+  it('keeps mixed cell content in one element for the phone card grid', () => {
+    const { container } = render(
+      <MarkdownContent
+        features={features}
+        text={'| Runtime | Notes |\n| --- | --- |\n| Sample | `~/.local/bin/sample-cli` is a **local** shim |'}
+      />,
+    );
+    const cell = container.querySelectorAll('td')[1];
+
+    expect(cell.childNodes).toHaveLength(1);
+    const value = cell.firstElementChild!;
+    expect(value.classList.contains('michi-table-cell')).toBe(true);
+    expect(value.querySelector('code')?.textContent).toBe('~/.local/bin/sample-cli');
+    expect(value.textContent).toBe('~/.local/bin/sample-cli is a local shim');
+  });
+
   it('renders completed Mermaid fences with diagram controls', async () => {
     const { container } = render(
       <MarkdownContent

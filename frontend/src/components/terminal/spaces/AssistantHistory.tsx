@@ -21,7 +21,7 @@ export function AssistantHistory({ onOpenAssistant, visible = false }: { onOpenA
   useEffect(() => {
     const current = ++generation.current;
     const controller = new AbortController();
-    if (snap.status !== 'ready') return () => controller.abort();
+    if (!visible || snap.status !== 'ready') return () => controller.abort();
     setLoading(true);
     setError(null);
     void fetchAssistantConversations(undefined, controller.signal).then(result => {
@@ -33,7 +33,7 @@ export function AssistantHistory({ onOpenAssistant, visible = false }: { onOpenA
       if (!controller.signal.aborted && current === generation.current) setError(cause instanceof Error ? cause.message : 'Could not load history');
     }).finally(() => { if (!controller.signal.aborted && current === generation.current) setLoading(false); });
     return () => controller.abort();
-  }, [nodeId, snap.status, status, retry]);
+  }, [visible, nodeId, snap.status, status, retry]);
 
   const more = async () => {
     if (!history.nextCursor || loading) return;
@@ -68,6 +68,8 @@ export function AssistantHistory({ onOpenAssistant, visible = false }: { onOpenA
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not open conversation'); }
     finally { busy.current = false; setSwitching(null); }
   };
+  if (!visible) return null;
+
   return <nav className="spaces-assistant-history" aria-label="Assistant conversations" aria-busy={loading || switching !== null}>
     {history.items.map(item => <button type="button" key={item.nodeId} className="area-side__row spaces-assistant-history__row"
       title={item.title} aria-current={visible && item.nodeId === nodeId ? 'page' : undefined}

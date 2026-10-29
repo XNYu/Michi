@@ -10,7 +10,7 @@ import { getDb } from "./db";
  *   MICHI_ENCRYPTION_KEY.
  * - MICHI_ENCRYPTION_KEY leak alone: useless without DB.
  * - Both leak together: all stored keys decryptable. (Acceptable v1
- *   trade-off — see docs/cloud-deployment.md.)
+ *   trade-off — see README.md, "Hosted auth configuration".)
  *
  * Key rotation: NOT supported. Setting a new MICHI_ENCRYPTION_KEY
  * bricks every existing user_provider_keys row.

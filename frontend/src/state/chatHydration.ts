@@ -384,14 +384,62 @@ export function applyTreeMessages(
     const prev = next[nodeId];
     if (!prev) continue; // node not present locally (e.g. trimmed) — skip
     const messages = messagesByNode[nodeId];
-    next[nodeId] = {
+    next[nodeId] = recoverRunningTurn({
       ...prev,
       messages,
       messagesLoaded: true,
       messageCount: messages.length,
-    };
+    });
   }
   return next;
+}
+
+/**
+ * Stored rows always map to finished messages, and a renderer that opens a
+ * running turn (a reload, another window, a lazily loaded thread) replays
+ * from a cursor past `turn_start`, so nothing marks the turn's assistant
+ * message live again. Without the flag its agent block cannot report
+ * Working… during tool calls and the activity row defers to it, leaving only
+ * the tool spinner. The turn's begin transaction writes the node's streaming
+ * status together with its assistant row, so the last assistant message is
+ * the running one; the foreground reattach path relies on the same fact.
+ */
+function recoverStreamingAssistant(node: ChatNodeState): ChatNodeState {
+  if (node.status !== 'streaming' || node.visibleResponseComplete) return node;
+  const index = node.messages.findLastIndex((message) => message.role === 'assistant');
+  if (index < 0 || node.messages[index].streaming) return node;
+  const messages = node.messages.slice();
+  messages[index] = { ...messages[index], streaming: true };
+  return { ...node, messages };
+}
+
+/** Restore the live state a running turn's stored rows cannot carry. */
+function recoverRunningTurn(node: ChatNodeState): ChatNodeState {
+  return recoverPendingUserInput(recoverStreamingAssistant(node));
+}
+
+/**
+ * A renderer that opens a running turn after its question was persisted
+ * (another window asked it, a reload, a reconnect) replays from a cursor past
+ * the `user_input_request` event, so only the stored block knows the question
+ * is open. Restore it as the node's pending request so it can be answered.
+ */
+export function recoverPendingUserInput(node: ChatNodeState): ChatNodeState {
+  if (node.status !== 'streaming' || node.pendingUserInput) return node;
+  const last = node.messages[node.messages.length - 1];
+  if (last?.role !== 'assistant') return node;
+  const block = last.blocks?.findLast((candidate) => candidate.kind === 'user-input');
+  const interaction = block?.kind === 'user-input' ? block.interaction : undefined;
+  if (interaction?.status !== 'pending') return node;
+  return {
+    ...node,
+    pendingUserInput: {
+      requestId: interaction.requestId,
+      interactionId: interaction.interactionId,
+      questions: interaction.questions,
+      answers: [],
+    },
+  };
 }
 
 export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): ChatMessage {
@@ -503,6 +551,7 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
     viewedAt: asOptionalNumber(row.viewed_at),
     currentModeId: asString(row.current_mode_id) ?? null,
     permissionMode: isChatPermissionMode(row.permission_mode) ? row.permission_mode : undefined,
+    permissionApproveForMe: row.permission_mode === 'ask' && (row.permission_approve_for_me === 1 || row.permission_approve_for_me === true) ? true : undefined,
     paneWidth: asOptionalNumber(row.pane_width),
     composerDraft: parseComposerDraft(row.composer_draft),
   };
@@ -667,7 +716,7 @@ export function hydrateBackendWorkspaces(
       const assembled = messagesByNode.get(nodeId) ?? [];
       const rawCount = asOptionalNumber(row.message_count);
       const isMetaRow = rawCount !== undefined && assembled.length === 0;
-      nodes[nodeId] = {
+      nodes[nodeId] = recoverRunningTurn({
         ...scalars,
         // Cross-row derived fields the single-row scalar mapper cannot know:
         projectId,
@@ -676,7 +725,7 @@ export function hydrateBackendWorkspaces(
         messagesLoaded: !isMetaRow,
         messageCount: rawCount ?? assembled.length,
         digest,
-      } as ChatNodeState;
+      } as ChatNodeState);
     }
   }
 

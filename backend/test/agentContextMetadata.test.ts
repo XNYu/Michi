@@ -27,6 +27,16 @@ describe('agent context metadata persistence', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  test('keeps file classification on reload and replaces a previous document registration', () => {
+    for (const [filePath, type] of [['notes.md', 'doc'], ['shot.PNG', 'image'], ['archive.zip', 'file']]) {
+      upsertAgentContextMetadata({ workspaceId: 'ws-1', nodeId: 'node-1', name: 'output', filePath, size: 3 });
+      const entries = listContexts('ws-1');
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0].type, type);
+      assert.equal(entries[0].file_path, filePath);
+    }
+  });
+
   test('upserts one durable agent context by workspace/name for save and update', () => {
     const savedId = upsertAgentContextMetadata({
       workspaceId: 'ws-1', nodeId: 'node-1', name: 'notes', filePath: '.contexts/notes.md', size: 2,

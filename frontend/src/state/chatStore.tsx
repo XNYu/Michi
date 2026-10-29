@@ -1,13 +1,15 @@
+import { artifactTypeForPath } from 'michi-shared';
 import { formatQuotedSelectionContext } from '../lib/quoteFormat';
 import { isFileFeedbackTargetValid, type FileFeedbackTarget } from './fileFeedback';
 import type { QuoteSource } from '../lib/quoteFormat';
 import { backendFetch } from '../services/api/backendRequest';
 import { parseChatCommand, nextQueuedBatch, executeComposerCommand } from './chatCommands';
-import type { ScheduledJobRunEvent, SteerMessageOptions } from 'michi-shared';
+import { chatPermissionChoiceParts, type ScheduledJobRunEvent, type SteerMessageOptions } from 'michi-shared';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { allocateNodeIds, allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
+import { allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
 import { bindPendingPrimaryAgent, type AgentStatus } from '../services/api';
-import { findTreeIdForNode } from './tree';
+import { activeTreeRootNodeId, findTreeIdForNode } from './tree';
+export { activeTreeRootNodeId } from './tree';
 import { usePrefs } from './prefs';
 import { DARK_PALETTES } from '../components/terminal/tokens';
 import { resolveAtMentions, resolveAtNodeMentions, buildNodeTranscriptBlock, stripNodeMentionTokens, rewriteNodeMentionsForDisplay } from './contextBudget';
@@ -53,6 +55,7 @@ import { isSystemWorkspace } from './assistant/systemWorkspace';
 import { isVisibleConversationNode } from './conversationVisibility';
 import { rememberUserWorkspace, userWorkspaceToReturnTo } from './assistant/userWorkspace';
 import { isShownInAssistantPanel, openAssistantPanel } from './assistant/assistantStore';
+import { revealScheduleAssistant } from './assistant/scheduleAssistantStore';
 import { quoteSourceOf } from './assistant/assistantContext';
 import { useContextActions } from './contextActions';
 import { useProjectActions, useTreeActions } from './projectTreeActions';
@@ -281,17 +284,6 @@ function linkedPeersOf(
     else if (e.target === nodeId) out.push(e.source);
   }
   return out;
-}
-
-/**
- * Returns the active tree's root nodeId, or `null` if the workspace has no
- * active tree (e.g. every tree was archived). Callers previously used
- * `project.chatIds[0]`; this is the forest-aware replacement.
- */
-export function activeTreeRootNodeId(project: Project | null | undefined): string | null {
-  if (!project || !project.activeTreeId) return null;
-  const t = project.trees.find((x) => x.id === project.activeTreeId);
-  return t ? t.rootNodeId : null;
 }
 
 export function ChatProvider({ children, userId }: { children: React.ReactNode; userId?: string }) {
@@ -1031,13 +1023,16 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           : undefined,
         handlersForChat: (chatId, envelopeNodeId) => {
           const byEnvelope = envelopeNodeId ? nodesRef.current[envelopeNodeId] : undefined;
-          const node = byEnvelope?.chatId === chatId && belongsToConnection(byEnvelope)
+          const node = byEnvelope && (byEnvelope.chatId === chatId || byEnvelope.nodeId === chatId) && belongsToConnection(byEnvelope)
             ? byEnvelope
             : Object.values(nodesRef.current).find(
                 (candidate) => candidate.chatId === chatId && belongsToConnection(candidate),
               );
           if (!node) return {};
           const nodeId = node.nodeId;
+          // Another device can start the first turn before this renderer has
+          // ever opened a native session for this existing node.
+          if (!node.chatId) dispatch({ type: 'bind-chat', nodeId });
           const cached = bindings.get(chatId);
           if (cached?.nodeId === nodeId) return cached.handlers;
           const handlers = createBackgroundTurnBinding({
@@ -1230,7 +1225,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         return reduceProject(project, {
           type: 'upsert-context',
           projectId,
-          context: { id: contextId ?? existing?.id, name, filePath, size, source: 'agent' },
+          context: { id: contextId ?? existing?.id, name, filePath, size, type: artifactTypeForPath(filePath), kind: 'embedded', source: 'agent' },
         });
       }));
     },
@@ -1241,7 +1236,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         ? reduceProject(project, {
             type: 'update-context-by-name',
             projectId,
-            context: { id: contextId, name, filePath, size, source: 'agent' },
+            context: { id: contextId, name, filePath, size, type: artifactTypeForPath(filePath), kind: 'embedded', source: 'agent' },
           })
         : project));
     },
@@ -1491,6 +1486,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           // Applied server-side after the fresh session is created, before this
           // first prompt streams. Ignored on resume (node already has a chatId).
           permissionMode: meta?.permissionMode ?? n.permissionMode,
+          approveForMe: meta?.permissionMode ? meta.approveForMe === true : n.permissionApproveForMe === true,
           crewMemoryMode: meta?.crewMemoryMode,
           modeId: n.chatId ? undefined : n.currentModeId ?? undefined,
           graphPrerequisite: durableNodePrerequisite(owningProject, nodesRef.current[nodeId] ?? n),
@@ -1570,7 +1566,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       cancelFns.current[nodeId] = cancelSetup;
       try {
         if (!owningProject) throw new Error('workspace not found for node');
-        if (meta?.permissionMode && !n.permissionMode) dispatch({ type: 'set-permission-mode', nodeId, mode: meta.permissionMode });
+        if (meta?.permissionMode && !n.permissionMode) dispatch({ type: 'set-permission-mode', nodeId, mode: meta.permissionMode, approveForMe: meta.approveForMe });
         const ensured = await ensureRuntimeSession(setupController.signal);
         // Aborting the HTTP wait does not undo the server's native binding.
         // A late response must never send the cancelled prompt or bind over a newer turn.
@@ -2119,16 +2115,19 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     [dispatch],
   );
 
-  const setChatPermissionMode = useCallback(async (nodeId: string, mode: import('michi-shared').ChatPermissionMode) => {
+  const setChatPermissionMode = useCallback(async (nodeId: string, choice: import('michi-shared').ChatPermissionChoice) => {
     const node = nodesRef.current[nodeId];
     const project = projectsRef.current.find((candidate) => candidate.id === node?.projectId);
     if (!node || !project) throw new Error('Chat not found');
+    const { mode, approveForMe } = chatPermissionChoiceParts(choice);
     const res = await backendFetch(`${nodeBackendApiBase(nodeId)}/nodes/${encodeURIComponent(nodeId)}/permissions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode, graphPrerequisite: durableNodePrerequisite(project, node) }),
+      body: JSON.stringify({ mode, approveForMe, graphPrerequisite: durableNodePrerequisite(project, node) }),
     });
     if (!res.ok) throw new Error('Failed to save chat permissions');
-    dispatch({ type: 'set-permission-mode', nodeId, mode });
+    // An older Backend ignores approveForMe: show what it saved.
+    const saved = await res.json().catch(() => null) as { approveForMe?: unknown } | null;
+    dispatch({ type: 'set-permission-mode', nodeId, mode, approveForMe: approveForMe && saved?.approveForMe === true });
   }, [dispatch]);
 
   const resolvePermission = useCallback((nodeId: string, optionId: string) => {
@@ -2796,7 +2795,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const revealNode = useCallback((nodeId: string) => {
     window.focus();
     // The assistant's conversation lives in its hidden workspace: it shows in
-    // the ⌘J panel, never by switching to that workspace.
+    // the ⌘J panel (the Scheduled window's, on the Scheduled page), never by
+    // switching to that workspace.
+    if (revealScheduleAssistant(nodeId)) return;
     const owner = projectsRef.current.find((p) => p.chatIds.includes(nodeId));
     if (isSystemWorkspace(owner) && openAssistantPanel()) return;
     navigateToNode(

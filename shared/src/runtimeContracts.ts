@@ -56,6 +56,8 @@ export interface AgentRuntimeOption {
   available: boolean;
   unavailableReason?: string;
   requiresApiKey?: boolean;
+  /** Chats on this runtime offer Approve for me (Ask plus the runtime's trust classifier). */
+  approveForMe?: boolean;
 }
 
 export interface AgentModelInfo extends ModelReasoningCapabilities {
@@ -191,7 +193,7 @@ function provider(value: unknown): AgentProviderInfo | undefined {
 function runtime(value: unknown): AgentRuntimeOption | undefined {
   const raw = object(value);
   if (!raw || !string(raw.id) || !raw.id || !string(raw.label)) return undefined;
-  return { id: raw.id, label: raw.label, available: raw.available === true, ...optional('unavailableReason', raw.unavailableReason, string), ...optional('requiresApiKey', raw.requiresApiKey, boolean) };
+  return { id: raw.id, label: raw.label, available: raw.available === true, ...optional('unavailableReason', raw.unavailableReason, string), ...optional('requiresApiKey', raw.requiresApiKey, boolean), ...(raw.approveForMe === true ? { approveForMe: true } : {}) };
 }
 
 function webSearchProvider(value: unknown): WebSearchProviderInfo | undefined {

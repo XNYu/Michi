@@ -1,4 +1,4 @@
-import type { TerminalPalette } from '../../state/prefs';
+export type TerminalPalette = 'bone' | 'slate' | 'monokai' | 'gruvbox';
 
 export interface TerminalTokens {
   /** Canvas background — the paper. */
@@ -123,6 +123,19 @@ export const DARK_PALETTES: ReadonlySet<TerminalPalette> = new Set<TerminalPalet
   'gruvbox',
 ]);
 
+// Light pages use dark floating surfaces with a matching color temperature.
+// Keep these separate from page tokens so text and native controls remain legible.
+const LIGHT_FLOATING_COLORS = {
+  slate: {
+    bg: '#2f3a49', fg: '#eef3f9', mid: '#c2cfdf', muted: '#aabacd',
+    line: '#4f6075', hover: '#3c4b5d', quote: '#26303d', action: '#bfcee2',
+  },
+  bone: {
+    bg: '#39342f', fg: '#f5f0e7', mid: '#d0c5b6', muted: '#bcb0a1',
+    line: '#595147', hover: '#484039', quote: '#302b26', action: '#d9cdbb',
+  },
+} as const;
+
 /**
  * Error TEXT colour. On the dark palettes danger reads only 3.1–4.3:1 on
  * bg/surface/alt (Monokai 3.1–3.9, Gruvbox 3.4–4.3) — fine for icons and
@@ -150,6 +163,7 @@ export function cssVarsFor(
 ): Record<string, string> {
   const p = PALETTES[palette];
   const isLight = !DARK_PALETTES.has(palette);
+  const floating = palette === 'slate' || palette === 'bone' ? LIGHT_FLOATING_COLORS[palette] : null;
   return {
     '--term-bg': p.bg,
     '--term-page-bg': p.bg,
@@ -209,15 +223,22 @@ export function cssVarsFor(
     '--tw-prose-links': p.accent,
     // Motion tokens (--t-quick/soft/enter/decay/ease) are palette-independent
     // and live only in index.css :root.
-    // Selection bar inverted tokens — light theme gets dark popup, dark gets light popup.
-    '--sel-bar-bg': isLight ? '#26262a' : '#ffffff',
-    '--sel-bar-fg': isLight ? '#f0f0f0' : '#1a1916',
-    '--sel-bar-mid': isLight ? '#b0b0b0' : '#5a544a',
-    '--sel-bar-muted': isLight ? '#808080' : '#70695d',
-    '--sel-bar-line': isLight ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)',
-    '--sel-bar-hover': isLight ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+    // Floating surfaces stay dark: cool blue-gray on Slate, warm graphite on Bone,
+    // and a raised shade of the page on the dark palettes.
+    // Shared by selection bars/composers, batch actions and transient notices.
+    '--sel-bar-bg': floating?.bg ?? `color-mix(in srgb, ${p.surface} 92%, ${p.fg})`,
+    '--sel-bar-fg': floating?.fg ?? p.fg,
+    '--sel-bar-mid': floating?.mid ?? p.mid,
+    // Raising a dark surface reduces contrast; use the brighter text level for metadata.
+    '--sel-bar-muted': floating?.muted ?? p.mid,
+    '--sel-bar-line': floating?.line ?? `color-mix(in srgb, ${p.surface} 80%, ${p.fg})`,
+    '--sel-bar-hover': floating?.hover ?? `color-mix(in srgb, ${p.fg} 8%, transparent)`,
     '--sel-bar-shadow': isLight
-      ? '0 2px 8px rgba(0,0,0,0.35), 0 16px 40px rgba(0,0,0,0.25)'
-      : '0 1px 2px rgba(0,0,0,0.08), 0 12px 34px rgba(0,0,0,0.10)',
+      ? '0 2px 6px rgba(16, 24, 32, 0.09), 0 12px 26px rgba(16, 24, 32, 0.14)'
+      : 'var(--term-float-shadow)',
+    '--sel-bar-color-scheme': 'dark',
+    '--sel-bar-quote-bg': floating?.quote ?? 'color-mix(in srgb, var(--term-bg) 45%, var(--sel-bar-bg))',
+    '--sel-bar-action-bg': floating?.action ?? `color-mix(in srgb, ${accent} 35%, ${p.fg})`,
+    '--sel-bar-action-fg': floating?.bg ?? p.bg,
   };
 }

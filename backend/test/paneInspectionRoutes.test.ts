@@ -13,6 +13,8 @@ import type { PaneInspectionCaller } from '../src/services/paneInspection';
 import type { ReadPaneOutputInput, ReadPaneOutputResult } from '../src/services/paneInspectionOutput';
 import { PanePresenceRegistry, MAX_SURFACE_REGISTRATIONS_PER_SCOPE } from '../src/services/panePresence';
 import { setupPaneInspectionRoutes, type PaneInspectionRouteDeps } from '../src/routes/paneInspection';
+import { inspectPaneTool } from '../src/agents/paneInspectionTools';
+import { LOCAL_AGENT_OWNER_ID } from '../src/services/agentOwner';
 
 // Mirrors agentRunOwnershipRoutes.test.ts / files.test.ts: a real express app on an ephemeral
 // port, exercised with fetch(). No supertest dependency.
@@ -74,7 +76,7 @@ function seed(): void {
 }
 
 /** Builds the router with fully stubbed inspect/readOutput/presence + the REAL
- *  getWorkspace/getNodeWorkspaceId (so workspace-resolution/ownership is exercised against a
+ *  workspace resolution (so workspace-resolution/ownership is exercised against a
  *  real sqlite fixture, per the brief's "caller identity comes from the session" requirement),
  *  and captures every call the router makes into `capture` for assertion. */
 async function start(opts: { throwFromInspect?: PaneInspectionError; throwFromOutput?: PaneInspectionError; nonPaneError?: boolean } = {}): Promise<Capture> {
@@ -109,6 +111,38 @@ async function start(opts: { throwFromInspect?: PaneInspectionError; throwFromOu
   await once(server, 'listening');
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
   return capture;
+}
+
+/** Builds the router with its real services and the shared presence registry, as server.ts
+ *  mounts it, so a surface registered through the presence routes is what inspect() reads. */
+async function startWithRealServices(): Promise<void> {
+  const app = express();
+  app.use(express.json());
+  app.use((req: any, _res, next) => {
+    const owner = req.header('x-user');
+    if (owner) req.user = { id: owner };
+    next();
+  });
+  app.use('/api', setupPaneInspectionRoutes());
+  server = app.listen(0, '127.0.0.1');
+  servers.push(server);
+  await once(server, 'listening');
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+}
+
+/** Allocates a terminal surface in ws-a and reports one live view of it, through the routes. */
+async function registerTerminalSurface(windowId: string, owner?: string): Promise<string> {
+  const alloc = await send('POST', '/panes/presence/allocate', { workspaceId: 'ws-a', kind: 'terminal' }, owner);
+  assert.equal(alloc.status, 200);
+  const { paneId } = await asJson(alloc) as { paneId: string };
+  const put = await send('PUT', '/panes/presence', {
+    workspaceId: 'ws-a',
+    viewRevision: 1,
+    windowId,
+    views: [{ paneId, windowId, uiPaneId: 'ui-terminal', treeId: null, visible: true, openedAtClient: null, surfaceTitle: 'Shell' }],
+  }, owner);
+  assert.equal((await asJson(put)).accepted, 1);
+  return paneId;
 }
 
 async function get(route: string, owner?: string): Promise<Response> {
@@ -200,6 +234,44 @@ describe('Pane Inspection HTTP routes', () => {
     const res = await get('/panes/inspect?nodeId=n-1', 'owner-b');
     assert.equal(res.status, 404);
     assert.equal(capture.inspectCalls.length, 0);
+  });
+
+  test('inspect resolves a surface paneId that the inspect_pane tool resolves for the same workspace', async () => {
+    await startWithRealServices();
+    const paneId = await registerTerminalSurface('win-surface-desktop');
+
+    const tool = inspectPaneTool({ ownerUserId: LOCAL_AGENT_OWNER_ID, workspaceId: 'ws-a', backendConnectionId: 'local' }, { paneId });
+    assert.equal(tool.isError, undefined);
+    assert.match(tool.content[0].text, /^kind: terminal$/m);
+
+    const res = await get(`/panes/inspect?paneId=${encodeURIComponent(paneId)}`);
+    assert.equal(res.status, 200);
+    const body = await asJson(res);
+    assert.equal(body.kind, 'terminal');
+    assert.equal(body.workspaceId, 'ws-a');
+
+    // The surface is authorised, so output reaches the capability check instead of NOT_FOUND.
+    const output = await get(`/panes/output?paneId=${encodeURIComponent(paneId)}&selection=latest`);
+    assert.equal(output.status, 400);
+    assert.equal((await asJson(output)).code, 'UNSUPPORTED');
+  });
+
+  test('cloud mode: a surface registered by another owner is NOT_FOUND over HTTP', async () => {
+    process.env.MICHI_CLOUD = '1';
+    saveWorkspace({
+      id: 'ws-b', name: 'B', cwd: null, active_tree_id: null, created_at: 1, updated_at: 1,
+      settings: null, deleted_at: null, archived_at: null, folders: null, owner_user_id: 'owner-b',
+    } as never);
+    await startWithRealServices();
+    const paneId = await registerTerminalSurface('win-surface-cloud', 'owner-a');
+
+    const foreign = await get(`/panes/inspect?paneId=${encodeURIComponent(paneId)}`, 'owner-b');
+    assert.equal(foreign.status, 404);
+    assert.equal((await asJson(foreign)).code, 'NOT_FOUND');
+
+    const own = await get(`/panes/inspect?paneId=${encodeURIComponent(paneId)}`, 'owner-a');
+    assert.equal(own.status, 200);
+    assert.equal((await asJson(own)).workspaceId, 'ws-a');
   });
 
   test('PUT presence with an unresolvable workspaceId -> 404 NOT_FOUND, registry untouched', async () => {

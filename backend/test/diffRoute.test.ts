@@ -7,7 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { setupDiffRoutes } from '../src/routes/diff';
-import { NotFoundError } from '../src/agents/tools/pathSandbox';
+import { NotFoundError } from '../src/services/workspaceSandbox';
 
 // Mirror files.test.ts: real express app on an ephemeral port, resolveCwd
 // injected so the route never touches the DB or cloud sandbox resolution.

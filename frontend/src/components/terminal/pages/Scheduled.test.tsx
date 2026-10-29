@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MetaAgentOverview, ScheduledJobBlockedExecution, ScheduledJobDto, ScheduledJobRunDto } from 'michi-shared';
 import type { Project } from '../../../state/chatTypes';
 import TerminalScheduled from './Scheduled';
-import { requestScheduledJobDetail } from '../scheduled/scheduledNav';
+import { openScheduledHome, requestScheduledJobDetail } from '../scheduled/scheduledNav';
 
 const state = vi.hoisted(() => ({
   projects: [] as Project[],
@@ -65,6 +65,12 @@ vi.mock('../agents/useRuntimeFieldCatalog', () => ({
 }));
 vi.mock('../../ui/ConfirmDialog', () => ({ confirmDialog: (...args: unknown[]) => state.confirm(...args) }));
 vi.mock('sonner', () => ({ toast: { success: (...args: unknown[]) => state.success(...args), error: (...args: unknown[]) => state.error(...args) } }));
+/** The "Create with agent" window has its own tests (ScheduledAgentChat.test.tsx); here, what the page tells it. */
+vi.mock('../scheduled/ScheduledAgentChat', () => ({
+  ScheduledAgentChat: ({ enabled, defaultWorkspaceId, children }: { enabled: boolean; defaultWorkspaceId: string | null; children: React.ReactNode }) => (
+    <div data-testid="agent-chat" data-enabled={String(enabled)} data-workspace={defaultWorkspaceId ?? ''}>{children}</div>
+  ),
+}));
 
 const now = Date.now();
 
@@ -85,6 +91,7 @@ function job(overrides: Partial<ScheduledJobDto> = {}): ScheduledJobDto {
 }
 
 beforeEach(() => {
+  openScheduledHome();
   vi.clearAllMocks();
   state.projects = [project('ws-1', 'michi'), project('ws-2', 'research')];
   state.jobs = [job(), job({ id: 'job-2', workspaceId: 'ws-2', name: 'Paper watch', enabled: false, nextRunAt: null, lastStatus: null, lastRunAt: null })];
@@ -134,6 +141,17 @@ describe('Scheduled page: the Meta agent system task', () => {
     meta.load = { kind: 'ready', overview: metaOverview(), at: now };
   });
 
+  it('shows a database check separately when no AI update has run', async () => {
+    meta.load = { kind: 'ready', overview: { state: 'running', runtime: { runtimeId: 'pi' },
+      today: { checks: 1, checksTruncated: false, modelCalls: 0, writes: 0, pendingProposals: 0 },
+      cursors: [], recentRuns: [], managedJobIds: [], lastCheckedAt: now - 60_000 } };
+    render(<TerminalScheduled />);
+    await waitFor(() => expect(screen.getByText(/Checked .*ago/)).toBeTruthy());
+    expect(screen.getByText(/AI only for pending work/)).toBeTruthy();
+    const row = screen.getByRole('button', { name: 'Open Meta agent · maintain Pages' }).closest('article')!;
+    expect(within(row).queryByText('Never run')).toBeNull();
+  });
+
   it('shows the managed maintenance jobs only as one pinned system row that can be paused but not deleted', async () => {
     render(<TerminalScheduled />);
     expect(await screen.findByText('Morning digest')).toBeTruthy();
@@ -148,7 +166,7 @@ describe('Scheduled page: the Meta agent system task', () => {
     const row = within(system).getByRole('article');
     expect(row.textContent).toContain('Meta agent · maintain Pages');
     expect(row.textContent).toContain('System');
-    expect(row.textContent).toContain('Every 60 s · 2 workspaces');
+    expect(row.textContent).toContain('Checks every 60 s · AI only for pending work · 2 workspaces');
     expect(row.textContent).toContain('2 min ago');
     expect(within(row).queryByRole('button', { name: /More actions/ })).toBeNull();
     expect(within(row).queryByRole('button', { name: /Run .* now/ })).toBeNull();
@@ -167,7 +185,7 @@ describe('Scheduled page: the Meta agent system task', () => {
     meta.load = { kind: 'ready', overview: metaOverview({ state: 'paused' }), at: now };
     render(<TerminalScheduled />);
     const row = within(await screen.findByRole('region', { name: 'System task' })).getByRole('article');
-    expect(row.textContent).toContain('Every 60 s · Paused');
+    expect(row.textContent).toContain('Checks every 60 s · AI only for pending work · Paused');
     fireEvent.click(within(row).getByRole('switch', { name: 'Resume background updates' }));
     expect(meta.pause).toHaveBeenCalledWith(false);
   });
@@ -284,6 +302,23 @@ describe('Scheduled page', () => {
     render(<TerminalScheduled />);
     expect(await screen.findByText('No scheduled jobs')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: /New job/ })).toHaveLength(2);
+  });
+
+  it('offers Create with agent where New job is, defaulting to the workspace New job preselects', async () => {
+    state.projects = [{ ...project('ws-assistant', 'Michi assistant'), system: 'assistant' }, ...state.projects];
+    const { unmount } = render(<TerminalScheduled />);
+    await screen.findByText('Morning digest');
+    const chat = screen.getByTestId('agent-chat');
+    expect(chat.dataset.enabled).toBe('true');
+    expect(chat.dataset.workspace).toBe('ws-1');
+    unmount();
+
+    // No local workspace to schedule in: neither New job nor the agent.
+    state.projects = [{ ...project('ws-assistant', 'Michi assistant'), system: 'assistant' }];
+    state.jobs = [];
+    render(<TerminalScheduled />);
+    expect(await screen.findByText('No scheduled jobs')).toBeTruthy();
+    expect(screen.getByTestId('agent-chat').dataset.enabled).toBe('false');
   });
 
   it('runs, pauses and filters jobs from the row', async () => {

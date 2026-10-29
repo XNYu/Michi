@@ -402,7 +402,7 @@ for (const choice of ['allow_always', 'allow_session']) {
     let token = '0';
     configureRuntimeDeps({
       dataDir: '/tmp/michi-codex-approval-tests',
-      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} },
+      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null },
       agentConfig: { getAgentConfig: () => ({ runtime: 'codex', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined },
       chatPermissions: { getMode: () => 'ask', hasGrant: (id, tool) => grants.has(`${id}:${tool}`), grant: (id, tool) => { grants.add(`${id}:${tool}`); }, resetToken: () => token },
     });
@@ -462,7 +462,7 @@ for (const grantedTo of ['owner-b', 'user-a']) test(`cloud chat approval reads t
       getNode: (id: string) => (id === nodeId ? { id, workspace_id: 'ws-owner-b' } : null) as never,
       listMessages: () => [],
       getWorkspace: (id: string) => (id === 'ws-owner-b' ? { id, owner_user_id: 'owner-b' } : null) as never,
-      getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {},
+      getWorkspaceInstructions: () => null,
     },
     agentConfig: { getAgentConfig: () => ({ runtime: 'codex', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined },
     chatPermissions: {

@@ -1,8 +1,9 @@
 import { serverEntityId } from '../../../config/backendIdentity';
 import { usePermissionPreferences } from '../../../hooks/usePermissionPreferences';
 import { ComposerPermissionControl } from '../ComposerPermissionControl';
-import { chatPermissionModeForRuntime } from '../../../lib/chatPermissionModes';
-import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { approveForMeRuntimeIds, chatPermissionChoiceForRuntime } from '../../../lib/chatPermissionModes';
+import { chatPermissionChoiceParts } from 'michi-shared';
+import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
 import type { MentionEditorHandle } from '../../MentionEditor';
 const MentionEditor = React.lazy(() => import('../../MentionEditor'));
@@ -28,6 +29,7 @@ import { resolveNodeBinding } from '../../../state/nodeBindingResolution';
 import { appendAttachmentsSentinel } from '../../../lib/composerAttachments';
 import { toast } from 'sonner';
 import { ComposerShell } from '../ComposerShell';
+import './ManageComposer.css';
 import { PaneComposerToolbarLeft, type PaneMenuAnchor } from '../PaneComposerToolbarLeft';
 import { ComposerModelTrigger } from '../ComposerModelTrigger';
 import { resolveComposerReasoning } from '../composerReasoning';
@@ -61,7 +63,7 @@ interface PendingAttachment {
 // In-memory draft survives unmount within a session, but successful sends
 // reset it. Cleared on full reload.
 const composerDrafts = new Map<string, ComposerDraft>();
-const draftPermissionModes = new Map<string, import('michi-shared').ChatPermissionMode>();
+const draftPermissionModes = new Map<string, import('michi-shared').ChatPermissionChoice>();
 // Pre-picked agent, sticky across unmounts and app restarts. The session
 // copy keeps the pick while agent status is still loading; once the runtime
 // is known the pick is also stored per Backend + runtime (see
@@ -104,8 +106,17 @@ interface Props {
   workspaceId?: string;
   /** Display name for fixed-workspace mode. Falls back to active project name. */
   workspaceName?: string;
-  /** Extra toolbar content rendered before the standard left toolbar (e.g. workspace picker chip). */
+  /**
+   * Extra toolbar content rendered before the standard left toolbar (e.g.
+   * workspace picker chip). Below `trayBelow` it leads the tray instead.
+   */
   toolbarLeftPrefix?: React.ReactNode;
+  /**
+   * Toolbar width (border box, px) below which the toolbar keeps one row and
+   * `toolbarLeftPrefix` and the permission chip move to a tray under the
+   * composer. Without it they always stay in the toolbar.
+   */
+  trayBelow?: number;
   /**
    * Show the agent (⎇) chip so the user can pre-pick an agent before the
    * thread exists. The pick is applied to the new thread's session on send.
@@ -136,23 +147,33 @@ export interface ManageComposerHandle {
 }
 
 type ToolbarTier = 0 | 1 | 2;
+interface ToolbarLayout { tier: ToolbarTier; tray: boolean }
+const FULL_TOOLBAR: ToolbarLayout = { tier: 0, tray: false };
 
-/** Pick the toolbar tier from its measured width, following the toolbar as
- *  the window (or the page zoom) changes. */
-function useToolbarTier(
+/** Pick the toolbar tier, and whether the tray is used, from the toolbar's
+ *  measured width, following it as the window (or the page zoom) changes.
+ *  Moving chips into the tray leaves the toolbar's width unchanged. Measured
+ *  before paint, so a phone never shows the full toolbar first. */
+function useToolbarLayout(
   toolbarRef: React.RefObject<HTMLDivElement | null>,
   compaction: Props['toolbarCompaction'],
-): ToolbarTier {
-  const [tier, setTier] = useState<ToolbarTier>(0);
+  trayBelow: number | undefined,
+): ToolbarLayout {
+  const [layout, setLayout] = useState<ToolbarLayout>(FULL_TOOLBAR);
   const glyphsBelow = compaction?.glyphsBelow;
   const hideAgentBelow = compaction?.hideAgentBelow;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = toolbarRef.current;
-    if (glyphsBelow === undefined || hideAgentBelow === undefined) { setTier(0); return; }
+    if ((glyphsBelow === undefined || hideAgentBelow === undefined) && trayBelow === undefined) {
+      setLayout(FULL_TOOLBAR);
+      return;
+    }
     if (!el || typeof ResizeObserver === 'undefined') return;
     const apply = (width: number) => {
-      const next: ToolbarTier = width < hideAgentBelow ? 2 : width < glyphsBelow ? 1 : 0;
-      setTier((prev) => (prev === next ? prev : next));
+      const tier: ToolbarTier = glyphsBelow === undefined || hideAgentBelow === undefined ? 0
+        : width < hideAgentBelow ? 2 : width < glyphsBelow ? 1 : 0;
+      const tray = trayBelow !== undefined && width < trayBelow;
+      setLayout((prev) => (prev.tier === tier && prev.tray === tray ? prev : { tier, tray }));
     };
     apply(el.offsetWidth);
     const observer = new ResizeObserver((entries) => {
@@ -160,8 +181,8 @@ function useToolbarTier(
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [toolbarRef, glyphsBelow, hideAgentBelow]);
-  return tier;
+  }, [toolbarRef, glyphsBelow, hideAgentBelow, trayBelow]);
+  return layout;
 }
 
 /** Build a thumbnail src for a pending image attachment in ManageComposer. */
@@ -192,13 +213,14 @@ function ScopedManageComposer({
   parentNodeId,
   workspaceId: fixedWorkspaceId,
   toolbarLeftPrefix,
+  trayBelow,
   enableAgentSelect = false,
   toolbarCompaction,
   onSubmitted,
   handleRef,
 }: Props & { handleRef: React.ForwardedRef<ManageComposerHandle> }) {
   const toolbarRef = useRef<HTMLDivElement>(null);
-  const toolbarTier = useToolbarTier(toolbarRef, toolbarCompaction);
+  const { tier: toolbarTier, tray } = useToolbarLayout(toolbarRef, toolbarCompaction, trayBelow);
   const {
     activeProject,
     selectProject,
@@ -246,7 +268,7 @@ function ScopedManageComposer({
   const permissionDraftKey = `${workspaceId}:${parentNodeId ?? '__new__'}`;
   const [, setPermissionModeRevision] = useState(0);
   const permissionMode = draftPermissionModes.get(permissionDraftKey) ?? 'ask';
-  const setPermissionMode = (mode: import('michi-shared').ChatPermissionMode) => {
+  const setPermissionMode = (mode: import('michi-shared').ChatPermissionChoice) => {
     draftPermissionModes.set(permissionDraftKey, mode);
     setPermissionModeRevision((revision) => revision + 1);
   };
@@ -353,7 +375,8 @@ function ScopedManageComposer({
     if (!result.ok) throw new Error(result.error);
   };
   const permissionRuntime = pendingPrimaryAgent?.definition.runtimeProfile.runtimeId ?? manageResolvedBinding.runtime;
-  const effectivePermissionMode = chatPermissionModeForRuntime(permissionMode, permissionRuntime);
+  const approveRuntimeIds = approveForMeRuntimeIds(agentStatus);
+  const effectivePermissionMode = chatPermissionChoiceForRuntime(permissionMode, permissionRuntime, approveRuntimeIds.includes(permissionRuntime));
   const composerEffort = resolveComposerReasoning(manageResolvedBinding, agentStatus, null, providerModels, agentStatus?.providers);
 
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -729,7 +752,9 @@ function ScopedManageComposer({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const overrides = permissionPreferences.global || effectivePermissionMode === 'ask' ? {} : { permissionMode: effectivePermissionMode };
+      const permissionParts = chatPermissionChoiceParts(effectivePermissionMode);
+      const overrides = permissionPreferences.global || effectivePermissionMode === 'ask' ? {}
+        : { permissionMode: permissionParts.mode, ...(permissionParts.approveForMe ? { approveForMe: true } : {}) };
       const permissionMeta = Object.keys(overrides).length ? { ...meta, ...overrides } : meta;
       const modeId = pendingPrimaryAgent ? undefined : currentModeId;
       const primaryAgent = pendingPrimaryAgent ? {
@@ -807,12 +832,22 @@ function ScopedManageComposer({
     return collectCrossTreeGroups(nodesMap, project, null);
   }, [project]), shallowArrayEqual);
 
+  // The tray names the chip in full; the toolbar shortens it as it narrows.
+  const permissionControl = permissionPreferences.global ? null : (
+    <ComposerPermissionControl apiBase={workspaceBackendApiBase(workspaceId)} mode={permissionMode}
+      runtimeIds={[permissionRuntime]} approveForMeRuntimeIds={approveRuntimeIds} compact={!tray && toolbarTier > 0}
+      disabled={submitting || permissionPreferences.loading} onChange={setPermissionMode} />
+  );
+  const showTray = tray && (!!toolbarLeftPrefix || !!permissionControl);
+
   return (
-    <div style={{ marginBottom: parentNodeId ? 0 : 18, flexShrink: 0, minWidth: 0 }}>
+    <div style={{ marginBottom: parentNodeId ? 0 : 18, flexShrink: 0, minWidth: 0 }} data-composer-tray={showTray || undefined}>
       <ComposerShell
         position="static"
         toolbarRef={toolbarRef}
         dragHover={dragHover}
+        // Never collapses on a phone: a new thread's workspace, permission and
+        // model are chosen here, so they stay in view.
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
@@ -884,8 +919,8 @@ function ScopedManageComposer({
           />
           </React.Suspense>
         }
-        toolbarLeft={<div style={{ display: 'flex', flex: '0 1 auto', flexWrap: 'wrap', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          {toolbarLeftPrefix}
+        toolbarLeft={<div className="manage-composer-toolbar-left">
+          {!showTray && toolbarLeftPrefix}
           <PaneComposerToolbarLeft
             canAttach={canAttach}
             toolbarTier={toolbarTier}
@@ -902,9 +937,7 @@ function ScopedManageComposer({
         </div>}
         toolbarRight={
           <>
-          {!permissionPreferences.global && <ComposerPermissionControl apiBase={workspaceBackendApiBase(workspaceId)} mode={permissionMode}
-            runtimeIds={[permissionRuntime]} compact={toolbarTier > 0}
-            disabled={submitting || permissionPreferences.loading} onChange={setPermissionMode} />}
+          {!showTray && permissionControl}
           <ComposerModelTrigger
             toolbarTier={toolbarTier}
             agentStatus={agentStatus}
@@ -929,6 +962,14 @@ function ScopedManageComposer({
           </>
         }
       />
+      {showTray && (
+        // Where the new thread starts and what it may do, set once before
+        // sending; the toolbar above keeps what can change per message.
+        <div className="composer-tray">
+          <div className="composer-tray__start">{toolbarLeftPrefix}</div>
+          {permissionControl && <div className="composer-tray__end">{permissionControl}</div>}
+        </div>
+      )}
 
       <PaneAgentMenus
         agentMenu={agentMenu}

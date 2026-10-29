@@ -3,6 +3,16 @@
 .workspace-toolbar, .workspace-toolbar__actions { display: contents; }
 .workspace-toolbar .workspace-toolbar__trigger { display: none; }
 .mention-editor-placeholder { display: none; }
+.mobile-pane-trigger { min-width: 44px !important; min-height: 44px !important; }
+.mobile-pane-title { min-width: 0; flex: 1; align-self: center; margin-left: 88px; margin-right: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; font-size: var(--fs-md); font-weight: 500; color: var(--term-fg); }
+.mobile-pane-list { padding: 7px; overflow: auto; overscroll-behavior: contain; }
+.mobile-pane-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 10px 12px 10px calc(12px + var(--pane-depth) * 16px); border: 0; border-radius: var(--ui-radius); background: transparent; color: var(--term-fg); font: inherit; font-size: var(--fs-md); text-align: left; cursor: pointer; }
+.mobile-pane-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-pane-row[aria-current] { color: var(--term-accent); background: var(--term-accent-f); font-weight: 550; }
+.mobile-pane-row:hover { background: var(--term-hover-bg, var(--term-alt)); }
+.mobile-pane-row:focus-visible { outline: 2px solid var(--term-accent); outline-offset: -2px; }
+.mobile-pane-status { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--term-accent); }
+.mobile-pane-status[data-status='error'] { background: var(--term-danger); }
 
 @keyframes mobile-arrive {
   from { opacity: 0; transform: translateY(9px); }
@@ -10,6 +20,18 @@
 }
 
 @media (max-width: 700px) {
+  .terminal-topbar-controls { width: auto !important; padding-left: 8px !important; gap: 0 !important; }
+  .terminal-topbar-controls > button { min-height: 44px !important; min-width: 40px !important; }
+  .terminal-topbar-controls [aria-label='Go home'],
+  .terminal-topbar-controls [aria-label='Search'],
+  .terminal-topbar-controls [aria-label='Switch to activity view'],
+  .terminal-topbar-controls [aria-label='Switch to structure view'],
+  .terminal-topbar-controls [aria-label='Navigate back'],
+  .terminal-topbar-controls [aria-label='Navigate forward'] { display: none !important; }
+  .terminal-topbar-right { padding: 0 8px !important; gap: 0 !important; }
+  .terminal-topbar-main { margin-right: 0 !important; }
+  /* Clear the right cluster (two 40px buttons); long crumbs ellipsize. */
+  .terminal-topbar-breadcrumb { margin-left: 88px !important; padding-right: 100px !important; overflow: hidden; }
 .terminal-composer {
   --workspace-shadow-ink: color-mix(in srgb, var(--term-bg) 20%, black);
   --composer-input-padding: 14px 16px 6px;
@@ -113,3 +135,134 @@
 }
 html[data-reduce-motion='on'] :is(.workspace-toolbar[data-open] .workspace-toolbar__actions, .michi-home__hero) { animation: none; }
 html[data-reduce-motion='on'] .terminal-composer .t-action-btn:active:not(:disabled) { transform: none; }
+
+/* Keep the full runtime toolbar, including permission/agent controls, inside
+   the pane. Its model label yields space before the fixed action buttons. */
+@media (max-width: 600px) {
+  .terminal-dashboard .terminal-composer {
+    left: 12px !important; right: 12px !important;
+    --composer-toolbar-padding: 4px 8px 10px;
+  }
+  .terminal-dashboard .terminal-composer__toolbar { gap: 4px !important; }
+  .terminal-dashboard .composer-model-trigger.t-toolbar-chip { min-width: 40px; max-width: 100px; flex: 1 1 52px; padding-inline: 4px; }
+  /* TPane sets the sides inline per density; phones use one inset just
+     inside the composer's, and user cards take up to 80% of the text. */
+  .terminal-pane__transcript { padding-left: 14px !important; padding-right: 14px !important; }
+  .terminal-pane__transcript :is(.terminal-message-user, .terminal-message-user-editing) { max-width: 80%; }
+  .terminal-pane__transcript .terminal-message-user-editing { width: 80%; }
+}
+@media (max-width: 370px) {
+  .terminal-dashboard .terminal-composer { --composer-chip-height: 26px; }
+  .terminal-dashboard .terminal-composer .t-action-btn { min-width: 32px; }
+}
+
+/* Phone composer at rest (ComposerShell data-collapsed): attach, the field and
+   send/stop share one row; the rest of the toolbar returns on engagement. */
+.terminal-composer[data-collapsed] {
+  gap: 2px;
+  padding: 4px 6px;
+  --composer-input-padding: 8px 6px;
+  --composer-min-rows: 1;
+}
+.terminal-composer[data-collapsed] .terminal-composer__input { order: 1; flex: 1 1 auto; min-width: 0; align-items: center; }
+/* Empty at rest (it holds content only while open); hidden so it takes no
+   gap before +, which then sits where the open toolbar has it. */
+.terminal-composer[data-collapsed] > .composer-pre-blocks-scroll { display: none; }
+.terminal-composer[data-collapsed] .terminal-composer__prompt,
+.terminal-composer[data-collapsed] .t-action-kbd,
+.terminal-composer[data-collapsed] .terminal-composer__toolbar .t-toolbar-chip:not(.composer-attach) { display: none !important; }
+.terminal-composer[data-collapsed] .terminal-composer__toolbar > div:not(.composer-context-ring) { display: contents !important; }
+.terminal-composer[data-collapsed] .composer-attach { order: 0; }
+.terminal-composer[data-collapsed] .terminal-composer__toolbar .t-action-btn { order: 2; }
+/* Context usage shows once the composer opens, beside send/stop: at rest it
+   sat between + and the hint, and moved when the composer opened. */
+.terminal-composer[data-collapsed] .composer-context-ring { display: none !important; }
+/* The hint covers the caret row's content box, so it sits where typed text
+   starts: centred in the one-row field, on the first line once open. */
+.terminal-composer__hint {
+  position: absolute;
+  inset: var(--composer-input-padding, 10px 12px 4px 12px);
+  display: flex;
+  align-items: flex-start;
+  overflow: hidden;
+  color: var(--term-muted);
+  font-family: var(--message-latin-font), var(--message-cjk-font);
+  font-size: var(--composer-body-size, var(--message-body-size));
+  line-height: var(--message-body-leading);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.terminal-composer[data-collapsed] .terminal-composer__hint { align-items: center; }
+
+/* While ComposerShell animates between rest and open (composerMorph.ts), the
+   composer's box already has its final size; this stand-in draws the frame
+   instead and grows or shrinks to it. Copies of the chips that leave fade
+   out over the frame. */
+.terminal-composer__morph { display: none; }
+.terminal-composer.terminal-composer[data-morphing] {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  transition: none !important;
+}
+.terminal-composer[data-morphing] > .terminal-composer__morph {
+  display: block;
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+}
+.terminal-composer__ghost { position: absolute !important; margin: 0 !important; pointer-events: none; }
+@media (hover: none) and (pointer: coarse) {
+  /* Match the field, which touch screens keep at 16px or more. */
+  .terminal-composer__hint { font-size: max(16px, var(--composer-body-size, var(--message-body-size))); }
+}
+
+/* Phone pane composer, after the ChatGPT app but in Michi's squarer frame:
+   at rest only attach and the hint; open, the field sits above one quiet row
+   of + on the left and agent, model and send on the right. Corners follow
+   the corner-radius setting. Typing @ still mentions.
+   Both states keep + and send/stop the same size and 6px inside the
+   frame's left, right and bottom edges, so opening only grows the frame
+   upward and moves the text; the first line also starts 14px below the top
+   in both. ComposerShell animates the change. */
+@media (max-width: 700px) {
+  .terminal-dashboard .terminal-composer {
+    --composer-input-padding: 14px 16px 4px;
+    --composer-toolbar-padding: 4px 6px 6px;
+  }
+  .terminal-dashboard .terminal-composer__toolbar { gap: 4px !important; }
+  .terminal-dashboard .terminal-composer[data-collapsed] {
+    gap: 4px;
+    padding: 6px;
+    /* 8px + one 24px line fills the 40px row, which puts the line 14px down. */
+    --composer-input-padding: 8px 6px;
+  }
+  .terminal-dashboard .terminal-composer .composer-mention { display: none !important; }
+  .terminal-dashboard .terminal-composer .composer-attach {
+    min-width: 40px;
+    font-size: 24px;
+    font-weight: 300;
+    color: var(--term-fg);
+  }
+  /* Nothing to send at rest; Stop and Retry stay. */
+  .terminal-dashboard .terminal-composer[data-collapsed] .t-action-btn:disabled { display: none; }
+  /* Home's composer stays open but, like the pane, has no @ chip (typing @
+     still mentions) and lets its placeholder stand in for ›_. */
+  .home-compose .terminal-composer .composer-mention,
+  .home-compose .terminal-composer__prompt { display: none !important; }
+}
+
+/* Phone model picker: one icon with the effort's initial; the full name stays
+   in its accessible label, tooltip and menu. */
+.composer-model-trigger.is-icon { position: relative; flex: none !important; width: 40px; min-width: 40px !important; max-width: 40px !important; padding: 0 !important; justify-content: center; }
+.composer-model-trigger.is-icon .composer-model-trigger-effort {
+  position: absolute;
+  top: 5px;
+  right: 3px;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: 1;
+  color: var(--term-accent);
+}

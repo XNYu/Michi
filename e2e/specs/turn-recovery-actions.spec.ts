@@ -164,3 +164,45 @@ test('a hydrated unclassified error preserves output until an explicitly confirm
   expect(posts[0].turnId).not.toBe('older-successful-turn');
   expect(destructiveCalls).toHaveLength(0);
 });
+
+for (const missingTail of [false, true]) {
+  test(`automatic reconnect restores persisted ${missingTail ? 'answer tail and completion' : 'completion without duplicating content'}`, async ({ page }) => {
+    const posts: Array<{ turnId: string; nodeId: string }> = [];
+    const cursors: string[] = [];
+    await installMockApi(page, { custom: async route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (request.method() === 'POST' && /\/chats\/[^/]+\/message$/.test(url.pathname)) {
+        const body = request.postDataJSON();
+        posts.push(body);
+        const envelope = { turnId: body.turnId, nodeId: body.nodeId, assistantId: 'saved-answer' };
+        // Transport ends before done; the remote task completed independently.
+        await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+          { event: 'turn_start', data: { ...envelope, seq: 0, userText: body.text } },
+          { event: 'chunk', data: { ...envelope, seq: 1, text: 'Saved remote answer.' } },
+        ]) });
+        return true;
+      }
+      if (request.method() === 'GET' && /\/chats\/[^/]+\/stream$/.test(url.pathname) && posts[0]) {
+        expect(url.searchParams.get('fromTurnId')).toBe(posts[0].turnId);
+        cursors.push(url.searchParams.get('fromSeq')!);
+        const envelope = { ...posts[0], assistantId: 'saved-answer' };
+        await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
+          ...(missingTail ? [{ event: 'chunk' as const, data: { ...envelope, seq: 2, text: ' Recovered tail.' } }] : []),
+          { event: 'done', data: { ...envelope, seq: missingTail ? 3 : 2, persisted: true, completedAt: 123, stopReason: 'end_turn' } },
+        ]) });
+        return true;
+      }
+      return false;
+    } });
+    await bootWithWorkspace(page);
+    await page.locator('[contenteditable="true"]').first().fill('Recover remote completion');
+    await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+    await expect(page.getByText(missingTail ? 'Saved remote answer. Recovered tail.' : 'Saved remote answer.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    await expect(page.getByTestId('error-tail-retry')).toHaveCount(0);
+    await expect(page.locator('.terminal-message-assistant')).toHaveCount(1);
+    expect(posts).toHaveLength(1);
+    expect(cursors).toEqual(['2']);
+  });
+}

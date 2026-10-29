@@ -31,8 +31,7 @@ for (const runtimeId of ['codex', 'claude']) {
     const { claudeTestOptions } = require('./helpers/claudeTestOptions') as typeof import('./helpers/claudeTestOptions');
     closeDb(); initDb();
     configureRuntimeDeps({ historyStore: { getNode: repo.getNode, listMessages: repo.listMessages,
-      getWorkspace: repo.getWorkspace, getWorkspaceInstructions: repo.getWorkspaceInstructions,
-      hasGrant: repo.hasGrant, grantPermission: repo.grantPermission }, dataDir: directory,
+      getWorkspace: repo.getWorkspace, getWorkspaceInstructions: repo.getWorkspaceInstructions }, dataDir: directory,
       providerKeys: { getProviderApiKey: () => null },
       agentConfig: { getAgentConfig: config.getAgentConfig, resolveModel: config.resolveModel, resolveReasoning: config.resolveReasoning } });
     // Read once the server below listens: the port the runtime gets.

@@ -10,15 +10,20 @@ import { randomBytes } from 'crypto';
 import { watchCrewApprovals } from './crewApprovalBridge';
 import { isCrewMemoryMode } from 'michi-shared';
 import { StringDecoder } from 'string_decoder';
-import type { CrewGateway, CrewModel, CrewAgent, CrewHistoryRow, CrewMemoryMode, CrewPendingApproval } from './gatewayTypes';
+import { CrewGatewayError, type CreateSlotInput, type CrewGateway, type CrewModel, type CrewAgent, type CrewHistoryRow, type CrewMemoryMode, type CrewPendingApproval } from './gatewayTypes';
+import { CrewFolders, isTemporaryProject } from './crewFolders';
 import { CrewTurn } from './crewTurn';
 import {
     RECEIPT_NOTICE,
+    compactionResult,
     errorMessage,
+    frameText,
     messageNotice,
     sanitizeErrorMessage,
+    stopReport,
     translateFrame,
     type AcpUpdate,
+    type CrewStopReport,
 } from './crewFrames';
 
 export interface CrewAcpServerOptions {
@@ -39,6 +44,8 @@ export interface CrewAcpServerOptions {
     cancelGraceMs?: number;
     /** After a failed model list, wait this long before asking the Gateway again. */
     modelRetryMs?: number;
+    /** How long a `/compact` turn may run before the command reports it unfinished. */
+    compactLimitMs?: number;
     dashboardBaseUrl?: string;
 }
 
@@ -51,6 +58,11 @@ export interface CrewAcpServer {
 const DEFAULT_MODEL_ID = 'default';
 const DEFAULT_CANCEL_GRACE_MS = 10_000;
 const DEFAULT_MODEL_RETRY_MS = 60_000;
+/** Below Michi's 180 s ACP command limit, so a slow compaction is reported rather than quarantining the session. */
+const DEFAULT_COMPACT_LIMIT_MS = 170_000;
+/** How long to read the stop's record before falling back to an unconfirmed stop. */
+const STOP_REPORT_POLLS = 10;
+const STOP_REPORT_POLL_MS = 200;
 
 const ERR_INVALID_PARAMS = -32602;
 const ERR_METHOD_NOT_FOUND = -32601;
@@ -80,6 +92,8 @@ interface Turn {
 
 interface CrewSession {
     cwd: string;
+    /** Michi workspace a new slot is filed under in the Crew sidebar. */
+    workspaceName?: string;
     memoryMode?: CrewMemoryMode;
     mcpServers?: unknown[];
     model?: string;
@@ -91,6 +105,8 @@ interface CrewSession {
     settingsBusy?: boolean;
     setup?: Promise<void>;
     turn?: Turn;
+    /** The last stop this adapter sent for the session, as the Gateway recorded it. */
+    lastStop?: Promise<CrewStopReport>;
 }
 
 type Params = Record<string, unknown>;
@@ -135,11 +151,13 @@ class CrewAcpServerImpl {
     private readonly newSessionId: () => string;
     private readonly cancelGraceMs: number;
     private readonly modelRetryMs: number;
+    private readonly compactLimitMs: number;
     private readonly sessions = new Map<string, CrewSession>();
     private modelsPromise?: Promise<CrewModel[]>;
     /** Set when the last model list failed; cleared on the next attempt. */
     private modelsFailedAt?: number;
     private readonly mcpBindings = new CrewMcpBindings();
+    private readonly folders: CrewFolders;
     private toolSeq = 0;
     private permissionSeq = 1000000;
     private readonly permissionResponses = new Map<number, (result: unknown) => void>();
@@ -157,7 +175,9 @@ class CrewAcpServerImpl {
         this.newSessionId = opts.newSessionId ?? defaultSessionId;
         this.cancelGraceMs = opts.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS;
         this.modelRetryMs = opts.modelRetryMs ?? DEFAULT_MODEL_RETRY_MS;
+        this.compactLimitMs = opts.compactLimitMs ?? DEFAULT_COMPACT_LIMIT_MS;
         this.dashboardBaseUrl = opts.dashboardBaseUrl;
+        this.folders = new CrewFolders(this.gateway, this.log);
     }
 
     // ---- transport -------------------------------------------------------
@@ -323,12 +343,15 @@ class CrewAcpServerImpl {
         if (!cwd) throw new RpcError(ERR_INVALID_PARAMS, 'cwd is required');
         const mcpServers = this.mcpServers(params);
         const sessionId = this.mintSessionId();
-        const requestedMemory = (params._meta as { crew?: { memoryMode?: unknown } } | undefined)?.crew?.memoryMode;
+        const crewMeta = (params._meta as { crew?: { memoryMode?: unknown; workspaceName?: unknown } } | undefined)?.crew;
+        const requestedMemory = crewMeta?.memoryMode;
         if (requestedMemory !== undefined && !isCrewMemoryMode(requestedMemory)) throw new RpcError(ERR_INVALID_PARAMS, 'Invalid Crew memory mode');
         const agents = await this.loadAgents();
         const agent = this.agent ?? agents.find(row => row.id === this.preferredAgent)?.id;
         if (!agent) this.log('Michi Agent template is unavailable; update the Michi Crew App to use concise system instructions. Using the Gateway default.');
+        const workspaceName = asString(crewMeta?.workspaceName)?.trim();
         const session: CrewSession = { cwd, mcpServers, slotReady: false, agent,
+            ...(workspaceName ? { workspaceName } : {}),
             template: !!agent && agents.some(row => row.id === agent),
             memoryMode: requestedMemory ?? this.memoryMode ?? 'persistent' };
         this.sessions.set(sessionId, session);
@@ -483,7 +506,7 @@ class CrewAcpServerImpl {
     private async configureSlot(sessionId: string, session: CrewSession): Promise<void> {
         const model = this.effectiveModel(session);
         if (!session.slotCreated) try {
-            await this.gateway.createSlot({
+            await this.createSlotInFolder(session, {
                 name: sessionId,
                 ...(session.agent ? { agent: session.agent } : {}),
                 ...(session.template ? { agent_kind: 'template' as const } : {}),
@@ -500,6 +523,28 @@ class CrewAcpServerImpl {
             await this.gateway.setReasoningEffort(sessionId, effort);
         }
         session.slotReady = true;
+    }
+
+    /**
+     * Creates the slot in its workspace's sidebar folder. A folder Crew no
+     * longer has (deleted by the person) is forgotten and the slot is created
+     * at the top level; the next session files into a new one.
+     */
+    private async createSlotInFolder(session: CrewSession, input: CreateSlotInput): Promise<void> {
+        const folderId = session.workspaceName && !isTemporaryProject(session.cwd)
+            ? await this.folders.folderFor(session.workspaceName) : undefined;
+        if (!folderId) {
+            await this.gateway.createSlot(input);
+            return;
+        }
+        try {
+            await this.gateway.createSlot({ ...input, folder_id: folderId });
+        } catch (err) {
+            if (!(err instanceof CrewGatewayError && err.code === 'folder_not_found')) throw err;
+            this.folders.forget();
+            this.log('Crew folder for this workspace is gone; created the session at the top level');
+            await this.gateway.createSlot(input);
+        }
     }
 
     // ---- turns -----------------------------------------------------------
@@ -607,8 +652,9 @@ class CrewAcpServerImpl {
 
     private cancel(params: Params, graceMs = this.cancelGraceMs): void {
         const sessionId = asString(params.sessionId);
-        const turn = sessionId ? this.sessions.get(sessionId)?.turn : undefined;
-        if (!sessionId || !turn || turn.cancelled) return;
+        const session = sessionId ? this.sessions.get(sessionId) : undefined;
+        const turn = session?.turn;
+        if (!sessionId || !session || !turn || turn.cancelled) return;
         turn.cancelled = true;
         void turn.releaseMcp?.().catch(() => this.log('Could not clean Crew MCP binding'));
         turn.controller.abort();
@@ -620,22 +666,53 @@ class CrewAcpServerImpl {
         const grace = new Promise<void>((res) => {
             timer = setTimeout(res, graceMs);
         });
+        let report!: (value: CrewStopReport) => void;
+        session.lastStop = new Promise<CrewStopReport>((res) => { report = res; });
         const stopped = Promise.resolve()
             .then(async () => {
                 if (!turn.nativeStarted) return;
+                const requestedAt = Date.now();
                 await this.gateway.stop(sessionId);
+                report(await this.readStop(sessionId, requestedAt, drainController.signal));
                 await this.gateway.waitUntilIdle(sessionId, drainController.signal);
             })
             .catch((err: unknown) => this.log(`could not stop Crew session ${sessionId}: ${errorMessage(err)}`));
         void Promise.race([stopped, grace]).then(async () => {
             drainController.abort();
             if (timer) clearTimeout(timer);
+            // No record within the grace: the stop stays unconfirmed.
+            report({ confirmed: false });
             // Stop/grace bounds stream draining, but a successor must never
             // overlap an approval mutation still being sent for this turn.
             await turn.controlWork?.catch(() => {});
             await turn.releaseMcp?.().catch(() => this.log('Could not clean Crew MCP binding'));
             turn.resolve({ stopReason: 'cancelled' });
         });
+    }
+
+    /**
+     * The Gateway's own record of a stop: the `stop_event` row its stop
+     * handler opens and settles. Polled briefly, since an escalated stop
+     * settles after the request returns.
+     */
+    private async readStop(sessionId: string, requestedAt: number, signal: AbortSignal): Promise<CrewStopReport> {
+        if (!this.gateway.getSlot) return { confirmed: false };
+        let last: CrewStopReport | undefined;
+        for (let attempt = 0; attempt < STOP_REPORT_POLLS && !signal.aborted; attempt++) {
+            let running: unknown;
+            try {
+                const detail = await this.gateway.getSlot(sessionId, 20);
+                running = detail.running;
+                last = stopReport(detail.messages, requestedAt) ?? last;
+            } catch (error) {
+                this.log(`could not read the Crew stop record: ${errorMessage(error)}`);
+            }
+            if (last?.confirmed || last?.state === 'stop_declined_compacting') return last;
+            // Nothing was running to stop (the turn ended first): no record will come.
+            if (!last && running === false && attempt > 0) break;
+            await new Promise<void>((resolve) => setTimeout(resolve, STOP_REPORT_POLL_MS));
+        }
+        return last ? { ...last, confirmed: false } : { confirmed: false };
     }
 
     // ---- settings --------------------------------------------------------
@@ -656,6 +733,50 @@ class CrewAcpServerImpl {
         } finally { session.settingsBusy = false; }
     }
 
+    /**
+     * Manual compaction as the App: `/compact` sent to the session's own idle
+     * slot, which the Gateway runs as its native command and answers with a
+     * tagged notice. Kiro's `_kiro.dev/compaction/status` completion follows a
+     * success, which is what Michi's v2 compact waits for. A failure returns
+     * the Gateway's own notice and leaves the session usable.
+     */
+    private async compact(params: Params, args: Params): Promise<unknown> {
+        const sessionId = asString(params.sessionId);
+        const session = sessionId ? this.sessions.get(sessionId) : undefined;
+        if (!sessionId || !session) return { success: false, message: 'Unknown Kiro Crew session' };
+        if (asString(args.instructions)?.trim()) return { success: false, message: 'Kiro Crew /compact takes no instructions' };
+        if (!this.gateway.getSlot) return { success: false, message: 'compact is not supported by Kiro Crew' };
+        if (session.turn || session.settingsBusy || session.setup) throw new RpcError(ERR_BUSY, 'Crew session is busy');
+        if (!session.slotReady) return { success: false, message: 'Nothing to compact yet' };
+        session.settingsBusy = true;
+        try {
+            const before = await this.gateway.getSlot(sessionId, 1);
+            if (before.running) throw new RpcError(ERR_BUSY, 'This Crew session still has a running task. Finish or stop it in Kiro Crew before compacting.');
+            const boundary = before.total ?? 0;
+            this.write({ method: '_kiro.dev/compaction/status', params: { sessionId, status: { type: 'started' } } });
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), this.compactLimitMs);
+            let queued = false;
+            let error: string | undefined;
+            try {
+                for await (const event of this.gateway.streamChat(sessionId, '/compact', controller.signal)) {
+                    if (event.kind === 'receipt') queued = true;
+                    else if (event.frame.type === 'error') error = frameText(event.frame.content);
+                }
+            } finally { clearTimeout(timer); }
+            if (queued) return { success: false, message: 'Kiro Crew queued /compact behind other work in this session' };
+            if (controller.signal.aborted) return { success: false, message: 'Kiro Crew compaction is still running; check the session in Kiro Crew' };
+            if (error) return { success: false, message: `Kiro Crew compaction failed: ${error}` };
+            const after = await this.gateway.getSlot(sessionId, 20);
+            const offset = after.next_before ?? Math.max(0, (after.total ?? after.messages.length) - after.messages.length);
+            const result = compactionResult(after.messages, offset, boundary);
+            if (!result.compacted) return { success: false, message: result.message };
+            this.write({ method: '_kiro.dev/compaction/status', params: { sessionId, status: { type: 'completed' },
+                ...(result.summary ? { summary: result.summary } : {}) } });
+            return { success: true, message: 'Conversation compacted' };
+        } finally { session.settingsBusy = false; }
+    }
+
     private async executeCommand(params: Params): Promise<unknown> {
         const command = (params.command ?? {}) as Params;
         const name = asString(command.command) ?? 'unknown';
@@ -667,6 +788,12 @@ class CrewAcpServerImpl {
             const point = points.find((row) => String(row.logIndex) === value);
             if (!point) return { success: false, message: 'Crew fork point is unavailable' };
             return { success: true, data: await this.fork({ sessionId, _meta: { kiro: { messageId: point.messageId } } }) };
+        }
+        if (name === 'compact') return this.compact(params, (command.args ?? {}) as Params);
+        if (name === 'cancel_status') {
+            const stop = this.sessions.get(asString(params.sessionId) ?? '')?.lastStop;
+            if (!stop) return { success: false, message: 'No Kiro Crew stop was requested for this session' };
+            return { success: true, data: await stop };
         }
         if (name !== 'effort') return { success: false, message: `${name} is not supported by Kiro Crew` };
 

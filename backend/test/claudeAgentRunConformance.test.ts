@@ -109,7 +109,9 @@ test('Claude adapter declares the actual Session steering strategy', async () =>
   try {
     const { session } = await harness.createRunSession({ owner: RUN_OWNER });
     assert(session instanceof ClaudeSession);
-    assert.equal('steer' in session, false);
+    // Chat sessions steer natively; a Run session refuses and the Executor
+    // holds supplemental input for the next turn.
+    assert.deepEqual(await session.steer('more'), { accepted: false, reason: 'unsupported' });
     assert.equal('followUp' in session, false);
     assert.equal(harness.adapter.steering, 'next_turn');
   } finally { await harness.cleanup(); }

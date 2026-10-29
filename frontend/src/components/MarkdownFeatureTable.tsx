@@ -142,6 +142,23 @@ export default function MarkdownFeatureTable({
     };
   }, []);
 
+  // Phones lay a settled table out as cards: label each cell with its column.
+  useEffect(() => {
+    const table = tableRef.current;
+    if (!settled || !table) return;
+    const head = table.tHead?.rows[0] ?? table.rows[0];
+    if (!head?.querySelector('th')) return;
+    const labels = Array.from(head.cells, (cell) => cell.textContent?.trim() ?? '');
+    for (const row of Array.from(table.rows)) {
+      if (row === head) {
+        if (!table.tHead) row.setAttribute('data-cards-head', '');
+        continue;
+      }
+      Array.from(row.cells).forEach((cell, index) => cell.setAttribute('data-label', labels[index] ?? ''));
+    }
+    table.setAttribute('data-cards', '');
+  }, [settled]);
+
   const copy = async () => {
     const table = tableRef.current;
     if (!table || !navigator.clipboard?.writeText) return;

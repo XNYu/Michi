@@ -5,7 +5,8 @@ import type { ScheduledJobRunEvent, ScheduledJobsChangedEvent } from 'michi-shar
 
 /**
  * One reconnecting SSE feed per ChatProvider. Unlike the retired pane
- * observer transport it has no membership list: self-initiated turns are
+ * observer transport it has no membership list: turns from other clients and
+ * self-initiated turns are
  * discovered by their chatId / turn_start envelope, including for closed
  * panes.
  */

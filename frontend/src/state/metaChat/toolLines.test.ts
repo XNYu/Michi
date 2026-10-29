@@ -13,6 +13,13 @@ const tool = (title: string, input: unknown, output?: unknown, status = 'complet
 } as ToolCallState);
 
 describe('metaAgentToolLine', () => {
+  it('names custom database creation and keeps configuration proposals distinct from applied writes', () => {
+    expect(metaAgentToolLine(tool('create_database', { title: 'Tickets', workspaceId: 'ws-r' }), names)).toBe('Create Tickets · rabbitholes');
+    expect(metaAgentToolLine(tool('configure_database', { databaseId: 'db' }, { michiPageWrite: {
+      kind: 'michiPageWrite', resourceKind: 'database', resourceId: 'db', title: 'Tickets', appliedCount: 0, proposedCount: 1, affectedTargetIds: ['db'],
+    } }), names)).toBe('Suggest Tickets · 1 suggestion');
+  });
+
   it('names the page it read and how much it read', () => {
     expect(metaAgentToolLine(tool('Running: @michi/read_page', { pageId: 'pg-home' }, { title: 'Home', blocks: [{}, {}] }), names))
       .toBe('Read Home · 2 blocks');
@@ -78,6 +85,19 @@ describe('metaAgentToolLine', () => {
     const held = { id: 'h', title: 'open_task_database', status: 'failed', kind: 'other', inputJson: JSON.stringify({ workspaceId: 'ws-r' }),
       output: kiro("HELD: the Meta agent's first-time generation is still writing (2 of 5 workspace homes written, then the Spaces Home).") } as ToolCallState;
     expect(metaAgentToolLine(held, names)).toBe('Open the task database · rabbitholes · held until the first run finishes');
+  });
+
+  it('names the scheduled job tools and says when the user did not approve a change', () => {
+    expect(metaAgentToolLine(tool('list_scheduled_jobs', { workspaceId: 'ws-r' }, { count: 2, jobs: [{}, {}] }), names)).toBe('List scheduled jobs · rabbitholes · 2 jobs');
+    expect(metaAgentToolLine(tool('list_scheduled_jobs', { jobId: 'job-1' }), names)).toBe('Read a scheduled job');
+    expect(metaAgentToolLine(tool('mcp__michi-tools__create_scheduled_job', { name: 'Morning digest', workspaceId: 'ws-r' }, { status: 'created' }), names))
+      .toBe('Schedule Morning digest · rabbitholes');
+    expect(metaAgentToolLine(tool('create_scheduled_job', { name: 'Morning digest', workspaceId: 'ws-r' }, { status: 'declined' }), names))
+      .toBe('Schedule Morning digest · rabbitholes · not approved');
+    expect(metaAgentToolLine(tool('update_scheduled_job', { jobId: 'job-1', enabled: false }), names)).toBe('Pause a scheduled job');
+    expect(metaAgentToolLine(tool('update_scheduled_job', { jobId: 'job-1', enabled: true, prompt: 'x' }), names)).toBe('Change a scheduled job');
+    expect(metaAgentToolLine(tool('run_scheduled_job', { jobId: 'job-1' }, { status: 'declined' }), names)).toBe('Run a scheduled job now · not approved');
+    expect(metaAgentToolLine(tool('delete_scheduled_job', { jobId: 'job-1' }, { status: 'deleted' }), names)).toBe('Delete a scheduled job');
   });
 
   it('leaves tools it does not know to the generic row', () => {

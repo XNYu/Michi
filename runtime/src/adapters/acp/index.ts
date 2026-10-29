@@ -9,7 +9,7 @@ export {
 } from './errors';
 export type { ACPErrorDetails } from './errors';
 export type {
-    AcpAgentCapabilities, AcpAuthMethod, AcpCancelOptions, AcpClientInfo, AcpConfigOption, AcpConfigValue,
+    AcpAgentCapabilities, AcpAuthMethod, AcpCancelOptions, AcpCancelSettlement, AcpClientInfo, AcpConfigOption, AcpConfigValue,
     AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest, AcpInitializeResult,
     AcpMcpAttach, AcpMcpCapabilities, AcpMcpServer, AcpPermissionRequest, AcpProfile, AcpPromptBlock,
     AcpPromptCapabilities, AcpRpcErrorPayload, AcpSessionInfo, AcpSessionOptions, AcpUpdate, AcpUserAnswer,

@@ -153,6 +153,62 @@ describe('Kiro V2 subagents (native roster)', () => {
   });
 });
 
+describe('Kiro V2 subagent approvals (kiro-cli 2.35.1 wire)', () => {
+  /** The wire through AcpClient while the parent's prompt runs; answers kiro-cli would receive. */
+  function routeApprovals(frames: Array<Record<string, any>>, parent: string) {
+    const client = new AcpClient(undefined, os.tmpdir(), undefined, 'v2');
+    const updates: Array<Record<string, any>> = [];
+    const writes: Array<Record<string, any>> = [];
+    (client as any).sessionQueues.set(parent, { push: (item: any) => { if (item.update) updates.push(item.update.update ?? item.update); } });
+    (client as any).activePrompts.add(parent);
+    (client as any).proc = { stdin: { destroyed: false, write: (line: string) => writes.push(JSON.parse(line)) } };
+    for (const frame of frames) (client as any).dispatch(frame);
+    return { client, updates, writes };
+  }
+
+  async function sendWith(updates: Array<Record<string, any>>, mode: 'ask' | 'trust', client: AcpClient) {
+    const host = michiTestHost();
+    const permissions = Object.create(host.permissions);
+    permissions.mode = () => mode;
+    const runtime = {
+      host: Object.assign(Object.create(host), { permissions }),
+      ensureClient: async () => ({ async *prompt() { for (const update of updates) yield update; yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' }; } }),
+      getCurrentMode: () => null,
+      getCurrentModel: () => null,
+      respondToPermission: (_sid: string, requestId: number, optionId: string) => client.respondToPermission(requestId, optionId),
+      cancelPermission: (_sid: string, requestId: number) => client.cancelPermission(requestId),
+    } as unknown as KiroRuntime;
+    const session = new KiroSession('node-1', 'native-1', runtime, '/tmp');
+    const events: NormalizedEvent[] = [];
+    for await (const event of session.send('probe')) events.push(event);
+    return events;
+  }
+
+  it("asks the chat for the child's shell approval, naming the subagent, instead of cancelling it", async () => {
+    const { parent, frames } = readWire('kiro-v2-permission-wire.jsonl');
+    const { client, updates, writes } = routeApprovals(frames, parent);
+    assert.deepEqual(writes, [], 'AcpClient no longer cancels the child request');
+    const events = await sendWith(updates, 'ask', client);
+    const approvals = events.filter((event) => event.kind === 'permission_request') as Array<{ title: string; toolCallId?: string }>;
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].title, 'Running: echo PROBE_OK_42 (subagent probe)');
+    assert.equal(approvals[0].toolCallId, 'toolu_bdrk_01JHAg8bDMGKehtKviZHH8Qr');
+    assert.deepEqual(writes, [], 'Ask waits for the user');
+  });
+
+  it("Trust approves the child's request on the wire, and the stage completes with its report", async () => {
+    const { parent, frames } = readWire('kiro-v2-permission-wire.jsonl');
+    const { client, updates, writes } = routeApprovals(frames, parent);
+    const events = await sendWith(updates, 'trust', client);
+    assert.equal(events.filter((event) => event.kind === 'permission_request').length, 0);
+    assert.deepEqual(writes, [{ jsonrpc: '2.0', id: 'cbace7f8-3795-464c-9caa-24b4e403019e', result: { outcome: { outcome: 'selected', optionId: 'allow_once' } } }]);
+    const [sub] = foldRoster(events);
+    assert.equal(sub.sessionName, 'probe');
+    assert.equal(sub.outcome, 'completed');
+    assert.match(sub.result ?? '', /PROBE_OK_42/);
+  });
+});
+
 describe('Kiro V2 roster routing with concurrent sessions', () => {
   it('keeps known agents with their session and does not stamp a guessed chip link', () => {
     const client = new AcpClient(undefined, os.tmpdir(), undefined, 'v2');

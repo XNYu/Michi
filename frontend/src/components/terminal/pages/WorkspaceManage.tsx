@@ -1,4 +1,7 @@
+import { artifactTypeForPath, artifactHasImagePreview } from 'michi-shared';
 import React from 'react';
+import { Lightbox } from '../Lightbox';
+import { artifactImageUrl, downloadArtifactFile } from '../../../services/api/artifacts';
 import { toast } from 'sonner';
 import type { PageId } from '../../../state/commands';
 import { useChatStore, useChatNodesSnapshot } from '../../../state/chatStore';
@@ -32,6 +35,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
     ? store.projects.find((p) => p.id === workspaceId && !p.deletedAt) ?? null
     : null;
 
+  const [lightbox, setLightbox] = React.useState<string | null>(null);
   const [tab, setTab] = React.useState<Tab>('chats');
   const [filter, setFilter] = React.useState('');
   const [selectedContextId, setSelectedContextId] = React.useState<string | null>(null);
@@ -67,7 +71,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
             const base = p.split('/').pop() ?? p;
             const name = sanitizeContextName(base, existing);
             existing.push(name);
-            store.createContext(name, p, { kind: 'reference' });
+            store.createContext(name, p, { kind: 'reference', type: artifactTypeForPath(p) });
           }
         }
       } catch (err) {
@@ -106,7 +110,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
           const base = electronPath.split('/').pop() ?? electronPath;
           const name = sanitizeContextName(base, existing);
           existing.push(name);
-          store.createContext(name, electronPath, { kind: 'reference' });
+          store.createContext(name, electronPath, { kind: 'reference', type: artifactTypeForPath(electronPath) });
           continue;
         }
         const cwd = project.cwd;
@@ -117,7 +121,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
         const result = await importWorkspaceFileUpload(project.id, cwd, file, {
           onProgress: progressForFile(file.name, fileIndex, files.length),
         });
-        store.createContext(result.name, result.filePath, { size: result.size });
+        store.createContext(result.name, result.filePath, { size: result.size, type: artifactTypeForPath(result.filePath) });
       }
     } catch (err) {
       toast.error(`Add source failed: ${(err as Error).message}`);
@@ -330,6 +334,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
         )}
         {tab === 'artifacts' && (
           <>
+            {lightbox && <Lightbox src={artifactImageUrl(project.id, lightbox)} filename={lightbox.split('/').pop() ?? lightbox} onClose={() => setLightbox(null)} />}
             <UploadProgressBar progress={uploadProgress} compact />
             <ContextList
               artifacts={project.artifacts ?? []}
@@ -340,7 +345,21 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
               onPin={(id) => store.pinContext?.(id)}
               onDelete={(id) => store.deleteContext?.(id)}
               onPreview={(filePath) => {
-                void store.openArtifactPane(filePath).catch((err: unknown) => {
+                const entry = project.artifacts?.find((item) => item.filePath === filePath);
+                const type = artifactTypeForPath(filePath);
+                const localReference = entry?.kind === 'reference' || entry?.kind === 'symlink';
+                if (!localReference && artifactHasImagePreview(filePath)) {
+                  setLightbox(filePath);
+                  return;
+                }
+                const resolvedPath = localReference && !filePath.startsWith('/') && project.cwd
+                  ? `${project.cwd.replace(/\/$/, '')}/${filePath}` : filePath;
+                const action = type === 'doc'
+                  ? store.openArtifactPane(resolvedPath)
+                  : localReference
+                    ? getElectron()?.openPath?.(resolvedPath) ?? Promise.reject(new Error('Open this reference on its desktop host'))
+                    : downloadArtifactFile(project.id, filePath);
+                void action.catch((err: unknown) => {
                   console.warn(`openArtifactPane(${filePath}) failed:`, err);
                   toast.error(
                     `Could not open ${filePath}: ${err instanceof Error ? err.message : String(err)}`,

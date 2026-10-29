@@ -80,6 +80,12 @@ function createClientTurnId(): string {
   return `turn-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+// Foreground requests own their complete replay lifecycle. Keep their IDs for
+// this window's lifetime so a delayed/reconnected shared feed cannot replay a
+// locally submitted (including cancelled) turn into the transcript a second time.
+const locallyOwnedTurns = new Set<string>();
+const ownedTurnKey = (nodeId: string, turnId: string) => JSON.stringify([nodeId, turnId]);
+
 /**
  * Consume an SSE stream produced by the backend. Returns a cancel function
  * that aborts the fetch (also calls /cancel on the backend).
@@ -95,7 +101,7 @@ export function streamMessage(
     enableKiroSidecarTitle?: boolean;
     userMetadata?: {
       quotedText?: string;
-      quoteSource?: import('../../lib/quoteFormat').AnyQuoteSource;
+      quoteSource?: import('../../lib/quoteSource').AnyQuoteSource;
       attachments?: Array<{ name: string; absPath: string }>;
       comments?: Array<Record<string, unknown>>;
     };
@@ -120,6 +126,7 @@ export function streamMessage(
   // The server requires nodeId for a durable foreground turn. Preserve the
   // legacy no-node helper behavior used by a few lightweight callers/tests.
   const clientTurnId = nodeId ? (durable?.turnId ?? createClientTurnId()) : '';
+  if (clientTurnId) locallyOwnedTurns.add(ownedTurnKey(nodeId, clientTurnId));
   let resumeTurnId = clientTurnId;
   let resumeSeq = -1;
   let resumeCancel: (() => void) | null = null;
@@ -510,6 +517,7 @@ export function subscribeChat(
     onError?: (err: Error) => void;
   } = {},
 ): () => void {
+  if (from.turnId) locallyOwnedTurns.add(ownedTurnKey(chatId, from.turnId));
   const controller = new AbortController();
   let stopped = false;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
@@ -613,8 +621,8 @@ function observerDisconnectFor(error: Error): BackgroundDisconnect {
 }
 
 /**
- * The one Window-lifetime background feed. It carries runtime self-turns
- * only; user initiated turns stay on their own direct /message stream.
+ * The window-lifetime feed carries self-turns and other windows’ foreground
+ * turns. Locally owned foreground turns keep their direct /message lifecycle.
  */
 export function subscribeBackground(
   handlersForChat: (chatId: string, nodeId?: string) => StreamHandlers,
@@ -640,7 +648,7 @@ export function subscribeBackground(
       const res = await fetchStream(`${backendApiBase(connectionId)}/chats/background/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cursors: opts.cursors ?? {} }),
+        body: JSON.stringify({ cursors: opts.cursors ?? {}, includeForeground: true }),
         signal: controller.signal,
       });
       if (!res.ok) throw new SseHttpError(res.status);
@@ -690,6 +698,18 @@ export function subscribeBackground(
               seq: gap.seq,
             }, controller.signal);
           }
+          return;
+        }
+        if (evt === 'foreground_event') {
+          let event: { event?: unknown; data?: unknown };
+          try { event = JSON.parse(data); } catch { return; }
+          if (!event || typeof event.event !== 'string') return;
+          const parsed = parseChatStreamEvent(event.event, JSON.stringify(event.data));
+          if (!parsed?.data.chatId) return;
+          const nodeId = parsed.data.nodeId ?? parsed.data.chatId;
+          if (parsed.data.turnId && locallyOwnedTurns.has(ownedTurnKey(nodeId, parsed.data.turnId))) return;
+          // Use the same identifier scoping and sequence gate as self-turns.
+          dispatchChatStreamEvent(parsed, handlersForChat(parsed.data.chatId, parsed.data.nodeId));
           return;
         }
         const parsed = parseChatStreamEvent(evt, data);

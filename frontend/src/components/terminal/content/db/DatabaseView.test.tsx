@@ -5,8 +5,7 @@ import type { MichiDatabase, MichiDbEditOp, MichiDbView } from 'michi-shared';
 import { DatabaseView, type DatabaseViewServices } from './DatabaseView';
 import { DOUBLE_CLICK_MS } from './views/TableView';
 import { findBoardCard } from './views/BoardView';
-import { applyOpsLocally } from './dbRead';
-import { userDatabase } from './dbTestData';
+import { applyOpsLocally, userDatabase } from './dbTestData';
 
 const michiState = vi.hoisted(() => ({ value: null as null | Record<string, unknown> }));
 

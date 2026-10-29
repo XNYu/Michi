@@ -75,7 +75,7 @@ const NAMES = ['title', 'question', 'label', 'name', 'caption', 'alt', 'text'];
 /** Fields that say nothing to a person about what the block is. */
 const NOT_NAMES = new Set([
   'id', 'type', 'sources', 'edit', 'staleFor', 'url', 'image', 'avatar', 'before', 'after', 'code',
-  'databaseId', 'viewId', 'threadId', 'component', 'lang',
+  'databaseId', 'viewId', 'threadId', 'component', 'componentId', 'lang', 'interaction', 'visibility', 'blockIds', 'action',
 ]);
 
 /** What to call a block no one wrote a handle for: its title, question, label or name, else its first words; '' when it has none. */

@@ -127,3 +127,16 @@ export function findTreeIdForNode(
   }
   return null;
 }
+
+/**
+ * Returns the active tree's root nodeId, or `null` if the workspace has no
+ * active tree (e.g. every tree was archived). Callers previously used
+ * `project.chatIds[0]`; this is the forest-aware replacement.
+ */
+export function activeTreeRootNodeId(
+  project: { activeTreeId: string | null; trees: Array<{ id: string; rootNodeId: string }> } | null | undefined,
+): string | null {
+  if (!project || !project.activeTreeId) return null;
+  const t = project.trees.find((x) => x.id === project.activeTreeId);
+  return t ? t.rootNodeId : null;
+}

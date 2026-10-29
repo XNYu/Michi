@@ -1,18 +1,27 @@
 # Permissions and tool approvals
 
-Applies to: ordinary chats on local/remote backends; hosted settings are owner-scoped. Source checked: 2026-10-16. Agent Runs use their own effective policy. Native sandbox and governance behavior depends on the runtime.
+Applies to: ordinary chats on local/remote backends; hosted settings are owner-scoped. Source checked: 2026-10-29. Agent Runs use their own effective policy. Native sandbox and governance behavior depends on the runtime.
 
 ## Choose the mode in Michi
 
 Open Settings → Model → Permissions. Use global permissions applies one mode to ordinary chats on that backend and hides per-chat composer controls. Turn it off to choose a mode in each chat. Individual choices are preserved while global control is enabled and restored when it is disabled. New chats default to Ask.
 
-Kiro, Crew and Pi offer Ask / Trust in the composer. Claude and Codex also offer YOLO. Existing YOLO choices display as Trust on Kiro and Pi with the same execution behavior. Local and remote backends each own their settings; hosted settings are scoped to the authenticated user. Agent Runs have a separate permission policy.
+Kiro, Crew and Pi offer Ask / Trust in the composer. Claude and Codex also offer YOLO. Kiro V3, the default Kiro engine, also offers Approve for me. Existing YOLO choices display as Trust on Kiro and Pi with the same execution behavior. An Approve for me choice displays and runs as Ask on any other runtime, including Crew and Kiro v2. Local and remote backends each own their settings; hosted settings are scoped to the authenticated user. Agent Runs have a separate permission policy.
 
 ## Ask, Trust and YOLO
 
 - Ask: prompts for changes and tools requiring approval. Native read-only tools can run automatically. Pi also asks for unknown/external MCP tools. Reading bundled Michi docs is a read-only built-in operation.
 - Trust: automatically approves tools while retaining any native sandbox. For example, Codex allows workspace writes but retains sandbox restrictions.
 - YOLO: automatically approves tools and requests full native access where supported. Claude uses its bypass mode and Codex uses full access. Kiro/Pi Trust and YOLO have the same backend auto-approval behavior; Michi does not add an OS sandbox for them.
+- Approve for me (Kiro V3 only): Ask, with Kiro's own trust classifier added. Kiro allows workspace edits and read-only shell commands, and its classifier judges what no rule settles. It approves routine work, blocks actions it considers risky and sends an ordinary approval card when it is unsure. Michi does not see or record the operations Kiro approves itself; they appear as ordinary tool calls. Each classifier decision is an extra Kiro model call.
+
+## Approve for me details
+
+Kiro V3 applies Approve for me as its `approve-for-me` policy preset when it opens a session. Michi launches Kiro V3 with `KIRO_TRUST_CLASSIFIER_MODE=enforce`, which this preset requires, unless the backend environment already sets that variable. The classifier only judges rules whose effect is `evaluate`, so sessions without the preset keep Kiro's normal behavior.
+
+Switching a chat into or out of Approve for me takes effect from its next message: Michi closes and reopens the idle native session with the new preset. The transcript, model and effort settings are kept. Michi does not reopen a session while it is running, compacting or while a Kiro workflow runs in the same process. If turning the preset off fails, the message is not sent, so Kiro's classifier never approves work in a chat set to Ask. Send the message again to retry. Trust and YOLO approve everything and leave a session's preset as it is.
+
+Approve for me applies to ordinary chats. Agent Runs, Meta agent maintenance and the Pages Assistant keep Kiro's default policy. With global permissions enabled, choosing Approve for me sets Ask on runtimes without it.
 
 Changes apply from the next turn. Returning to Ask clears applicable Michi always-allow chat grants. Approval remains enforced without a connected renderer. Approval controls do not enable a missing tool or override an upstream governance refusal.
 
@@ -38,7 +47,7 @@ With global permissions enabled, selecting Ask again clears the user's applicabl
 
 | Runtime | Trust / full-access boundary |
 | --- | --- |
-| Kiro | Michi auto-approval; no added Michi OS sandbox; native policy still applies |
+| Kiro | Michi auto-approval; no added Michi OS sandbox; native policy still applies. Approve for me uses Kiro V3's classifier, not a sandbox |
 | Crew | Auto-answers pending native requests; Crew allowlists/governance still apply |
 | Pi | Michi policy and filesystem path checks; arbitrary shell commands are not OS-isolated by a working directory |
 | Claude | Native permission handling; YOLO uses native bypass; equivalent OS isolation is not verified by Michi |

@@ -45,6 +45,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'build',
+    manifest: true,
     target: 'es2022',
     cssTarget: 'chrome120',
     sourcemap: false,

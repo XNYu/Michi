@@ -3,7 +3,7 @@
     "kiro": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [
           "mcp-http"
         ],
@@ -23,7 +23,7 @@
     "crew": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [
           "mcp-relay"
         ],
@@ -129,7 +129,7 @@
     "kiro-v2": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [
           "mcp-http"
         ],
@@ -149,7 +149,7 @@
     "kiro-v2-without-mcp": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [],
         "historyReplay": "preamble",
         "backgroundTurns": false,
@@ -167,7 +167,7 @@
     "kiro-v2-sidecar-off": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [
           "mcp-http"
         ],
@@ -187,7 +187,7 @@
     "kiro-v3-local": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [
           "mcp-http-grouped",
           "mcp-http"
@@ -209,7 +209,7 @@
     "kiro-v3-cloud": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [
           "mcp-http"
         ],
@@ -230,7 +230,7 @@
     "kiro-v3-without-mcp": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [],
         "historyReplay": "preamble",
         "backgroundTurns": true,
@@ -249,7 +249,7 @@
     "kiro-v3-isolated-worker": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [
           "mcp-http"
         ],
@@ -270,7 +270,7 @@
     "crew": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [
           "mcp-relay"
         ],
@@ -284,7 +284,7 @@
     "crew-without-mcp": {
       "topology": {
         "identityTiming": "on-open",
-        "cancel": "inferred-keep-session",
+        "cancel": "native-ack",
         "toolDelivery": [],
         "historyReplay": "preamble",
         "backgroundTurns": false,

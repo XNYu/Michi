@@ -1,3 +1,4 @@
+import { usePhoneLayout } from '../../../hooks/usePhoneLayout';
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { serverEntityId } from '../../../config/backendIdentity';
 import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
@@ -92,6 +93,8 @@ export function centeredPaneScrollLeft({
 export default function TerminalDashboard() {
   const { activeProject, agentStatus } = useChatProjects();
   const { openPanes: activePanes, pagePane, focusedPane, paneItems: activeItems = {} } = useChatPanes();
+  const phone = usePhoneLayout();
+  const visiblePhonePane = activePanes.includes(focusedPane ?? '') && activeItems[focusedPane ?? '']?.kind !== 'browser' ? focusedPane : activePanes.find(id => activeItems[id]?.kind !== 'browser');
   const paneScope = paneScopeKey(activeProject, pagePane);
   const { settleFocus } = usePresentedPaneFocus(focusedPane);
   const { paneIds: presentedPanes, paneItems, exitingIds: allExitingIds, holdExits, finishExit } = usePresentedPanes(activePanes, activeItems);
@@ -168,11 +171,11 @@ export default function TerminalDashboard() {
   const stripRef = useRef<HTMLDivElement>(null);
   const paneRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const layout = usePaneLayout(stripRef, {
-    paneIds: openPanes, customWidths: widths, mode: prefs.paneWidthMode, exitingIds,
-    defaultPaneWidth: prefs.defaultPaneWidth,
+    paneIds: openPanes, customWidths: phone ? [] : widths, mode: phone ? 'fixed' : prefs.paneWidthMode, exitingIds,
+    defaultPaneWidth: phone ? 100_000 : prefs.defaultPaneWidth,
     enabled: !!activeProject && openPanes.length > 0,
     scope: paneScope,
-    appReduceMotion: prefs.reduceMotion,
+    appReduceMotion: phone || prefs.reduceMotion,
     onExitStart: holdExits,
     onExitComplete: finishExit,
   });
@@ -413,7 +416,7 @@ export default function TerminalDashboard() {
   }, [activeProject, progressForFile]);
 
   const revealRef = useRef<(() => void) | null>(null);
-  const lastReveal = useRef<{ scope: string; focused: string | null; mode: string; ready: boolean; ids: string[] } | null>(null);
+  const lastReveal = useRef<{ scope: string; focused: string | null; mode: string; ready: boolean; ids: string[]; width: number } | null>(null);
   useLayoutEffect(() => {
     if (layout.waitingForExit) {
       revealRef.current?.();
@@ -421,12 +424,14 @@ export default function TerminalDashboard() {
     }
     const scope = paneScope;
     const previous = lastReveal.current;
-    lastReveal.current = { scope, focused: focusedPane, mode: prefs.paneWidthMode, ready: layout.ready, ids: activePanes };
+    lastReveal.current = { scope, focused: focusedPane, mode: phone ? 'phone' : prefs.paneWidthMode, ready: layout.ready, ids: activePanes, width: stripRef.current?.clientWidth ?? 0 };
     const strip = stripRef.current;
-    const index = focusedPane ? openPanes.indexOf(focusedPane) : -1;
+    const revealPane = phone ? visiblePhonePane : focusedPane;
+    const index = revealPane ? openPanes.indexOf(revealPane) : -1;
     if (!strip || index < 0 || !layout.ready) return;
     const requested = !previous || previous.scope !== scope || previous.focused !== focusedPane
-      || previous.mode !== prefs.paneWidthMode || !previous.ready;
+      || previous.mode !== (phone ? 'phone' : prefs.paneWidthMode) || !previous.ready
+      || (phone && previous.width !== strip.clientWidth);
     // Closing the focused pane reveals its predecessor on the same clock as
     // the covering boundaries. Background closes preserve the current view.
     const closing = previous?.scope === scope && previous.ids.some(id => !activePanes.includes(id));
@@ -447,7 +452,7 @@ export default function TerminalDashboard() {
       strip.scrollTo({ left: target, behavior: 'instant' });
       mirror(strip.scrollLeft);
     }
-  }, [paneScope, focusedPane, openPanes, activePanes, prefs.paneWidthMode, layout]);
+  }, [paneScope, focusedPane, openPanes, activePanes, prefs.paneWidthMode, phone, visiblePhonePane, layout]);
 
   useLayoutEffect(() => () => { revealRef.current?.(); }, []);
 
@@ -463,7 +468,7 @@ export default function TerminalDashboard() {
     const scope = paneScope;
     const previous = previousEntrance.current;
     previousEntrance.current = { scope, ids: openPanes };
-    const reduced = prefs.reduceMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+    const reduced = phone || prefs.reduceMotion || (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
     for (const [id, animation] of entrances.current) {
       if (!openPanes.includes(id) || previous.scope !== scope || reduced) {
         animation.cancel(); entrances.current.delete(id);
@@ -500,7 +505,7 @@ export default function TerminalDashboard() {
       };
     }
     previousExits.current = exitingIds;
-  }, [openPanes, exitingIds, paneScope, prefs.paneSpawnAnimation]);
+  }, [openPanes, exitingIds, paneScope, prefs.paneSpawnAnimation, phone, prefs.reduceMotion]);
   useLayoutEffect(() => {
     const running = entrances.current;
     return () => { for (const animation of running.values()) animation.cancel(); running.clear(); };
@@ -541,6 +546,7 @@ export default function TerminalDashboard() {
     <div
       ref={stripRef}
       data-pane-width-mode={prefs.paneWidthMode}
+      data-phone-panes={phone || undefined}
       className={['terminal-dashboard', 'hide-sb'].join(' ')}
       onScroll={() => {
         const thumb = thumbRef.current;
@@ -571,7 +577,7 @@ export default function TerminalDashboard() {
         minWidth: 0,
         minHeight: 0,
         height: '100%',
-        overflowX: overflow || exitingIds.size > 0 ? 'auto' : 'hidden',
+        overflowX: !phone && (overflow || exitingIds.size > 0) ? 'auto' : 'hidden',
         overflowY: 'hidden',
         position: 'relative', /* anchor offsetLeft for scrollToPane */
         padding: 'var(--term-dashboard-padding, 0px)',
@@ -596,6 +602,7 @@ export default function TerminalDashboard() {
           background: 'var(--term-pane-bg)',
           overflow: 'clip',
           ...layout.paneStyles[i],
+          visibility: phone && id !== visiblePhonePane ? 'hidden' : undefined,
         };
         return (
           <div
@@ -603,8 +610,8 @@ export default function TerminalDashboard() {
             ref={(el) => { paneRefs.current[id] = el; }}
             data-node-id={id}
             data-pane-exiting={exitingIds.has(id) ? '' : undefined}
-            aria-hidden={exitingIds.has(id) || undefined}
-            inert={exitingIds.has(id)}
+            aria-hidden={exitingIds.has(id) || (phone && id !== visiblePhonePane) || undefined}
+            inert={exitingIds.has(id) || (phone && id !== visiblePhonePane)}
             style={wrapStyle}
           >
             <div className="pane-entry-surface" style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
@@ -635,11 +642,11 @@ export default function TerminalDashboard() {
             </PaneErrorBoundary>
             </RetainedPaneContent>
             </div>
-            <ResizeHandle
+            {!phone && <ResizeHandle
                 paneRef={{ current: paneRefs.current[id] ?? null }}
                 onResize={(w) => setPaneWidth(id, w)}
                 onReset={() => setPaneWidth(id, undefined)}
-              />
+              />}
           </div>
         );
       })}
@@ -694,7 +701,7 @@ export default function TerminalDashboard() {
         </div>
       )}
     </div>
-      {overflow && (
+      {!phone && overflow && (
         <div
           ref={thumbRef}
           className="dashboard-hscroll-thumb"

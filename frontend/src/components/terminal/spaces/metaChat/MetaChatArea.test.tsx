@@ -94,22 +94,37 @@ describe('MetaChatArea', () => {
     expect((screen.getByRole('textbox', { name: 'Message the assistant' }) as HTMLTextAreaElement).value).toBe('Unsent question');
   });
 
-  it('keeps half the title bar inside the area while dragging past any edge', () => {
+  it('keeps the entire window inside the area while dragging past any edge', () => {
     render(<Host />);
     drag(title(), [720, 330], [720 - 2000, 330 + 2000]);
-    expect(box()).toMatchObject({ left: '-192px', top: `${800 - 46}px` });
+    expect(box()).toMatchObject({ left: '18px', top: '262px' });
     release();
-    expect(box()).toMatchObject({ left: '-192px', top: `${800 - 46}px` });
+    expect(box()).toMatchObject({ left: '18px', top: '262px' });
     drag(title(), [120, 820], [120, -2000]);
     release();
-    expect(box()).toMatchObject({ left: '-192px', top: '0px' });
-    // Off the right edge too; the pointer stays clear of the dock edge.
+    expect(box()).toMatchObject({ left: '18px', top: '18px' });
+    // Drag toward the right edge while keeping the pointer clear of docking.
     drag(title(), [120, 70], [1020, 70]);
     release();
     drag(title(), [820, 70], [910, 70]);
     release();
-    expect(box()).toMatchObject({ left: '798px', top: '0px' });
+    expect(box()).toMatchObject({ left: '598px', top: '18px' });
     expect(area().dataset.form).toBe('float');
+  });
+
+  it('refits the window when the area shrinks, including during a drag', () => {
+    render(<Host />);
+    drag(title(), [720, 330], [740, 350]);
+    const original = { ...AREA };
+    try {
+      Object.assign(AREA, { width: 300, height: 250 });
+      fireEvent(window, new Event('resize'));
+      expect(box()).toEqual({ left: '18px', top: '18px', width: '264px', height: '214px' });
+      release();
+      expect(box()).toEqual({ left: '18px', top: '18px', width: '264px', height: '214px' });
+    } finally {
+      Object.assign(AREA, original);
+    }
   });
 
   it('does not start a drag from the title bar buttons', () => {
@@ -189,6 +204,22 @@ describe('MetaChatArea', () => {
     fireEvent.click(launcher);
     expect(area().dataset.form).toBe('dock');
     expect(document.activeElement).toBe(screen.getByLabelText('Message the assistant'));
+  });
+
+  it('a labelled pill reads its label, and starts minimized when asked to, until the user opens it', () => {
+    // The Meta agent's first run is reading, but that is not this window's work.
+    firstRun.data = { requestedAt: 1, summary: { state: 'waiting', summarizedAt: null }, haltedReason: null,
+      workspaces: [{ workspaceId: 'a', workspaceName: 'a', homePageId: null, hiddenAt: null,
+        firstRun: { workspaceId: 'a', startedAt: 1, startSeq: 1, readCount: 2, total: 9, state: 'reading', error: null, updatedAt: 1 } }] };
+    render(<Host options={{ storage: null, initialState: { minimized: true } }} pillLabel="Create with agent" firstRunDot={false} />);
+    expect(area().dataset.form).toBe('min');
+    const launcher = screen.getByRole('button', { name: 'Create with agent' });
+    expect(launcher.textContent).toBe('Create with agent');
+    expect(launcher.getAttribute('title')).toBe('Create with agent');
+    expect(launcher.hasAttribute('data-labelled')).toBe(true);
+    expect(screen.queryByRole('status', { name: 'Assistant is working' })).toBeNull();
+    fireEvent.click(launcher);
+    expect(area().dataset.form).toBe('float');
   });
 
   it('toggles with ⌘J and Ctrl+J only while visible and enabled', () => {
@@ -344,6 +375,6 @@ describe('MetaChatArea', () => {
   it('restores a stored box clamped to the current area', () => {
     localStorage.setItem(METACHAT_STORAGE_KEY, JSON.stringify({ form: 'float', rect: { x: 5000, y: 5000, w: 600, h: 2000 }, dockRatio: 40 }));
     render(<Host options={{}} />);
-    expect(box()).toEqual({ left: `${1000 - 300}px`, top: `${800 - 46}px`, width: '600px', height: '800px' });
+    expect(box()).toEqual({ left: '382px', top: '18px', width: '600px', height: '764px' });
   });
 });

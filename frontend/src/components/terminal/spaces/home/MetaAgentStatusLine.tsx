@@ -74,6 +74,7 @@ function cursorState(row: MetaAgentCursorRow): string {
   if (row.problem) return row.problem.stopped ? `Stopped: ${row.problem.message}` : `Last try failed: ${row.problem.message} · retrying`;
   switch (row.state) {
     case 'synced': return 'Up to date';
+    case 'paused': return 'Paused in this workspace';
     case 'next': return `${plural(row.unread, 'new conversation')} to read next round`;
     case 'no-new': return 'No new conversations yet';
     case 'error': return 'Last try failed';

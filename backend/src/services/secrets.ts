@@ -1,7 +1,7 @@
 import { readJsonConfig, updateJsonConfig } from "./jsonConfigStore";
 import { getMichiCredentialConfigPaths } from "./configPaths";
 import type { ProviderEnvBinding } from "../agents/types";
-import { getUserProviderKey } from "./userKeys";
+import { clearUserProviderKey, getUserProviderKey, setUserProviderKey } from "./userKeys";
 
 const { configPath: CONFIG_PATH } = getMichiCredentialConfigPaths();
 
@@ -103,6 +103,16 @@ export function setProviderApiKey(provider: string, key: string | null): void {
   });
   // Invalidate cache so next read picks up the new keys from disk.
   diskKeysCache = parseDiskKeys(next);
+}
+
+/**
+ * Save a key, or clear it with `null`: in the user's encrypted slot when
+ * `userId` (a cloud owner) is given, otherwise in the desktop disk store.
+ */
+export function storeProviderApiKey(provider: string, key: string | null, userId?: string): void {
+  if (!userId) setProviderApiKey(provider, key);
+  else if (key) setUserProviderKey(userId, provider, key);
+  else clearUserProviderKey(userId, provider);
 }
 
 // TODO: macOS Keychain backing (keytar/security CLI) goes here.

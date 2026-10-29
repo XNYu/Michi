@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { pageBlockInputSchema, TASK_COLUMN } from 'michi-shared';
 import type { BlockSource, MaintenanceResourceKind } from 'michi-shared';
-import { META_AGENT_MAINTENANCE_TOOL_NAMES } from '../../agents/maintenancePolicy';
+import { MAINTENANCE_CORE_TOOL_NAMES } from '../../agents/maintenancePolicy';
 import {
   homeRunFor, listHistory, readHistoryNode, readHistoryOverview, readTargetPage, readWorkspaceHome, recordTargetNoChange, writeTargetPage,
   type HomeToolContext,
@@ -307,7 +307,7 @@ export function createMaintenanceTools(
       execute: homeOnly,
     },
   ];
-  if (definitions.map((tool) => tool.name).join('|') !== META_AGENT_MAINTENANCE_TOOL_NAMES.join('|')) {
+  if (definitions.map((tool) => tool.name).join('|') !== MAINTENANCE_CORE_TOOL_NAMES.join('|')) {
     throw new Error('Maintenance tools differ from the approved maintenance profile');
   }
   return definitions.map((tool) => ({ ...tool, execute: (raw: unknown) => {

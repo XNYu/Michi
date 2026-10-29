@@ -1,5 +1,14 @@
-import type { MichiDatabase, MichiDbColumn, MichiDbRow, MichiDbView, MichiThreadState } from 'michi-shared';
+import type {
+  MichiDatabase,
+  MichiDbColumn,
+  MichiDbEditOp,
+  MichiDbRow,
+  MichiDbView,
+  MichiDbViewConfig,
+  MichiThreadState,
+} from 'michi-shared';
 import { taskDatabaseColumns, taskDatabaseViews } from 'michi-shared';
+import { cellEditable, isThreadsDb, sameValue } from './dbModel';
 
 /** Sample rows used to exercise computed and editable columns. */
 export interface SampleThread {
@@ -95,4 +104,115 @@ export function taskDatabase(rows: MichiDbRow[] = []): MichiDatabase {
     id: 'db-tasks', title: 'Tasks', kind: 'user', role: 'tasks', projectId: null,
     columns: taskDatabaseColumns(), views: taskDatabaseViews(), rows, updatedAt: 1,
   };
+}
+
+// ── Drawn ahead of Michi's answer ─────────────────────────────────────
+
+const put = (values: Record<string, unknown>, id: string, v: unknown) => {
+  const { [id]: _drop, ...rest } = values;
+  return (v === null || v === undefined ? rest : { ...rest, [id]: v }) as MichiDbRow['values'];
+};
+
+/** A deleted column leaves nothing behind in a view. */
+function unref(c: MichiDbViewConfig, id: string): MichiDbViewConfig {
+  const next: MichiDbViewConfig = {
+    ...c,
+    filters: (c.filters ?? []).filter((f) => f.column !== id),
+    sorts: (c.sorts ?? []).filter((s) => s.column !== id),
+    ...(c.visible ? { visible: c.visible.filter((x) => x !== id) } : {}),
+  };
+  for (const k of ['group', 'date', 'planDate', 'cover'] as const) if (next[k] === id) delete next[k];
+  return next;
+}
+
+/**
+ * The database as the ops will leave it, drawn at once while Michi applies
+ * them for real. Michi's answer replaces it either way, so this only needs to
+ * be right for what a person sees in the moment: values are not converted, and
+ * an op this cannot place is left for Michi to decide.
+ */
+export function applyOpsLocally(db: MichiDatabase, ops: readonly MichiDbEditOp[], now: number): MichiDatabase {
+  const threads = isThreadsDb(db);
+  let { columns, rows, views } = db;
+  const colAt = (id: string) => columns.findIndex((c) => c.id === id);
+  const rowAt = (id: string) => rows.findIndex((r) => r.id === id);
+  for (const op of ops) {
+    switch (op.op) {
+      case 'row.update': {
+        const i = rowAt(op.id);
+        if (i < 0) break;
+        let values = rows[i].values;
+        for (const [k, v] of Object.entries(op.values ?? {})) {
+          const c = columns[colAt(k)];
+          if (!c || !cellEditable(c)) continue;
+          if (threads && c.builtin && c.id === 'state' && v !== 'doing' && v !== 'done') continue;
+          values = put(values, k, v);
+        }
+        const next: MichiDbRow = { ...rows[i], values, updatedAt: now };
+        if (op.body !== undefined) {
+          if (op.body) next.body = op.body;
+          else delete next.body;
+        }
+        if (sameValue(next.values as never, rows[i].values as never) && next.body === rows[i].body) break;
+        rows = rows.map((r, j) => (j === i ? next : r));
+        break;
+      }
+      case 'row.add': {
+        if (threads || !op.id || rowAt(op.id) >= 0) break;
+        const position = rows.reduce((m, r) => Math.max(m, r.position + 1), 0);
+        const values = Object.fromEntries(Object.entries(op.values).filter(([, v]) => v !== null)) as MichiDbRow['values'];
+        rows = [...rows, { id: op.id, values, ...(op.body ? { body: op.body } : {}), position, updatedAt: now }];
+        break;
+      }
+      case 'row.delete':
+        if (!threads) rows = rows.filter((r) => r.id !== op.id);
+        break;
+      case 'column.add': {
+        const id = op.column.id;
+        if (!id || colAt(id) >= 0) break;
+        const column: MichiDbColumn = { ...op.column, id };
+        const at = op.after === undefined ? columns.length : op.after === null ? 0 : colAt(op.after) + 1;
+        columns = [...columns.slice(0, at), column, ...columns.slice(at)];
+        break;
+      }
+      case 'column.update': {
+        const i = colAt(op.id);
+        if (i < 0) break;
+        const c = columns[i];
+        // A built-in column's name, type and options are the thread's; only its width is layout.
+        const patch = c.builtin ? (op.patch.width !== undefined ? { width: op.patch.width } : {}) : op.patch;
+        columns = columns.map((x, j) => (j === i ? { ...x, ...patch } : x));
+        break;
+      }
+      case 'column.delete': {
+        const c = columns[colAt(op.id)];
+        if (!c || c.builtin) break;
+        columns = columns.filter((x) => x.id !== op.id);
+        rows = rows.map((r) => (Object.prototype.hasOwnProperty.call(r.values, op.id) ? { ...r, values: put(r.values, op.id, null) } : r));
+        views = views.map((v) => ({ ...v, config: unref(v.config, op.id) }));
+        break;
+      }
+      case 'option.add': {
+        const i = colAt(op.id);
+        const c = columns[i];
+        if (!c || c.builtin || c.options?.some((o) => o.value === op.option.value)) break;
+        columns = columns.map((x, j) => (j === i ? { ...x, options: [...(x.options ?? []), op.option] } : x));
+        break;
+      }
+      case 'view.save': {
+        const v = op.view;
+        const i = v.id === undefined ? -1 : views.findIndex((x) => x.id === v.id);
+        if (i >= 0) views = views.map((x, j) => (j === i ? { ...x, name: v.name, type: v.type, config: v.config } : x));
+        else if (v.id) views = [...views, { id: v.id, name: v.name, type: v.type, config: v.config, position: views.reduce((m, x) => Math.max(m, x.position + 1), 0) }];
+        break;
+      }
+      case 'view.delete':
+        if (views.length > 1) views = views.filter((v) => v.id !== op.id);
+        break;
+      default:
+        break;
+    }
+  }
+  if (columns === db.columns && rows === db.rows && views === db.views) return db;
+  return { ...db, columns, rows, views, updatedAt: now };
 }

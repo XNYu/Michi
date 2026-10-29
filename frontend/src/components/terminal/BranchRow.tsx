@@ -263,7 +263,7 @@ export default function BranchRow({
               flexShrink: 0,
               width: 9,
               // Keeps clear of the hover-revealed ⋯ — see caretKebabClearance.
-              marginRight: caretKebabClearance(geom),
+              marginRight: `calc(${caretKebabClearance(geom)}px + var(--row-kebab-extra, 0px))`,
               textAlign: 'center',
               fontSize: 'var(--fs-xs)',
               color: 'var(--term-muted)',

@@ -1,3 +1,4 @@
+import { restrictedChatProfile } from './helpers/restrictedChatProfile';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { META_AGENT_RUNTIMES } from 'michi-shared';
@@ -49,7 +50,7 @@ describe('checkMetaAgentToolCatalog', () => {
 describe('Meta agent toolsets', () => {
   test('maintenance: the dedicated tools, read-only history and the workspace home reader', () => {
     assert.deepEqual([...META_AGENT_MAINTENANCE_TOOL_NAMES], [
-      ...MAINTENANCE_TOOL_NAMES, 'list_threads', 'read_node_overview', 'read_node', 'maintenance_read_workspace_home',
+      ...MAINTENANCE_TOOL_NAMES, 'list_threads', 'read_node_overview', 'read_node', 'maintenance_read_workspace_home', 'maintenance_list_tools', 'maintenance_call_tool',
     ]);
     assert.deepEqual([...MAINTENANCE_HISTORY_TOOL_NAMES], ['list_threads', 'read_node_overview', 'read_node']);
     assert.equal(MAINTENANCE_READ_WORKSPACE_HOME_TOOL, 'maintenance_read_workspace_home');
@@ -78,13 +79,13 @@ describe('Meta agent toolsets', () => {
 
   test('profiles carry their toolset; the older markers keep working', () => {
     const maintenance = maintenanceToolProfile();
-    const chat = assistantToolProfile();
+    const chat = restrictedChatProfile();
     assert.equal(metaAgentToolsetOf(maintenance), 'maintenance');
     assert.equal(metaAgentToolsetOf(chat), 'chat');
     assert.ok(isMaintenanceProfile(maintenance) && !isAssistantProfile(maintenance));
     assert.ok(isAssistantProfile(chat) && !isMaintenanceProfile(chat));
     assert.equal(metaAgentToolsetOf({ allowedToolNames: [], maintenance: true }), 'maintenance');
-    assert.equal(metaAgentToolsetOf({ allowedToolNames: [], assistant: true }), 'chat');
+    assert.equal(metaAgentToolsetOf({ allowedToolNames: [], assistant: true }), null);
     assert.equal(metaAgentToolsetOf({ allowedToolNames: ['read'] }), null);
     assert.equal(metaAgentToolsetOf(undefined), null);
     assert.ok(!isMetaAgentProfile({ allowedToolNames: ['read'] }));
@@ -112,14 +113,14 @@ describe('assertMetaAgentToolCatalog', () => {
         && error.violation.toolset === 'maintenance' && error.violation.unexpectedTools.join() === 'bash',
     );
     assert.throws(
-      () => assertMetaAgentToolCatalog({ runtimeId: 'codex', profile: assistantToolProfile(), observed: ['send_to_thread'] }),
+      () => assertMetaAgentToolCatalog({ runtimeId: 'codex', profile: restrictedChatProfile(), observed: ['send_to_thread'] }),
       MetaAgentGuardError,
       'a chat session may not have send_to_thread',
     );
   });
 
   test('extraAllowed admits the runtime\'s documented built-ins only', () => {
-    const profile = assistantToolProfile();
+    const profile = restrictedChatProfile();
     assert.doesNotThrow(() => assertMetaAgentToolCatalog({ runtimeId: 'codex', profile, observed: ['view_image'], extraAllowed: ['view_image'] }));
     assert.throws(() => assertMetaAgentToolCatalog({ runtimeId: 'codex', profile, observed: ['view_image'] }), MetaAgentGuardError);
   });

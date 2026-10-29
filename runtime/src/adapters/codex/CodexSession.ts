@@ -43,12 +43,21 @@ import { hostEventSink } from '../../core/hostEventSink';
 import { prepareAttachments } from '../../core/attachments';
 import { codexChatTurnPolicy } from './codexTurnPolicy';
 import { CODEX_RESTRICTED_TURN_POLICY } from './codexRestrictedProfile';
+import { buildCodexCollaborationMode, CODEX_THREAD_FEATURES_OFF, codexDisableMcpServers, isCodexModeKind } from './codexProtocol';
+import { codexSpawnSignal } from './codexCollab';
 import type { CodexHostText } from './CodexRuntime';
 import { fallbackCodexTitle, generateCodexTitle } from './codexTitleGenerator';
 import { buildRunMcpSlotCallbacks } from '../../core/runMcpSlot';
 import { interactiveOwner } from '../../contract/types';
 
 const APPROVE_TIMEOUT_MS = 300_000;
+
+/**
+ * Why a restricted session's turn ended when Codex started a sub-agent
+ * anyway (its thread config refuses spawns; see codexRestrictedProfile).
+ */
+export const CODEX_RESTRICTED_SUBAGENT_ERROR =
+  'The Michi assistant cannot use sub-agents. Codex started one, so Michi stopped this turn and the sub-agent.';
 
 const INTERNAL_METADATA_TOOLS = new Set([
   'set_branch_overview',
@@ -133,6 +142,10 @@ export class CodexSession implements AgentSession {
    * public session id, which for a headless owner is `owner.key`.
    */
   public readonly nativeSessionId: string | null;
+  /**
+   * The Codex collaboration mode this session chose (setMode), sent with every
+   * turn once set; null leaves the thread's own mode untouched.
+   */
   public currentModeId: string | null = null;
   public currentModelId: string | null;
   /** Assistant text accumulated during the in-flight turn, exposed via
@@ -174,7 +187,7 @@ export class CodexSession implements AgentSession {
   }
 
   get metaAgentToolProfile(): RuntimeToolProfile | undefined {
-    return this.isMetaAgent ? this.toolProfile : undefined;
+    return this.isMetaAgent || this.toolProfile?.assistant ? this.toolProfile : undefined;
   }
 
   private state: SessionState = 'idle';
@@ -263,6 +276,16 @@ export class CodexSession implements AgentSession {
   /** Called when a tool is granted always-allow, with the canonical tool name. */
   public onAlwaysAllow: ((canonicalTool: string) => void) | null = null;
 
+  /** MCP servers of the user's config this thread disables (CodexRuntime.openThread); the title thread disables them too. */
+  public userMcpServers: string[] = [];
+
+  // ---- Restricted sessions: sub-agents are stopped on sight -------------------
+  /** This turn already stopped for a sub-agent. */
+  private subagentBlocked = false;
+  /** Child threads a restricted turn started; each of their turns is interrupted. */
+  private readonly blockedChildThreads = new Set<string>();
+  private readonly interruptedChildTurns = new Set<string>();
+
   constructor(deps: CodexSessionDeps) {
     this.id = deps.nodeId;
     this.threadId = deps.threadId;
@@ -279,8 +302,8 @@ export class CodexSession implements AgentSession {
     this.backgroundSubagents = deps.backgroundSubagents ?? this.host.backgroundSubagents!;
     this.generateTitleOnFirstTurn = deps.generateTitleOnFirstTurn ?? false;
     this.titleModel = deps.titleModel ?? null;
-    this.enableFollowUps = deps.enableFollowUps !== false && !this.host.profile.isRestricted(deps.toolProfile);
-    this.followUpsHookPocEnabled = (deps.followUpsHookPocEnabled ?? false) && !this.host.profile.isRestricted(deps.toolProfile);
+    this.enableFollowUps = deps.enableFollowUps !== false && !this.host.profile.isRestricted(deps.toolProfile) && !deps.toolProfile?.assistant;
+    this.followUpsHookPocEnabled = (deps.followUpsHookPocEnabled ?? false) && !this.host.profile.isRestricted(deps.toolProfile) && !deps.toolProfile?.assistant;
     this.followUpsExperimentMode = this.followUpsHookPocEnabled
       ? deps.followUpsExperimentMode ?? this.host.prompt.followUpsExperimentMode()
       : 'sentinel';
@@ -362,6 +385,7 @@ export class CodexSession implements AgentSession {
       this.activePageTurnAttribution = pageTurnAttribution;
       this.activeMaintenanceExecutionContext = maintenanceContext;
       this.cancelRequested = false;
+      this.subagentBlocked = false;
       if (this.state === 'crashed') {
         if (!this.recover) throw new Error('Codex session needs native recovery before another turn.');
         yield { kind: 'retry_start', detail: 'Restoring original Codex session' };
@@ -415,6 +439,7 @@ export class CodexSession implements AgentSession {
           instructions: this.hostText?.titleInstructions?.() ?? '',
           userText: text,
           timeoutMs: this.titleTimeoutMs?.(),
+          config: codexDisableMcpServers({ features: { ...CODEX_THREAD_FEATURES_OFF } }, this.userMcpServers),
           onThreadStarted: (threadId) => {
             titleThreadId = threadId;
             if (this.turnAbort === controller && !controller.signal.aborted) {
@@ -470,6 +495,9 @@ export class CodexSession implements AgentSession {
         threadId: this.threadId,
         input: turnInput,
         ...(this.effort ? { effort: this.effort } : {}),
+        ...(isCodexModeKind(this.currentModeId) && this.currentModelId
+          ? { collaborationMode: buildCodexCollaborationMode(this.currentModeId, this.currentModelId, this.effort) }
+          : {}),
         summary: 'detailed',
       }).then(
         (result) => {
@@ -570,6 +598,10 @@ export class CodexSession implements AgentSession {
         if (!(this.cancelRequested && ev.kind === 'title')) yield ev;
         if (pendingTurnEnd && titleDelivered) break;
       }
+      // A turn stopped for a sub-agent ended as interrupted; it failed.
+      if (pendingTurnEnd && this.subagentBlocked && pendingTurnEnd.stopReason === 'cancelled') {
+        pendingTurnEnd = { kind: 'turn_end', stopReason: 'error' };
+      }
       if (pendingTurnEnd) yield pendingTurnEnd;
       if (assistantChunks.length > 0) {
         this.history.push({ role: 'assistant', content: assistantChunks.join('') });
@@ -633,6 +665,18 @@ export class CodexSession implements AgentSession {
       confidence: 'native',
       nativeMethod: 'turn/interrupt',
     };
+  }
+
+  /**
+   * Chooses a Codex collaboration mode (`default` or `plan`) for the next
+   * turns. Codex keeps a thread's last mode, so the choice is sent with every
+   * turn from the next one on; a running turn keeps its mode.
+   */
+  async setMode(modeId: string): Promise<void> {
+    if (!isCodexModeKind(modeId)) throw new Error(`Unknown Codex collaboration mode: ${modeId}`);
+    if (this.isAssistant) throw new Error('The Michi assistant runs in Codex\'s default mode');
+    if (!this.currentModelId) throw new Error('Codex collaboration modes need the session\'s model');
+    this.currentModeId = modeId;
   }
 
   async steer(text: string): Promise<SteerResult> {
@@ -879,7 +923,7 @@ export class CodexSession implements AgentSession {
           respond({ decision: 'accept' });
           return;
         case 'allow_always':
-          // Attempt-scoped allow → acceptForSession, but NEVER call grantPermission.
+          // Attempt-scoped allow → acceptForSession; no grant is persisted.
           respond({ decision: 'acceptForSession' });
           return;
         case 'deny':
@@ -1189,8 +1233,8 @@ export class CodexSession implements AgentSession {
         }),
       } : {}),
       ...(this.bridge.saveContext ? {
-        onSaveArtifact: (name: string, body: string) =>
-          this.bridge.saveContext!({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body }),
+        onSaveArtifact: (name: string, body: string | undefined, path?: string) =>
+          this.bridge.saveContext!({ cwd: this.cwd, chatId: this.id, ownerUserId: this.ownerUserId, name, body, path }),
       } : {}),
       ...(this.bridge.updateContext ? {
         onUpdateArtifact: (name: string, body: string) =>
@@ -1303,6 +1347,10 @@ export class CodexSession implements AgentSession {
           this.activeNativeTurnId = turnId;
           this.nativeTurnIds.set(this.threadId, turnId);
         }
+        if (this.isAssistant && method === 'item/started') {
+          const signal = codexSpawnSignal((params['item'] ?? {}) as Record<string, unknown>);
+          if (signal) this.blockRestrictedSubagent(signal.childThreadId);
+        }
         if (method === 'turn/completed') {
           this.markBackgroundChildren();
           this.nativeSettled = true;
@@ -1327,11 +1375,70 @@ export class CodexSession implements AgentSession {
 
     // ---- Child subagent thread discovery via global notification handler -----
     this.unsubGlobalNotification = this.client.onGlobalNotification((method, params) => {
+      if (this.isAssistant) this.stopRestrictedChildTurn(method, params);
       if (method === 'thread/started') {
         this.handleChildThreadStarted(params);
       } else if (method === 'thread/status/changed' || method === 'thread/closed') {
         this.handleChildThreadLifecycle(method, params);
       }
+    });
+  }
+
+  // ---- Restricted sessions: sub-agent guard -------------------------------------
+
+  /**
+   * A restricted turn started a sub-agent (its thread config makes Codex
+   * refuse spawns, so this is the fallback): report the error once, stop the
+   * turn, and stop the child's turns. Interrupting the parent does not stop
+   * a running child (codex 0.165), so each child turn is interrupted too
+   * (stopRestrictedChildTurn). A parent turn Codex will not stop is
+   * recovered by restarting app-server, which ends the child as well.
+   */
+  private blockRestrictedSubagent(childThreadId: string | null): void {
+    if (childThreadId && childThreadId !== this.threadId) this.blockedChildThreads.add(childThreadId);
+    if (this.subagentBlocked || this.state !== 'in_turn' || this.nativeSettled) return;
+    this.subagentBlocked = true;
+    this.host.observability.log('warn', 'chat', 'codex restricted session started a sub-agent; stopping the turn', {
+      nodeId: this.id, threadId: this.threadId, childThreadId,
+    });
+    this.queue.push({
+      kind: 'runtime_error', error: CODEX_RESTRICTED_SUBAGENT_ERROR,
+      code: 'codex_subagent_blocked', category: 'terminal', retryable: false,
+    });
+    const stopFailed = () => {
+      if (this.nativeSettled) return;
+      this.requiresRestart = true;
+      this.markCrashed('Codex did not stop a turn that started a sub-agent. Original thread retained for native recovery.');
+    };
+    void this.interruptThread(this.threadId).then((ok) => { if (!ok) stopFailed(); });
+    if (!this.cancelTimer) this.cancelTimer = setTimeout(stopFailed, this.cancelTimeoutMs);
+  }
+
+  /**
+   * Interrupts every turn of a child this restricted session started: a
+   * thread it already blocked, or one whose turn descends from this thread's
+   * turn (`rootTurnId`), which also blocks the parent turn.
+   */
+  private stopRestrictedChildTurn(method: string, params: Record<string, unknown>): void {
+    const threadId = typeof params['threadId'] === 'string' ? params['threadId'] : null;
+    if (!threadId || threadId === this.threadId) return;
+    const turn = params['turn'] as { id?: unknown; rootTurnId?: unknown } | undefined;
+    const turnId = typeof params['turnId'] === 'string' ? params['turnId'] : typeof turn?.id === 'string' ? turn.id : null;
+    if (!turnId) return;
+    const root = typeof turn?.rootTurnId === 'string' ? turn.rootTurnId : null;
+    const descends = method === 'turn/started' && root !== null && root !== turnId
+      && (root === this.activeNativeTurnId || this.completedTurnIds.has(root));
+    if (!this.blockedChildThreads.has(threadId) && !descends) return;
+    if (descends) this.blockRestrictedSubagent(threadId);
+    if (method === 'turn/completed') return;
+    const key = `${threadId}:${turnId}`;
+    if (this.interruptedChildTurns.has(key)) return;
+    this.interruptedChildTurns.add(key);
+    if (this.interruptedChildTurns.size > 200) this.interruptedChildTurns.delete(this.interruptedChildTurns.values().next().value!);
+    void this.client.request('turn/interrupt', { threadId, turnId }, this.cancelTimeoutMs).catch((err: unknown) => {
+      this.host.observability.log('warn', 'chat', 'codex could not interrupt a restricted session\'s sub-agent', {
+        nodeId: this.id, childThreadId: threadId, error: err instanceof Error ? err.message : String(err),
+      });
     });
   }
 
@@ -1343,6 +1450,7 @@ export class CodexSession implements AgentSession {
     if (parentId !== this.threadId) return; // Not our child
 
     const childId = typeof thread['id'] === 'string' ? thread['id'] : '';
+    if (this.isAssistant && childId) this.blockRestrictedSubagent(childId);
     if (!childId || this.childThreadInfos.has(childId)) return; // Already tracked
 
     // Extract agent identity from Thread object
@@ -1392,6 +1500,7 @@ export class CodexSession implements AgentSession {
   private markBackgroundChildren(): void {
     for (const [childId, info] of this.childThreadInfos) {
       if (info.status !== 'working' || this.childPublishedTurn.get(childId) !== this.parentTurnSeq) continue;
+      if (this.blockedChildThreads.has(childId)) continue;
       const updated = { ...info, background: true };
       this.childThreadInfos.set(childId, updated);
       this.queue.push({ kind: 'subagent_list_update', subagents: [{ sessionId: childId, background: true }] });
@@ -1407,7 +1516,7 @@ export class CodexSession implements AgentSession {
   private backgroundSubagentIds(): string[] {
     const ids = new Set([...this.idleChildCompletions].filter((id) => !this.idleChildEnded.has(id)));
     for (const [childId, info] of this.childThreadInfos) {
-      if (info.background && info.status === 'working') ids.add(childId);
+      if (info.background && info.status === 'working' && !this.blockedChildThreads.has(childId)) ids.add(childId);
     }
     return [...ids];
   }

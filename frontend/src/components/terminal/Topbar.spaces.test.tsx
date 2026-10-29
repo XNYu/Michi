@@ -14,7 +14,6 @@ vi.mock('../../services/api', async (importOriginal) => {
     checkVersion: vi.fn().mockResolvedValue({ updateAvailable: false }),
     triggerUpdate: vi.fn(),
     listAgentModes: vi.fn().mockResolvedValue({ availableModes: [], defaultModeId: null }),
-    listModels: vi.fn().mockResolvedValue({ models: [], defaultModel: null }),
   };
 });
 vi.mock('../../lib/electronBridge', () => ({ getElectron: () => null }));

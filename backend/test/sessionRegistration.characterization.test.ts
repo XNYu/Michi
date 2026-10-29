@@ -37,7 +37,7 @@ function store(nodes: Record<string, { parent: string | null }>): HistoryStore {
   return {
     getNode: (id) => (nodes[id] ? { parent_node_id: nodes[id].parent, workspace_id: null } : null),
     listMessages: (id) => (nodes[id] ? [{ role: 'user', content: `history of ${id}`, created_at: 0 }] : []),
-    getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {},
+    getWorkspace: () => null, getWorkspaceInstructions: () => null,
   };
 }
 

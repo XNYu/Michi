@@ -32,7 +32,8 @@ describe('AreaRail', () => {
     const view = render(<AreaRail area="conversations" onSelect={vi.fn()} />);
     expect(document.querySelector('.area-rail__count, .area-rail__dot')).toBeNull();
     view.rerender(<AreaRail area="conversations" onSelect={vi.fn()} badges={{ spacesWaiting: 2, scheduledRunning: true, conversationsDone: true, settingsAlert: true }} />);
-    expect(screen.getByRole('button', { name: 'Pages, 2 waiting' }).textContent).toBe('2');
+    expect(screen.getByRole('button', { name: 'Pages' }).querySelector('.area-rail__count')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Pages,.*waiting/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Scheduled, running' }).querySelector('[data-tone="run"]')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Conversations, finished' }).querySelector('[data-tone="done"]')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Settings, needs attention' }).querySelector('[data-tone="warn"]')).not.toBeNull();

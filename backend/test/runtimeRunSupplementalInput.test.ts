@@ -450,7 +450,7 @@ test('real Pi Session applies immediate Run input after Agent abort as a new tur
   const { PiSession } = require('../src/agents/pi/PiSession') as typeof import('../src/agents/pi/PiSession');
   const deps = require('../src/agents/runtimeDeps') as typeof import('../src/agents/runtimeDeps');
   deps.configureRuntimeDeps({ dataDir: '/tmp', historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null,
-    getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission() {} },
+    getWorkspaceInstructions: () => null },
     providerKeys: { getProviderApiKey: () => 'fixture' },
     agentConfig: { getAgentConfig: () => ({ provider: 'deepseek' } as any), resolveModel: () => 'model', resolveReasoning: () => 'medium' },
   });

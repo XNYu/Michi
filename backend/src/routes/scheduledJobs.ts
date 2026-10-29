@@ -113,6 +113,12 @@ export function setupScheduledJobRoutes(deps: {
     res.json(scheduler().getRun(String(req.params.runId)));
   }));
 
+  // Internal execution IDs are not editable/runnable/deletable prompt jobs.
+  router.use('/scheduled-jobs/:id', (req, res, next) => {
+    try { scheduler().requirePromptJob(String(req.params.id)); next(); }
+    catch (error) { res.status(errorStatus(error)).json({ error: (error as Error).message }); }
+  });
+
   router.get('/scheduled-jobs/:id', handle((req, res) => {
     res.json(scheduler().getJob(String(req.params.id)));
   }));

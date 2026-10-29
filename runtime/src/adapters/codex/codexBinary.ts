@@ -69,10 +69,11 @@ export function codexHome(override?: string): string {
 }
 
 /**
- * Fast-fail pre-flight: verify that Codex auth credentials are present before
- * spawning a headless codex process that would otherwise hang on a login prompt.
- *
- * Codex stores its credentials in `<codexHome>/auth.json` after `codex login`.
+ * Local auth hint: whether `<codexHome>/auth.json`, the file `codex login`
+ * writes, exists. Its absence does not prove Codex lacks credentials: a
+ * provider can manage its own (Amazon Bedrock) or read an API key from the
+ * environment. CodexRuntime therefore only treats a missing file as a reason
+ * to ask app-server (`account/read`) before the first thread.
  */
 export function preflightCodexAuth(codexHomeOverride?: string): void {
   const authFile = path.join(codexHome(codexHomeOverride), 'auth.json');

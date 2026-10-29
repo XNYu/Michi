@@ -49,7 +49,7 @@ import {
   parseReadOutputLimitBytes,
   parseWaitPaneRequestV1,
 } from "michi-shared";
-import { inspect, paneTargetWorkspaceId, resolvePaneTarget, type PaneInspectionCaller } from "../services/paneInspection";
+import { inspect, resolveCallerForTarget, type PaneInspectionCaller } from "../services/paneInspection";
 import { getWorkspace } from "../services/dbRepository";
 import { workspaceIdKindHint } from "../services/idKindHint";
 import { readOutput, type ReadPaneOutputResult } from "../services/paneInspectionOutput";
@@ -125,8 +125,7 @@ function isAssistantBinding(binding: PaneInspectionToolBinding): boolean {
  */
 function scopedToTarget(binding: PaneInspectionToolBinding, caller: PaneInspectionCaller, locator: PaneLocator): PaneInspectionCaller {
   if (!isAssistantBinding(binding)) return caller;
-  const workspaceId = paneTargetWorkspaceId(caller.ownerUserId, resolvePaneTarget(locator));
-  return workspaceId ? { ...caller, workspaceId } : caller;
+  return resolveCallerForTarget(caller, locator) ?? caller;
 }
 
 /** The assistant's caller re-scoped to `workspaceId`, for list_panes (which takes no locator). */

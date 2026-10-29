@@ -455,3 +455,25 @@ test('a recovered, already-routed source lists its routed resources and the plan
   assert.equal(done.state, 'terminal');
   assert.equal((getDb().prepare('SELECT state FROM page_maintenance_sources WHERE plan_id=? AND source_turn_id=?').get(plan.id, source.sourceTurnId) as { state: string }).state, 'terminal');
 });
+
+test('maintenance gateway creates Michi content and stops dispatch after its run loses authority', async () => {
+  const { buildMcpServerForSlot, McpSlotRegistry } = await import('../src/services/mcpServer');
+  const { META_AGENT_MAINTENANCE_TOOL_NAMES } = await import('../src/agents/maintenancePolicy');
+  const { context } = setup();
+  const slot = new McpSlotRegistry().create('maintenance-node', dir, 'alice', {
+    owner: { mode: 'interactive', key: 'maintenance-node' }, maintenance: true,
+    exposedToolNames: new Set(META_AGENT_MAINTENANCE_TOOL_NAMES),
+    getActiveMaintenanceExecutionContext: () => ({ ...context, sources: context.sources.map(source => ({ ...source, manifest: [] })) }),
+  }, { nodeId: 'maintenance-node', workspaceId: 'ws' });
+  const tools = (buildMcpServerForSlot(slot) as any)._registeredTools;
+  const created = await tools.maintenance_call_tool.handler({ tool: 'create_page', arguments: { title: 'Gateway-created page' } });
+  assert.equal(created.isError, undefined, JSON.stringify(created));
+  assert.equal((getDb().prepare("SELECT count(*) AS n FROM pages WHERE title='Gateway-created page' AND workspace_id='ws'").get() as any).n, 1);
+  const blocked = await tools.maintenance_call_tool.handler({ tool: 'send_to_thread', arguments: { nodeId: 'source-node', text: 'Run a command' } });
+  assert.equal(blocked.isError, undefined);
+  assert.match(JSON.stringify(blocked.content), /unavailable/);
+  getDb().prepare("UPDATE scheduled_job_runs SET status='cancelled' WHERE id='run'").run();
+  const stale = await tools.maintenance_call_tool.handler({ tool: 'create_page', arguments: { title: 'Must not exist' } });
+  assert.equal(stale.isError, true);
+  assert.equal((getDb().prepare("SELECT count(*) AS n FROM pages WHERE title='Must not exist'").get() as any).n, 0);
+});

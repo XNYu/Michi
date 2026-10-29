@@ -22,6 +22,7 @@ import path from "path";
 
 type Level = "DEBUG" | "INFO" | "WARN" | "ERROR";
 type Stage =
+    | "performance"
     | "boot"
     | "http"
     | "acp"

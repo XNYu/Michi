@@ -37,7 +37,7 @@ export function usePageBlockDrag(page: PageDto, host: RefObject<HTMLDivElement |
     let frame = 0;
     const scope = hostElement.closest('.pane-entry-surface, main') ?? hostElement;
     const frames = () => [scope as HTMLElement, ...Array.from(scope.querySelectorAll<HTMLElement>('[data-native-page-id]'))]
-      .filter(doc => doc.dataset.nativePageId === pageId && doc.dataset.nativeWorkspaceId === workspaceId)
+      .filter(doc => doc.dataset.nativePageId === pageId && doc.dataset.nativeWorkspaceId === workspaceId && !doc.closest('[data-page-view-content]'))
       .flatMap(doc => Array.from(doc.querySelectorAll<HTMLElement>(':scope > .michi-doc-block[data-top]')))
       .filter(item => item.dataset.blockId && item.getBoundingClientRect().height > 0);
     let scrollParent: HTMLElement | null = hostElement.parentElement;

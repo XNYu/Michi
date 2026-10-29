@@ -2,17 +2,17 @@ import { invisibleSlot, slot, type CapabilityDescriptor } from 'michi-shared';
 import type { RuntimeDescriptor, RuntimeRunFacet } from '../../contract/descriptor';
 
 export const CLAUDE_HARNESS: CapabilityDescriptor = {
-  steer: invisibleSlot('SDK accepts input, but Michi does not yet multiplex active-turn steering results'),
+  steer: slot('native', 'native', 'SDK user message during a turn: folded in at the next tool round, else run as the next CLI turn within the same Michi turn (command_lifecycle); Stop withdraws an unstarted steer. Chats only'),
   followUp: invisibleSlot('Michi pendingQueued is next-turn flush, not Claude steer'),
   interruptAck: slot('native', 'native', 'SDK interrupt plus terminal result; process retirement fallback is inferred'),
-  compact: invisibleSlot(),
+  compact: slot('native', 'native', '/compact through SDK input; compact_boundary reports the context before and after. Auto-compaction is reported too'),
   retry: invisibleSlot(),
   sessionFork: slot('native', 'native', 'SDK forkSession for compatible, idle conversation parents; saved message anchors select historical boundaries'),
   nativeResume: slot('native', 'native', '--resume'),
   permissions: slot('native', 'native', 'claude_prompt_tool'),
-  sandbox: invisibleSlot('CLI isolation is unverifiable from Michi'),
-  subagents: slot('inferred', 'projected', 'Task tool roster only'),
-  usage: invisibleSlot('Do not fabricate token/cost'),
+  sandbox: invisibleSlot('Not enabled: Options.sandbox needs bubblewrap and socat on Linux; without them the CLI refuses to start or runs unsandboxed'),
+  subagents: slot('native', 'native', 'Agent/Task: task_* lifecycle, forwarded child messages (parent_tool_use_id) and the structured hand-back'),
+  usage: slot('native', 'native', 'Per-turn tokens of the main loop from result.usage; the CLI cost is a list-price estimate and is not shown'),
 };
 
 export const CLAUDE_RUN: RuntimeRunFacet = {

@@ -101,7 +101,7 @@ const AllTasksView = React.lazy(() => import('./allTasks/AllTasksPage'));
 
 /** The Spaces landing page: its own blocks, and the sections Michi counts from conversation state. */
 export function SpacesHome({ now }: { now?: Date }) {
-  return <React.Suspense fallback={null}><SpacesHomeView now={now} /></React.Suspense>;
+  return <React.Suspense fallback={<main className="area-settings michi-doc space-doc" aria-busy="true"><h1>Home</h1><p role="status">Loading Home…</p></main>}><SpacesHomeView now={now} /></React.Suspense>;
 }
 
 /** A workspace's home in Spaces: the Meta agent's page, the workspace's Spaces and its conversations. */

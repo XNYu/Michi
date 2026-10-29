@@ -8,7 +8,7 @@
  * when the network call fails.
  */
 
-import type { PiModelInfo } from "./piProviders";
+import type { PiModelInfo } from "./piModelTypes";
 
 interface OpenRouterApiModel {
     id: string;

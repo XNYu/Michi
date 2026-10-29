@@ -1,7 +1,9 @@
+import { listToolApprovals } from './toolApprovals';
 /**
  * The one Meta agent settings record (shared/src/metaAgent.ts). Background
- * maintenance and the assistant conversation resolve it at the start of every
- * run; nothing copies its values. Stored in `meta`, one key per owner, like
+ * maintenance resolves it at the start of every run; nothing copies its
+ * values. The assistant conversation runs on the global settings instead
+ * (assistant/store.ts). Stored in `meta`, one key per owner, like
  * the chat permission settings.
  */
 
@@ -240,7 +242,7 @@ export function resolveMetaAgentRuntime(ownerUserId?: string | null): MetaAgentR
 }
 
 /** GET /api/meta-agent. */
-export function metaAgentInfo(ownerUserId?: string | null, now = Date.now()): MetaAgentInfo {
+export function metaAgentInfo(ownerUserId?: string | null, now = Date.now(), usage?: MetaAgentUsageToday | null): MetaAgentInfo {
   const resolved = resolveMetaAgentRuntime(ownerUserId);
   const availability = maintenanceRuntimeAvailability(resolved.runtimeId);
   const guard = (toolset: MetaAgentToolset) => getMetaAgentGuardStatus(toolset, () => resolved, ownerUserId);
@@ -248,8 +250,9 @@ export function metaAgentInfo(ownerUserId?: string | null, now = Date.now()): Me
     settings: getMetaAgentSettings(ownerUserId),
     resolved,
     availability: { available: availability.available, reason: availability.available ? null : availability.reason ?? null },
-    guard: { maintenance: guard('maintenance'), chat: guard('chat') },
-    usageToday: usageToday(ownerUserId, now),
+    guard: { maintenance: guard('maintenance'), chat: null },
+    usageToday: usage === undefined ? usageToday(ownerUserId, now) : usage,
+    toolApprovals: listToolApprovals(ownerUserId),
   };
 }
 

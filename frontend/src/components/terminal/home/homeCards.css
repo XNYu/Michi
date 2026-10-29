@@ -1,5 +1,9 @@
 /* Michi Home: greeting, quick starts and the "Start here" cards. Tokens only. */
 
+.home-scroll {
+  container: home-scroll / inline-size;
+}
+
 .home-page {
   width: 100%;
   max-width: 900px;
@@ -9,6 +13,30 @@
   flex-direction: column;
   gap: 18px;
   container-type: inline-size;
+}
+/* A phone, or a narrow pane: 48px gutters would leave a 390px phone with a
+   246px composer. */
+@container home-scroll (max-width: 560px) {
+  .home-page { padding: 28px 20px 56px; }
+}
+
+/* With no Pages content yet, retain the original Home hero's position and width. */
+.home-scroll:has(.home-page[data-default-layout]) {
+  padding: clamp(16px, calc(44vh - 140px), 22vh) 24px 40px;
+}
+.home-page[data-default-layout] {
+  max-width: 850px;
+  padding: 0;
+  gap: 28px;
+}
+.home-default-headline {
+  margin: 0;
+  font-family: var(--ui-font);
+  font-size: var(--fs-5xl);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: var(--ls-tight);
+  text-align: center;
 }
 
 .home-greeting {
@@ -41,6 +69,30 @@
 .home-compose {
   display: flex;
   flex-direction: column;
+  container: home-compose / inline-size;
+}
+
+/* The workspace chip never shortens in the toolbar, where the model name
+   gives way first. */
+.home-workspace-chip { flex-shrink: 0; }
+
+/* Below HOME_TRAY_BELOW (Home.tsx) one toolbar row cannot hold the
+   workspace, +, permission, model and send controls. The toolbar keeps +,
+   model and send; the workspace and permission chips move to the tray under
+   the composer (ManageComposer.css). */
+.home-compose [data-composer-tray] .terminal-composer {
+  /* The tray adds height below; open with two lines, not three. */
+  --composer-min-rows: 2;
+  /* The chips' own 8px padding lines their content up with the input. */
+  --composer-toolbar-padding: 2px 8px 8px;
+}
+/* A long workspace name shortens before the permission chip does. */
+.composer-tray .home-workspace-chip { flex-shrink: 1; min-width: 0; max-width: 100%; }
+/* Touch: + becomes square like the send button instead of 30px wide, and
+   the tray's chips are as easy to hit. */
+@media (pointer: coarse) {
+  .home-compose .terminal-composer,
+  .home-compose .composer-tray { --composer-chip-height: 40px; }
 }
 
 .home-starters {
@@ -67,8 +119,9 @@
 }
 .home-cards__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 4px 10px;
 }
 .home-cards__links {
   /* Ghost buttons: their padding sits outside the text column. */
@@ -95,7 +148,8 @@
   .home-cards__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @container (max-width: 460px) {
-  .home-cards__grid { grid-template-columns: minmax(0, 1fr); }
+  .home-cards__grid,
+  .home-cards__grid[data-count='4'] { grid-template-columns: minmax(0, 1fr); }
 }
 
 .home-card {
@@ -179,4 +233,58 @@
 @container (min-width: 720px) {
   .chat-home-document .michi-doc-grid__region { grid-column: span var(--grid-span); }
   .chat-home-document .michi-doc-grid__resize { display: block; }
+}
+
+/* Workspace chip: hovering swaps the folder icon for a × that leaves the
+   workspace. The × is a sibling button laid over the icon (a button cannot
+   nest in the chip's button), so the wrapper carries the hover state and
+   keeps the chip highlighted while the pointer is on the ×. Hidden and
+   unclickable until revealed, so a tap on the icon still opens the menu.
+   Hover rules only apply where a pointer can hover: a touch screen keeps
+   :hover after a tap, which hid the folder while the menu was open. */
+@media (hover: hover) {
+  .home-workspace-chip:hover > .t-toolbar-chip {
+    background: var(--term-hover-bg, var(--term-alt));
+    color: var(--term-fg);
+  }
+  .home-workspace-chip:hover > .home-workspace-chip__clear {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .home-workspace-chip:hover:has(> .home-workspace-chip__clear) .home-workspace-chip__folder {
+    visibility: hidden;
+  }
+}
+.home-workspace-chip__clear {
+  position: absolute;
+  /* Centred on the 12px folder icon, which starts after the chip's padding. */
+  left: calc(var(--composer-chip-h-pad, 12px) - 3px);
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-top: -9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease);
+}
+.home-workspace-chip__clear:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.home-workspace-chip__clear:hover { color: var(--term-fg); }
+.home-workspace-chip:has(> .home-workspace-chip__clear:focus-visible) .home-workspace-chip__folder {
+  visibility: hidden;
+}
+/* No hover on touch screens: the menu's "no workspace" row does this instead. */
+@media (hover: none) {
+  .home-workspace-chip__clear { display: none; }
 }

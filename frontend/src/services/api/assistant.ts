@@ -8,6 +8,8 @@ import type { AgentReasoning, RuntimeId } from './agentRuntime';
 
 export interface AssistantSettings {
   runtimeId: RuntimeId;
+  /** Provider runtimes (Pi) only. Absent from older backends. */
+  providerId?: string | null;
   /** Null = the runtime's default model. */
   modelId: string | null;
   /** Null = the model's default reasoning. */
@@ -18,19 +20,24 @@ export interface AssistantInfo {
   nodeId: string;
   workspaceId: string;
   treeId: string;
+  /** The global runtime settings: what a new conversation runs on. */
   settings: AssistantSettings;
   /**
-   * What the current conversation runs on: once it has messages it keeps its
-   * runtime, so this can differ from `settings` (the next conversation's).
-   * Absent from older backends.
+   * What the current conversation runs on: what the user picked in its
+   * composer, else `settings`. Absent from older backends.
    */
   conversation?: AssistantSettings;
+  /** True while the conversation has no pick of its own. Absent from older backends. */
+  conversationFollowsGlobal?: boolean;
   supportedRuntimes: RuntimeId[];
   /** Where the conversation moved to another runtime, oldest first. Absent from older backends. */
   runtimeSwitches?: MichiAssistantRuntimeSwitch[];
 }
 
-export type AssistantSettingsPatch = Partial<AssistantSettings>;
+export type AssistantSettingsPatch = Partial<AssistantSettings> & {
+  /** The conversation the pick is for; the current one when omitted. */
+  nodeId?: string;
+};
 
 /** Fired on window after the assistant starts over; `detail` is the new AssistantInfo. */
 export const MICHI_ASSISTANT_RESET_EVENT = 'michi:assistant-reset';
@@ -39,11 +46,14 @@ export class AssistantApiError extends Error {
   readonly status: number;
   /** True when this backend has no (usable) assistant: a 404, or an answer of the wrong shape. */
   readonly missing: boolean;
-  constructor(status: number, message: string, missing = status === 404) {
+  /** 409 assistant_changed: the conversation that is current now (another window started over or switched). */
+  readonly current: AssistantInfo | null;
+  constructor(status: number, message: string, missing = status === 404, current: AssistantInfo | null = null) {
     super(message);
     this.name = 'AssistantApiError';
     this.status = status;
     this.missing = missing;
+    this.current = current;
   }
 }
 
@@ -75,6 +85,8 @@ async function assistantJson(path: string, init?: { method: 'PUT' | 'POST'; body
     throw new AssistantApiError(
       res.status,
       typeof body?.error === 'string' ? body.error : `Assistant request failed (${res.status})`,
+      res.status === 404,
+      body?.code === 'assistant_changed' && isAssistantInfo(body.current) ? body.current : null,
     );
   }
   if (!isAssistantInfo(body)) throw new AssistantApiError(res.status, 'Unexpected assistant response', true);
@@ -85,7 +97,7 @@ export function fetchAssistant(): Promise<AssistantInfo> {
   return assistantJson('');
 }
 
-/** Applies to the assistant's next conversation; the current one keeps its settings. */
+/** The user's pick in one conversation's composer; that conversation keeps it, new ones follow the global settings. */
 export function updateAssistantSettings(patch: AssistantSettingsPatch): Promise<AssistantInfo> {
   return assistantJson('/settings', { method: 'PUT', body: patch });
 }
@@ -93,6 +105,20 @@ export function updateAssistantSettings(patch: AssistantSettingsPatch): Promise<
 /** Starts the assistant over in a fresh conversation. */
 export function resetAssistant(nodeId?: string): Promise<AssistantInfo> {
   return assistantJson('/reset', { method: 'POST', ...(nodeId ? { body: { nodeId } } : {}) });
+}
+
+/**
+ * The Scheduled page's "Create with agent" conversation: the same assistant
+ * workspace and settings, its own conversation and tools. Older backends
+ * answer 404 (no such window there).
+ */
+export function fetchScheduleAssistant(): Promise<AssistantInfo> {
+  return assistantJson('/schedule');
+}
+
+/** Starts the Scheduled window over in a fresh conversation; the Spaces one is untouched. */
+export function resetScheduleAssistant(nodeId?: string): Promise<AssistantInfo> {
+  return assistantJson('/schedule/reset', { method: 'POST', ...(nodeId ? { body: { nodeId } } : {}) });
 }
 
 export async function fetchAssistantConversations(cursor?: string, signal?: AbortSignal): Promise<MichiAssistantConversations> {

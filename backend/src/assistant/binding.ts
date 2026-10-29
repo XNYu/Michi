@@ -7,10 +7,11 @@
  * empty working directory (every call site spreads them after the client's
  * cwd, so the client cannot point the assistant at a project).
  *
- * Runtime choice: the Meta agent settings, resolved on every binding. A
- * conversation whose bound session ran on another runtime gets a new native
- * session on this one, seeded with its visible history, by the same resume
- * paths that rebuild any session whose runtime changed.
+ * Runtime choice: what the user picked in the conversation, else the global
+ * runtime settings, resolved on every binding. A conversation whose bound
+ * session ran on another runtime gets a new native session on this one,
+ * seeded with its visible history, by the same resume paths that rebuild any
+ * session whose runtime changed.
  *
  * A node of an assistant workspace never binds as anything else: the marker
  * is read from the row itself, deleted or purged, and on a cloud backend
@@ -29,8 +30,8 @@ import { getModelReasoningOptions } from '../agents/modelReasoning';
 import { getRuntime } from '../agents/registry';
 import { getDb } from '../services/db';
 import { getNode, type WorkspaceRow } from '../services/dbRepository';
-import { metaAgentGuardFailureOf, recordMetaAgentGuardCheck } from '../services/metaAgent/guardStatus';
-import { ASSISTANT_INSTRUCTIONS, assistantProfileHash, assistantToolProfile } from './policy';
+import { assistantInstructionsFor, assistantProfileHash, assistantToolProfile, type AssistantPurpose } from './policy';
+import { assistantPurposeOf } from './identity';
 import { assistantConversationRuntime, assistantCwd } from './store';
 
 export interface AssistantSessionBinding {
@@ -66,7 +67,7 @@ export function resolveAssistantBinding(nodeId: string, override?: { reasoning: 
     throw new AssistantBindingError('The Michi assistant runs only in the desktop app.');
   }
 
-  const runs = assistantConversationRuntime();
+  const runs = assistantConversationRuntime(nodeId);
   const runtimeProfile: RuntimeProfileV1 = {
     version: 1,
     runtimeId: runs.runtimeId,
@@ -74,12 +75,14 @@ export function resolveAssistantBinding(nodeId: string, override?: { reasoning: 
     modelId: runs.modelId,
     reasoning: override ? override.reasoning : runs.reasoning,
   };
-  const profileHash = assistantProfileHash(runtimeProfile);
+  // The Scheduled window's conversations open with their own instructions; the Michi tools follow the same purpose.
+  const purpose = assistantPurposeOf(nodeId);
+  const profileHash = assistantProfileHash(runtimeProfile, purpose);
   return {
-    effectiveDefinition: assistantDefinition(runtimeProfile),
+    effectiveDefinition: assistantDefinition(runtimeProfile, purpose),
     profileHash,
     sessionOptions: {
-      bootstrapInstructions: ASSISTANT_INSTRUCTIONS,
+      bootstrapInstructions: assistantInstructionsFor(purpose),
       toolProfile: assistantToolProfile(),
       profileHash,
       cwd: assistantCwd(),
@@ -103,30 +106,18 @@ export async function resolveAssistantBindingForSession(nodeId: string): Promise
   return reasoning === profile.reasoning ? binding : resolveAssistantBinding(nodeId, { reasoning });
 }
 
-/**
- * Records the chat toolset's restriction check for an assistant conversation.
- * `error` null: a turn on it succeeded, so its session passed. Otherwise the
- * error its session failed to open with, or its turn ended on; only a
- * restriction failure is recorded. Any other node is ignored.
- */
-export function recordAssistantGuardCheck(nodeId: string, error: unknown | null): void {
-  if (process.env.MICHI_CLOUD === '1') return;
-  const node = getNode(nodeId);
-  const workspace = node ? workspaceRowOf(node.workspace_id) : null;
-  if (!workspace || !isAssistantWorkspaceSettings(workspace.settings)) return;
-  const failure = error === null ? null : metaAgentGuardFailureOf(error);
-  if (error !== null && !failure) return;
-  const { followsGlobal: _followsGlobal, ...profile } = assistantConversationRuntime();
-  recordMetaAgentGuardCheck({ toolset: 'chat', profile, failure });
-}
-
 /** A well-formed definition for code that reads a primary binding; never stored. */
-function assistantDefinition(runtimeProfile: RuntimeProfileV1): EffectiveAgentDefinitionV1 {
+function assistantDefinition(runtimeProfile: RuntimeProfileV1, purpose: AssistantPurpose): EffectiveAgentDefinitionV1 {
   return {
     version: 1,
-    name: 'Michi assistant',
-    description: 'Reads and coordinates Michi threads across workspaces and maintains Michi Pages. Not a worker.',
-    instructions: ASSISTANT_INSTRUCTIONS,
+    ...(purpose === 'schedule' ? {
+      name: 'Michi scheduling assistant',
+      description: 'Creates and manages scheduled jobs in the user\'s workspaces, each change approved by the user. Uses the selected runtime tools.',
+    } : {
+      name: 'Michi assistant',
+      description: 'Reads and coordinates Michi threads across workspaces and maintains Michi Pages. Uses the selected runtime tools.',
+    }),
+    instructions: assistantInstructionsFor(purpose),
     runtimeProfile,
     fallbackChain: [],
     capabilitySnapshot: { version: 1, entries: [] },
@@ -136,12 +127,12 @@ function assistantDefinition(runtimeProfile: RuntimeProfileV1): EffectiveAgentDe
       categories: {
         [AgentPolicyCategory.Read]: AgentPolicyDecision.Allow,
         [AgentPolicyCategory.Search]: AgentPolicyDecision.Allow,
-        [AgentPolicyCategory.Browse]: AgentPolicyDecision.Deny,
-        [AgentPolicyCategory.ArtifactWrite]: AgentPolicyDecision.Deny,
-        [AgentPolicyCategory.FilesystemWrite]: AgentPolicyDecision.Deny,
-        [AgentPolicyCategory.ShellExec]: AgentPolicyDecision.Deny,
+        [AgentPolicyCategory.Browse]: AgentPolicyDecision.Ask,
+        [AgentPolicyCategory.ArtifactWrite]: AgentPolicyDecision.Ask,
+        [AgentPolicyCategory.FilesystemWrite]: AgentPolicyDecision.Ask,
+        [AgentPolicyCategory.ShellExec]: AgentPolicyDecision.Ask,
         [AgentPolicyCategory.ExternalAction]: AgentPolicyDecision.Ask,
-        [AgentPolicyCategory.SpawnAgent]: AgentPolicyDecision.Deny,
+        [AgentPolicyCategory.SpawnAgent]: AgentPolicyDecision.Ask,
       },
       maxDelegationDepth: 0,
       maxConcurrentRuns: 1,

@@ -221,4 +221,10 @@
 @media (pointer: coarse) {
   .terminal-scheduled .sched-row { grid-template-columns: minmax(0, 1fr) 150px 152px; }
   .sched-segment, .sched-day, .sched-choice { min-height: 44px; }
+  /* A narrow page hides the last-run column (above), so the title and the
+     actions share the row; without this the wide three columns return and the
+     actions land on top of the title. */
+  @container (max-width: 640px) { .terminal-scheduled .sched-row { grid-template-columns: minmax(0, 1fr) auto; } }
+  /* The 28×16 switch keeps its look; its tap area grows to the row's height. */
+  .sched-switch .ui-switch::after { content: ''; position: absolute; inset: -14px -5px; }
 }

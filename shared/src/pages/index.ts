@@ -11,3 +11,4 @@ export * from './sandboxProtocol';
 export * from './home';
 export * from './markdownSegments';
 export * from './tasks';
+export * from './viewInteractions';

@@ -5,6 +5,8 @@ export const PAGE_TOOL_NAMES = [
   'read_page',
   'edit_page',
   'create_page',
+  'create_database',
+  'configure_database',
   'read_database',
   'edit_database',
   'list_page_components',

@@ -21,14 +21,12 @@ export type SpacesHomeTarget =
 export const SPACES_HOME: SpacesHomeTarget = { kind: 'home' };
 export const ALL_TASKS: SpacesHomeTarget = { kind: 'all-tasks' };
 
-export type SettingsAreaSection = 'general' | 'runtime' | 'assistant' | 'meta-agent' | 'components' | 'appearance' | 'data';
+export type SettingsAreaSection = 'general' | 'runtime' | 'meta-agent' | 'appearance' | 'data';
 
 export const SETTINGS_AREA_SECTIONS: ReadonlyArray<{ id: SettingsAreaSection; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'runtime', label: 'Runtime (global)' },
-  { id: 'assistant', label: 'Assistant' },
   { id: 'meta-agent', label: 'Meta agent' },
-  { id: 'components', label: 'Components' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'data', label: 'Data & backup' },
 ];

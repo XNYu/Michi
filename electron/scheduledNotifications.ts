@@ -81,6 +81,33 @@ export function describeNotice(notice: ScheduledRunNotice): { title: string; sub
   return null;
 }
 
+export type NoticeContent = NonNullable<ReturnType<typeof describeNotice>>;
+
+/**
+ * How Electron main handles a notice. `ack` tells the backend to stop
+ * replaying it; a deferred notice stays pending and is replayed when the
+ * notification feed next connects.
+ */
+export type NoticeDeliveryPlan =
+  | { kind: 'skip'; ack: boolean }
+  | { kind: 'toast'; ack: true; content: NoticeContent }
+  | { kind: 'banner'; ack: true; content: NoticeContent }
+  | { kind: 'defer'; ack: false };
+
+export function planNoticeDelivery(
+  notice: ScheduledRunNotice,
+  env: { hasFocusedWindow: boolean; osNotificationsSupported: boolean },
+): NoticeDeliveryPlan {
+  // Live 'started' events carry no notification state to acknowledge.
+  if (notice.phase === 'started') return { kind: 'skip', ack: false };
+  const content = describeNotice(notice);
+  if (!content) return { kind: 'skip', ack: true };
+  // The user is looking at Michi: an in-app toast, not an OS banner.
+  if (env.hasFocusedWindow) return { kind: 'toast', ack: true, content };
+  if (env.osNotificationsSupported) return { kind: 'banner', ack: true, content };
+  return { kind: 'defer', ack: false };
+}
+
 export interface NotificationFeedOptions {
   /** Current backend port; null pauses the feed. */
   port(): number | null;

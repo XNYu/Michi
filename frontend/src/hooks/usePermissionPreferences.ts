@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import type { ChatPermissionSettings } from 'michi-shared';
+import { chatPermissionChoice, type ChatPermissionSettings } from 'michi-shared';
 import { API_BASE_URL } from '../config/env';
 import { usePrefs } from '../state/prefs';
 import { useBackendScope } from './useBackendScope';
@@ -21,9 +21,13 @@ export function usePermissionPreferences(apiBase = API_BASE_URL) {
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
   }, [remote, retry]);
+  const mode = remote ? snapshot.settings?.mode ?? 'ask' : prefs.permissionMode;
+  const approveForMe = remote ? snapshot.settings?.approveForMe === true : prefs.permissionApproveForMe === true;
   return {
     global: remote ? snapshot.settings?.global ?? false : prefs.globalPermissions,
-    mode: remote ? snapshot.settings?.mode ?? 'ask' : prefs.permissionMode,
+    mode,
+    /** The global mode as picked, with Approve for me. */
+    choice: chatPermissionChoice(mode, approveForMe),
     loading: remote && snapshot.loading,
     error: remote ? snapshot.error : null,
     retry,

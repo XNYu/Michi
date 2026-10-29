@@ -19,6 +19,7 @@ import {
   type SubagentInfo,
 } from 'michi-shared';
 import { CLAUDE_FALLBACK_MODEL, createTranslator } from 'michi-runtime/internal/adapters/claude/claudeEventTranslator';
+import { getClaudeModelEntry } from 'michi-runtime/internal/adapters/claude/claudeModelCatalog';
 import { DEFAULT_MODELS } from '../src/agents/agentConfig';
 import { NormalizedEvent } from '../src/services/chatEvents';
 import { applyTurnEvent, createDurableTurn, parseChatStreamEvent } from 'michi-shared';
@@ -940,5 +941,124 @@ describe('claudeEventTranslator', () => {
     assert.equal(rosters.length, 1);
     const subs = rosters[0].subagents as Array<Record<string, unknown>>;
     assert.equal(subs[0].status, 'terminated');
+  });
+});
+
+// ── Native usage, compaction and held turns (probe-backed, CLI 2.1.312) ──────
+
+describe('claudeEventTranslator native capabilities', () => {
+  // The shape a 2.1.312 result carries (probe 01-usage): per-turn main-loop usage.
+  const RESULT_USAGE = {
+    input_tokens: 3, cache_creation_input_tokens: 7237, cache_read_input_tokens: 11849, output_tokens: 5,
+    output_tokens_details: { thinking_tokens: 2 }, service_tier: 'standard',
+  };
+
+  test('a successful result reports its own token counts as native and no cost', () => {
+    const emitted: NormalizedEvent[] = [];
+    const { feed } = createTranslator((ev) => emitted.push(ev));
+    feed({ type: 'result', subtype: 'success', usage: RESULT_USAGE, total_cost_usd: 0.0307,
+      modelUsage: { 'global.anthropic.claude-sonnet-4-6': { costUSD: 0.0307, costBasis: 'list', contextWindow: 200_000 } } });
+    const summary = emitted.find((ev) => ev.kind === 'usage_summary');
+    assert.ok(summary?.kind === 'usage_summary');
+    assert.equal(summary.source, 'native');
+    assert.equal(summary.inputTokens, 3 + 7237 + 11849);
+    assert.equal(summary.cachedInputTokens, 11849);
+    assert.equal(summary.outputTokens, 5);
+    assert.equal(summary.reasoningOutputTokens, 2);
+    assert.equal(summary.totalTokens, 3 + 7237 + 11849 + 5);
+    assert.equal(summary.charge, undefined, 'the CLI cost is a list-price estimate');
+    assert.equal(summary.totalCredits, undefined);
+    // Across the wire: the route keeps every token field.
+    const wire = toChatStreamEvent(summary);
+    assert.ok(wire);
+    const parsed = parseChatStreamEvent(wire!.event, JSON.stringify(wire!.data));
+    assert.equal(parsed?.event, 'usage_summary');
+    assert.equal(parsed?.event === 'usage_summary' && parsed.data.totalTokens, 19094);
+    assert.equal(parsed?.event === 'usage_summary' && parsed.data.cachedInputTokens, 11849);
+  });
+
+  test('a result without usage is unverifiable, not zero', () => {
+    const emitted: NormalizedEvent[] = [];
+    const { feed } = createTranslator((ev) => emitted.push(ev));
+    feed({ type: 'result', subtype: 'success' });
+    const summary = emitted.find((ev) => ev.kind === 'usage_summary');
+    assert.ok(summary?.kind === 'usage_summary');
+    assert.equal(summary.source, 'unverifiable');
+    assert.equal(summary.totalTokens, undefined);
+  });
+
+  test('a compaction reports start, end and the compacted context size', () => {
+    const emitted: NormalizedEvent[] = [];
+    const translator = createTranslator((ev) => emitted.push(ev));
+    translator.feed({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-sonnet-4-6' });
+    // The order probe 02-compact recorded.
+    translator.feed({ type: 'system', subtype: 'status', status: 'compacting' });
+    translator.feed({ type: 'system', subtype: 'status', status: null, compact_result: 'success' });
+    translator.feed({ type: 'system', subtype: 'init', session_id: 's', model: 'claude-sonnet-4-6' });
+    translator.feed({ type: 'system', subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'manual', pre_tokens: 19_107, post_tokens: 4_174, duration_ms: 7379 } });
+    translator.feed({ type: 'user', message: { role: 'user', content: 'This session is being continued…' } });
+    translator.feed({ type: 'result', subtype: 'success', num_turns: 0, usage: { input_tokens: 0, output_tokens: 0 } });
+    assert.deepEqual(emitted.slice(0, 3).map((ev) => ev.kind), ['compaction_start', 'compaction_end', 'context_usage']);
+    const context = emitted[2];
+    assert.ok(context.kind === 'context_usage');
+    const { entry } = getClaudeModelEntry('claude-sonnet-4-6');
+    assert.equal(context.contextUsagePercentage, (4_174 / entry.contextWindow) * 100);
+    assert.deepEqual(translator.takeCompaction(), { result: 'success', trigger: 'manual', preTokens: 19_107, postTokens: 4_174 });
+    assert.equal(translator.takeCompaction(), null, 'taken once');
+    assert.equal(emitted.at(-1)?.kind, 'turn_end');
+  });
+
+  test('a failed compaction ends with its error and reports no boundary', () => {
+    const emitted: NormalizedEvent[] = [];
+    const translator = createTranslator((ev) => emitted.push(ev));
+    translator.feed({ type: 'system', subtype: 'status', status: 'compacting' });
+    translator.feed({ type: 'system', subtype: 'status', status: null, compact_result: 'failed', compact_error: 'Not enough messages' });
+    assert.deepEqual(emitted, [
+      { kind: 'compaction_start', detail: 'Claude Code is compacting the conversation' },
+      { kind: 'compaction_end', detail: 'Compaction failed: Not enough messages' },
+    ]);
+    assert.deepEqual(translator.takeCompaction(), { result: 'failed', error: 'Not enough messages' });
+  });
+
+  test('an ordinary requesting status is not a compaction', () => {
+    const emitted: NormalizedEvent[] = [];
+    const { feed } = createTranslator((ev) => emitted.push(ev));
+    feed({ type: 'system', subtype: 'status', status: 'requesting' });
+    feed({ type: 'system', subtype: 'status', status: null });
+    assert.deepEqual(emitted, []);
+  });
+
+  test('a held result carries its tokens into the summary of the result that ends the host turn', () => {
+    const emitted: NormalizedEvent[] = [];
+    let hold = true;
+    const translator = createTranslator((ev) => emitted.push(ev), { holdTurnEnd: () => hold });
+    translator.startTurn();
+    translator.feed({ type: 'result', subtype: 'success', usage: { input_tokens: 100, output_tokens: 10 } });
+    assert.equal(emitted.length, 0, 'no summary, no turn_end while held');
+    hold = false;
+    translator.feed({ type: 'result', subtype: 'success', usage: { input_tokens: 200, cache_read_input_tokens: 50, output_tokens: 20 } });
+    const summaries = emitted.filter((ev): ev is Extract<NormalizedEvent, { kind: 'usage_summary' }> => ev.kind === 'usage_summary');
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].inputTokens, 350);
+    assert.equal(summaries[0].outputTokens, 30);
+    assert.equal(summaries[0].cachedInputTokens, 50);
+    assert.deepEqual(emitted.filter((ev) => ev.kind === 'turn_end'), [{ kind: 'turn_end', stopReason: 'end_turn' }]);
+  });
+
+  test('releaseHeldTurn ends a held turn with the carried tokens; error results are never held', () => {
+    const emitted: NormalizedEvent[] = [];
+    const translator = createTranslator((ev) => emitted.push(ev), { holdTurnEnd: () => true });
+    translator.startTurn();
+    translator.feed({ type: 'result', subtype: 'success', usage: { input_tokens: 40, output_tokens: 4 } });
+    translator.releaseHeldTurn();
+    const summary = emitted.find((ev) => ev.kind === 'usage_summary');
+    assert.ok(summary?.kind === 'usage_summary');
+    assert.equal(summary.totalTokens, 44);
+    assert.equal(emitted.at(-1)?.kind, 'turn_end');
+    emitted.length = 0;
+    translator.startTurn();
+    translator.feed({ type: 'result', subtype: 'error_during_execution', usage: { input_tokens: 1, output_tokens: 1 } });
+    assert.deepEqual(emitted.at(-1), { kind: 'turn_end', stopReason: 'error' });
   });
 });

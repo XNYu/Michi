@@ -289,9 +289,11 @@ export interface HostNodeRecord {
   purged_at?: number | null;
 }
 
-/** The workspace fields adapters read: its folder, owner and lifecycle stamps. */
+/** The workspace fields adapters read: its name, directory, owner and lifecycle stamps. */
 export interface HostWorkspaceRecord {
   id: string;
+  /** Display name; the Crew adapter files a workspace's sessions under it. */
+  name?: string | null;
   cwd?: string | null;
   owner_user_id?: string | null;
   deleted_at?: number | null;
@@ -435,6 +437,11 @@ export interface PermissionDecisionRequest {
 /** The host's chat permission policy: modes, always-allow grants and their revocation. */
 export interface PermissionPolicyPort {
   mode(owner: RuntimeSessionOwner | undefined, ownerUserId?: string | null): ChatPermissionMode;
+  /**
+   * Approve for me: the chat's mode is Ask, and a runtime that has its own
+   * trust classifier (Kiro V3) may let it approve what no rule settles. Absent: off.
+   */
+  approveForMe?(owner: RuntimeSessionOwner | undefined, ownerUserId?: string | null): boolean;
   /** The user whose grants apply: `ownerUserId`, or the host's owner of the chat when absent. */
   resolveOwnerUserId(owner: RuntimeSessionOwner, ownerUserId?: string | null): string | null | undefined;
   decide(request: PermissionDecisionRequest): HostPermissionDecision;

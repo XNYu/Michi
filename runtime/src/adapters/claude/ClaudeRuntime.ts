@@ -29,6 +29,7 @@ import { findClaudeBinary, preflightClaudeAuth } from './claudeBinary';
 import { ClaudeSessionManager, ClaudeConcurrencyError } from './ClaudeSessionManager';
 import type { RuntimeDescriptor } from '../../contract/descriptor';
 import { CLAUDE_RUNTIME_DESCRIPTOR } from './claudeDescriptor';
+import { CLAUDE_MODES } from './claudeModes';
 import { NativeResumeUnavailableError } from '../../contract/errors';
 import { forkClaudeHistory } from './claudeSdkHistory';
 import { normalizeWorkspaceCwd } from '../../core/pathSandbox';
@@ -47,7 +48,8 @@ export class ClaudeSessionNotResumableError extends NativeResumeUnavailableError
 // ---- Capabilities ------------------------------------------------------------
 
 const CLAUDE_CAPABILITIES: AgentCapabilities = {
-  modes: false,
+  // Work modes for chats: Default and Plan (claudeModes.ts).
+  modes: true,
   permissions: true,
   models: true,
   providerModels: false,
@@ -381,7 +383,7 @@ export class ClaudeRuntime implements AgentRuntime {
   }
 
   async listModes(_sessionId: string): Promise<SessionMode[]> {
-    return [];
+    return CLAUDE_MODES.map((mode) => ({ ...mode }));
   }
 
   async listModels(): Promise<ModelInfo[]> {

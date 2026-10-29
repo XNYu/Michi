@@ -134,8 +134,9 @@ describe('scheduled maintenance and the Meta agent restriction check', () => {
 
   /** Makes the job due and runs one scheduler tick. */
   async function dueTick(scheduler: ScheduledJobScheduler, jobId: string): Promise<void> {
-    now += 61_000;
-    getDb().prepare('UPDATE scheduled_jobs SET next_run_at=? WHERE id=?').run(now - 1, jobId);
+    await scheduler.tick();
+    now += 61_000 * 2 ** Math.max(0, scheduler.getJob(jobId).consecutiveFailures - 1);
+    if (scheduler.listJobs().some(job => job.id === jobId)) getDb().prepare('UPDATE scheduled_jobs SET next_run_at=? WHERE id=?').run(now - 1, jobId);
     await scheduler.tick();
     await until(() => scheduler.getJob(jobId).activeRunId === null);
   }
@@ -199,20 +200,20 @@ describe('scheduled maintenance and the Meta agent restriction check', () => {
 
   test('a failed check holds scheduled runs until a retry, which starts one at once', async () => {
     const { scheduler, executor, jobId } = fixture('kiro');
-    scheduler.start();
     try {
       const error = new MetaAgentGuardError({ runtimeId: 'kiro', toolset: 'maintenance', unexpectedTools: ['desk_now'] });
       executor.behaviors.push({ kind: 'reject', error });
       await runOnce(scheduler, jobId);
+      scheduler.start();
       assert.equal(executor.started.length, 1);
 
       for (let i = 0; i < 3; i += 1) await dueTick(scheduler, jobId);
       assert.equal(executor.started.length, 1, 'held runs never open a session');
       const held = scheduler.getJob(jobId);
       assert.equal(held.lastStatus, 'failed');
-      assert.equal(held.lastError, `Skipped: ${error.message}`);
+      assert.equal(held.lastError, error.message);
       assert.equal(held.consecutiveFailures, 1, 'held runs do not count toward the auto-pause');
-      assert.ok((held.nextRunAt ?? 0) > now, 'the schedule keeps moving');
+      assert.equal(held.nextRunAt, null, 'no per-workspace schedule is created');
 
       executor.behaviors.push({ kind: 'succeed' });
       retryMetaAgentGuard(['maintenance']);
@@ -228,10 +229,10 @@ describe('scheduled maintenance and the Meta agent restriction check', () => {
 
   test('retrying the chat toolset does not start maintenance', async () => {
     const { scheduler, executor, jobId } = fixture('kiro');
-    scheduler.start();
     try {
       executor.behaviors.push({ kind: 'reject', error: new MetaAgentGuardError({ runtimeId: 'kiro', toolset: 'maintenance', unexpectedTools: ['x'] }) });
       await runOnce(scheduler, jobId);
+      scheduler.start();
       retryMetaAgentGuard(['chat']);
       await flush();
       assert.equal(executor.started.length, 1);
@@ -243,10 +244,10 @@ describe('scheduled maintenance and the Meta agent restriction check', () => {
 
   test('a Meta agent settings change releases the hold', async () => {
     const { scheduler, executor, jobId } = fixture('claude');
-    scheduler.start();
     try {
       executor.behaviors.push({ kind: 'fail', error: new MetaAgentGuardError({ runtimeId: 'claude', toolset: 'maintenance', unexpectedTools: ['native:Bash'] }).message });
       await runOnce(scheduler, jobId);
+      scheduler.start();
       await dueTick(scheduler, jobId);
       assert.equal(executor.started.length, 1);
 
@@ -268,10 +269,10 @@ describe('scheduled maintenance and the Meta agent restriction check', () => {
 
   test('ordinary scheduled jobs are never held', async () => {
     const { scheduler, executor, jobId } = fixture('kiro');
-    scheduler.start();
     try {
       executor.behaviors.push({ kind: 'reject', error: new MetaAgentGuardError({ runtimeId: 'kiro', toolset: 'maintenance', unexpectedTools: ['x'] }) });
       await runOnce(scheduler, jobId);
+      scheduler.start();
       const plain = scheduler.createJob({ workspaceId: 'ws', name: 'Digest', prompt: 'Summarize',
         schedule: { kind: 'every', everySeconds: 60 }, runtimeId: 'kiro' });
       await dueTick(scheduler, plain.id);

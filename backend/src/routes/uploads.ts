@@ -1,5 +1,5 @@
 import express from "express";
-import { NotFoundError } from "../agents/tools/pathSandbox";
+import { NotFoundError } from "../services/workspaceSandbox";
 import { resolveWorkspaceFileRoot, WORKSPACE_FILE_ID_RE } from "../services/workspaceFiles";
 
 export function setupUploadsRoutes(): express.Router {

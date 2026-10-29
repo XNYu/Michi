@@ -14,7 +14,7 @@ dist/
 .env.*.local
 # Deployment-provider configuration is local to each checkout.
 /railway.toml
-# Re-include committed templates (root + per-package). See docs/environment.md.
+# Re-include committed templates (root + per-package). See README.md, Configuration.
 !.env.example
 !**/.env.example
 
@@ -85,6 +85,10 @@ frontend/.omc/
 # directory. To unignore one file we have to unignore the directory
 # itself first, then re-ignore everything in it, then unignore the
 # specific file.
+#
+# Every tracked file under docs/ and mocks/ is listed here, so a new file
+# next to them stays ignored until it is added to this list. Check with
+# `git ls-files | git check-ignore --no-index --stdin` (prints nothing).
 docs/
 !docs/
 docs/*
@@ -94,16 +98,6 @@ docs/*
 !docs/remote-backend.md
 !docs/kiro-acp-validation.md
 !docs/internal-usage-telemetry.md
-!docs/validation/
-docs/validation/*
-!docs/validation/2026-10-13-claude-sdk-electron.md
-!docs/validation/2026-10-22-claude-sdk-integration.md
-!docs/investigations/
-docs/investigations/*
-!docs/investigations/claude-agent-sdk/
-docs/investigations/claude-agent-sdk/*
-!docs/investigations/claude-agent-sdk/2026-10-12-comparison.md
-!docs/investigations/claude-agent-sdk/2026-10-21-acp-comparison.md
 !docs/features/
 docs/features/*
 !docs/features/*.md
@@ -157,7 +151,16 @@ artifacts-state.png
 cfn-template.json
 extension/
 feasibility-of-background-execution-during-sleep-*.md
+# Mocks stay local, except the tracked files listed here.
 mocks/
+!/mocks/
+/mocks/*
+!/mocks/streaming-reveal-explainer.html
+!/mocks/streaming-reveal-lab.html
+!/mocks/terminal-motion.html
+!/mocks/typography-lab.html
+!/mocks/ui-font-lab.html
+!/mocks/ui-mono-units.html
 
 # Stitch design snapshots and metadata
 /.stitch/

@@ -7,7 +7,7 @@ import { SUBMIT_AGENT_RESULT_TOOL } from "../src/agents/runs/runWorkerTools";
 import { chatOwner, runOwner } from "./helpers/owners";
 
 const baseCfg = { getAgentConfig: () => ({ runtime: "pi", provider: "x", modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => "", resolveReasoning: () => undefined };
-const store = { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} };
+const store = { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null };
 // Minimal typebox stand-in: every builder returns a plain object.
 const Type: any = new Proxy({}, { get: () => (..._a: any[]) => ({}) });
 function opts() {
@@ -120,9 +120,26 @@ describe("Pi task tools", () => {
     const list = tools.find((tool: any) => tool.name === "list_tasks");
     assert.ok(tools.find((tool: any) => tool.name === "read_home"));
     assert.equal(tools.find((tool: any) => tool.name === "edit_home")?.executionMode, "sequential");
+    for (const name of ["create_database", "configure_database"]) {
+      assert.equal(tools.find((tool: any) => tool.name === name)?.executionMode, "sequential");
+    }
     assert.ok(open, "open_task_database");
     assert.ok(list, "list_tasks");
     assert.equal(open.executionMode, "sequential");
     assert.equal(list.executionMode, undefined);
   });
+});
+
+test('Pi forwards arbitrary artifact paths to the bridge', async (t) => {
+  configureRuntimeDeps({ historyStore: store as any, agentConfig: baseCfg, dataDir: '/tmp/agent-runtime-test' });
+  t.after(() => __resetRuntimeDeps());
+  let received: any;
+  const tool = buildPiTools({ ...opts(), bridge: { saveContext: (args: any) => {
+    received = args;
+    return { name: args.name, filePath: args.path, size: 5 };
+  } } }).find((tool: any) => tool.name === 'save_artifact');
+  assert.ok(tool);
+  await tool.execute('save-file', { name: 'shot', path: '.attachments/shot.png' });
+  assert.equal(received.path, '.attachments/shot.png');
+  assert.equal(received.body, undefined);
 });

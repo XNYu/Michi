@@ -19,7 +19,6 @@ vi.mock('../../services/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/api')>();
   return {
     ...actual,
-    listModels: vi.fn().mockResolvedValue({ models: [], defaultModel: null }),
     listAgentModes: vi.fn().mockResolvedValue({ availableModes: [], defaultModeId: null }),
     fetchAllWorkspaces: vi.fn().mockResolvedValue([]),
     fetchAllWorkspacesMeta: vi.fn().mockResolvedValue([]),

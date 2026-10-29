@@ -9,6 +9,12 @@ export function workspaceMachineLabel(connectionId: string | undefined, connecti
   return `Remote${separator}${connection?.name || connection?.sshHost || 'Unavailable connection'}`;
 }
 
+/** The note a workspace picker shows after a remote workspace's name; none for a local one. */
+export function workspaceRemoteNote(connectionId: string | undefined, connections: BackendConnectionSummary[]): string | undefined {
+  if (!connectionId || connectionId === LOCAL_BACKEND_CONNECTION_ID) return undefined;
+  return workspaceMachineLabel(connectionId, connections);
+}
+
 export function WorkspaceLocation({ connectionId, separator }: { connectionId?: string; separator?: string }) {
   const connections = useBackendConnections();
   const remote = !!connectionId && connectionId !== LOCAL_BACKEND_CONNECTION_ID;

@@ -20,7 +20,7 @@ function rowKeys(action: () => void) {
 
 /** The system row's sub-line: what the Meta agent's background maintenance is doing now. */
 function systemSubline(load: MetaAgentOverviewLoad, info: MetaAgentInfo | null): string {
-  if (load.kind === 'loading') return 'Every 60 s';
+  if (load.kind === 'loading') return 'Checks every 60 s';
   if (load.kind !== 'ready') return load.kind === 'unavailable' ? 'Not set up yet' : 'Status unavailable';
   const { cursors } = load.overview;
   // The same status the Spaces sidebar, the Home and the detail page read.
@@ -59,7 +59,7 @@ export function ScheduledSidebar({ selectedJobId, onSelectJob, onNavigate, syste
     return jobs.filter((job) => !hidden.has(job.id)).sort((a, b) => a.name.localeCompare(b.name));
   }, [jobs, managed]);
   const metaAgentOpen = useMetaAgentDetailOpen();
-  const openMetaAgent = () => { openMetaAgentDetail(selectedJobId); onNavigate?.(); };
+  const openMetaAgent = () => { openMetaAgentDetail(); onNavigate?.(); };
   return (
     <div className="area-side scheduled-side" aria-label="Scheduled jobs">
       <div className="area-side__grow term-scrollbar">

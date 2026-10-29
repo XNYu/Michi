@@ -256,7 +256,7 @@ describe('profile', () => {
 
   it('honors generic restricted profiles and both legacy Meta agent toolsets', () => {
     assert.equal(profile.isRestricted(toolProfile), true);
-    assert.equal(profile.isRestricted({ assistant: true }), true);
+    assert.equal(profile.isRestricted({ assistant: true }), false);
     assert.equal(profile.isRestricted({ maintenance: true }), true);
     assert.equal(profile.isRestricted(undefined), false);
     assert.equal(profile.isRestricted({ allowedToolNames: [] }), false);
@@ -279,7 +279,7 @@ describe('profile', () => {
 
   it('the adapters and the default host lock a restricted session down exactly as Michi locks its assistant', () => {
     const fallback = createDefaultHost().profile;
-    const restricted = assistantPolicy.assistantToolProfile();
+    const restricted = { ...assistantPolicy.assistantToolProfile(), restricted: true };
     for (const ownerMode of ['interactive', 'headless'] as const) {
       for (const permissionMode of ['yolo', 'ask', undefined] as const) {
         for (const toolProfile of [restricted, { restricted: true }, { maintenance: true as const }, undefined, { allowedToolNames: ['read'] }]) {

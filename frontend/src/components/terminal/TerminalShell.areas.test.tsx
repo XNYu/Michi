@@ -46,6 +46,7 @@ const rail = (name: string) => screen.getByRole('navigation', { name: 'Areas' })
 
 describe('TerminalShell areas', () => {
   beforeEach(() => {
+    closeMetaAgentDetail();
     sessionStorage.clear();
     localStorage.setItem('michi:v1:prefs', JSON.stringify({ onboardingCompletedAt: 1, sidebarCollapsed: false, reduceMotion: true }));
   });
@@ -140,6 +141,33 @@ describe('TerminalShell areas', () => {
     fireEvent.click(rail('spaces'));
     expect(await screen.findByRole('heading', { level: 1, name: 'Home' })).toBeTruthy();
     expect(screen.queryByText('Space view')).toBeNull();
+  });
+
+  it('records Scheduled list and details separately and restores them across areas', async () => {
+    render(<PrefsProvider><TerminalShell /></PrefsProvider>);
+    fireEvent.click(rail('scheduled'));
+    expect(await screen.findByText('Scheduled page')).toBeTruthy();
+    fireEvent.click(screen.getByText('Meta agent · maintain Pages'));
+    expect(await screen.findByText('Meta agent detail page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Navigate back' }));
+    expect(await screen.findByText('Scheduled page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Navigate back' }));
+    expect(await screen.findByText('Conversation home')).toBeTruthy();
+    fireEvent.keyDown(window, { key: ']', metaKey: true });
+    expect(await screen.findByText('Scheduled page')).toBeTruthy();
+    fireEvent.keyDown(window, { key: ']', metaKey: true });
+    expect(await screen.findByText('Meta agent detail page')).toBeTruthy();
+    fireEvent.click(rail('conversations'));
+    expect(await screen.findByText('Conversation home')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Navigate back' }));
+    expect(await screen.findByText('Meta agent detail page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'SCHEDULED' }));
+    expect(await screen.findByText('Scheduled page')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Navigate back' }));
+    expect(await screen.findByText('Meta agent detail page')).toBeTruthy();
+    fireEvent.click(rail('scheduled'));
+    expect(await screen.findByText('Scheduled page')).toBeTruthy();
+    expect(screen.queryByText('Meta agent detail page')).toBeNull();
   });
 
   it('opens the Meta agent page from the pinned Scheduled row and Settings › Meta agent from its link event', async () => {

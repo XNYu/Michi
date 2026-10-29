@@ -7,7 +7,6 @@
 // concern module it belongs to; it flows out here automatically.
 
 export type { AgentCommand, PlanEntry, StreamHandlers } from './chatStreamEvents';
-export type { PermissionRequest } from '../state/chatTypes';
 
 export * from './api/uploads';
 export * from './api/sessions';

@@ -125,7 +125,8 @@
    Promoted from chat-scoped rules so all three rendering surfaces share the
    same Typora/GitHub-inspired table, blockquote, hr, and link treatment.
    Uses currentColor-based tints so each pane's color system is respected.
-   Calibrated in mocks/markdown-rendering-comparison.html.
+   These rules are the reference for the values: the comparison mock they
+   were tuned in (cbaff76e) was never committed.
    -------------------------------------------------------------------------- */
 
 .prose hr {
@@ -321,6 +322,12 @@
 :is(.terminal-message-assistant, .terminal-message-user) .prose :where(li:first-child, li > p:first-child, blockquote > :first-child),
 :is(.terminal-message-assistant, .terminal-message-user) .prose[data-markdown-first] > :first-child {
   margin-block-start: 0;
+}
+/* Prose carries only leading margins, so a thought/agent block right after a
+   paragraph would sit flush against it. Mirror the block's own 8px bottom
+   margin above it. The reinterpret wrapper is the streaming-time root. */
+.terminal-message-assistant > :is(.prose, [data-markdown-reinterpret-strategy]) + [data-agent-block] {
+  margin-block-start: 8px;
 }
 :is(.terminal-message-assistant, .terminal-message-user) .prose table {
   font-size: calc(var(--message-body-size) * 0.95);
@@ -704,6 +711,38 @@
   margin: 0;
 }
 
+/* Phones read a settled table as one card per row, each value beside its
+   column name (MarkdownFeatureTable sets data-cards and the labels), so no
+   column hides past the edge. Copy, download and fullscreen still use the table.
+   MarkdownContent wraps each cell's content in .michi-table-cell, so the grid
+   holds exactly the label and one value item; bare text, code and <br> would
+   otherwise each become a grid item and wrap into the label column. */
+@media (max-width: 700px) {
+  .michi-table-scroll:has(> table[data-cards]) { overflow: visible; }
+  .prose table[data-cards],
+  .prose table[data-cards] :is(tbody, tr) { display: block; }
+  .prose table[data-cards] thead,
+  .prose table[data-cards] tr[data-cards-head] { display: none; }
+  .prose table[data-cards] tr {
+    padding: 10px 14px;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  }
+  .prose table[data-cards] tbody tr:last-child { border-bottom: 0; }
+  .prose table[data-cards] td {
+    display: grid;
+    grid-template-columns: minmax(5em, 32%) minmax(0, 1fr);
+    gap: 10px;
+    padding: 3px 0;
+    border: 0;
+  }
+  .prose table[data-cards] td::before {
+    content: attr(data-label);
+    color: var(--term-muted);
+    font-size: 0.92em;
+  }
+  .prose table[data-cards] td:first-child { font-weight: 600; }
+}
+
 .michi-mermaid-block {
   content-visibility: auto;
   contain-intrinsic-size: auto 220px;
@@ -820,6 +859,13 @@
 [data-code-wrap="on"] .michi-code-line {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* Phones always wrap: a block that scrolls sideways under a finger reads as
+   the page itself sliding. */
+@media (max-width: 700px) {
+  .michi-code-scroll { overflow-x: hidden; }
+  .michi-code-pre { min-width: 0; }
+  .michi-code-line { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 
 [data-terminal-palette="monokai"] .michi-code-token,
@@ -971,10 +1017,33 @@ body,
   height: 100%;
 }
 
+/* An application shell, not a document: the page itself never scrolls. Without
+   this, iOS rubber-bands the whole page when a drag starts on fixed chrome (the
+   composer, top bar, drawer tabs) or runs past the end of a transcript or list,
+   so the composer and sidebar move with it; Android pulls to refresh. Inner
+   scrollers keep their own scrolling and bounce. Vertical only, so horizontal
+   history swipes still work. */
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
 body {
   @apply bg-app text-fg;
   font-family: var(--ui-font);
   -webkit-font-smoothing: antialiased;
+}
+
+/* iOS Safari zooms into any focused field under 16px and stays zoomed, which
+   crops menus behind the keyboard and lets the page pan sideways. Many fields
+   size their text inline, hence !important. */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='color']),
+  textarea,
+  select,
+  [contenteditable='true'] {
+    font-size: max(16px, 1em) !important;
+  }
 }
 
 /* Design-system variables consumed by the terminal shell's inline styles. */
@@ -1758,6 +1827,11 @@ html[data-vibrancy="on"],
 .t-icon-btn.is-on:hover {
   background: color-mix(in srgb, var(--term-fg) 12%, transparent);
 }
+/* Message actions (copy, retry, edit, branch) are 26px for a mouse; a finger
+   needs 40. The negative block margin keeps the space under the message. */
+@media (hover: none) and (pointer: coarse) {
+  .t-msg-actions .t-icon-btn { min-width: 40px; min-height: 40px; margin-block: -7px; }
+}
 
 /* Text buttons — compact text-label affordance, default borderless.
    Sister to .t-icon-btn for label-bearing (not icon-only) affordances.
@@ -1847,6 +1921,10 @@ html[data-vibrancy="on"],
   cursor: pointer;
 }
 .t-followups-toggle:hover { background: var(--term-alt); }
+/* Touch: a 40px target; the negative margin keeps the heading's height. */
+@media (hover: none) and (pointer: coarse) {
+  .t-followups-toggle { width: 40px; height: 40px; margin: -7px -7px -7px 0; }
+}
 .t-followups-toggle svg { transition: transform var(--t-soft) ease-out; }
 .t-followups-toggle[aria-expanded='false'] svg { transform: rotate(-90deg); }
 .t-followups > [hidden] { display: none; }
@@ -1968,9 +2046,15 @@ html[data-vibrancy="on"],
   }
   .t-followup-branch:not(:disabled):hover { color: var(--term-accent); }
 }
+/* Narrow: the glyph and "Branch" stay on one line inside the right quarter by
+   trimming its padding; below 300px only the glyph fits, and the button keeps
+   its accessible name. */
 @container followups (max-width: 420px) {
   .t-followup-text { padding-inline: 12px; }
-  .t-followup-branch { flex-direction: column; gap: 6px; }
+  .t-followup-branch { gap: 5px; padding-inline: 4px; }
+}
+@container followups (max-width: 300px) {
+  .t-followup-branch-label { display: none; }
 }
 @keyframes t-followup-pop {
   0% {
@@ -2910,6 +2994,17 @@ html[data-vibrancy="on"],
     pointer-events: auto;
   }
 }
+/* A finger needs more than the 16px ⋯ and the 22px workspace buttons. The ⋯
+   takes the row's full height and 32px of width; its wrapper drops most of its
+   right padding, so the footprint grows by 12px, which the row's trailing caret
+   adds to its clearance through --row-kebab-extra (see caretKebabClearance). */
+@media (hover: none) and (pointer: coarse) {
+  .terminal-sidebar { --row-kebab-extra: 12px; }
+  .row-kebab,
+  .terminal-sidebar[data-row-style]:not([data-row-style='classic']) .row-kebab { padding-right: 2px !important; }
+  .row-kebab > button { width: 32px !important; height: 100% !important; max-height: 44px; }
+  .ws-action-btn { width: 32px; height: 32px; }
+}
 .row-kebab > button:hover {
   color: var(--term-fg) !important;
 }
@@ -3167,6 +3262,9 @@ html[data-vibrancy="on"],
 }
 .ui-menu-item[data-danger='true'] {
   color: var(--term-danger, #a8261a);
+}
+@media (hover: none) and (pointer: coarse) {
+  .ui-menu-item { min-height: 44px; }
 }
 .ui-menu-item[data-disabled='true'] {
   color: var(--term-faint);

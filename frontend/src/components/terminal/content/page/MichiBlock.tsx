@@ -41,6 +41,7 @@ import type { PageBlockWithSources } from './vendor-blocks/shared/desk-blocks';
 import './michiPage.css';
 import { toggledChecklist } from './pageEdits';
 import { ResponsiveGrid } from './blocks/Grid';
+import { PageViewEntry } from './PageViewContext';
 
 /** Michi nests blocks at most two levels deep; anything deeper is not drawn. */
 const MAX_DEPTH = 2;
@@ -255,7 +256,9 @@ export function rendererFor(type: string): BlockRenderer | undefined {
   return RENDERERS.get(type);
 }
 
-function MichiBlockView({ block, ctx }: BlockProps) {
+function BlockContent({ block, ctx }: BlockProps) {
+  if (block.type === 'view-link') return <PageViewEntry action={block.action}>{str(block.label)}</PageViewEntry>;
+  if (block.type === 'view') return null;
   if (block.type === 'markdown' && ctx.renderNativeMarkdown) return <>{ctx.renderNativeMarkdown(block)}</>;
   if (block.type === 'page-link' && ctx.renderNativePageLink) return <>{ctx.renderNativePageLink(block)}</>;
   if (block.type === 'database-ref' && ctx.renderNativeDatabaseRef) return <>{ctx.renderNativeDatabaseRef(block)}</>;
@@ -266,6 +269,11 @@ function MichiBlockView({ block, ctx }: BlockProps) {
       <Renderer block={block} ctx={ctx} />
     </BlockBoundary>
   );
+}
+
+function MichiBlockView(props: BlockProps) {
+  const interaction = props.block.interaction as { label?: string; action?: unknown } | undefined;
+  return <><BlockContent {...props} />{interaction && <div className="page-view-block-entry"><PageViewEntry action={interaction.action}>{interaction.label}</PageViewEntry></div>}</>;
 }
 
 /** One page block, drawn by its type's renderer; unknown, too deep or broken blocks show a one-line label. */

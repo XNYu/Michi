@@ -10,7 +10,7 @@ export default function AssistantPaneStub({
   nodeId, composerPreBlocks, composerFocusToken, draftRequest, composerDisabled,
 }: {
   nodeId: string;
-  composerPreBlocks?: ReactNode;
+  composerPreBlocks?: ReactNode | ((draftHasText: boolean) => ReactNode);
   composerFocusToken?: number;
   draftRequest?: { id: number; text: string } | null;
   composerDisabled?: boolean;
@@ -28,7 +28,7 @@ export default function AssistantPaneStub({
     input.current?.focus();
   }, [composerFocusToken]);
   return <>
-    {composerPreBlocks}
+    {typeof composerPreBlocks === 'function' ? composerPreBlocks(Boolean(draft.trim())) : composerPreBlocks}
     <textarea ref={input} aria-label="Message the assistant" disabled={composerDisabled}
       value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => {
         if (event.key !== 'Enter' || event.shiftKey || composerDisabled || !draft.trim()) return;

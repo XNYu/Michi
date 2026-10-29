@@ -86,6 +86,8 @@ export interface DefaultHostOptions {
   workflows?: boolean | ((runtimeId: string, userId?: string | null) => boolean);
   /** Chat permission mode; default 'ask'. */
   permissionMode?: ChatPermissionMode | ((owner: RuntimeSessionOwner | undefined, ownerUserId?: string | null) => ChatPermissionMode);
+  /** Approve for me on top of Ask (PermissionPolicyPort.approveForMe); default off. */
+  approveForMe?: boolean | ((owner: RuntimeSessionOwner | undefined, ownerUserId?: string | null) => boolean);
   /** Initial in-memory rows read through bindings. */
   nodes?: readonly HostNodeRecord[];
   workspaces?: readonly HostWorkspaceRecord[];
@@ -401,6 +403,8 @@ function defaultPermissions(host: RuntimeHost, options: DefaultHostOptions): Per
     `${grantOwner(owner)}\u0000${ownerUserId ?? ''}\u0000${toolName}`;
   return {
     mode: (owner, ownerUserId) => typeof configured === 'function' ? configured(owner, ownerUserId) : configured ?? 'ask',
+    approveForMe: (owner, ownerUserId) => typeof options.approveForMe === 'function'
+      ? options.approveForMe(owner, ownerUserId) : options.approveForMe === true,
     resolveOwnerUserId: (_owner, ownerUserId) => ownerUserId ?? null,
     decide: (request) => {
       const mode = request.mode ?? host.permissions.mode(request.owner, request.ownerUserId);

@@ -39,6 +39,20 @@ export interface CreateSlotInput {
     model?: string;
     /** Controls learned memory, not transcript persistence. Set only at birth. */
     memory_mode?: CrewMemoryMode;
+    /** Sidebar folder the slot is created in. */
+    folder_id?: string;
+}
+
+/** A Crew sidebar folder. */
+export interface CrewFolder {
+    id: string;
+    name: string;
+    /** Empty at the top level. */
+    parentId: string;
+    /** Created by this App. Only an App's own folders can hold its new folders. */
+    own: boolean;
+    /** Epoch seconds; absent on folders older than the field. */
+    createdAt?: number;
 }
 
 export interface CrewAgent { id: string; name: string; description?: string }
@@ -95,6 +109,12 @@ export interface CrewGateway {
     setAgent?(slot: string, agent: string): Promise<void>;
     forkSlot?(slot: string, messageId: string): Promise<CrewSlotInfo>;
     watchSlot?(slot: string, receive: (event: CrewEvent) => void): Promise<() => void>;
+    /** Every sidebar folder: an App reads the whole tree, the person's folders included. */
+    listFolders?(): Promise<CrewFolder[]>;
+    /** A folder owned by this App, at the top level or inside one of its own. */
+    createFolder?(name: string, parentId?: string): Promise<CrewFolder>;
+    /** Hides one of this App's folders. An App cannot delete folders. */
+    hideFolder?(id: string): Promise<void>;
     close?(): void;
     createSlot(input: CreateSlotInput): Promise<CrewSlotInfo>;
     /** False on 404 (missing or owned by someone else). */

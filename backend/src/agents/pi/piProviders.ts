@@ -1,6 +1,7 @@
 import { loadPiAi } from "./piAi";
 import { DEFAULT_MODELS } from "../agentConfig";
 import { fetchOpenRouterModels, type OpenRouterModelInfo } from "./openrouterModels";
+import type { PiModelInfo } from "./piModelTypes";
 import { isReasoningLevel, type ModelReasoningCapabilities } from 'michi-shared';
 import { GEMINI_ARGON_ID, argonThinkingLevelMap, geminiArgonModel, isGeminiArgon, isOpenRouterArgon } from './geminiArgonModel';
 import { streamPiModel } from './geminiArgonStream';
@@ -24,13 +25,6 @@ export interface PiProviderInfo {
      * Defaults to `'api-key'` when unset.
      */
     credentialMode?: "api-key" | "aws-credential-chain";
-}
-
-export interface PiModelInfo extends ModelReasoningCapabilities {
-    model_id: string;
-    model_name: string;
-    description?: string;
-    context_window_tokens?: number;
 }
 
 /**

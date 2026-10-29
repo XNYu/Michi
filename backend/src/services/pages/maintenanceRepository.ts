@@ -71,6 +71,10 @@ export function createMaintenanceConfig(input: CreateMaintenanceConfigInput): Ma
       (workspace_id,owner_user_id,job_id,enabled,paused,revision,completion_cursor,runtime_id,provider_id,model_id,reasoning,updated_at)
       VALUES(?,?,?,?,?,1,?,NULL,NULL,NULL,NULL,?)`).run(input.workspaceId, input.ownerUserId, input.jobId, input.enabled ? 1 : 0,
       input.paused ? 1 : 0, counter(input.workspaceId), now);
+    // Keep legacy execution IDs (receipt keys and plans refer to them), while
+    // removing this record from prompt scheduling and the public job list.
+    db().prepare("UPDATE scheduled_jobs SET execution_kind='maintenance',next_run_at=NULL,owner_user_id=? WHERE id=?")
+      .run(input.ownerUserId, input.jobId);
     return getMaintenanceConfig(input.workspaceId, input.ownerUserId)!;
   });
 }

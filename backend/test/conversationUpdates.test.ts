@@ -190,7 +190,7 @@ describe('conversation completion increments', () => {
     const mcp = await tools.read_conversation_updates.handler({ after: 0, workspaceId: 'other' });
     configureRuntimeDeps({ dataDir: dir,
       historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null,
-        getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} },
+        getWorkspaceInstructions: () => null },
       agentConfig: { getAgentConfig: () => ({ runtime: 'pi', provider: '', modelByRuntime: {}, reasoningByRuntime: {} }),
         resolveModel: () => '', resolveReasoning: () => undefined },
     });

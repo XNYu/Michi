@@ -1,5 +1,7 @@
+import { maintenanceCoordinatorState, pauseMaintenanceCoordinator } from './maintenanceCoordinator';
 import {
   SCHEDULED_JOB_LIMITS,
+  type MetaAgentTodayMetrics,
   type MetaAgentCursorRow,
   type MetaAgentOverview,
   type MetaAgentOverviewState,
@@ -12,7 +14,6 @@ import { maintenanceRuntimeAvailability } from '../../agents/maintenancePolicy';
 import { conversationCompletionCounter } from '../conversationUpdates';
 import { getDb } from '../db';
 import { listFirstRuns } from '../pages/firstRun';
-import { PageMaintenanceConfigService } from '../pages/maintenanceConfig';
 import { listMaintenanceBacklog, requeueMaintenanceAttention } from '../pages/maintenanceRepository';
 import { scheduledJobsFeatureEnabled } from '../scheduledJobs/feature';
 import type { ScheduledJobScheduler } from '../scheduledJobs/scheduler';
@@ -54,6 +55,7 @@ function cursorRow(config: ConfigRow, ownerUserId: string, runtimeId: string): {
   const attention = backlog.attentionSources;
   const failed = config.auto_paused === 1 || config.last_status === 'failed' || config.last_status === 'timed_out';
   const base = { workspaceId: config.workspace_id, workspaceName: config.workspace_name, cursor: config.completion_cursor, unread, lastRunAt };
+  if (config.paused === 1) return { row: { ...base, state: 'paused' } };
   if (failed) {
     const classified = classifyMetaAgentRunError(config.last_error ?? '', { runtimeId, workspaceName: config.workspace_name });
     const error = config.last_error ?? 'The last run failed';
@@ -243,6 +245,7 @@ function overallState(
   ownerUserId: string, runtime: MetaAgentResolvedRuntime, configs: ConfigRow[],
   rows: Array<{ row: MetaAgentCursorRow; detail?: string }>,
 ): OverallState {
+  if (maintenanceCoordinatorState(ownerUserId).paused) return { state: 'paused', stopped: null };
   const availability = maintenanceRuntimeAvailability(runtime.runtimeId);
   if (!availability.available) {
     return stoppedBy({ reason: 'runtime-unsupported', message: availability.reason ?? `The Meta agent cannot run on ${runtimeLabel(runtime.runtimeId)}`, workspaceIds: [] });
@@ -258,7 +261,6 @@ function overallState(
       ...(guard.detail ? { detail: errorFirstLine(guard.detail) } : {}),
     });
   }
-  if (configs.length > 0 && configs.every((config) => config.paused === 1)) return { state: 'paused', stopped: null };
   const live = new Set(configs.filter((config) => config.paused !== 1).map((config) => config.workspace_id));
   const stopped = rows.filter(({ row }) => row.problem?.stopped && live.has(row.workspaceId));
   if (stopped.length > 0) {
@@ -269,7 +271,7 @@ function overallState(
   return { state: 'running', stopped: null };
 }
 
-export function metaAgentOverview(input: { ownerUserId: string; now: number; dayStart?: number }): MetaAgentOverview {
+export function metaAgentOverview(input: { ownerUserId: string; now: number; dayStart?: number; today?: MetaAgentTodayMetrics }): MetaAgentOverview {
   const { ownerUserId } = input;
   const runtime = resolveMetaAgentRuntime(ownerUserId);
   const configs = listConfigs(ownerUserId);
@@ -284,10 +286,11 @@ export function metaAgentOverview(input: { ownerUserId: string; now: number; day
     // The server builds no scheduler when the feature is off, so no maintenance job starts.
     notRunning: scheduledJobsFeatureEnabled() ? null : { reason: 'scheduler-off', message: 'Scheduled jobs are off on this backend' },
     runtime,
-    today: todayMetrics(ownerUserId, configs, input.dayStart ?? startOfLocalDay(input.now)),
+    today: input.today ?? todayMetrics(ownerUserId, configs, input.dayStart ?? startOfLocalDay(input.now)),
     cursors: rows.map(({ row }) => row),
     recentRuns: mergeQuiet([...entries, ...(first ? [first] : []), ...summaryEntries(ownerUserId)]),
     managedJobIds: listManagedMaintenanceJobIds(ownerUserId),
+    lastCheckedAt: maintenanceCoordinatorState(ownerUserId).lastCheckedAt,
   };
 }
 
@@ -295,29 +298,23 @@ export class MetaAgentPauseError extends Error {
   constructor(message: string) { super(message); this.name = 'MetaAgentPauseError'; }
 }
 
-/**
- * Pauses or resumes background maintenance in every listed workspace through
- * the maintenance config service, which keeps each managed job in step.
- * Resuming also restarts a workspace's job that stopped itself after repeated
- * failures and queues again every batch held for attention (the stopped
- * state's Retry). A workspace that refuses is reported after the others were changed.
+/** Global pause leaves each workspace's own pause and cursor untouched.
+ * Explicit retry/resume also retries stopped workspaces that are not locally paused.
  */
 export function setMetaAgentPaused(input: { scheduler: ScheduledJobScheduler; ownerUserId: string; paused: boolean; clock?: () => number }): void {
+  pauseMaintenanceCoordinator(input.ownerUserId, input.paused);
+  if (input.paused) return;
   const clock = input.clock ?? Date.now;
-  const service = new PageMaintenanceConfigService(input.scheduler, clock);
   const failures: string[] = [];
   for (const config of listConfigs(input.ownerUserId)) {
+    if (config.paused === 1) continue;
     try {
-      if (!input.paused) requeueMaintenanceAttention({ workspaceId: config.workspace_id, ownerUserId: input.ownerUserId, now: clock() });
-      if ((config.paused === 1) !== input.paused) {
-        service.update({ workspaceId: config.workspace_id, ownerUserId: input.ownerUserId, expectedRevision: config.revision,
-          now: clock(), paused: input.paused });
-      } else if (!input.paused && config.auto_paused === 1) {
-        input.scheduler.updateJob(config.job_id, { enabled: true });
-      }
+      requeueMaintenanceAttention({ workspaceId: config.workspace_id, ownerUserId: input.ownerUserId, now: clock() });
+      if (config.auto_paused === 1) input.scheduler.updateJob(config.job_id, { enabled: true });
     } catch (error) {
       failures.push(`${config.workspace_name}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  if (failures.length > 0) throw new MetaAgentPauseError(`Could not ${input.paused ? 'pause' : 'resume'} ${failures.join('; ')}`);
+  input.scheduler.wakeJobs([]);
+  if (failures.length > 0) throw new MetaAgentPauseError(`Could not resume ${failures.join('; ')}`);
 }

@@ -220,6 +220,34 @@ test("describeNotice words finished, failed and attention notices", () => {
   assert.equal(notifications.describeNotice({ ...notice, phase: "attention", attention: "input", notify: false }).subtitle, "Needs your input");
 });
 
+test("planNoticeDelivery skips notices that are not shown", () => {
+  const env = { hasFocusedWindow: true, osNotificationsSupported: true };
+  assert.deepEqual(notifications.planNoticeDelivery({ ...notice, phase: "started" }, env), { kind: "skip", ack: false });
+  assert.deepEqual(notifications.planNoticeDelivery({ ...notice, notify: false }, env), { kind: "skip", ack: true });
+});
+
+test("planNoticeDelivery shows only an in-app toast while a window is focused", () => {
+  const content = notifications.describeNotice(notice);
+  for (const osNotificationsSupported of [true, false]) {
+    assert.deepEqual(
+      notifications.planNoticeDelivery(notice, { hasFocusedWindow: true, osNotificationsSupported }),
+      { kind: "toast", ack: true, content },
+    );
+  }
+});
+
+test("planNoticeDelivery uses an OS banner when no window is focused", () => {
+  assert.deepEqual(
+    notifications.planNoticeDelivery(notice, { hasFocusedWindow: false, osNotificationsSupported: true }),
+    { kind: "banner", ack: true, content: notifications.describeNotice(notice) },
+  );
+});
+
+test("planNoticeDelivery defers without acknowledging when nothing can show the notice", () => {
+  const plan = notifications.planNoticeDelivery(notice, { hasFocusedWindow: false, osNotificationsSupported: false });
+  assert.deepEqual(plan, { kind: "defer", ack: false });
+});
+
 test("notification feed replays notices, reconnects and acknowledges", async () => {
   const acks = [];
   let connections = 0;

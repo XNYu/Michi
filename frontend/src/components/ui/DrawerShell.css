@@ -30,6 +30,15 @@
   pointer-events: none;
 }
 
+/* Back control for a drawer that fills a phone screen: a finger-sized target,
+   with negative margins so the header keeps its height and the chevron sits
+   near the content's left edge. */
+.ui-overlay-close.drawer-shell-back {
+  width: 36px;
+  height: 36px;
+  margin: -7px 0 -7px -10px;
+}
+
 .drawer-shell-panel[data-motion='instant'] {
   transition: none;
   transform: none;

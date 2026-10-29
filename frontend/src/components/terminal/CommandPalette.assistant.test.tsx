@@ -32,16 +32,6 @@ vi.mock('../../state/chatStore', async () => {
   };
 });
 vi.mock('../../state/prefs', () => ({ usePrefs: () => ({ prefs: { bypassPermissions: false }, setPref: vi.fn() }) }));
-vi.mock('../../state/useServerSearch', () => ({
-  useServerSearch: (query: string) => ({
-    matches: query ? [
-      { projectId: 'w1', projectName: 'Workspace A', nodeId: 'n1', nodeTitle: 'Plan the launch', messageId: 'm1', messageIdx: 0, role: 'user', snippet: 'plan A', range: [0, 4] },
-      { projectId: 'sys', projectName: 'Assistant', nodeId: 'n-sys', nodeTitle: 'Plan with the assistant', messageId: 'm2', messageIdx: 0, role: 'user', snippet: 'plan secret', range: [0, 4] },
-    ] : [],
-    truncated: false,
-    totalUnbounded: 0,
-  }),
-}));
 vi.mock('../../state/useNodeSearch', () => ({
   useNodeSearch: (query: string) => ({
     nodes: query ? [

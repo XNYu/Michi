@@ -7,6 +7,11 @@ import { test, type TestContext } from 'node:test';
 import { applyTurnEvent, createDurableTurn, parseChatStreamEvent } from 'michi-shared';
 import { createCodexTranslator } from 'michi-runtime/internal/adapters/codex/codexEventTranslator';
 import { CODEX_SERVER_REQUESTS } from 'michi-runtime/internal/adapters/codex/codexProtocol';
+import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
+import type { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSession';
+import type { McpSlot } from '../src/services/mcpServer';
+import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
+import { codexTestOptions } from './helpers/codexTestOptions';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import { toChatStreamEvent } from '../src/routes/chatStreamEvents';
 import { baselineDir, manifest, schema, assertSchema, validator, discriminants, tsDiscriminants, variableStringLiterals } from './contracts/codex/schema';
@@ -279,6 +284,36 @@ contract('terminal lifecycle', async (t) => {
     }
     assert.equal(durable.status, status === 'interrupted' ? 'cancelled' : status === 'failed' ? 'error' : 'completed');
   });
+});
+
+contract('collaboration modes', async (t) => {
+  const wire = await wireClient(t, false);
+  const runtime = new CodexRuntime({ ...codexTestOptions(), bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+    mcpSlots: fakeMcpRegistry({ create: () => ({ slotId: 'contract-slot' }) as McpSlot, get: () => undefined }, { mcpPort: 0 }) },
+  { client: wire.client, followUpsHookPocEnabled: false, followUpsExperimentMode: 'sentinel', authFileMissing: 'no auth.json' });
+  t.after(() => runtime.shutdown());
+  await runtime.listModes('');
+  const session = await runtime.newSession({ sessionId: 'contract-modes', cwd: process.env.MICHI_DATA_DIR!, model: 'fixture-model', enableFollowUps: false }) as CodexSession;
+  await session.setMode('plan');
+  const events: NormalizedEvent[] = [];
+  const drain = (async () => { for await (const event of session.send('plan this')) events.push(event); })();
+  const sent = (method: string) => wire.outgoing.find((message) => message.method === method && message.id !== undefined
+    && (method === 'thread/start' ? !message.params?.ephemeral : method === 'turn/start' ? message.params?.threadId === threadId : true));
+  for (let i = 0; i < 50 && !sent('turn/start'); i += 1) await tick();
+  for (const method of ['collaborationMode/list', 'account/read', 'thread/start', 'turn/start']) {
+    assert.ok(sent(method), `${method} sent`);
+    assertSchema('ClientRequest', sent(method));
+  }
+  assert.equal(sent('turn/start')!.params.collaborationMode.mode, 'plan');
+  assert.equal(sent('thread/start')!.params.config.features.goals, false);
+  // account/read as codex 0.165 answers it for Amazon Bedrock and for a missing OpenAI login.
+  assertSchema('GetAccountResponse', { account: { type: 'amazonBedrock', usesCodexManagedCredentials: false }, requiresOpenaiAuth: false, workspaceRouting: null });
+  assertSchema('GetAccountResponse', { account: null, requiresOpenaiAuth: true, workspaceRouting: null });
+  assertSchema('CollaborationModeListResponse', { data: [{ name: 'Plan', mode: 'plan', model: null, reasoning_effort: 'medium' }] });
+  wire.send(itemNotification('item/completed', { type: 'plan', id: 'plan-1', text: 'Proposed plan.' }), 'ServerNotification');
+  wire.send(turnNotification('completed'), 'ServerNotification');
+  await drain;
+  assert.ok(events.some((event) => event.kind === 'chunk' && event.text === 'Proposed plan.'));
 });
 
 contract('translator notifications', () => {

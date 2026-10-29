@@ -64,7 +64,7 @@ export function claudeSpawnPolicy(
       isolateSettings: true,
       restrictedMode: true,
     }
-    : { permissionMode: mode === 'interactive' && !toolProfile && permissionMode === 'yolo' ? 'bypassPermissions' : 'default' };
+    : { permissionMode: mode === 'interactive' && (!toolProfile || (toolProfile.assistant === true && !toolProfile.allowedToolNames)) && permissionMode === 'yolo' ? 'bypassPermissions' : 'default' };
 }
 
 /**

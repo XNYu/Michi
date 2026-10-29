@@ -15,6 +15,39 @@ function sseResponse(frames: string[]) {
 describe('background SSE', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('observes another device through the foreground wrapper and opts into delivery', async () => {
+    const event = { event: 'turn_start', data: { chatId: 'phone', nodeId: 'phone', turnId: 'phone-turn', assistantId: 'phone-a', seq: 0, userText: 'from phone' } };
+    const fetchMock = vi.fn().mockResolvedValue(sseResponse([
+      `event: foreground_event\ndata: ${JSON.stringify(event)}\n\n`,
+      'event: foreground_event\ndata: null\n\n',
+    ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const onTurnStart = vi.fn();
+    subscribeBackground(() => ({ onTurnStart }));
+    await vi.waitFor(() => expect(onTurnStart).toHaveBeenCalledTimes(1));
+    expect(onTurnStart).toHaveBeenCalledWith(expect.objectContaining({ userText: 'from phone' }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).includeForeground).toBe(true);
+  });
+
+  it('ignores its own foreground echo even before direct headers arrive and after cancellation', async () => {
+    const localEvent = { event: 'turn_start', data: { chatId: 'echo-node', nodeId: 'echo-node', turnId: 'echo-turn', assistantId: 'echo-a', seq: 0, userText: 'local' } };
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/message')) return new Promise(() => {});
+      if (String(url).endsWith('/cancel')) return new Response('{}');
+      return sseResponse([`event: foreground_event\ndata: ${JSON.stringify(localEvent)}\n\n`]);
+    }));
+    const cancel = streamMessage('echo-node', 'local', {}, { turnId: 'echo-turn' });
+    const onTurnStart = vi.fn();
+    const onDisconnect = vi.fn();
+    subscribeBackground(() => ({ onTurnStart }), { onDisconnect });
+    await vi.waitFor(() => expect(onDisconnect).toHaveBeenCalledTimes(1));
+    expect(onTurnStart).not.toHaveBeenCalled();
+    cancel();
+    subscribeBackground(() => ({ onTurnStart }), { onDisconnect });
+    await vi.waitFor(() => expect(onDisconnect).toHaveBeenCalledTimes(2));
+    expect(onTurnStart).not.toHaveBeenCalled();
+  });
+
   it('treats replay-gap reconciliation as a delivery barrier', async () => {
     let releaseGap!: () => void;
     const gapBarrier = new Promise<void>((resolve) => { releaseGap = resolve; });

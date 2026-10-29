@@ -4,7 +4,6 @@ import path from "path";
 import fs from "fs";
 import { ChatManager } from "../services/chatManager";
 import {
-    runDigestGeneration,
     streamDigestGeneration,
     GenerationRequest,
 } from "../services/digestGenerator";
@@ -30,19 +29,6 @@ function validateGenerationBody(body: GenerationRequest): string | null {
 
 export function setupDigestRoutes(chatManager: ChatManager) {
     const router = express.Router();
-
-    router.post("/digests/generate", requireWorkspaceOwner, async (req, res) => {
-        try {
-            const body = req.body as GenerationRequest;
-            const err = validateGenerationBody(body);
-            if (err) return res.status(400).json({ error: err });
-            const markdown = await runDigestGeneration(chatManager, body);
-            res.json({ markdown });
-        } catch (err) {
-            console.error("Digest generation failed:", err);
-            res.status(500).json({ error: (err as Error).message });
-        }
-    });
 
     router.post("/digests/stream", requireWorkspaceOwner, async (req, res) => {
         const body = req.body as GenerationRequest;

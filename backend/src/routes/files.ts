@@ -1,7 +1,7 @@
 import express, { Request, Response } from "express";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { NotFoundError } from "../agents/tools/pathSandbox";
+import { NotFoundError } from "../services/workspaceSandbox";
 import { SHOW_IMAGE_MAX_BYTES } from "michi-runtime/internal/core/showImage";
 import { resolveWorkspaceFileRoot, resolveWorkspaceRegularFile, WORKSPACE_FILE_ID_RE } from "../services/workspaceFiles";
 

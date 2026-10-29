@@ -9,12 +9,13 @@ export interface ToolLineNames {
 }
 
 const TOOLS = [
-  'list_pages', 'read_page', 'edit_page', 'create_page', 'read_database', 'edit_database', 'configure_database_view',
+  'list_pages', 'read_page', 'edit_page', 'create_page', 'create_database', 'configure_database', 'read_database', 'edit_database', 'configure_database_view',
   'open_task_database', 'list_tasks',
   'list_page_components', 'read_page_component', 'save_page_component', 'layout_rules',
   'read_conversation_updates', 'start_conversation', 'list_workspaces', 'list_threads', 'search_messages',
   'read_node', 'read_node_overview', 'list_panes', 'inspect_pane', 'read_pane_output', 'wait_pane',
   'michi_docs',
+  'list_scheduled_jobs', 'create_scheduled_job', 'update_scheduled_job', 'run_scheduled_job', 'delete_scheduled_job',
 ] as const;
 type Tool = typeof TOOLS[number];
 
@@ -70,7 +71,7 @@ function taskStepCounts(tasks: TaskWriteCounts): string | null {
 
 /** The backend's refusal of a page write while the first run still writes (firstRunHold.ts). */
 const HELD = "HELD: the Meta agent's first-time generation";
-const WRITE_TOOLS: ReadonlySet<Tool> = new Set(['edit_page', 'edit_database', 'configure_database_view', 'create_page', 'save_page_component', 'layout_rules', 'open_task_database']);
+const WRITE_TOOLS: ReadonlySet<Tool> = new Set(['edit_page', 'edit_database', 'configure_database', 'configure_database_view', 'create_page', 'create_database', 'save_page_component', 'layout_rules', 'open_task_database']);
 
 /** A page write the first run made wait: it runs once the first run finishes. */
 export function isHeldForFirstRun(tool: ToolCallState): boolean {
@@ -97,7 +98,8 @@ export function metaAgentToolLine(tool: ToolCallState, names: ToolLineNames): st
     return (id ? names.page(id) : null) ?? str(fromAnswer?.title) ?? 'a page';
   };
   if (isHeldForFirstRun(tool)) {
-    const what = name === 'create_page' ? `Create ${clip(str(input.title) ?? 'a page')}`
+    const what = name === 'create_database' ? `Create ${clip(str(input.title) ?? 'a database')}`
+      : name === 'create_page' ? `Create ${clip(str(input.title) ?? 'a page')}`
       : name === 'save_page_component' ? 'Save component'
         : name === 'open_task_database' ? join('Open the task database', workspace())
           : `Write ${clip(pageTitle())}`;
@@ -112,6 +114,7 @@ export function metaAgentToolLine(tool: ToolCallState, names: ToolLineNames): st
     case 'read_database': return join(`Read ${clip(pageTitle(['rows']))}`, done && count(tool, ['rows']) !== null && plural(count(tool, ['rows'])!, 'row'));
     case 'edit_page':
     case 'edit_database':
+    case 'configure_database':
     case 'configure_database_view': {
       const receipt = done ? parseTurnPageReceipt(tool, 'local') : null;
       const title = clip(receipt?.title ?? pageTitle());
@@ -125,6 +128,7 @@ export function metaAgentToolLine(tool: ToolCallState, names: ToolLineNames): st
       }
       return join(`Write ${title}`, what ?? plural(receipt.appliedCount, 'change'));
     }
+    case 'create_database': return join(`Create ${clip(str(input.title) ?? 'a database')}`, workspace());
     case 'open_task_database': {
       const made = done && answer(tool, ['created'])?.created === true;
       return join(made ? 'Create the task database' : 'Open the task database', workspace());
@@ -175,5 +179,23 @@ export function metaAgentToolLine(tool: ToolCallState, names: ToolLineNames): st
     case 'wait_pane':
     case 'read_pane_output': return 'Check a running conversation';
     case 'michi_docs': return 'Read Michi docs';
+    case 'list_scheduled_jobs': {
+      if (str(input.jobId)) return 'Read a scheduled job';
+      const n = done ? count(tool, ['jobs']) : null;
+      return join('List scheduled jobs', workspace(), n !== null && plural(n, 'job'));
+    }
+    case 'create_scheduled_job': return join(`Schedule ${clip(str(input.name) ?? 'a job')}`, workspace(), jobOutcome(tool, done));
+    case 'update_scheduled_job': {
+      const changes = Object.keys(input).filter((key) => !['jobId', 'enabled', '__tool_use_purpose'].includes(key));
+      return join(input.enabled === false && changes.length === 0 ? 'Pause a scheduled job' : 'Change a scheduled job', jobOutcome(tool, done));
+    }
+    case 'run_scheduled_job': return join('Run a scheduled job now', jobOutcome(tool, done));
+    case 'delete_scheduled_job': return join('Delete a scheduled job', jobOutcome(tool, done));
   }
+}
+
+/** A scheduled-job change the user declined (or did not answer) says so; an approved one needs no note. */
+function jobOutcome(tool: ToolCallState, done: boolean): string | null {
+  const status = done ? str(answer(tool, ['status'])?.status) : null;
+  return status === 'declined' ? 'not approved' : null;
 }

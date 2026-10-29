@@ -70,7 +70,7 @@ test('mountMcp serves slot and session-group tool calls and the Codex Stop Hook 
     const saved: Array<{ name: string; size: number }> = [];
     const slot = registry.create('chat-a', '/tmp', null, {
         onSpawnBranches: async () => [],
-        onSaveArtifact: (name, body) => {
+        onSaveArtifact: (name, body = '') => {
             saved.push({ name, size: body.length });
             return { name, filePath: `/tmp/${name}`, size: body.length };
         },
@@ -93,7 +93,10 @@ test('mountMcp serves slot and session-group tool calls and the Codex Stop Hook 
     // Arguments are validated against the tool's schema before the handler runs.
     const invalid = await direct.callTool({ name: 'save_artifact', arguments: { name: 'bad', body: 7 } }) as CallResult;
     assert.equal(invalid.isError, true);
-    assert.match(textOf(invalid), /Input validation error: Invalid arguments for tool save_artifact/);
+    // The text agents read: zod's issues as JSON after the prefix, as with MCP SDK 1.29
+    // (1.32's getParseErrorMessage would say "Invalid input: expected string, received number at body").
+    assert.equal(textOf(invalid), 'MCP error -32602: Input validation error: Invalid arguments for tool save_artifact: '
+        + JSON.stringify([{ expected: 'string', code: 'invalid_type', path: ['body'], message: 'Invalid input: expected string, received number' }], null, 2));
     // A body over the package default of 4 MB still fits Michi's 50 MB limit.
     const large = await direct.callTool({ name: 'save_artifact', arguments: { name: 'large', body: 'x'.repeat(5 * 1024 * 1024) } }) as CallResult;
     assert.equal(textOf(large), 'Saved artifact: @large');

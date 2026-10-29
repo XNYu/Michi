@@ -9,7 +9,7 @@
 .spaces-side__footer > button { width: 100%; border: 0; background: transparent; text-align: left; font: inherit; }
 .spaces-side__footer > [role='status'] { display: flex; align-items: flex-start; gap: var(--sb-icon-gap, 6px); padding: 4px calc(var(--sb-area-right, 16px) + var(--sb-inset, 0px)) 4px calc(var(--sb-area-left, 20px) + var(--sb-inset, 0px)); }
 .spaces-assistant-history { padding-bottom: 4px; }
-.spaces-assistant-history__row { width: calc(100% - 28px); margin-left: 28px; border: 0; background: transparent; text-align: left; }
+.spaces-assistant-history__row { width: calc(100% + 2 * var(--sb-bleed, 0px)); padding-left: calc(var(--sb-area-left, 20px) + 28px); border: 0; background: transparent; text-align: left; }
 .spaces-assistant-history__row time { flex: none; color: var(--sb-row-meta-color, var(--term-muted)); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .spaces-assistant-history__row:disabled { opacity: .5; cursor: default; }
 .spaces-assistant-history__more { margin: 4px 0 4px 38px; padding: 2px 0; border: 0; background: transparent; color: var(--term-muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }

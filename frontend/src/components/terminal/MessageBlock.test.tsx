@@ -459,6 +459,78 @@ describe('MessageBlock — thought activity sync', () => {
     expect(queryByText(/tool calls/)).toBeNull();
   });
 
+  it('moves tools that close a prose run into the thought block that follows', () => {
+    const m: ChatMessage = {
+      ...baseMsg,
+      role: 'assistant',
+      text: 'Checking first:',
+      streaming: false,
+      toolCalls: [
+        { id: 't1', title: 'Bash npm test', kind: 'bash', status: 'completed' },
+        { id: 't2', title: 'Read a.ts', kind: 'read', status: 'completed' },
+        { id: 't3', title: 'Edit a.ts', kind: 'edit', status: 'completed' },
+      ],
+      blocks: [
+        { id: 'b1', kind: 'answer', rawText: 'Checking first:', streaming: false },
+        { id: 'b2', kind: 'tool', toolCallId: 't1', section: 'answer', rawOffset: 15 },
+        { id: 'b3', kind: 'tool', toolCallId: 't2', section: 'answer', rawOffset: 15 },
+        { id: 'b4', kind: 'thinking', rawText: 'Deciding', streaming: false },
+        { id: 'b5', kind: 'tool', toolCallId: 't3', section: 'thinking', rawOffset: 8 },
+      ],
+    };
+
+    const { getByText, queryByText } = renderCardMessage(m);
+
+    expect(getByText('Checking first:')).not.toBeNull();
+    expect(getByText('Edited 1 file, ran 1 command, read 1 file')).not.toBeNull();
+    expect(queryByText('ran 1 command, read 1 file')).toBeNull();
+  });
+
+  it('moves tools that open a prose run into the thought block before it', () => {
+    const m: ChatMessage = {
+      ...baseMsg,
+      role: 'assistant',
+      text: 'Done',
+      streaming: false,
+      toolCalls: [
+        { id: 't1', title: 'Read a.ts', kind: 'read', status: 'completed' },
+        { id: 't2', title: 'Bash npm test', kind: 'bash', status: 'completed' },
+      ],
+      blocks: [
+        { id: 'b1', kind: 'thinking', rawText: 'Deciding', streaming: false },
+        { id: 'b2', kind: 'tool', toolCallId: 't1', section: 'thinking', rawOffset: 8 },
+        { id: 'b3', kind: 'tool', toolCallId: 't2', section: 'answer', rawOffset: 0 },
+        { id: 'b4', kind: 'answer', rawText: 'Done', streaming: false },
+      ],
+    };
+
+    const { getByText, queryByText } = renderCardMessage(m);
+
+    expect(getByText('Done')).not.toBeNull();
+    expect(getByText('Ran 1 command, read 1 file')).not.toBeNull();
+    expect(queryByText('Bash npm test')).toBeNull();
+  });
+
+  it('leaves hidden metadata tools with the prose run', () => {
+    const m: ChatMessage = {
+      ...baseMsg,
+      role: 'assistant',
+      text: 'Done',
+      streaming: false,
+      toolCalls: [{ id: 't1', title: 'set_branch_overview', status: 'completed' }],
+      blocks: [
+        { id: 'b1', kind: 'thinking', rawText: 'Wrapping up', streaming: false },
+        { id: 'b2', kind: 'tool', toolCallId: 't1', section: 'answer', rawOffset: 0 },
+        { id: 'b3', kind: 'answer', rawText: 'Done', streaming: false },
+      ],
+    };
+
+    const { getByText, queryByText } = renderCardMessage(m);
+
+    expect(getByText(/^Thoughts$/)).not.toBeNull();
+    expect(queryByText(/Worked/)).toBeNull();
+  });
+
   it('keeps Thought for when a duration is known but there were no tools', () => {
     const { getByText, queryByText } = render(
       <AgentBlockStyleOverride.Provider value="card">

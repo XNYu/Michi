@@ -19,7 +19,6 @@ test('isolatedConfigDir redirects agent and prefs writes away from HOME and clea
       const configPath = require('path').join(process.env.MICHI_CONFIG_DIR, 'config.json');
       require('fs').writeFileSync(configPath, JSON.stringify({ piMcpServers: [{ serverName: 'isolated', command: 'isolated-mcp' }] }));
       delete process.env.MICHI_PI_MCP_SERVERS;
-      process.env.MICHI_PI_AIM_DISCOVERY = '0';
       const { updateAgentConfig } = require('./src/services/agentConfig');
       const { writePrefs } = require('./src/services/prefsConfig');
       const { readPiMcpServers } = require('./src/services/piMcpConfig');
@@ -57,7 +56,6 @@ test('agent, prefs and Pi MCP share the home profile when MICHI_CONFIG_DIR is un
     const script = `
       delete process.env.MICHI_CONFIG_DIR;
       delete process.env.MICHI_PI_MCP_SERVERS;
-      process.env.MICHI_PI_AIM_DISCOVERY = '0';
       const { updateAgentConfig } = require('./src/services/agentConfig');
       const { writePrefs, readPrefs } = require('./src/services/prefsConfig');
       const { readPiMcpServers } = require('./src/services/piMcpConfig');

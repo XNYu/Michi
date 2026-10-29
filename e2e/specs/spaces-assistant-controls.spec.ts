@@ -40,6 +40,9 @@ for (const palette of ['bone', 'monokai']) test(`native hover actions and assist
       const path = new URL(route.request().url()).pathname;
       if (path === '/api/prefs' && route.request().method() === 'GET') { await route.fulfill({ json: { prefs: { onboardingCompletedAt: 1, terminalPalette: palette, uiFont: 'Geist' } } }); return true; }
       if (path === '/api/assistant') { await route.fulfill({ json: assistantInfo() }); return true; }
+      if (path === '/api/assistant/conversations') {
+        await route.fulfill({ json: { items: [{ nodeId: `assistant-${current}`, title: 'Recent assistant conversation', updatedAt: 1000 }], nextCursor: null } }); return true;
+      }
       if (path === '/api/assistant/reset') {
         expect(route.request().postDataJSON()).toEqual({ nodeId: 'assistant-old' });
         resets += 1;
@@ -57,6 +60,17 @@ for (const palette of ['bone', 'monokai']) test(`native hover actions and assist
   await page.goto('/');
   await expect(page.locator('.home-page')).toBeVisible();
   await openArea(page, 'spaces');
+  const history = page.getByRole('navigation', { name: 'Assistant conversations' });
+  await expect(history).toHaveCount(0);
+  await page.locator('.spaces-side').getByRole('button', { name: 'Assistant', exact: true }).click();
+  const selectedHistory = history.locator('[aria-current="page"]');
+  await expect(selectedHistory).toBeVisible();
+  const historyBox = await selectedHistory.boundingBox();
+  const navigationBox = await page.locator('.spaces-side .is-nav').first().boundingBox();
+  expect(historyBox!.x).toBeCloseTo(navigationBox!.x, 0);
+  expect(historyBox!.width).toBeCloseTo(navigationBox!.width, 0);
+  await page.getByRole('region', { name: 'Assistant', exact: true }).getByRole('button', { name: 'Minimize', exact: true }).click();
+  await expect(history).toHaveCount(0);
   await page.locator('.spaces-side').getByRole('button', { name: /^Release review/ }).click();
   const home = page.getByRole('main', { name: 'Release review', exact: true });
   const block = home.locator('[data-block-id="review-block"]');
@@ -72,6 +86,7 @@ for (const palette of ['bone', 'monokai']) test(`native hover actions and assist
   await expect(block).toHaveAttribute('data-selected', 'true');
   await toolbar.getByRole('button', { name: 'Ask assistant' }).click();
   const panel = page.getByRole('region', { name: 'Assistant', exact: true });
+  await expect(history).toBeVisible();
   await expect(panel.getByText(previousAnswer)).toBeVisible();
   await expect(panel.getByText(/Targeting:/)).toBeVisible();
   const editor = panel.locator('.terminal-composer [contenteditable="true"]');

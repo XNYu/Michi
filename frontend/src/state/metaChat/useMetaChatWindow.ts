@@ -36,6 +36,8 @@ export interface UseMetaChatWindowOptions {
   /** Defaults to window.localStorage; null keeps the state in memory only. */
   storage?: Storage | null;
   storageKey?: string;
+  /** The state before anything is stored (the Scheduled window starts minimized to its button). */
+  initialState?: Partial<MetaChatWindowState>;
 }
 
 function defaultStorage(): Storage | null {
@@ -63,7 +65,11 @@ function nothingStored(storage: Storage | null, key: string): boolean {
 export function useMetaChatWindow(options: UseMetaChatWindowOptions = {}): MetaChatWindowController {
   const storageRef = useRef<Storage | null>(options.storage === undefined ? defaultStorage() : options.storage);
   const keyRef = useRef(options.storageKey ?? METACHAT_STORAGE_KEY);
-  const [state, setState] = useState<MetaChatWindowState>(() => readStoredState(storageRef.current, keyRef.current));
+  const [state, setState] = useState<MetaChatWindowState>(() => (
+    options.initialState && (storageRef.current === null || nothingStored(storageRef.current, keyRef.current))
+      ? { ...readStoredState(null), ...options.initialState }
+      : readStoredState(storageRef.current, keyRef.current)
+  ));
   const [fullscreen, setFullscreen] = useState(false);
   const [focusToken, setFocusToken] = useState(0);
   const stateRef = useRef(state);

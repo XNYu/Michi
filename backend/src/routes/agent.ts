@@ -1,5 +1,5 @@
 import { isReasoningLevel, REASONING_LEVELS } from 'michi-shared';
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { crewRoutes } from "./crew";
 import {
   getAgentConfig,
@@ -13,12 +13,10 @@ import {
 } from "../services/agentConfig";
 import {
   getProviderApiKey,
-  setProviderApiKey,
+  storeProviderApiKey,
   listProviderKeyPresence,
 } from "../services/secrets";
 import {
-  setUserProviderKey,
-  clearUserProviderKey,
   listUserProviderKeys,
   getUserProviderKey,
 } from "../services/userKeys";
@@ -35,6 +33,8 @@ import {
   saveBedrockConfig,
   clearBedrockConfig,
 } from "../services/bedrockCredentials";
+import { resolveAccessPolicy } from "../services/accessPolicy";
+import { requireAdmin } from "./middleware/admin";
 import { isWebSearchFeatureEnabled, isWebSearchProviderId } from "../services/searchProviders";
 import {
   clearWebSearchApiKey,
@@ -97,6 +97,17 @@ async function isModelListed(runtime: AgentRuntime, modelId: string, providerId:
   return !!canonical && ids.includes(canonical);
 }
 
+/** Cloud mode isolates accounts; an invalid access configuration counts as cloud. */
+function isOwnerScoped(): boolean {
+  try { return resolveAccessPolicy().ownerScoped; } catch { return true; }
+}
+
+/** Bedrock credentials are shared by every account: in cloud mode only an admin manages them. */
+function requireOperatorInCloud(req: Request, res: Response, next: NextFunction): void {
+  if (!isOwnerScoped()) { next(); return; }
+  requireAdmin(req, res, next);
+}
+
 export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   const catalogCache = opts?.catalogCache ?? null;
   const isCustomAgentsEnabled = () => opts?.customAgents?.isEnabled() ?? opts?.customAgentsEnabled ?? false;
@@ -138,6 +149,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
         available: availability.available,
         ...(availability.available ? {} : { unavailableReason: availability.detail }),
         requiresApiKey: r.capabilities.apiKeys === true,
+        ...(r.approveForMe === true ? { approveForMe: true } : {}),
       };
     });
 
@@ -505,14 +517,8 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       res.status(400).json({ ok: false, error: "Empty key" });
       return;
     }
-    // BYOK: in cloud mode, write the user-scoped encrypted slot. Desktop
-    // / Electron mode falls through to the legacy disk store.
-    const userId = req.user?.id as string | undefined;
-    if (userId) {
-      setUserProviderKey(userId, provider, key);
-    } else {
-      setProviderApiKey(provider, key);
-    }
+    // BYOK: cloud users get their own encrypted slot; desktop uses the disk store.
+    storeProviderApiKey(provider, key, req.user?.id as string | undefined);
     res.json({ ok: true });
   });
 
@@ -521,12 +527,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       res.status(400).json({ ok: false, error: "Provider uses a built-in server key" });
       return;
     }
-    const userId = req.user?.id as string | undefined;
-    if (userId) {
-      clearUserProviderKey(userId, req.params.provider);
-    } else {
-      setProviderApiKey(req.params.provider, null);
-    }
+    storeProviderApiKey(req.params.provider, null, req.user?.id as string | undefined);
     res.json({ ok: true });
   });
 
@@ -570,7 +571,8 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   });
 
   router.post("/agent/provider-key/verify", async (req: Request, res: Response) => {
-    const cfg = getAgentConfig();
+    const userId = req.user?.id as string | undefined;
+    const cfg = getAgentConfig(userId);
     const active = getRuntime(cfg.runtime);
     if (!active || !hasProviders(active)) {
       res.status(400).json({ ok: false, error: "Active runtime does not support key verification" });
@@ -582,7 +584,6 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       // already does the disk fallback). This keeps "verify the key I
       // just saved" working without sending the plaintext back over the
       // wire.
-      const userId = req.user?.id as string | undefined;
       let body = req.body ?? {};
       if (userId && !body.key && body.provider) {
         const key = getUserProviderKey(userId, body.provider) ?? undefined;
@@ -600,23 +601,26 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
   // -----------------------------------------------------------------------
 
   /** Sanitized Bedrock config — never returns actual secret values. */
-  router.get("/agent/bedrock-config", (_req: Request, res: Response) => {
+  router.get("/agent/bedrock-config", requireOperatorInCloud, (_req: Request, res: Response) => {
     res.json(getBedrockConfigSanitized());
   });
 
-  /** Save Bedrock credential config to ~/.michi/config.json. */
-  router.post("/agent/bedrock-config", (req: Request, res: Response) => {
+  /**
+   * Save Bedrock credential config to ~/.michi/config.json. In cloud mode
+   * the refresh command is not accepted over HTTP; the one on disk is kept.
+   */
+  router.post("/agent/bedrock-config", requireOperatorInCloud, (req: Request, res: Response) => {
     const body = req.body;
     if (!body || typeof body !== "object") {
       res.status(400).json({ ok: false, error: "Missing request body" });
       return;
     }
-    saveBedrockConfig(body);
+    saveBedrockConfig(body, { keepAuthRefreshCommand: isOwnerScoped() });
     res.json({ ok: true });
   });
 
   /** Clear Bedrock config from ~/.michi/config.json. */
-  router.delete("/agent/bedrock-config", (_req: Request, res: Response) => {
+  router.delete("/agent/bedrock-config", requireOperatorInCloud, (_req: Request, res: Response) => {
     clearBedrockConfig();
     res.json({ ok: true });
   });
@@ -625,8 +629,8 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
    * Verify Bedrock connection using saved or supplied credentials.
    * Re-uses the existing verifyProviderKey flow for the amazon-bedrock provider.
    */
-  router.post("/agent/bedrock-config/verify", async (req: Request, res: Response) => {
-    const cfg = getAgentConfig();
+  router.post("/agent/bedrock-config/verify", requireOperatorInCloud, async (req: Request, res: Response) => {
+    const cfg = getAgentConfig(req.user?.id as string | undefined);
     const active = getRuntime(cfg.runtime);
     if (!active || !hasProviders(active)) {
       res.status(400).json({ ok: false, error: "Active runtime does not support verification" });

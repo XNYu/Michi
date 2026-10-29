@@ -1,5 +1,5 @@
 import { vi } from 'vitest';
-import { buildCommands, CommandContext } from './commands';
+import { buildCommands, CommandContext, filterCommands } from './commands';
 
 function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
   return {
@@ -74,5 +74,19 @@ describe('thread commands', () => {
     archived.run();
     expect(base.activateTree).toHaveBeenCalledWith('t3');
     expect(base.unarchiveTree).not.toHaveBeenCalled();
+  });
+});
+
+describe('workspace commands', () => {
+  it('notes the remote backend of remote workspaces and finds them by it', () => {
+    const cmds = buildCommands(makeCtx({
+      workspaces: [{ id: 'w1', name: 'Stocks' }, { id: 'w2', name: 'Bonds', remoteNote: 'Remote · Dev desktop' }],
+    }));
+    const rows = cmds.filter((c) => c.group === 'workspace');
+    expect(rows.map((c) => [c.label, c.meta])).toEqual([
+      ['Switch to workspace ▸ Stocks', undefined],
+      ['Switch to workspace ▸ Bonds', 'Remote · Dev desktop'],
+    ]);
+    expect(filterCommands(rows, 'dev desktop').map((c) => c.id)).toEqual(['workspace.switch.w2']);
   });
 });

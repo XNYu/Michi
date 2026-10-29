@@ -390,7 +390,7 @@ test('Codex follow-ups Hook POC injects temporary Hook config alongside the MCP 
   assert.doesNotMatch(developerInstructions, /\[BRANCH-OVERVIEW:/);
   const config = capturedStartParams[0].config as Record<string, unknown>;
   assert.ok(config.mcp_servers, 'existing MCP config must be preserved');
-  assert.deepEqual(config.features, { hooks: true });
+  assert.deepEqual(config.features, { hooks: true, goals: false });
   assert.equal(config.bypass_hook_trust, true);
   const hooks = config.hooks as { Stop: Array<{ hooks: Array<Record<string, unknown>> }> };
   assert.equal(hooks.Stop[0].hooks[0].type, 'command');

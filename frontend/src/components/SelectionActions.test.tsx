@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import SelectionActions, { stickyPlacement, findMessageIdForRange, type SelectionActionsProps } from './SelectionActions';
+import SelectionActions, { placeTouchPopup, stickyPlacement, findMessageIdForRange, type SelectionActionsProps } from './SelectionActions';
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return {
@@ -46,6 +46,7 @@ describe('SelectionActions', () => {
       value: originalGetClientRects,
     });
     window.getSelection()?.removeAllRanges();
+    pointerDown('mouse');
     vi.useRealTimers();
   });
 
@@ -67,6 +68,27 @@ describe('SelectionActions', () => {
       vi.advanceTimersByTime(80);
     });
   }
+
+  it('shows the captured passage only while composing, without a details control', () => {
+    const onComment = vi.fn();
+    render(<ContextHarness onQuote={vi.fn()} onBranch={vi.fn()} onComment={onComment}
+      captureSelectionContext={() => ({ source: 'original.md' })}
+      getSelectionSourceLabel={context => (context as { source: string }).source}
+      renderSelectionContext={() => <span>Send to original thread</span>} />);
+    selectContextSource();
+    expect(screen.queryByLabelText('Selected passage')).toBeNull();
+    expect(document.querySelector('details')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    expect(screen.getByLabelText('Selected passage').textContent).toContain('immutable source text');
+    expect(screen.getByLabelText('Selected passage').textContent).toContain('original.md');
+    const textarea = screen.getByRole('textbox');
+    fireEvent.change(textarea, { target: { value: 'Comment on the original passage' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+    fireEvent.keyDown(textarea, { key: 'Enter', isComposing: true });
+    expect(onComment).not.toHaveBeenCalled();
+    fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+    expect(onComment).toHaveBeenCalledWith('immutable source text', 'Comment on the original passage', expect.any(Range), { source: 'original.md' });
+  });
 
   it('captures context once and submits it to the latest callback after props and focus change', () => {
     const token = { snapshot: 'v1', target: 'thread A' };
@@ -226,7 +248,7 @@ describe('SelectionActions', () => {
     fireEvent.mouseDown(commentButton);
     fireEvent.click(commentButton);
 
-    expect(screen.getByText('COMMENT ON SELECTION')).toBeTruthy();
+    expect(screen.getByText('Comment')).toBeTruthy();
 
     const textarea = screen.getByPlaceholderText(/your reply/i) as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: 'my reply body' } });
@@ -236,7 +258,7 @@ describe('SelectionActions', () => {
     expect(onBranch).not.toHaveBeenCalled();
     expect(onQuote).not.toHaveBeenCalled();
     // Bar closes after submit.
-    expect(screen.queryByText('COMMENT ON SELECTION')).toBeNull();
+    expect(screen.queryByText('Comment')).toBeNull();
   });
 
   it('opens the comment composer via ⌘; global hotkey', () => {
@@ -284,7 +306,7 @@ describe('SelectionActions', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: ';', metaKey: true }));
     });
 
-    expect(screen.getByText('COMMENT ON SELECTION')).toBeTruthy();
+    expect(screen.getByText('Comment')).toBeTruthy();
   });
 
   it('fires onBranch when the footer Branch button is clicked in branch mode', () => {
@@ -340,7 +362,7 @@ describe('SelectionActions', () => {
     fireEvent.click(branchSubmitBtn);
 
     expect(onBranch).toHaveBeenCalledWith('selected source text', 'why does this work?', undefined, expect.anything());
-    expect(screen.queryByText('BRANCH FROM SELECTION')).toBeNull();
+    expect(screen.queryByText('Branch from selection')).toBeNull();
   });
 
   it('does not re-measure the popup on scroll-driven anchor updates (no per-frame forced layout)', () => {
@@ -465,10 +487,10 @@ describe('SelectionActions', () => {
     const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
     expect(bar).toBeTruthy();
     const settled = { left: bar.style.left, top: bar.style.top };
-    // Union 300..460 → centre 380 → left 240; firstVisible.top 200 → top 150.
+    // Union 300..460 → centre 380 → left 240; firstVisible.top 200 − 16px gap − 36px bar → top 148.
     // Away from every viewport clamp, so the assertions below are meaningful.
     expect(settled.left).toBe('240px');
-    expect(settled.top).toBe('150px');
+    expect(settled.top).toBe('148px');
 
     // Extending the selection by a short word nudges the union edges a few px
     // (and sub-pixel rect noise nudges the top). The bar must not budge.
@@ -531,7 +553,7 @@ describe('SelectionActions', () => {
     act(() => { vi.advanceTimersByTime(80); });
 
     const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
-    expect(bar.style.top).toBe('150px');
+    expect(bar.style.top).toBe('148px');
 
     // Scroll by 3px — under the dead-zone, but the bar is glued to the text.
     lineRects = [rect(300, 197, 120, 18), rect(300, 219, 160, 18)];
@@ -540,7 +562,111 @@ describe('SelectionActions', () => {
       vi.advanceTimersByTime(20);
     });
 
-    expect(bar.style.top).toBe('147px');
+    expect(bar.style.top).toBe('145px');
+  });
+
+  it('docks the bar of a touch selection to the pane edge, clear of the platform edit menu', () => {
+    let lineRects = [rect(300, 200, 120, 18), rect(300, 222, 160, 18)];
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: vi.fn(() => lineRects as unknown as DOMRectList),
+    });
+
+    function Harness() {
+      const ref = React.useRef<HTMLDivElement>(null);
+      React.useEffect(() => {
+        if (ref.current) ref.current.getBoundingClientRect = () => rect(0, 0, 1000, 600);
+      }, []);
+      return (
+        <div ref={ref}>
+          hello world foobar
+          <SelectionActions containerRef={ref} onBranch={vi.fn()} onQuote={vi.fn()} onComment={vi.fn()} />
+        </div>
+      );
+    }
+
+    render(<Harness />);
+    const textNode = screen.getByText('hello world foobar').firstChild!;
+    const select = (end: number, pointerType: string) => {
+      act(() => {
+        pointerDown(pointerType);
+        const range = document.createRange();
+        range.setStart(textNode, 0);
+        range.setEnd(textNode, end);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        document.dispatchEvent(new Event('selectionchange'));
+        vi.advanceTimersByTime(80);
+      });
+    };
+    const bar = () => document.body.querySelector('.sel-actions-enter') as HTMLElement;
+
+    // Pane 0..1000 × 0..600, fallback bar 280 × 36, selection 300..460 ×
+    // 200..240. The platform menu fits above it (200 ≥ 64), so the bar goes
+    // below, clear of the end handle: 240 + 24.
+    select(5, 'touch');
+    expect(bar().style.left).toBe('240px');
+    expect(bar().style.top).toBe('264px');
+
+    // Near the composer there is no room below: above the selection, beyond
+    // the platform menu's slot: 500 − 64 − 36.
+    lineRects = [rect(300, 500, 120, 18), rect(300, 522, 160, 18)];
+    select(11, 'touch');
+    expect(bar().style.top).toBe('400px');
+
+    // Near the top the platform menu goes below the selection: the bar goes
+    // under that slot as well: 70 + 64.
+    lineRects = [rect(300, 30, 120, 18), rect(300, 52, 160, 18)];
+    select(5, 'touch');
+    expect(bar().style.top).toBe('134px');
+
+    // A mouse selection floats above it as before.
+    lineRects = [rect(300, 500, 120, 18), rect(300, 522, 160, 18)];
+    act(() => { window.getSelection()?.removeAllRanges(); document.dispatchEvent(new Event('selectionchange')); });
+    expect(bar()).toBeNull();
+    select(11, 'mouse');
+    expect(bar().style.top).toBe('448px');
+  });
+});
+
+function pointerDown(pointerType: string) {
+  const event = new Event('pointerdown', { bubbles: true });
+  Object.defineProperty(event, 'pointerType', { value: pointerType });
+  document.body.dispatchEvent(event);
+}
+
+describe('placeTouchPopup', () => {
+  // Bar 280 × 40, composer top at 700, so the bar's bottom stays ≤ 692.
+  const pane = { left: 0, top: 100, right: 390, bottom: 800, width: 390, height: 700 };
+  const line = (top: number) => rect(50, top, 290, 20);
+
+  it('goes below the selection, clear of the end handle, when the platform menu is above', () => {
+    expect(placeTouchPopup(pane, [line(300)], 700, 280, 40))
+      .toEqual({ left: 55, top: 344, above: false });
+  });
+
+  it('goes above the selection, beyond the platform menu, when there is no room below', () => {
+    expect(placeTouchPopup(pane, [line(640)], 700, 280, 40))
+      .toEqual({ left: 55, top: 536, above: true });
+  });
+
+  it('goes under the platform menu when the selection is too near the top for the menu above', () => {
+    const topPane = { ...pane, top: 0 };
+    expect(placeTouchPopup(topPane, [line(40)], 700, 280, 40))
+      .toEqual({ left: 55, top: 124, above: false });
+    // Measured from the visible viewport top, not the layout viewport.
+    expect(placeTouchPopup(pane, [line(300)], 700, 280, 40, 250))
+      .toEqual({ left: 55, top: 384, above: false });
+  });
+
+  it('docks above the composer when the selection fills the pane', () => {
+    expect(placeTouchPopup(pane, [line(130), line(640)], 700, 280, 40))
+      .toEqual({ left: 55, top: 652, above: false });
+  });
+
+  it('stays inside the pane horizontally', () => {
+    expect(placeTouchPopup(pane, [rect(300, 300, 80, 20)], 700, 280, 40).left).toBe(102);
   });
 });
 

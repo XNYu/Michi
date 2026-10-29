@@ -1,17 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ArtifactsDrawer from './ArtifactsDrawer';
 import type { ArtifactEntry } from '../../state/chatTypes';
 
-const { mockImportWorkspaceFile, mockLinkWorkspaceFile, mockOpenPath, mockGetElectron } = vi.hoisted(() => ({
+const { mockImportWorkspaceFile, mockUpload, mockLinkWorkspaceFile, mockOpenPath, mockGetElectron } = vi.hoisted(() => ({
   mockImportWorkspaceFile: vi.fn(),
+  mockUpload: vi.fn(),
   mockLinkWorkspaceFile: vi.fn(),
   mockOpenPath: vi.fn(),
   mockGetElectron: vi.fn(),
 }));
 vi.mock('../../services/api', () => ({
   importWorkspaceFile: mockImportWorkspaceFile,
+  importWorkspaceFileUpload: mockUpload,
   linkWorkspaceFile: mockLinkWorkspaceFile,
 }));
 vi.mock('../../lib/electronBridge', () => ({
@@ -224,3 +226,15 @@ describe('ArtifactsDrawer disk picker → symlink import', () => {
     expect(opts).toMatchObject({ kind: 'reference', type: 'doc' });
   });
 });
+
+ it('uploads any file type on the web and classifies images separately', async () => {
+   mockGetElectron.mockReturnValue(undefined);
+   mockUpload.mockResolvedValueOnce({ name: 'shot', filePath: '.artifacts/shot.PNG', size: 3 })
+     .mockResolvedValueOnce({ name: 'data', filePath: '.artifacts/data.custom', size: 2 });
+   render(<ArtifactsDrawer open onClose={() => {}} />);
+   const files = [new File(['png'], 'shot.PNG'), new File(['xx'], 'data.custom')];
+   fireEvent.change(screen.getByLabelText('Upload artifact files'), { target: { files } });
+   await waitFor(() => expect(mockActions.createContext).toHaveBeenCalledTimes(2));
+   expect(mockActions.createContext).toHaveBeenCalledWith('shot', '.artifacts/shot.PNG', expect.objectContaining({ type: 'image' }));
+   expect(mockActions.createContext).toHaveBeenCalledWith('data', '.artifacts/data.custom', expect.objectContaining({ type: 'file' }));
+ });

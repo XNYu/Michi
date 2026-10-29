@@ -79,8 +79,7 @@ async function main() {
   closeDb(); initDb();
   configureRuntimeDeps({
     historyStore: { getNode: repo.getNode, listMessages: repo.listMessages,
-      getWorkspace: repo.getWorkspace, getWorkspaceInstructions: repo.getWorkspaceInstructions,
-      hasGrant: repo.hasGrant, grantPermission: repo.grantPermission },
+      getWorkspace: repo.getWorkspace, getWorkspaceInstructions: repo.getWorkspaceInstructions },
     dataDir, providerKeys: { getProviderApiKey: () => null },
     agentConfig: { getAgentConfig: config.getAgentConfig, resolveModel: config.resolveModel,
       resolveReasoning: config.resolveReasoning },

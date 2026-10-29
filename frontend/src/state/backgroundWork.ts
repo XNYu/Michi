@@ -475,6 +475,64 @@ export function describeRunningWork({ subagents, workflows }: RunningWorkCounts)
   return parts.length > 0 ? `${parts.join(' · ')} running` : undefined;
 }
 
+/** What the top-bar background work button shows, for one conversation. */
+export interface BackgroundWorkIndicator {
+  /** The conversation its click opens the Background work drawer on. */
+  nodeId: string;
+  running: RunningWorkCounts;
+  /** Items the drawer lists for it now (selectBackgroundWork), running or not. */
+  total: number;
+  /** Work runs while the conversation waits for the user's approval. */
+  waiting: boolean;
+}
+
+/**
+ * The conversation the top-bar button speaks for, among open chat panes:
+ * the focused one when the drawer has anything to list for it (work that
+ * runs, or what its latest turn started, finished or not), else the first
+ * one with work running. Null when there is none, and the button hides.
+ * `liveness` is the workflow domain's (a background agent no live process
+ * tracks reads stopped).
+ */
+export function selectBackgroundWorkIndicator(
+  nodes: Readonly<Record<string, ChatNodeState>>,
+  paneIds: readonly string[],
+  focusedId: string | null | undefined,
+  runs: readonly LocatedWorkflowRun[],
+  liveness?: (workspaceId: string, nodeId: string) => LiveBackgroundSubagents,
+): BackgroundWorkIndicator | null {
+  const summarize = (id: string): BackgroundWorkIndicator | null => {
+    const node = nodes[id];
+    if (node?.kind !== 'chat' || node.deletedAt) return null;
+    const work = selectBackgroundWork(node, runs, {}, liveness?.(node.projectId, node.nodeId));
+    const total = work.subagents.length + work.workflows.length;
+    if (total === 0) return null;
+    const running = {
+      subagents: work.subagents.filter((item) => item.active).length,
+      workflows: work.workflows.filter((item) => item.active).length,
+    };
+    const busy = running.subagents + running.workflows > 0;
+    return { nodeId: id, running, total, waiting: busy && !!node.pendingPermission };
+  };
+  if (focusedId && paneIds.includes(focusedId)) {
+    const focused = summarize(focusedId);
+    if (focused) return focused;
+  }
+  for (const id of paneIds) {
+    if (id === focusedId) continue;
+    const other = summarize(id);
+    if (other && other.running.subagents + other.running.workflows > 0) return other;
+  }
+  return null;
+}
+
+export function sameBackgroundWorkIndicator(a: BackgroundWorkIndicator | null, b: BackgroundWorkIndicator | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.nodeId === b.nodeId && a.total === b.total && a.waiting === b.waiting
+    && a.running.subagents === b.running.subagents && a.running.workflows === b.running.workflows;
+}
+
 /**
  * Chat nodes of a thread in tree order (root first, depth-first), skipping
  * deleted nodes and non-chat nodes (digests, artifacts).

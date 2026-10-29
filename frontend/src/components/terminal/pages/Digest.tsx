@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore, useChatNodesSnapshot, useChatNode, chatLabel } from '../../../state/chatStore';
-import { parseDigestStructure, staleSources } from '../../../state/digest';
+import { liveDigestSources, parseDigestStructure, staleSources } from '../../../state/digest';
 import { findTreeIdForNode, descendants } from '../../../state/tree';
 import MarkdownContent from '../../MarkdownContent';
 import DigestGenerationStatus from '../DigestGenerationStatus';
@@ -174,27 +174,10 @@ export default function TerminalDigest({
     }
   }, []);
 
-  // Live source list = every chat in the digest's originating tree, recomputed
-  // from the project's current edges so chats branched after the digest was
-  // generated show up in the SOURCES rail immediately. Falls back to the saved
-  // snapshot when the tree can't be resolved (e.g. all original sources gone).
+  // Live source list for the SOURCES rail; see liveDigestSources.
   const liveSources = useMemo(() => {
     if (!digestNode || !activeProject) return digestNode?.digest?.sources ?? [];
-    const d = digestNode.digest!;
-    const isAlive = (id: string) => {
-      const n = nodesSnapshot[id];
-      return !!n && !n.deletedAt;
-    };
-    const anchor = d.sources.find(isAlive);
-    const treeId = anchor ? findTreeIdForNode(anchor, activeProject) : null;
-    const tree = treeId ? activeProject.trees.find((t) => t.id === treeId) : null;
-    if (!tree || !isAlive(tree.rootNodeId)) return d.sources;
-    const descIds = descendants(tree.rootNodeId, activeProject.edges, isAlive);
-    const ids = [tree.rootNodeId, ...descIds].filter((id) => {
-      const n = nodesSnapshot[id];
-      return !!n && n.kind === 'chat' && !n.deletedAt;
-    });
-    return ids.length > 0 ? ids : d.sources;
+    return liveDigestSources(digestNode.digest!, activeProject, nodesSnapshot);
   }, [digestNode, activeProject, nodesSnapshot]);
 
   const createCurrentDigest = async () => {

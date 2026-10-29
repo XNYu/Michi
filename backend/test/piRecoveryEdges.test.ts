@@ -104,7 +104,7 @@ function sessionFixture(t: TestContext, onPrompt?: (agent: any, text: string) =>
   configureRuntimeDeps({
     dataDir: process.env.HOME,
     historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null,
-      getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission() {} },
+      getWorkspaceInstructions: () => null },
     providerKeys: { getProviderApiKey: () => 'fake-key' },
     agentConfig: { getAgentConfig: () => ({ provider: 'deepseek' } as any), resolveModel: () => 'pi-model', resolveReasoning: () => undefined },
   });

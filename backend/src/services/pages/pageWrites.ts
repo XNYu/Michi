@@ -1,4 +1,4 @@
-import { agentPageOpProblem, applyPageOps, parseAgentPageOps, parseUserPageOps } from 'michi-shared';
+import { agentPageOpProblem, applyPageOps, parseAgentPageOps, parseUserPageOps, pageViewProblem } from 'michi-shared';
 import { blockLocation } from 'michi-shared';
 import { parseChangeSource } from 'michi-shared';
 import type { AgentPageEditOp, BlockLocation, BlockSource, ChangeSource, MaintenanceResourceRef, PageChangeDto, PageDto, PageWriteResult, TargetMutation, TargetSnapshot } from 'michi-shared';
@@ -210,7 +210,8 @@ export function planAgentEdits(args: {
     // Hard error, not a soft rejection: a proposal that adds a board could never be accepted.
     assertNoNewTaskBoardOnHome(args.page.workspaceId, args.ownerUserId, candidate.blocks, working);
     try {
-      validatePageReferences(args.page.workspaceId, args.ownerUserId, candidate.blocks);
+      // View references are checked on the whole plan, so links and definitions can change together.
+      validatePageReferences(args.page.workspaceId, args.ownerUserId, candidate.blocks, false);
       const written = candidate.blocks.find((block) => block.id === candidate.touched[0]?.id);
       if (written) validateConversationReferences(args.page.workspaceId, [written], pageConversationIds(working), true);
     }
@@ -233,6 +234,13 @@ export function planAgentEdits(args: {
     records.push({ id: touched.id, index, before, after, proposal });
     if (!proposal) working = candidate.blocks;
   });
+  const prospective = new Map(working.map(block => [block.id, block]));
+  for (const record of records) if (record.proposal) {
+    if (record.after.exists && record.after.block) prospective.set(record.id, record.after.block);
+    else prospective.delete(record.id);
+  }
+  const viewProblem = pageViewProblem(working) ?? pageViewProblem([...prospective.values()]);
+  if (viewProblem) throw new PageWriteError(400, 'invalid', viewProblem);
   return { working, records, rejected };
 }
 

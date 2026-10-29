@@ -346,7 +346,6 @@ test('late permission and user-input continuations cannot persist grants or leak
   session.wireNotifications();
   t.after(() => session.dispose());
   let grants = 0;
-  t.mock.method(db, 'grantPermission', () => { grants++; });
   session.onAlwaysAllow = () => { grants++; };
   const first = drain(session.send('A'));
   await tick();

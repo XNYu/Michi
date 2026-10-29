@@ -1,3 +1,4 @@
+import { toast } from 'sonner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import type { MetaAgentInfo } from '../../services/api/metaAgent';
@@ -10,6 +11,7 @@ import {
   useMetaAgentGuardFailed,
 } from './useMetaAgent';
 
+vi.mock('sonner', () => ({ toast: vi.fn() }));
 const api = vi.hoisted(() => ({ fetchMetaAgent: vi.fn(), updateMetaAgentSettings: vi.fn() }));
 vi.mock('../../services/api/metaAgent', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/api/metaAgent')>()),
@@ -102,4 +104,13 @@ describe('Meta agent store', () => {
     await refreshMetaAgent();
     expect(readMetaAgent()).toMatchObject({ status: 'ready', info: FAILED, error: 'offline' });
   });
+});
+
+it('notifies once per pending tool request while repeated polls keep the request visible', async () => {
+  vi.mocked(toast).mockClear();
+  const info: MetaAgentInfo = { ...OK, toolApprovals: [{ id: 'request', server: 'mail', tool: 'send', description: '', state: 'pending', requestedAt: 1, updatedAt: 1 }] };
+  api.fetchMetaAgent.mockResolvedValue(info);
+  await refreshMetaAgent(); await refreshMetaAgent();
+  expect(toast).toHaveBeenCalledTimes(1);
+  expect(readMetaAgent().info?.toolApprovals?.[0].state).toBe('pending');
 });

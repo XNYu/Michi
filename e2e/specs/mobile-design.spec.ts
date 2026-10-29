@@ -25,7 +25,7 @@ async function boot(page: Page, palette = 'bone', reduceMotion = false) {
     sessionStorage.setItem('michi:panes:focus', '{}');
   }, { palette, reduceMotion });
   await page.goto('/');
-  await expect(page.locator('.michi-home')).toBeVisible();
+  await expect(page.locator('.home-page')).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
 }
 
@@ -33,7 +33,7 @@ test('Home adapts to desktop, phone and a short window without clipping its comp
   await boot(page);
   for (const [width, height] of [[1440, 900], [768, 900], [390, 844], [320, 568], [900, 500]]) {
     await page.setViewportSize({ width, height });
-    const composer = page.locator('.terminal-composer');
+    const composer = page.locator('.home-compose .terminal-composer');
     await expect(composer).toBeVisible();
     const bounds = await composer.boundingBox();
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
@@ -110,10 +110,10 @@ test('resizing to desktop restores its original design without losing the draft'
   await boot(page);
   const editor = page.getByRole('textbox', { name: 'Message' });
   await editor.fill('Keep this draft through resize');
-  await expect(page.locator('.michi-home__hero')).toBeVisible();
+  await expect(page.locator('.home-default-headline')).toBeVisible();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await expect(page.locator('.michi-home__hero')).toHaveCount(0);
-  await expect(page.locator('.michi-home h1')).toHaveText('_ Another road diverged in a yellow wood.');
+  await expect(page.locator('.home-default-headline')).toBeVisible();
+  await expect(page.locator('.home-page h1')).toHaveText('_ Another road diverged in a yellow wood.');
   await expect(editor).toHaveText('Keep this draft through resize');
   await expect(page.locator('.terminal-composer__input')).toHaveCSS('padding', '10px 12px 4px');
   await expect(page.locator('.terminal-composer__toolbar')).toHaveCSS('padding', '4px 10px 8px');
@@ -121,7 +121,7 @@ test('resizing to desktop restores its original design without losing the draft'
   await expect(page.getByRole('button', { name: 'Workspace views', exact: true })).toBeHidden();
   await expect(page.getByRole('button', { name: 'Map', exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.michi-home__hero')).toBeVisible();
+  await expect(page.locator('.home-default-headline')).toBeVisible();
   await expect(editor).toHaveText('Keep this draft through resize');
 });
 
@@ -131,8 +131,8 @@ for (const palette of ['bone', 'monokai']) {
     const page = await context.newPage();
     try {
       await boot(page, palette, true);
-      await expect(page.locator('.michi-home__hero')).toHaveCSS('animation-name', 'none');
-      const composer = page.locator('.terminal-composer');
+      await expect(page.locator('.home-default-headline')).toHaveCSS('animation-name', 'none');
+      const composer = page.locator('.home-compose .terminal-composer');
       const bounds = (await composer.boundingBox())!;
       for (const control of await composer.locator('.t-toolbar-chip, .t-action-btn').all()) {
         if (!await control.isVisible()) continue;
@@ -147,3 +147,104 @@ for (const palette of ['bone', 'monokai']) {
     } finally { await context.close(); }
   });
 }
+
+test('a phone Home keeps one toolbar row and moves workspace and permissions to a tray', async ({ browser, baseURL }, info) => {
+  const greeting = { text: '几个示例项目正在推进', detail: 'Atlas 笔记还有两段待整理，Orchid 示例还有几项待检查。' };
+  for (const [width, globalPermissions] of [[390, false], [390, true], [320, false]] as const) {
+    const context = await browser.newContext({ baseURL, viewport: { width, height: 844 }, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    try {
+      await installMockApi(page, {
+        workspaces: [{ workspace: { id: 'ws', name: 'Cedar Studio', created_at: 1 }, trees: [], nodes: [], messages: [], edges: [], artifacts: [] }],
+        custom: async (route) => {
+          const path = new URL(route.request().url()).pathname.replace(/^.*\/api/, '');
+          if (path === '/home/cards') {
+            await route.fulfill({ json: { greeting, sets: [], generatedAt: 1, inputFingerprint: null } });
+            return true;
+          }
+          if (path === '/prefs' && route.request().method() === 'GET') {
+            await route.fulfill({ json: { prefs: { onboardingCompletedAt: 1, globalPermissions, permissionMode: 'ask' } } });
+            return true;
+          }
+          return false;
+        },
+      });
+      await page.addInitScript(() => {
+        localStorage.setItem('michi:migrated', '1');
+        localStorage.setItem('michi:v1:prefs', JSON.stringify({ onboardingCompletedAt: 1 }));
+      });
+      await page.goto('/');
+      await expect(page.locator('.home-greeting__text')).toBeVisible();
+      await expect(page.locator('[data-testid="home-card"]').first()).toBeVisible();
+      // The lazy editor changes the composer's height when it arrives.
+      await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
+
+      const composer = (await page.locator('.home-compose .terminal-composer').boundingBox())!;
+      const box = async (locator: ReturnType<Page['locator']>) => (await locator.boundingBox())!;
+      const toolbar = page.locator('.home-compose .terminal-composer__toolbar');
+      const attach = await box(toolbar.getByText('+', { exact: true }));
+      // Typing @ still mentions; the phone has no @ chip.
+      await expect(toolbar.getByTitle('Mention context or node')).toBeHidden();
+      const model = await box(toolbar.locator('.composer-model-trigger'));
+      const send = await box(toolbar.getByRole('button', { name: 'Send (Enter)', exact: true }));
+      // One toolbar row: +, model and send.
+      expect(Math.abs(model.y - attach.y)).toBeLessThan(1);
+      expect(Math.abs(send.y - attach.y)).toBeLessThan(1);
+      expect(send.x + send.width).toBeLessThanOrEqual(composer.x + composer.width);
+      await expect(toolbar.getByTitle('Switch workspace')).toHaveCount(0);
+      await expect(toolbar.getByRole('button', { name: /^Permissions:/ })).toHaveCount(0);
+
+      // The tray hangs from the composer, inset on both sides.
+      const tray = page.locator('.home-compose .composer-tray');
+      const trayBox = await box(tray);
+      expect(Math.abs(trayBox.y - (composer.y + composer.height))).toBeLessThan(1);
+      expect(trayBox.x).toBeGreaterThan(composer.x);
+      expect(trayBox.x + trayBox.width).toBeLessThan(composer.x + composer.width);
+      await expect(tray.getByTitle('Switch workspace')).toContainText('Cedar Studio');
+      const permissions = tray.getByRole('button', { name: /^Permissions:/ });
+      if (globalPermissions) await expect(permissions).toHaveCount(0);
+      else {
+        // Named in full on the right, level with the workspace. One layout
+        // snapshot, so nothing loading in between can shift one of them.
+        await expect(permissions).toContainText('Ask');
+        const { workspace, permission, end } = await tray.evaluate((el) => {
+          const rect = (node: Element) => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width }; };
+          return {
+            workspace: rect(el.querySelector('[title="Switch workspace"]')!),
+            permission: rect(el.querySelector('[aria-label^="Permissions:"]')!),
+            end: el.getBoundingClientRect().right,
+          };
+        });
+        expect(Math.abs(permission.y - workspace.y)).toBeLessThan(1);
+        expect(permission.x).toBeGreaterThan(workspace.x + workspace.width);
+        expect(permission.x + permission.width).toBeLessThanOrEqual(end);
+      }
+      for (const control of await tray.locator('.t-toolbar-chip').all()) {
+        expect((await box(control)).height).toBeGreaterThanOrEqual(40);
+      }
+      // Neither the page nor Home scrolls sideways.
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+      expect(await page.locator('.home-scroll').evaluate((el) => el.scrollWidth - el.clientWidth)).toBe(0);
+      await page.screenshot({ animations: 'disabled', path: info.outputPath(`home-greeting-${width}-${globalPermissions}.png`) });
+
+      // A tap leaves :hover on the chip; its folder icon stays while the menu is open.
+      await tray.getByTitle('Switch workspace').tap();
+      const workspaces = page.getByRole('menu', { name: 'Workspaces', exact: true });
+      await expect(workspaces).toBeVisible();
+      await expect(tray.locator('.home-workspace-chip__folder')).toBeVisible();
+      // Tray menus open downward, off the draft above.
+      const trayBottom = trayBox.y + trayBox.height;
+      await expect.poll(async () => (await workspaces.boundingBox())!.y).toBeGreaterThan(trayBottom);
+      await page.screenshot({ animations: 'disabled', path: info.outputPath(`home-greeting-${width}-${globalPermissions}-workspaces.png`) });
+      if (!globalPermissions) {
+        await tray.getByTitle('Switch workspace').tap();
+        await expect(workspaces).toBeHidden();
+        await permissions.tap();
+        const menu = page.getByRole('menu');
+        await expect(menu).toBeVisible();
+        await expect.poll(async () => (await menu.boundingBox())!.y).toBeGreaterThan(trayBottom);
+        await page.screenshot({ animations: 'disabled', path: info.outputPath(`home-greeting-${width}-permissions.png`) });
+      }
+    } finally { await context.close(); }
+  }
+});

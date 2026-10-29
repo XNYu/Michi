@@ -5,16 +5,16 @@ import test from 'node:test';
 const rootPackage = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const backendPackage = JSON.parse(await readFile(new URL('../backend/package.json', import.meta.url), 'utf8'));
 
-test('remote setup installs only backend, shared and runtime workspaces', () => {
+test('remote setup installs web, backend, shared and runtime workspaces without Electron', () => {
   const command = rootPackage.scripts?.['remote:setup'];
   assert.equal(typeof command, 'string');
   assert.match(command, /npm install/);
   assert.match(command, /--workspace backend/);
   assert.match(command, /--workspace shared/);
   assert.match(command, /--workspace runtime/);
-  assert.doesNotMatch(command, /--workspace frontend/);
+  assert.match(command, /--workspace frontend/);
   assert.match(command, /--include-workspace-root=false/);
-  assert.match(command, /npm run backend:build/);
+  assert.match(command, /npm run build/);
 });
 
 test('backend links the runtime workspace by path, not by registry version', () => {

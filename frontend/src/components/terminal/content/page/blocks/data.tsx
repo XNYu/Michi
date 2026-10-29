@@ -7,6 +7,7 @@ import { Button } from '../../../../ui/controls';
 import { useBlockSend } from '../vendor-blocks/src/desk/blocks/catalog/interactive/useBlockSend';
 import type { PageBlockWithSources } from '../vendor-blocks/shared/desk-blocks';
 import { BlockTitle } from './text';
+import { PageViewEntry } from '../PageViewContext';
 
 /** A row of labelled figures; tone `warn` flags one, `accent` highlights it. A note is a native page's hint. */
 export function MetricsBlock({ block }: BlockProps) {
@@ -18,7 +19,7 @@ export function MetricsBlock({ block }: BlockProps) {
         return (
           <div key={i} className="michi-doc-metric" data-tone={m.tone === 'warn' || m.tone === 'accent' ? m.tone : undefined}>
             <dt className="michi-doc-caption">{str(m.label)}</dt>
-            <dd className="michi-doc-metric__value">{str(m.value)}</dd>
+            <dd className="michi-doc-metric__value">{m.action ? <PageViewEntry action={m.action}><span className="sr-only">{str(m.label)}: </span>{str(m.value)}</PageViewEntry> : str(m.value)}</dd>
             {hint && <dd className="michi-doc-metric__hint">{hint}</dd>}
           </div>
         );

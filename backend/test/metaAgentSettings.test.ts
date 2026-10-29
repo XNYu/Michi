@@ -17,6 +17,8 @@ import { updateAgentConfig } from '../src/services/agentConfig';
 import {
   getMetaAgentSettings, MetaAgentSettingsError, metaAgentInfo, resolveMetaAgentBehaviour, resolveMetaAgentRuntime, updateMetaAgentSettings,
 } from '../src/services/metaAgent/settings';
+import { createRemoteAccessMiddleware } from '../src/services/remoteAccess';
+import { setupMetaAgentOverviewRoutes } from '../src/routes/metaAgentOverview';
 import { setupMetaAgentRoutes } from '../src/routes/metaAgent';
 
 function fakeRuntime(id: string, providerModels = false): AgentRuntime {
@@ -220,7 +222,9 @@ describe('Meta agent settings', () => {
     beforeEach(async () => {
       const app = express();
       app.use(express.json());
+      app.use('/api', createRemoteAccessMiddleware());
       app.use('/api', setupMetaAgentRoutes());
+      app.use('/api', setupMetaAgentOverviewRoutes({ scheduler: null }));
       server = app.listen(0, '127.0.0.1');
       await new Promise((resolve) => server.once('listening', resolve));
       base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -274,6 +278,28 @@ describe('Meta agent settings', () => {
       const back = await call('PUT', '/api/meta-agent/settings', { runtimeId: null });
       assert.equal(back.body.resolved.followsGlobal, true);
       assert.equal(back.body.resolved.runtimeId, 'claude');
+    });
+
+    test('authenticated remote owners can read settings and overview and update settings', async () => {
+      const priorRemote = process.env.MICHI_REMOTE_ACCESS;
+      const priorToken = process.env.MICHI_REMOTE_TOKEN;
+      process.env.MICHI_REMOTE_ACCESS = '1';
+      process.env.MICHI_REMOTE_TOKEN = 'meta-agent-test-owner-token';
+      try {
+        const headers = { host: 'michi.example', origin: 'https://michi.example', authorization: 'Bearer meta-agent-test-owner-token' };
+        assert.equal((await call('GET', '/api/meta-agent', undefined, { host: headers.host })).status, 401);
+        assert.equal((await call('GET', '/api/meta-agent', undefined, { ...headers, authorization: 'Bearer wrong' })).status, 401);
+        assert.equal((await call('GET', '/api/meta-agent', undefined, headers)).status, 200);
+        assert.equal((await call('GET', '/api/meta-agent/overview', undefined, headers)).status, 200);
+        const result = await call('PUT', '/api/meta-agent/settings', { firstRunDays: 90 }, headers);
+        assert.equal(result.status, 200);
+        assert.equal(result.body.settings.firstRunDays, 90);
+        assert.equal((await call('PUT', '/api/meta-agent/settings', { firstRunDays: 30 })).status, 401);
+        assert.equal(getMetaAgentSettings().firstRunDays, 90);
+      } finally {
+        if (priorRemote === undefined) delete process.env.MICHI_REMOTE_ACCESS; else process.env.MICHI_REMOTE_ACCESS = priorRemote;
+        if (priorToken === undefined) delete process.env.MICHI_REMOTE_TOKEN; else process.env.MICHI_REMOTE_TOKEN = priorToken;
+      }
     });
 
     test('routes are local-only', async () => {

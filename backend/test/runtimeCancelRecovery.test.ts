@@ -246,7 +246,7 @@ for (const action of ['cancel', 'destroy'] as const) {
   test(`Pi ${action} during setup cannot dispatch a prompt or install an Agent`, async (t) => {
     configureRuntimeDeps({
       dataDir: '/tmp/michi-pi-cancel-tests',
-      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission() {} },
+      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null },
       providerKeys: { getProviderApiKey: () => 'fake' },
       agentConfig: { getAgentConfig: () => ({ provider: 'deepseek' } as any), resolveModel: () => 'deepseek-chat', resolveReasoning: () => undefined },
     });

@@ -1,4 +1,5 @@
 import { kbd } from '../../../../lib/platform';
+import { SettingsSection } from './SettingsSection';
 
 type Binding = { keys: string; label: string };
 type Group = { title: string; bindings: Binding[] };
@@ -47,73 +48,20 @@ const SHORTCUT_GROUPS: Group[] = [
 
 export function ShortcutsPane() {
   return (
-    <div>
-      <h1
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-2xl)',
-          fontWeight: 700,
-          color: 'var(--term-fg)',
-          margin: 0,
-        }}
-      >
-        Shortcuts
-      </h1>
-      <div style={{ marginBottom: 20 }} />
-
+    <SettingsSection title="Shortcuts">
       {SHORTCUT_GROUPS.map((g) => (
-        <div key={g.title} style={{ marginBottom: 22 }}>
-          <div
-            style={{
-              fontSize: 'var(--fs-xs)',
-              color: 'var(--term-muted)',
-              letterSpacing: 'var(--ls-caps-wide)',
-              marginBottom: 8,
-              fontFamily: 'var(--ui-font)',
-            }}
-          >
-            ▸ {g.title.toUpperCase()}
-          </div>
-          <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface-glass)' }}>
+        <div key={g.title} className="settings-shortcuts__group">
+          <h3 className="settings-shortcuts__group-title">{g.title}</h3>
+          <div className="settings-shortcuts__table">
             {g.bindings.map((b, i) => (
-              <div
-                key={i}
-                className="settings-shortcut-row"
-                style={{
-                  display: 'grid',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '8px 14px',
-                  borderBottom: i < g.bindings.length - 1 ? '1px solid var(--term-line)' : 'none',
-                }}
-              >
-                <span
-                  style={{
-                    fontFamily: 'var(--ui-font)',
-                    fontSize: 'var(--fs-sm)',
-                    color: 'var(--term-fg)',
-                    padding: '2px 6px',
-                    border: '1px solid var(--term-line)',
-                    background: 'var(--term-alt)',
-                    justifySelf: 'start',
-                  }}
-                >
-                  {b.keys}
-                </span>
-                <span
-                  style={{
-                    fontFamily: 'var(--ui-font)',
-                    fontSize: 'var(--fs-lg)',
-                    color: 'var(--term-mid)',
-                  }}
-                >
-                  {b.label}
-                </span>
+              <div key={i} className="settings-shortcut-row">
+                <span className="settings-shortcut-row__keys">{b.keys}</span>
+                <span className="settings-shortcut-row__label">{b.label}</span>
               </div>
             ))}
           </div>
         </div>
       ))}
-    </div>
+    </SettingsSection>
   );
 }

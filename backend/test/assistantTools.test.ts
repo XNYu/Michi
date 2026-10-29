@@ -16,10 +16,15 @@ import { McpSlotRegistry, buildMcpServerForSlot, type McpSlot } from '../src/ser
 import { configureThreadMessaging, type ThreadMessagingDeps } from '../src/agents/threadMessageTool';
 import type { StartRequestedSelfTurnArgs, StartedRequestedSelfTurn } from '../src/agents/chatHub';
 import type { AgentSession } from '../src/agents/types';
-import { ensureAssistant } from '../src/assistant/store';
-import { ASSISTANT_TOOL_NAMES, LAYOUT_RULES_TOOL, META_AGENT_CHAT_TOOL_NAMES, START_CONVERSATION_TOOL, TURN_METADATA_TOOL_NAMES } from '../src/assistant/policy';
+import { ensureAssistant, ensureAssistantFor } from '../src/assistant/store';
+import {
+  ASSISTANT_TOOL_NAMES, LAYOUT_RULES_TOOL, META_AGENT_CHAT_TOOL_NAMES, SCHEDULE_ASSISTANT_TOOL_NAMES, START_CONVERSATION_TOOL, TURN_METADATA_TOOL_NAMES,
+} from '../src/assistant/policy';
 import { PAGE_TOOL_NAMES } from '../src/agents/pageToolNames';
 import { SCHEDULED_JOB_TOOL_NAMES, isScheduledJobToolName } from '../src/agents/scheduledJobToolNames';
+import { configureScheduledJobTools } from '../src/agents/scheduledJobTools';
+import { ScheduledJobNotFoundError } from '../src/services/scheduledJobs/scheduler';
+import type { ScheduledJobDto } from 'michi-shared';
 import { runOwner } from './helpers/owners';
 
 function seedWorkspace(id: string): void {
@@ -113,6 +118,7 @@ describe('Michi assistant MCP tools', () => {
 
   afterEach(() => {
     configureThreadMessaging(null);
+    configureScheduledJobTools(null);
     closeDb();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -141,11 +147,11 @@ describe('Michi assistant MCP tools', () => {
     assert.deepEqual(names.filter((name) => name.startsWith('desk_')), [], 'nothing reads or writes Agent Desk');
   });
 
-  test('the assistant catalog needs both the assistant workspace and an assistant-profile session', () => {
+  test('the assistant workspace retains its catalog without restricting native tools', () => {
     const channels = ['ask_user'];
     // A session not set up as the assistant (say, a runtime that ignored the profile) in its home: nothing but the channels.
     const unmarked = Object.keys(tools(slotFor(assistant.nodeId, assistant.workspaceId, {}, async () => null))).sort();
-    assert.deepEqual(unmarked, channels);
+    assert.deepEqual(unmarked, [...META_AGENT_CHAT_TOOL_NAMES].sort());
     // An assistant-profile slot anywhere else: the same.
     const elsewhere = Object.keys(tools(assistantSlotFor('n-a1', 'ws-a', {}, async () => null))).sort();
     assert.deepEqual(elsewhere, channels);
@@ -194,6 +200,72 @@ describe('Michi assistant MCP tools', () => {
       "an unmarked session in the assistant's workspace");
     assert.deepEqual(scheduling(assistantSlotFor('n-a1', 'ws-a', {}, async () => null)), [],
       'an assistant-profile session elsewhere');
+  });
+
+  test('the Scheduled window\'s conversation gets its own catalog: conversation reads and scheduled jobs, no Pages', () => {
+    const schedule = ensureAssistantFor('schedule');
+    const names = Object.keys(tools(slotFor(schedule.nodeId, schedule.workspaceId, {}, async () => null))).sort();
+    assert.deepEqual(names, [...SCHEDULE_ASSISTANT_TOOL_NAMES].sort());
+    for (const name of [...PAGE_TOOL_NAMES, START_CONVERSATION_TOOL, LAYOUT_RULES_TOOL, 'send_to_thread', 'read_conversation_updates', 'save_artifact']) {
+      assert.ok(!names.includes(name), `${name} is not the Scheduled window's`);
+    }
+    // The Spaces conversation in the same workspace keeps its own catalog, without scheduled jobs.
+    const spaces = Object.keys(tools(slotFor(assistant.nodeId, assistant.workspaceId, {}, async () => null)));
+    assert.deepEqual([...spaces].sort(), [...META_AGENT_CHAT_TOOL_NAMES].sort());
+    assert.ok(!spaces.some((name) => isScheduledJobToolName(name)));
+  });
+
+  test('the Scheduled window schedules only where the user lets it, and the approval names the workspace', async () => {
+    const jobs: ScheduledJobDto[] = [];
+    configureScheduledJobTools({
+      scheduler: {
+        status: () => ({ active: true, serviceMode: true }),
+        listJobs: () => jobs,
+        getJob: (id: string) => { const job = jobs.find((each) => each.id === id); if (!job) throw new ScheduledJobNotFoundError('Scheduled job not found'); return job; },
+        listRuns: () => [],
+        requirePromptJob: () => {},
+        validateCreate: (input: Record<string, unknown>) => ({
+          name: input.name, prompt: input.prompt, schedule: input.schedule, permissionMode: 'trust', sessionMode: 'fresh',
+          notify: true, enabled: true, timeoutSeconds: 1800,
+        }),
+        createJob: (input: Record<string, unknown>) => {
+          const job = { id: `job-${jobs.length + 1}`, workspaceId: input.workspaceId, name: input.name, prompt: input.prompt, schedule: input.schedule,
+            permissionMode: 'trust', sessionMode: 'fresh', notify: true, enabled: true, autoPaused: false, timeoutSeconds: 1800,
+            nextRunAt: null, lastRunAt: null, lastStatus: null, lastError: null, activeRunId: null, runtimeId: null, modelId: null } as unknown as ScheduledJobDto;
+          jobs.push(job);
+          return job;
+        },
+      } as never,
+      isScheduledRunNode: () => false,
+    });
+    seedWorkspace('ws-arch');
+    getDb().prepare('UPDATE workspaces SET archived_at = 9 WHERE id = ?').run('ws-arch');
+    setAiGlobalContext('ws-b', false);
+    const questions: string[] = [];
+    const schedule = ensureAssistantFor('schedule');
+    const slot = slotFor(schedule.nodeId, schedule.workspaceId, {}, async (qs) => { questions.push(qs[0].question); return { [qs[0].question]: 'Create' }; });
+    const job = { name: 'Digest', prompt: 'Summarize overnight changes.', schedule: { kind: 'every', everySeconds: 3600 } };
+
+    for (const [workspaceId, refusal] of [
+      [schedule.workspaceId, /^INVALID_ARGUMENT: workspace not found/],
+      ['ws-missing', /^INVALID_ARGUMENT: workspace not found/],
+      ['ws-b', /^NAVIGATION_DISABLED: "Let AI navigate this workspace" is off in Project ws-b/],
+      ['ws-arch', /^INVALID_ARGUMENT: Project ws-arch is archived/],
+    ] as const) {
+      const refused = await call(slot, 'create_scheduled_job', { ...job, workspaceId });
+      assert.ok(refused.isError, workspaceId);
+      assert.match(refused.text, refusal, workspaceId);
+    }
+    assert.equal(questions.length, 0, 'the user is asked only about a job that can be created');
+    assert.equal(jobs.length, 0);
+
+    const created = await call(slot, 'create_scheduled_job', { ...job, workspaceId: 'ws-a' });
+    assert.equal(created.isError, false, created.text);
+    assert.equal(JSON.parse(created.text).status, 'created');
+    assert.equal(questions.length, 1);
+    assert.match(questions[0], /^Create scheduled job “Digest”\?\nWorkspace: Project ws-a\n/);
+    assert.equal(jobs[0].workspaceId, 'ws-a');
+    assert.deepEqual(JSON.parse((await call(slot, 'list_scheduled_jobs')).text).jobs.map((each: any) => each.workspace), [{ id: 'ws-a', name: 'Project ws-a' }]);
   });
 
   test('ordinary chats still cannot message or inspect another workspace', async () => {

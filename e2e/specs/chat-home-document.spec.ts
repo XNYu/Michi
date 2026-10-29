@@ -25,11 +25,14 @@ test('Chat Home renders and edits a native Page below its working composer, surv
   };
   mock.pages.set(doc.id, doc);
   let contentMode: HomeCardsDto['contentMode'] = 'page';
+  let releaseHome!: () => void;
+  const homeReady = new Promise<void>((resolve) => { releaseHome = resolve; });
   await installMockApi(page, {
     workspaces: [{ workspace: { id: 'home-ws', name: 'My workspace', created_at: 1 }, trees: [], nodes: [], messages: [], edges: [], artifacts: [] }],
     custom: async route => {
       const path = new URL(route.request().url()).pathname.replace(/^.*\/api/, '');
       if (path === '/home/cards') {
+        await homeReady;
         await route.fulfill({ json: { greeting: null, sets: [], generatedAt: null, inputFingerprint: null,
           contentMode, contentPage: contentMode === 'page' ? mock.pages.get(doc.id) : null } satisfies HomeCardsDto });
         return true;
@@ -42,8 +45,16 @@ test('Chat Home renders and edits a native Page below its working composer, surv
     if (!localStorage.getItem('michi:v1:prefs')) localStorage.setItem('michi:v1:prefs', JSON.stringify({ onboardingCompletedAt: 1 }));
   });
   await page.goto('/');
+  const home = page.locator('.home-page');
+  await expect(home).toHaveAttribute('data-default-layout', 'true');
+  await expect(page.getByRole('heading', { name: 'Another road diverged in a yellow wood.', exact: false })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Quick starts' })).toBeVisible();
+  await page.locator(COMPOSER_EDITOR).first().fill('A draft while Pages loads');
+  releaseHome();
   const body = page.getByRole('region', { name: 'Home content' });
   await expect(body.getByRole('heading', { name: 'My weekly focus' })).toBeVisible();
+  await expect(home).not.toHaveAttribute('data-default-layout');
+  await expect(page.locator(COMPOSER_EDITOR).first()).toContainText('A draft while Pages loads');
   await expect(page.getByRole('group', { name: 'Quick starts' })).toHaveCount(0);
   const links = body.locator('[data-region-id="links"]');
   const todos = body.locator('[data-region-id="todos"]');

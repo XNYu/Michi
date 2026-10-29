@@ -3,36 +3,69 @@
   "workspaces": {
     "frontend": {
       "entry": [
-        "src/index.tsx",
+        "src/index.tsx!",
         "src/**/*.test.{ts,tsx}",
         "src/setupTests.ts",
-        "src/components/terminal/spaces/metaChat/harness/main.tsx"
+        "src/components/terminal/spaces/metaChat/harness/main.tsx",
+        "src/services/api/version.ts!"
       ],
-      "project": ["src/**/*.{ts,tsx}"]
+      "project": [
+        "src/**/*.{ts,tsx}!"
+      ]
     },
     "backend": {
       "entry": [
-        "src/server.ts",
+        "src/server.ts!",
+        "src/services/dbWorkerThread.ts!",
+        "src/services/metaAgentMetricsWorker.ts!",
         "test/**/*.test.ts",
-        "scripts/**/*.ts"
+        "scripts/**/*.{ts,mjs,cjs}",
+        "src/services/acp/index.ts!",
+        "src/agents/acp/AcpRuntime.ts!",
+        "src/agents/antigravity/antigravityBinary.ts!"
       ],
-      "project": ["src/**/*.ts"]
+      "project": [
+        "src/**/*.ts!"
+      ]
     },
     "shared": {
-      "entry": ["src/index.ts"],
-      "project": ["src/**/*.ts"]
+      "entry": [
+        "src/index.ts!"
+      ],
+      "project": [
+        "src/**/*.ts!"
+      ]
     },
     "runtime": {
-      "entry": ["src/index.ts", "test/**/*.test.ts"],
-      "project": ["src/**/*.ts"]
-    },
-    "electron": {
-      "entry": ["main.ts", "preload.ts"],
-      "project": ["**/*.ts"]
+      "entry": [
+        "src/index.ts!",
+        "src/adapters/crew/acp/main.ts!",
+        "src/adapters/crew/crewMcpMain.ts!",
+        "test/**/*.test.ts",
+        "scripts/**/*.mjs"
+      ],
+      "project": [
+        "src/**/*.ts!"
+      ]
     },
     ".": {
-      "entry": ["e2e/**/*.spec.ts", "e2e/playwright.config.ts"],
-      "project": ["e2e/**/*.ts"]
+      "entry": [
+        "electron/main.ts!",
+        "electron/preload.ts!",
+        "e2e/**/*.spec.ts",
+        "e2e/playwright.config.ts",
+        "scripts/**/*.test.mjs",
+        "scripts/electron-native-shortcut-smoke.cjs",
+        "scripts/page-block-source-sync.mjs",
+        "scripts/verify-claude-sdk-sidecar.mjs",
+        "scripts/verification/*.mjs",
+        "electron/autoUpdate.ts!"
+      ],
+      "project": [
+        "electron/**/*.ts!",
+        "e2e/**/*.ts",
+        "scripts/**/*.{mjs,cjs}"
+      ]
     }
   },
   "ignore": [

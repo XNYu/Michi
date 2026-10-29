@@ -1,4 +1,4 @@
-import { frameText, TOOL_CONTENT_MAX, TOOL_TITLE_MAX, type AcpUpdate } from './crewFrames';
+import { frameText, turnUsage, TOOL_CONTENT_MAX, TOOL_TITLE_MAX, type AcpUpdate, type CrewTurnUsage } from './crewFrames';
 import type { CrewChatFrame, CrewEvent, CrewGateway, CrewHistoryRow } from './gatewayTypes';
 import { createCrewSubagentFold } from './crewSubagents';
 
@@ -18,6 +18,7 @@ export class CrewTurn {
     private title = '';
     private contextPercentage?: number;
     private plan?: string;
+    private usage?: CrewTurnUsage;
     private readonly subagents = createCrewSubagentFold();
 
     constructor(private readonly slot: string, private readonly gateway: CrewGateway,
@@ -96,6 +97,9 @@ export class CrewTurn {
                             if (typeof detail.title === 'string') this.title = detail.title.slice(0, 500);
                             if (detail.context_stale === false) this.context(detail.context_pct);
                             this.todo(detail.todo);
+                            // Rows after this turn's user row only; earlier turns' stats never qualify.
+                            const usage = turnUsage(detail.messages);
+                            if (usage) this.usage = usage;
                         }
                         for (const row of detail.messages) {
                             if (typeof row.ts !== 'string' || !this.rows.has(row.ts)) continue;
@@ -181,6 +185,14 @@ export class CrewTurn {
             this.enrich(card, {});
         }
         if (!cancelled && this.title) this.emit({ sessionUpdate: 'session_info_update', title: this.title });
+        // Kiro v2's usage wire shape: the Gateway's turn_stats credits are
+        // kiro-cli's own meteringUsage sum. Sent only with a known context
+        // reading, which the shape requires, and never with invented totals.
+        if (!cancelled && this.usage && this.contextPercentage !== undefined) {
+            this.emit({ sessionUpdate: 'usage_summary', contextUsagePercentage: this.contextPercentage,
+                meteringUsage: [{ value: this.usage.credits, unit: 'credit', unitPlural: 'credits' }],
+                ...(this.usage.turnDurationMs !== undefined ? { turnDurationMs: this.usage.turnDurationMs } : {}) });
+        }
         this.pending.clear();
     }
 }

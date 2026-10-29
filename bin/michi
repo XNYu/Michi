@@ -5,6 +5,221 @@ set -euo pipefail
 SCRIPT="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "${BASH_SOURCE[0]}")"
 INSTALL_DIR="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
 
+# --- Linux remote backend ---
+# A data directory with remote.env belongs to the backend that the desktop app
+# and phone connect to. There `michi` acts on that backend, whichever release
+# this launcher came from; each launch points ~/.local/bin/michi at its build.
+REMOTE_ROOT="$HOME/.local/share/michi/devdesktop"
+
+remote_fail() { echo "✖ $*" >&2; exit 1; }
+
+remote_node() {
+  local candidate
+  for candidate in "$REMOTE_ROOT/node/bin/node" "$(command -v node || true)" "$HOME"/.nvm/versions/node/*/bin/node; do
+    [ -x "$candidate" ] || continue
+    if "$candidate" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)' 2>/dev/null; then
+      REMOTE_NODE="$candidate"
+      PATH="$(dirname "$candidate"):$PATH"
+      export PATH
+      return 0
+    fi
+  done
+  remote_fail "Michi needs Node.js 22.19 or newer"
+}
+
+# Prints the checkout whose server.js a pid or installation record names; with
+# "alive", only while that process still runs.
+remote_record_repo() {
+  [ -f "$1" ] || return 1
+  "$REMOTE_NODE" -e '
+const fs = require("node:fs"), path = require("node:path");
+const [file, mode] = process.argv.slice(1);
+try {
+  const record = JSON.parse(fs.readFileSync(file, "utf8"));
+  const repo = path.resolve(record.serverPath, "../../..");
+  if (path.basename(record.serverPath) !== "server.js" || !fs.existsSync(path.join(repo, "scripts/remote-control.mjs"))) process.exit(1);
+  if (mode === "alive") { try { process.kill(record.pid, 0); } catch (error) { if (error.code !== "EPERM") process.exit(1); } }
+  process.stdout.write(repo);
+} catch { process.exit(1); }' "$1" "${2:-}"
+}
+
+# The build that owns the data directory, resolved as the desktop app does.
+remote_repo() {
+  remote_record_repo "$REMOTE_DATA/remote-installation.json" \
+    || remote_record_repo "$REMOTE_DATA/remote.pid" \
+    || { [ -f "$INSTALL_DIR/scripts/remote-control.mjs" ] && printf '%s' "$INSTALL_DIR"; } \
+    || remote_fail "No Michi build found for $REMOTE_DATA"
+}
+
+# remote-control.mjs only stops or reports a process started from its own checkout.
+remote_running_repo() {
+  remote_record_repo "$REMOTE_DATA/remote.pid" alive || remote_repo
+}
+
+remote_control() {
+  local repo="$1"
+  shift
+  (cd "$repo" && env -u PORT -u MICHI_REMOTE_TOKEN -u MICHI_BIND_HOST \
+    "$REMOTE_NODE" scripts/remote-control.mjs "$@" --data-dir "$REMOTE_DATA")
+}
+
+remote_revision() {
+  remote_control "$1" status 2>/dev/null | sed -n 's/^revision: //p' || true
+}
+
+# Same order as the desktop app's update: build beside the running backend,
+# stop it from its own checkout, start the new build, and restore the old one
+# if the new build does not start.
+remote_update() {
+  local force=0 arg old_repo repo url ref revision attempt log
+  for arg in "$@"; do
+    case "$arg" in
+      --force|-f) force=1 ;;
+      *) remote_fail "unknown option: $arg" ;;
+    esac
+  done
+  url="${MICHI_REMOTE_SOURCE_URL:-https://github.com/XNYu/Michi.git}"
+  ref="${MICHI_REMOTE_SOURCE_REF:-main}"
+  old_repo="$(remote_running_repo)"
+  mkdir -p "$REMOTE_ROOT/releases"
+  mkdir "$REMOTE_ROOT/setup.lock" 2>/dev/null || remote_fail "Another Michi setup or update is running"
+  if ! mkdir "$REMOTE_DATA/remote-recovery.lock" 2>/dev/null; then
+    rmdir "$REMOTE_ROOT/setup.lock"
+    remote_fail "Another Michi setup or update is running"
+  fi
+  trap 'rmdir "$REMOTE_ROOT/setup.lock" "$REMOTE_DATA/remote-recovery.lock" 2>/dev/null || true' EXIT
+
+  if [ "$force" -ne 1 ] && [ -n "$(git -C "$old_repo" status --porcelain --untracked-files=normal -- . ':!package-lock.json' 2>/dev/null || true)" ]; then
+    remote_fail "The running build in $old_repo has local source changes that the update would not keep. Re-run with: michi update --force"
+  fi
+  revision="$(git ls-remote "$url" "refs/heads/$ref" | cut -f1)"
+  [ -n "$revision" ] || remote_fail "Could not read $ref from $url"
+  if [ "$(remote_revision "$old_repo")" = "$revision" ]; then
+    echo "✔ Michi is already at $ref (${revision:0:8})"
+    return 0
+  fi
+
+  attempt="$("$REMOTE_NODE" -e 'process.stdout.write(require("node:crypto").randomUUID())')"
+  repo="$REMOTE_ROOT/releases/$revision-$attempt"
+  log="$REMOTE_ROOT/update.$attempt.log"
+  (umask 077 && : >"$log")
+  echo "🐰 Building $ref ${revision:0:8} (log: $log)"
+  if ! (git clone --no-checkout --single-branch --branch "$ref" -- "$url" "$repo" \
+    && git -C "$repo" checkout --detach "$revision") >>"$log" 2>&1; then
+    tail -n 20 "$log"
+    remote_fail "Could not fetch $ref; Michi keeps running $old_repo"
+  fi
+  if ! (cd "$repo" && MICHI_DATA_DIR="$REMOTE_DATA" MICHI_CONFIG_DIR="$REMOTE_DATA" MICHI_LOG_DIR="$REMOTE_DATA/logs" \
+    npm run remote:setup) >>"$log" 2>&1; then
+    tail -n 20 "$log"
+    remote_fail "Build failed; Michi keeps running $old_repo"
+  fi
+
+  echo "🐰 Switching to the new build; running chats will be interrupted"
+  if ! remote_control "$old_repo" stop >>"$log" 2>&1; then
+    tail -n 20 "$log"
+    remote_fail "Could not stop the backend running from $old_repo"
+  fi
+  if ! remote_control "$repo" launch --no-setup >>"$log" 2>&1; then
+    remote_control "$repo" stop >>"$log" 2>&1 || true
+    remote_control "$old_repo" launch --no-setup >>"$log" 2>&1 || true
+    tail -n 20 "$log"
+    remote_fail "The new build did not start; restarted $old_repo"
+  fi
+  [ "$(remote_revision "$repo")" = "$revision" ] \
+    || remote_fail "The backend did not report ${revision:0:8} after the switch; see $log"
+  echo "✔ Michi updated to $(git -C "$repo" log -1 --format='%h %s')"
+}
+
+remote_usage() {
+  cat <<EOF
+Usage: michi [command] [--data-dir PATH]
+
+Manages the Michi backend that the desktop app and phone connect to.
+
+Commands:
+  start     Start the backend (default)
+  stop      Stop the backend
+  restart   Stop then start
+  status    Show whether the backend runs, and its revision
+  logs      Follow the backend log
+  update    Build the latest main beside the running backend, then switch to it
+            (--force: update even if the running build has local changes)
+
+Flags:
+  --data-dir PATH  Data directory of the backend (default: ~/.michi)
+  --help           Show this help
+  --version        Show version
+EOF
+}
+
+remote_main() {
+  local repo
+  remote_node
+  case "${1:-start}" in
+    start)
+      repo="$(remote_repo)"
+      remote_control "$repo" launch --no-setup
+      ;;
+    stop)
+      repo="$(remote_running_repo)"
+      remote_control "$repo" stop
+      ;;
+    restart)
+      repo="$(remote_running_repo)"
+      remote_control "$repo" stop
+      repo="$(remote_repo)"
+      remote_control "$repo" launch --no-setup
+      ;;
+    status)
+      repo="$(remote_running_repo)"
+      remote_control "$repo" status
+      ;;
+    logs)
+      if [ -f "$HOME/.config/systemd/user/michi-remote.service" ]; then
+        exec journalctl --user -u michi-remote.service -f
+      fi
+      exec tail -n 50 -f "$REMOTE_DATA/remote.log"
+      ;;
+    update)
+      shift
+      remote_update "$@"
+      ;;
+    --help|-h) remote_usage ;;
+    --version|-v)
+      repo="$(remote_repo)"
+      echo "$("$REMOTE_NODE" -e 'process.stdout.write(require(process.argv[1] + "/package.json").version)' "$repo") ($(git -C "$repo" rev-parse --short HEAD 2>/dev/null || echo unknown))"
+      ;;
+    *)
+      remote_usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+  REMOTE_DATA="${MICHI_DATA_DIR:-$HOME/.michi}"
+  remote_argc=$#
+  for ((remote_index = 0; remote_index < remote_argc; remote_index++)); do
+    remote_arg="$1"
+    shift
+    case "$remote_arg" in
+      --data-dir)
+        REMOTE_DATA="${1:?--data-dir requires a path}"
+        shift
+        remote_index=$((remote_index + 1))
+        ;;
+      --data-dir=*) REMOTE_DATA="${remote_arg#--data-dir=}" ;;
+      *) set -- "$@" "$remote_arg" ;;
+    esac
+  done
+  REMOTE_DATA="${REMOTE_DATA/#\~/$HOME}"
+  if [ -f "$REMOTE_DATA/remote.env" ]; then
+    remote_main "$@"
+    exit 0
+  fi
+fi
+
 configure_build_node() {
   PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -viE '(/Applications/.*\.app/|/Codex\.app/)' | paste -sd ':' - || true)"
   export PATH

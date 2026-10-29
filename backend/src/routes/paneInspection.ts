@@ -40,12 +40,12 @@ import { createSseObserver } from '../services/httpSse';
  *
  * Caller identity is ALWAYS server-derived (brief: "never from query parameters"). A locator
  * (paneId | nodeId | runId) carries no workspaceId, so this router resolves the target's real
- * owning workspace itself — via `getNodeWorkspaceId`/`getWorkspace` (node/surface targets) or
- * `AgentRunsRepository.getRun` (run targets), both already owner-scoped — rather than trusting a
+ * owning workspace through the service's `resolveCallerForTarget` (node, agent run and surface
+ * targets, all owner-scoped; the assistant's tools scope the same way) rather than trusting a
  * client-supplied workspaceId. A request cannot use its own query string to widen its access:
  * `getWorkspace(id, ownerUserId)` returns null the moment the resolved workspace is not owned by
  * the caller, which is what actually enforces the boundary; the value handed to the service as
- * `caller.workspaceId` is only ever the value this router itself looked up.
+ * `caller.workspaceId` is only ever the value resolved from the target itself.
  */
 
 import express, { type Request, type Response } from 'express';
@@ -58,7 +58,7 @@ import {
   PaneInspectionError,
   type PaneInspectionErrorCode,
 } from 'michi-shared';
-import { inspect, resolvePaneTarget, type PaneInspectionCaller } from '../services/paneInspection';
+import { inspect, resolveCallerForTarget, type PaneInspectionCaller } from '../services/paneInspection';
 import { readOutput } from '../services/paneInspectionOutput';
 import { PaneFeed, systemPaneSubscribeClock, type PaneSubscribeClock } from '../services/paneInspectionSubscribe';
 import { PaneInspectionRing, paneInspectionRing } from '../services/paneInspectionRing';
@@ -75,8 +75,7 @@ import {
   type PresenceKeepaliveRequest,
 } from '../services/panePresence';
 import { SURFACE_PANE_KINDS, type SurfacePaneKind } from '../services/paneInspectionProjection.surface';
-import { getNodeWorkspaceId, getWorkspace } from '../services/dbRepository';
-import { AgentRunsRepository } from '../services/agentRunsRepository';
+import { getWorkspace } from '../services/dbRepository';
 import { LOCAL_AGENT_OWNER_ID } from '../services/agentOwner';
 
 // ---------------------------------------------------------------------------
@@ -101,8 +100,6 @@ export { panePresenceRegistry };
 // importers of this module (route tests, defaultDeps below) keep working.
 export { paneInspectionRing };
 
-const runsRepositoryForCaller = new AgentRunsRepository();
-
 /**
  * Injectable dependencies, defaulting to the real service/registry/repository singletons.
  * Exists so `backend/test/paneInspectionRoutes.test.ts` can stub `inspect`/`readOutput`/the
@@ -122,9 +119,7 @@ export interface PaneInspectionRouteDeps {
   list: typeof list;
   waitPane: typeof waitPane;
   presenceRegistry: PanePresenceRegistry;
-  getNodeWorkspaceId: typeof getNodeWorkspaceId;
   getWorkspace: typeof getWorkspace;
-  getRunForCaller: (ownerUserId: string, runId: string) => { workspaceId: string } | null;
   ring: PaneInspectionRing;
   clock: PaneSubscribeClock;
   agentRunEvents?: AgentRunEventBus;
@@ -136,9 +131,7 @@ const defaultDeps: PaneInspectionRouteDeps = {
   list,
   waitPane,
   presenceRegistry: panePresenceRegistry,
-  getNodeWorkspaceId,
   getWorkspace,
-  getRunForCaller: (ownerUserId, runId) => runsRepositoryForCaller.getRun(ownerUserId, runId),
   ring: paneInspectionRing,
   clock: systemPaneSubscribeClock,
 };
@@ -214,43 +207,21 @@ function resolveOwnerUserId(req: Request): string {
 }
 
 /**
- * Resolves the REAL owning workspaceId for a locator's target, scoped to `ownerUserId`, without
- * trusting anything from the request beyond the locator itself. Returns null when the target
- * cannot be resolved to a workspace this caller owns — the caller maps that to NOT_FOUND (via
- * `authorizeCaller` inside the service, once it re-resolves the same target) rather than this
- * function inventing its own NOT_FOUND response, so there is exactly one place that decides the
- * NOT_FOUND message/shape.
- *
- * `surface` targets have no database row to resolve a workspace from at all — `authorizeCaller`
- * resolves those via the presence registry itself using ONLY the caller's ownerUserId, so this
- * function returns a sentinel workspaceId ('') for that case and lets the service's own
- * authorisation (which checks presence-registry-reported workspaceId, not this field) do the real
- * check. `PaneInspectionCaller.workspaceId` is still required to be a string by its own type, and
- * an empty string can never equal a real workspaceId, so this sentinel can never accidentally
- * authorise a node/agent_run target.
+ * The session-bound caller for a locator's target, scoped to the workspace that target lives in
+ * by the service's `resolveCallerForTarget` (node, agent run and surface targets alike, the same
+ * scoping the assistant's tools use). Nothing from the request beyond the locator is trusted.
+ * Returns null when the target cannot be resolved to a workspace this caller owns; each route
+ * maps that to NOT_FOUND. `backendConnectionId` is 'local' for the reason given on
+ * `buildInspectionCaller` below.
  */
-function resolveCallerWorkspaceId(
-  deps: PaneInspectionRouteDeps,
+function callerForTarget(
   ownerUserId: string,
   locator: { paneId: string } | { nodeId: string } | { runId: string },
-): string | null {
-  const target = resolvePaneTarget(locator);
-
-  if (target.kind === 'surface') return '';
-
-  if (target.kind === 'node') {
-    const workspaceId = deps.getNodeWorkspaceId(target.nodeId);
-    if (!workspaceId) return null;
-    const workspace = deps.getWorkspace(workspaceId, process.env.MICHI_CLOUD === '1' ? ownerUserId : undefined);
-    return workspace ? workspace.id : null;
-  }
-
-  // target.kind === 'agent_run'
-  const run = deps.getRunForCaller(ownerUserId, target.runId);
-  return run ? run.workspaceId : null;
+): PaneInspectionCaller | null {
+  return resolveCallerForTarget({ ownerUserId, backendConnectionId: 'local' }, locator);
 }
 
-/** Builds the session-bound PaneInspectionCaller for inspect/readOutput. `backendConnectionId`
+/** Builds the session-bound PaneInspectionCaller for list. `backendConnectionId`
  *  is always 'local' here: these routes are only ever reached directly (this process's own
  *  Express app), never through the `/backend-connections/:id/proxy` remote-connection path — a
  *  remote caller reaching this route already went through that proxy's own request rewriting
@@ -341,8 +312,8 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
       // Parsing first (rather than parsePaneLocator alone) lets an executionRef supply the
       // locator, exactly as the inspect_pane tool accepts it.
       const parsed = parseInspectPaneRequestV1({ ...locatorQuery(req.query), executionRef });
-      const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, parsed.locator);
-      if (workspaceId === null) {
+      const caller = callerForTarget(ownerUserId, parsed.locator);
+      if (caller === null) {
         // Mirrors the service's own NOT_FOUND message/shape exactly (see sendError's doc
         // comment) — this is the same "does not exist or is not owned by this caller" case
         // `authorizeCaller` would reach if it could resolve any workspace at all to compare
@@ -350,7 +321,6 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
         // null) avoids passing a non-string into PaneInspectionCaller.
         throw new PaneInspectionError('NOT_FOUND', 'inspect', 'target not found');
       }
-      const caller = buildInspectionCaller(ownerUserId, workspaceId);
       const descriptor = deps.inspect(caller, { locator: parsed.locator, executionRef: parsed.executionRef });
       res.status(200).json(descriptor);
     } catch (err) {
@@ -373,11 +343,10 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
         pageCursor: req.query.pageCursor,
         limitBytes: req.query.limitBytes,
       });
-      const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, parsed.locator);
-      if (workspaceId === null) {
+      const caller = callerForTarget(ownerUserId, parsed.locator);
+      if (caller === null) {
         throw new PaneInspectionError('NOT_FOUND', 'output', 'target not found');
       }
-      const caller = buildInspectionCaller(ownerUserId, workspaceId);
       const result = deps.readOutput(caller, {
         locator: parsed.locator,
         selection: parsed.selection,
@@ -415,34 +384,31 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
     // exactly like inspect/output above, and requires them all to agree before opening the
     // stream — a request spanning two workspaces is rejected rather than silently scoped to
     // whichever workspace happened to resolve first.
-    let workspaceId: string | null = null;
+    let caller: PaneInspectionCaller | null = null;
     for (const paneId of parsed.paneIds) {
-      let locator: { paneId: string };
+      let resolved: PaneInspectionCaller | null;
       try {
-        locator = { paneId };
-        resolvePaneTarget(locator);
+        resolved = callerForTarget(ownerUserId, { paneId });
       } catch (err) {
         sendError(res, err);
         return;
       }
-      const resolved = resolveCallerWorkspaceId(deps, ownerUserId, locator);
       if (resolved === null) {
         sendError(res, new PaneInspectionError('NOT_FOUND', 'subscribe', 'target not found'));
         return;
       }
-      if (workspaceId === null) workspaceId = resolved;
-      else if (workspaceId !== resolved) {
+      if (caller === null) caller = resolved;
+      else if (caller.workspaceId !== resolved.workspaceId) {
         sendError(res, new PaneInspectionError('INVALID_ARGUMENT', 'request.paneIds', 'must all belong to the same workspace'));
         return;
       }
     }
-    if (workspaceId === null) {
+    if (caller === null) {
       // Unreachable in practice (parseSubscribePanesRequestV1 already rejects an empty
       // paneIds array), kept as a defensive guard rather than asserting.
       sendError(res, new PaneInspectionError('INVALID_ARGUMENT', 'request.paneIds', 'must not be empty'));
       return;
     }
-    const caller = buildInspectionCaller(ownerUserId, workspaceId);
 
     res.status(200);
     res.setHeader('Content-Type', 'text/event-stream');
@@ -482,11 +448,10 @@ export function setupPaneInspectionRoutes(overrides: Partial<PaneInspectionRoute
         // above — see that handler's comment) and returns them nested under `locator`; an
         // executionRef alone also supplies the locator.
         const parsed = parseWaitPaneRequestV1(req.body);
-        const workspaceId = resolveCallerWorkspaceId(deps, ownerUserId, parsed.locator);
-        if (workspaceId === null) {
+        const caller = callerForTarget(ownerUserId, parsed.locator);
+        if (caller === null) {
           throw new PaneInspectionError('NOT_FOUND', 'wait', 'target not found');
         }
-        const caller = buildInspectionCaller(ownerUserId, workspaceId);
         const outcome = await deps.waitPane(caller, {
           locator: parsed.locator,
           until: parsed.until,

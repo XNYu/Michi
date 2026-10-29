@@ -17,12 +17,10 @@ vi.mock('./usePanePresenceIntegration', () => ({
 
 vi.mock('../services/api', () => ({
   __esModule: true,
-  allocateNodeIds: (() => { let i = 0; return async (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   allocateNodeIdsLocal: (() => { let i = 0; return (count = 1) => Array.from({ length: count }, () => `n-test-${++i}`); })(),
   listAgentModes: () => Promise.resolve([]),
   fetchAgentStatus: () => Promise.resolve(null),
   fetchReady: () => Promise.resolve({ status: 'ready' }),
-  listModels: () => Promise.resolve({ models: [], defaultModel: null }),
   listAgentModels: () => Promise.resolve({ models: [], sanitizedModel: null }),
   fetchPrefs: () => Promise.resolve(null),
   savePrefs: () => Promise.resolve(),

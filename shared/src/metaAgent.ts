@@ -1,8 +1,8 @@
 /**
  * The Meta agent: one agent with two kinds of run. Background maintenance
  * reads newly completed conversations and writes Space pages; the Spaces chat
- * window talks with the user. Both share one settings record and run on any
- * runtime, each restricted to its own closed toolset.
+ * window talks with the user. Both share one settings record. Background
+ * maintenance uses checked tool access; interactive chat uses ordinary tools.
  *
  * Backend: GET /api/meta-agent, PUT /api/meta-agent/settings,
  * POST /api/meta-agent/retry.
@@ -92,6 +92,7 @@ export interface MetaAgentInfo {
   guard: { maintenance: MetaAgentGuardStatus | null; chat: MetaAgentGuardStatus | null };
   /** Background maintenance since local midnight; null when it could not be counted (absent from an older backend). */
   usageToday?: MetaAgentUsageToday | null;
+  toolApprovals?: MetaAgentToolApproval[];
 }
 
 export interface MetaAgentUsageToday {
@@ -101,4 +102,15 @@ export interface MetaAgentUsageToday {
   modelCalls: number;
   /** Tokens the runtimes reported for those sessions; null when none reported a count. */
   tokens: number | null;
+}
+
+/** Persistent permission for one external tool definition and connection configuration. */
+export interface MetaAgentToolApproval {
+  id: string;
+  server: string;
+  tool: string;
+  description: string;
+  state: 'pending' | 'approved' | 'denied' | 'revoked';
+  requestedAt: number;
+  updatedAt: number;
 }

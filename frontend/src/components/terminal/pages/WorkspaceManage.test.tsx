@@ -1,7 +1,13 @@
 import React from 'react';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import WorkspaceManage from './WorkspaceManage';
+
+const { uploadMock } = vi.hoisted(() => ({ uploadMock: vi.fn() }));
+vi.mock('../../../services/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../services/api')>(),
+  importWorkspaceFileUpload: uploadMock,
+}));
 
 const baseStoreShape: any = {
   projects: [],
@@ -152,4 +158,19 @@ describe('WorkspaceManage', () => {
       window.removeEventListener('michi:toggle-export-panel', exportSpy as EventListener);
     }
   });
+});
+
+it('classifies uploaded remote images and unknown formats without treating them as documents', async () => {
+  seedWorkspace();
+  baseStoreShape.projects[0].backendConnectionId = 'remote';
+  baseStoreShape.createContext.mockClear();
+  uploadMock.mockResolvedValueOnce({ name: 'shot', filePath: '.artifacts/shot.png', size: 3 })
+    .mockResolvedValueOnce({ name: 'data', filePath: '.artifacts/data.custom', size: 2 });
+  const { container } = render(<WorkspaceManage workspaceId="ws1" onNav={() => {}} />);
+  fireEvent.change(container.querySelector('input[type="file"]')!, {
+    target: { files: [new File(['png'], 'shot.png'), new File(['xx'], 'data.custom')] },
+  });
+  await waitFor(() => expect(baseStoreShape.createContext).toHaveBeenCalledTimes(2));
+  expect(baseStoreShape.createContext).toHaveBeenCalledWith('shot', '.artifacts/shot.png', expect.objectContaining({ type: 'image' }));
+  expect(baseStoreShape.createContext).toHaveBeenCalledWith('data', '.artifacts/data.custom', expect.objectContaining({ type: 'file' }));
 });

@@ -16,7 +16,9 @@ import { ScheduledJobEventBus } from '../src/services/scheduledJobs/events';
 import { ScheduledJobScheduler, type ScheduledJobExecutor } from '../src/services/scheduledJobs/scheduler';
 import {
   askUserScheduledJobApprover,
+  assistantScheduledJobTool,
   scheduledJobTool,
+  type AssistantScheduledJobCaller,
   type ScheduledJobApprovalRequest,
   type ScheduledJobApprovalResult,
   type ScheduledJobToolCaller,
@@ -304,6 +306,104 @@ describe('scheduled job agent tools', () => {
     assert.match(errorText(await call('create_scheduled_job', hourly)), /^APPROVAL_UNAVAILABLE/);
     assert.equal(scheduler.listJobs().length, 0);
   });
+
+  describe('the Scheduled window (assistantScheduledJobTool)', () => {
+    /** The user's rules per workspace, as assistant/tools.ts applies them; anything unlisted does not exist. */
+    let rules: Record<string, 'ok' | 'archived' | 'off'>;
+    const window: AssistantScheduledJobCaller = {
+      ownerUserId: null,
+      nodeId: 'n-schedule',
+      workspace: (id, use) => {
+        const rule = rules[id];
+        if (!rule) return { refused: 'INVALID_ARGUMENT', message: `workspace not found: ${id}` };
+        if (rule === 'off') return { refused: 'NAVIGATION_DISABLED', message: `AI navigation is off in ${id}` };
+        if (rule === 'archived' && use === 'create') return { refused: 'INVALID_ARGUMENT', message: `${id} is archived` };
+        return { id, name: id === 'ws-a' ? 'Research' : 'Archive' };
+      },
+    };
+    const callAs = (name: ScheduledJobToolName, args: unknown, who: AssistantScheduledJobCaller = window, approver = approve) =>
+      assistantScheduledJobTool(name, who, args, approver, deps);
+
+    beforeEach(() => { rules = { 'ws-a': 'ok', 'ws-b': 'archived' }; });
+
+    test('each new job names its workspace, which must take jobs; the card names it first', async () => {
+      assert.match(errorText(await callAs('create_scheduled_job', hourly)), /^INVALID_ARGUMENT: workspaceId is required/);
+      assert.match(errorText(await callAs('create_scheduled_job', { ...hourly, workspaceId: 'ws-b' })), /^INVALID_ARGUMENT: ws-b is archived/);
+      assert.match(errorText(await callAs('create_scheduled_job', { ...hourly, workspaceId: 'ws-x' })), /^INVALID_ARGUMENT: workspace not found/);
+      rules['ws-off'] = 'off';
+      assert.match(errorText(await callAs('create_scheduled_job', { ...hourly, workspaceId: 'ws-off' })), /^NAVIGATION_DISABLED/);
+      assert.equal(asked.length, 0, 'nothing is put to the user before the workspace is checked');
+      assert.equal(scheduler.listJobs().length, 0);
+
+      const created = parse(await callAs('create_scheduled_job', { ...hourly, workspaceId: ' ws-a ', runtimeId: 'pi', modelId: 'x' }));
+      assert.equal(created.status, 'created');
+      assert.deepEqual(created.job.workspace, { id: 'ws-a', name: 'Research' });
+      assert.equal(asked.length, 1);
+      assert.equal(asked[0].lines[0], 'Workspace: Research');
+      const [job] = scheduler.listJobs();
+      assert.equal(job.workspaceId, 'ws-a');
+      assert.equal(job.runtimeId, null, 'agent profile fields never come from the agent');
+    });
+
+    test('a workspace that stops taking jobs while the user decides gets none', async () => {
+      const result = await callAs('create_scheduled_job', { ...hourly, workspaceId: 'ws-a' }, window, async (request) => {
+        asked.push(request);
+        rules['ws-a'] = 'off';
+        return { approved: true };
+      });
+      assert.match(errorText(result), /^NAVIGATION_DISABLED/);
+      assert.equal(scheduler.listJobs().length, 0);
+    });
+
+    test('lists jobs across the workspaces it may use, each with its workspace', async () => {
+      const research = scheduler.createJob({ ...hourly, workspaceId: 'ws-a' });
+      const archived = scheduler.createJob({ ...hourly, name: 'Old', workspaceId: 'ws-b' });
+
+      const all = parse(await callAs('list_scheduled_jobs', {}));
+      assert.equal(all.count, 2, 'an archived workspace keeps its jobs reachable');
+      assert.equal(all.timeZone, 'Asia/Tokyo');
+      assert.deepEqual(all.jobs.map((job: any) => job.workspace.name), ['Research', 'Archive']);
+      const one = parse(await callAs('list_scheduled_jobs', { workspaceId: 'ws-a' }));
+      assert.deepEqual(one.jobs.map((job: any) => job.jobId), [research.id]);
+
+      rules['ws-b'] = 'off';
+      assert.deepEqual(parse(await callAs('list_scheduled_jobs', {})).jobs.map((job: any) => job.jobId), [research.id]);
+      assert.match(errorText(await callAs('list_scheduled_jobs', { workspaceId: 'ws-b' })), /^NAVIGATION_DISABLED/);
+      for (const name of ['update_scheduled_job', 'run_scheduled_job', 'delete_scheduled_job'] as const) {
+        assert.match(errorText(await callAs(name, { jobId: archived.id, name: 'x' })), /^NOT_FOUND/, name);
+      }
+      assert.match(errorText(await callAs('list_scheduled_jobs', { jobId: archived.id })), /^NOT_FOUND/);
+      assert.equal(asked.length, 0);
+      assert.equal(scheduler.getJob(archived.id).name, 'Old');
+    });
+
+    test('update, run and delete name the job\'s workspace on the card; pausing still asks nothing', async () => {
+      const job = scheduler.createJob({ ...hourly, workspaceId: 'ws-b' });
+
+      assert.equal(parse(await callAs('update_scheduled_job', { jobId: job.id, enabled: false })).status, 'paused');
+      assert.equal(asked.length, 0);
+
+      assert.equal(parse(await callAs('update_scheduled_job', { jobId: job.id, prompt: 'Summarize the archive.' })).status, 'updated');
+      assert.equal(asked[0].lines[0], 'Workspace: Archive');
+      assert.match(asked[0].lines.join('\n'), /Prompt → “Summarize the archive\.”/);
+
+      assert.equal(parse(await callAs('run_scheduled_job', { jobId: job.id })).status, 'started');
+      assert.equal(asked[1].lines[0], 'Workspace: Archive');
+      assert.equal(executor.started, 1);
+
+      answer = { approved: false, reason: 'declined' };
+      assert.equal(parse(await callAs('delete_scheduled_job', { jobId: job.id })).status, 'declined');
+      assert.equal(asked[2].lines[0], 'Workspace: Archive');
+      assert.equal(scheduler.listJobs().length, 1);
+    });
+
+    test('refuses a session not bound to its conversation', async () => {
+      for (const name of TOOL_NAMES) {
+        assert.match(errorText(await callAs(name, { ...hourly, workspaceId: 'ws-a' }, { ...window, nodeId: null })), /^SOURCE_UNAVAILABLE/, name);
+      }
+      assert.equal(asked.length, 0);
+    });
+  });
 });
 
 describe('askUserScheduledJobApprover', () => {
@@ -350,7 +450,7 @@ describe('scheduled job tool registration', () => {
 
   function piToolNames(owner: unknown): string[] {
     configureRuntimeDeps({
-      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} } as any,
+      historyStore: { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null } as any,
       agentConfig: { getAgentConfig: () => ({ runtime: 'pi', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined } as any,
       dataDir: '/tmp/agent-runtime-test',
     });

@@ -20,6 +20,7 @@ import { MessageSubagents } from './subagents/SubagentRoster';
 import { MessageWorkflowRuns } from './workflows/MessageWorkflowRuns';
 import { useWorkflowPlacementsForNode, workflowRunKey, type WorkflowPlacement } from '../../state/workflowDomain';
 import { latestAssistantMessageId, messageSubagentRoster, workflowMessageResolver } from '../../state/backgroundWork';
+import { turnOwnSubagents } from '../../state/turnSubagents';
 import { unclaimedSubagents } from './subagents/subagentPresentation';
 import { BackgroundWorkNodeContext, openBackgroundWork } from './backgroundWork/backgroundWorkEvents';
 import { selectParentRunCards } from './agentRuns/agentRunSelectors';
@@ -115,6 +116,12 @@ function PaneMessageListInner({
   // Recomputes on every stream chunk (the reducer hands a fresh messages
   // array each chunk); the helper scans backward without copying.
   const tailAssistantId = React.useMemo(() => latestAssistantMessageId(node.messages), [node.messages]);
+  // Agents a turn lists inline: its own, not ones that ended in an earlier
+  // turn and reappear in this turn's roster.
+  const ownSubagents = React.useMemo(
+    () => turnOwnSubagents({ messages: node.messages, subagents: node.subagents }, tailAssistantId),
+    [node.messages, node.subagents, tailAssistantId],
+  );
   // Workflow runs this chat launched, attached to the message whose tool
   // call launched them. A run without a known launcher goes to the last
   // assistant message that existed when it started, so it stays in place
@@ -332,7 +339,7 @@ function PaneMessageListInner({
                 )}
               {/* Agents no delegation chip claims (Crew runs, legacy rosters)
                   render inline within the turn that spawned them. */}
-              {roster && <MessageSubagents subagents={unclaimedSubagents(roster, m.toolCalls)} />}
+              {roster && <MessageSubagents subagents={unclaimedSubagents(ownSubagents.get(m.id) ?? roster, m.toolCalls)} />}
               {!isUser && workflowsByMessage.get(m.id)?.length ? (
                 <MessageWorkflowRuns runs={workflowsByMessage.get(m.id)!} onOpen={openWorkflowRun} />
               ) : null}

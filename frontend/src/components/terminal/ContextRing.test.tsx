@@ -1,7 +1,16 @@
 import React from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ContextRing } from './ContextRing';
+
+// jsdom has no PointerEvent, so fireEvent would drop pointerType.
+class TestPointerEvent extends MouseEvent {
+  pointerType: string;
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init);
+    this.pointerType = init.pointerType ?? '';
+  }
+}
 
 describe('ContextRing', () => {
   it('clamps out-of-range percentages to the meter maximum', () => {
@@ -43,6 +52,25 @@ describe('ContextRing', () => {
     expect(tooltip.textContent).toContain('75.0%');
     // No token breakdown when usageSummary is absent
     expect(screen.queryByTestId('context-ring-tooltip-details')).toBeNull();
+  });
+
+  it('toggles on tap and closes on the next tap outside, on a touch screen', () => {
+    vi.stubGlobal('PointerEvent', TestPointerEvent);
+    render(<><ContextRing percentage={42} /><button type="button">elsewhere</button></>);
+    const meter = screen.getByRole('meter');
+    try {
+      fireEvent.pointerOver(meter, { pointerType: 'touch' });
+      fireEvent.pointerDown(meter, { pointerType: 'touch' });
+      fireEvent.mouseEnter(meter);
+      fireEvent.click(meter);
+      expect(screen.getByRole('tooltip').textContent).toContain('42.0%');
+
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'elsewhere' }), { pointerType: 'touch' });
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    } finally {
+      fireEvent.pointerOver(document.body, { pointerType: 'mouse' });
+      vi.unstubAllGlobals();
+    }
   });
 
   it('has reduced opacity for low percentages', () => {

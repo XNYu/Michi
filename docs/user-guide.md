@@ -15,7 +15,7 @@ Start with [Getting started](../backend/src/docs/getting-started.md) to complete
 | [Pages and components](../backend/src/docs/pages-and-components.md) | Pages/Assistant, native blocks, grid, Sources, preferences, database views and sandbox calls | `pages-and-components` |
 | [Pages maintenance](../backend/src/docs/pages-maintenance.md) | Meta agent, initial Home reads, automatic updates, catch-up and protected proposals | `pages-maintenance` |
 | [Component design](../backend/src/docs/page-component-design.md) | Visual conventions, supported tokens, sandbox limits and authoring/preview workflow | `page-component-design` |
-| [Permissions](../backend/src/docs/permissions.md) | Ask/Trust/YOLO, grant scope, revocation and sandbox | `permissions` |
+| [Permissions](../backend/src/docs/permissions.md) | Ask/Approve for me/Trust/YOLO, grant scope, revocation and sandbox | `permissions` |
 | [Sessions and recovery](../backend/src/docs/sessions-and-recovery.md) | Execution state, queue/steer, Stop, resume and fork | `sessions-and-recovery` |
 | [Files and Artifacts](../backend/src/docs/files-and-artifacts.md) | Files, attachments, references, remote paths and browser | `files-and-artifacts` |
 | [Data and backups](../backend/src/docs/data-and-backups.md) | Archive/Trash, export, backup, restore and migration | `data-and-backups` |

@@ -197,12 +197,13 @@ async function errorOf(work: () => Promise<unknown>): Promise<Record<string, unk
 interface GoldenConfig {
   name: string;
   factory: 'kiro' | 'crew';
-  engineEnv?: 'v3';
+  engineEnv?: 'v2' | 'v3';
   cloud?: boolean;
 }
 
 const CONFIGS: GoldenConfig[] = [
-  { name: 'kiro-v2', factory: 'kiro' },
+  // Unset is v3; v2 stays a supported engine.
+  { name: 'kiro-v2', factory: 'kiro', engineEnv: 'v2' },
   // Production v3: local chats share one MCP group per cwd, Agent Runs get isolated workers.
   { name: 'kiro-v3', factory: 'kiro', engineEnv: 'v3' },
   // Cloud v3: no shared group; every session runs on its own worker with a per-session slot.

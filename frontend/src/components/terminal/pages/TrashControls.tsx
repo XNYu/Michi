@@ -42,7 +42,7 @@ export function TrashIconButton({ icon: Icon, tooltip, ...props }: React.ButtonH
   return <>
     <button {...props} type="button" ref={anchor} className={`trash-icon-button ${props.className ?? ''}`} aria-describedby={open ? id : undefined}
       onPointerEnter={event => {
-        if (event.pointerType === 'touch' || props.disabled) return;
+        if (event.pointerType !== 'mouse' || props.disabled) return;
         clearTimeout(timer.current);
         const top = anchor.current?.getBoundingClientRect().top;
         timer.current = setTimeout(() => {

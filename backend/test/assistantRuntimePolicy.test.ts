@@ -1,3 +1,4 @@
+import { restrictedChatProfile } from './helpers/restrictedChatProfile';
 
 /**
  * How each runtime keeps the Michi assistant from working as a worker
@@ -54,7 +55,8 @@ import type { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSe
 import { CODEX_SERVER_REQUESTS } from 'michi-runtime/internal/adapters/codex/codexProtocol';
 import { closeDb, initDb } from '../src/services/db';
 import { saveWorkspace } from '../src/services/dbRepository';
-import { ensureAssistant } from '../src/assistant/store';
+import { ensureAssistant, ensureAssistantFor } from '../src/assistant/store';
+import { SCHEDULE_ASSISTANT_TOOL_NAMES } from '../src/assistant/policy';
 import { michiTestHost } from './helpers/michiTestHost';
 import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
 import type { McpSlotProvider } from 'michi-runtime/internal/contract/mcp';
@@ -86,7 +88,7 @@ const REAL_ASSISTANT_INIT: typeof RECORDED_ASSISTANT_INIT = {
 };
 
 const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null } as any;
-const store = { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null, hasGrant: () => false, grantPermission: () => {} };
+const store = { getNode: () => null, listMessages: () => [], getWorkspace: () => null, getWorkspaceInstructions: () => null };
 const agentConfig = { getAgentConfig: () => ({ runtime: 'claude', provider: 'x', modelByRuntime: {}, reasoningByRuntime: {} }), resolveModel: () => '', resolveReasoning: () => undefined };
 
 /** Every chat in these tests is in YOLO mode, the strongest permission a user can give. */
@@ -98,8 +100,15 @@ function configureYolo(): void {
 }
 
 describe('policy decisions', () => {
+  test('interactive Assistant uses ordinary native tools and permission mode', () => {
+    assert.deepEqual(assistantToolProfile(), { assistant: true });
+    assert.deepEqual(claudeSpawnPolicy({ ownerMode: 'interactive', permissionMode: 'ask', toolProfile: assistantToolProfile() }), { permissionMode: 'default' });
+    assert.deepEqual(claudeSpawnPolicy({ ownerMode: 'interactive', permissionMode: 'yolo', toolProfile: assistantToolProfile() }), { permissionMode: 'bypassPermissions' });
+    assert.equal(codexThreadSandbox(assistantToolProfile()), 'workspace-write');
+    assert.equal(codexThreadSandbox(maintenanceToolProfile()), 'read-only');
+  });
   test('Claude: the assistant never bypasses, has no built-in tools and loads only Michi MCP', () => {
-    const assistant = claudeSpawnPolicy({ ownerMode: 'interactive', permissionMode: 'yolo', toolProfile: assistantToolProfile() });
+    const assistant = claudeSpawnPolicy({ ownerMode: 'interactive', permissionMode: 'yolo', toolProfile: restrictedChatProfile() });
     assert.equal(assistant.permissionMode, 'default');
     assert.equal(assistant.strictMcpConfig, true);
     assert.equal(assistant.isolateSettings, true, 'none of the user\'s settings, hooks, plugins or skills');
@@ -201,7 +210,7 @@ describe('policy decisions', () => {
 
   test('Codex: read-only, offline turns; read-only threads; every approval declined', () => {
     assert.deepEqual(CODEX_ASSISTANT_TURN_POLICY, { approvalPolicy: 'on-request', sandboxPolicy: { type: 'readOnly', networkAccess: false } });
-    assert.equal(codexThreadSandbox(assistantToolProfile()), 'read-only');
+    assert.equal(codexThreadSandbox(restrictedChatProfile()), 'read-only');
     assert.equal(codexThreadSandbox(undefined), 'workspace-write');
     assert.equal(codexAssistantApproval(), 'decline');
   });
@@ -274,7 +283,7 @@ describe('policy decisions', () => {
       assert.ok(!ASSISTANT_ALLOWED_TOOL_NAMES.includes(name), name);
     }
     assert.equal(claudeAssistantApproval('send_to_thread'), 'deny');
-    assert.deepEqual(assistantToolProfile(), { allowedToolNames: ASSISTANT_ALLOWED_TOOL_NAMES, assistant: true, restricted: true, metaAgentToolset: 'chat' });
+    assert.deepEqual(restrictedChatProfile(), { allowedToolNames: ASSISTANT_ALLOWED_TOOL_NAMES, assistant: true, restricted: true, metaAgentToolset: 'chat' });
   });
 });
 
@@ -298,9 +307,34 @@ describe('Pi assistant session tools', () => {
     return buildPiTools({
       bridge, cwd: '/tmp', parentChatId: nodeId, workspaceId, enableFollowUps: true,
       imageQuota: { usedBytes: 0, limitBytes: 1 } as any, seenPaths: new Set(), Type,
-      owner: chatOwner(nodeId), toolProfile: assistantToolProfile(),
+      owner: chatOwner(nodeId), toolProfile: restrictedChatProfile(),
     }).map((tool: any) => tool.name);
   }
+
+  test('interactive Assistant retains native tools alongside its cross-workspace Page tools', () => {
+    const info = ensureAssistant();
+    const Type: any = new Proxy({}, { get: () => (..._a: any[]) => ({}) });
+    const names = buildPiTools({ bridge, cwd: '/tmp', parentChatId: info.nodeId, workspaceId: info.workspaceId,
+      enableFollowUps: false, imageQuota: { usedBytes: 0, limitBytes: 1 } as any, seenPaths: new Set(), Type,
+      owner: chatOwner(info.nodeId), toolProfile: assistantToolProfile(),
+    }).map((tool: any) => tool.name);
+    for (const name of ['bash', 'read', 'write', 'edit', 'list_workspaces', 'edit_page', 'start_conversation']) assert.ok(names.includes(name), name);
+    assert.equal(new Set(names).size, names.length);
+  });
+
+  test('the Scheduled window on Pi keeps native tools beside its own catalog, and no other Michi tools', () => {
+    const info = ensureAssistantFor('schedule');
+    const Type: any = new Proxy({}, { get: () => (..._a: any[]) => ({}) });
+    const names = buildPiTools({ bridge, cwd: '/tmp', parentChatId: info.nodeId, workspaceId: info.workspaceId,
+      enableFollowUps: false, imageQuota: { usedBytes: 0, limitBytes: 1 } as any, seenPaths: new Set(), Type,
+      owner: chatOwner(info.nodeId), toolProfile: assistantToolProfile(),
+    }).map((tool: any) => tool.name);
+    const native = ['read', 'ls', 'grep', 'find', 'write', 'edit', 'bash', 'web_search'];
+    for (const name of ['bash', 'read', 'write', 'edit']) assert.ok(names.includes(name), name);
+    assert.deepEqual(names.filter((name) => !native.includes(name)).sort(),
+      SCHEDULE_ASSISTANT_TOOL_NAMES.filter((name) => !(ASSISTANT_CHANNEL_TOOL_NAMES as readonly string[]).includes(name)).sort());
+    assert.equal(new Set(names).size, names.length);
+  });
 
   test('buildPiTools offers exactly the chat-window catalog, no native tools', () => {
     const info = ensureAssistant();
@@ -328,8 +362,8 @@ describe('Pi assistant session tools', () => {
     const { PiRuntime } = require('../src/agents/pi/PiRuntime') as typeof import('../src/agents/pi/PiRuntime');
     const runtime = new PiRuntime(bridge);
     const info = ensureAssistant();
-    await runtime.newSession({ sessionId: info.nodeId, cwd: tmpDir, workspaceId: info.workspaceId, toolProfile: assistantToolProfile(), bootstrapInstructions: ASSISTANT_INSTRUCTIONS } as any);
-    await runtime.loadSession({ sessionId: 'n-assistant-old', cwd: tmpDir, workspaceId: info.workspaceId, toolProfile: assistantToolProfile() } as any);
+    await runtime.newSession({ sessionId: info.nodeId, cwd: tmpDir, workspaceId: info.workspaceId, toolProfile: restrictedChatProfile(), bootstrapInstructions: ASSISTANT_INSTRUCTIONS } as any);
+    await runtime.loadSession({ sessionId: 'n-assistant-old', cwd: tmpDir, workspaceId: info.workspaceId, toolProfile: restrictedChatProfile() } as any);
     await runtime.newSession({ sessionId: 'n-plain', cwd: tmpDir, workspaceId: 'ws-a' } as any);
     assert.equal(preambles.length, 3);
     for (const preamble of preambles.slice(0, 2)) {
@@ -427,6 +461,15 @@ describe('Claude assistant session', () => {
 
   const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
 
+  test('interactive Assistant starts Claude with native tools and user settings', async () => {
+    const { session } = await spawn('n-unrestricted', assistantToolProfile());
+    try {
+      assert.equal((session as any).sdkBuiltinTools(), undefined);
+      assert.equal((session as any).isToolAllowed('Bash'), true);
+      assert.equal((session as any).isToolAllowed('mcp__user_server__tool'), true);
+    } finally { await session.dispose(); }
+  });
+
   /** The init a well-behaved CLI reports for the given spawn. */
   function goodInit(child: MockClaudeChild, args: { tools?: readonly string[]; permissionMode?: string }): void {
     child.emitInit('ext-late', initToolsFor(args), {
@@ -478,7 +521,7 @@ describe('Claude assistant session', () => {
   test("an assistant conversation's first message opens with the marker, ahead of any context Michi adds", async () => {
     const carried = 'Earlier in this conversation: the user asked which threads wait on them.';
     const text = await firstClaudeMessage('n-assistant-first', {
-      toolProfile: assistantToolProfile(), bootstrapInstructions: ASSISTANT_INSTRUCTIONS, mergeContexts: [carried],
+      toolProfile: restrictedChatProfile(), bootstrapInstructions: ASSISTANT_INSTRUCTIONS, mergeContexts: [carried],
     });
     assert.ok(text.startsWith(MICHI_ASSISTANT_MARKER), text.slice(0, 120));
     assert.ok(text.includes(carried) && text.endsWith('What is waiting?'));
@@ -490,7 +533,7 @@ describe('Claude assistant session', () => {
   });
 
   test("the assistant's system prompt offers no AskUserQuestion and none of the ordinary chat tools", async () => {
-    await firstClaudeMessage('n-assistant-prompt', { toolProfile: assistantToolProfile(), bootstrapInstructions: ASSISTANT_INSTRUCTIONS });
+    await firstClaudeMessage('n-assistant-prompt', { toolProfile: restrictedChatProfile(), bootstrapInstructions: ASSISTANT_INSTRUCTIONS });
     const assistantPrompt = String(spawned[spawned.length - 1].systemPromptAppend);
     await firstClaudeMessage('n-plain-prompt', {});
     const plainPrompt = String(spawned[spawned.length - 1].systemPromptAppend);
@@ -503,7 +546,7 @@ describe('Claude assistant session', () => {
 
   test('a YOLO chat bypasses permissions; the assistant in the same mode does not', async () => {
     const plain = await spawn('n-plain');
-    const assistant = await spawn('n-assistant', assistantToolProfile());
+    const assistant = await spawn('n-assistant', restrictedChatProfile());
     await settle();
     try {
       assert.equal(spawned[0].permissionMode, 'bypassPermissions');
@@ -564,7 +607,7 @@ describe('Claude assistant session', () => {
   });
 
   test('the assistant keeps running when Claude reports only its Michi tools', async () => {
-    const { session } = await spawn('n-assistant', assistantToolProfile());
+    const { session } = await spawn('n-assistant', restrictedChatProfile());
     try {
       await settle();
       assert.notEqual((session as any).state, 'crashed');
@@ -587,7 +630,7 @@ describe('Claude assistant session', () => {
     for (const [i, fault] of cases.entries()) {
       children.length = 0;
       misbehave = fault;
-      const { session } = await spawn(`n-assistant-${i}`, assistantToolProfile());
+      const { session } = await spawn(`n-assistant-${i}`, restrictedChatProfile());
       try {
         await settle();
         assert.equal((session as any).state, 'crashed', JSON.stringify(fault));
@@ -606,7 +649,7 @@ describe('Claude assistant session', () => {
 
   test('no assistant tool runs before its init has been checked', async () => {
     misbehave = { withholdInit: true };
-    const { session, slot } = await spawn('n-assistant', assistantToolProfile());
+    const { session, slot } = await spawn('n-assistant', restrictedChatProfile());
     try {
       await settle();
       assert.deepEqual(await verdicts(spawned[0]), ['deny', 'deny'], 'the hook and canUseTool refuse its own tools too');
@@ -624,7 +667,7 @@ describe('Claude assistant session', () => {
 
   test("the real 2.1.305 envelopes, command_lifecycle first, keep the assistant running and verified", async () => {
     misbehave = { withholdInit: true };
-    const { session, slot } = await spawn('n-assistant', assistantToolProfile());
+    const { session, slot } = await spawn('n-assistant', restrictedChatProfile());
     try {
       for (const envelope of [...REAL_ASSISTANT_INIT.preInit, REAL_ASSISTANT_INIT.init]) {
         children[0].stdout.push(JSON.stringify(envelope) + '\n');
@@ -642,7 +685,7 @@ describe('Claude assistant session', () => {
 
   test('a failed init stops the assistant\'s tools at once, while its process is still exiting', async () => {
     misbehave = { tools: ['Bash', ...initToolsFor({ tools: [] })], slowExit: true };
-    const { session, slot } = await spawn('n-assistant', assistantToolProfile());
+    const { session, slot } = await spawn('n-assistant', restrictedChatProfile());
     try {
       await settle();
       assert.equal((session as any).state, 'crashed');
@@ -658,7 +701,7 @@ describe('Claude assistant session', () => {
 
   test('the next send after a failed init says why the session stopped', async () => {
     misbehave = { tools: ['Bash', ...initToolsFor({ tools: [] })] };
-    const { session } = await spawn('n-assistant', assistantToolProfile());
+    const { session } = await spawn('n-assistant', restrictedChatProfile());
     try {
       await settle();
       assert.equal((session as any).state, 'crashed');
@@ -674,7 +717,7 @@ describe('Claude assistant session', () => {
 
   test('the turn whose init fails the check ends with MetaAgentGuardError', async () => {
     misbehave = { withholdInit: true };
-    const { session } = await spawn('n-assistant', assistantToolProfile());
+    const { session } = await spawn('n-assistant', restrictedChatProfile());
     try {
       const turn = (async () => { for await (const _event of session.send('Anything waiting?')) { /* drain */ } })();
       await settle();
@@ -721,7 +764,7 @@ describe('Claude assistant session', () => {
 
   test('an assistant that answers before its init is stopped; an ordinary chat is not', async () => {
     misbehave = { outputBeforeInit: true };
-    const assistant = await spawn('n-assistant', assistantToolProfile());
+    const assistant = await spawn('n-assistant', restrictedChatProfile());
     const plain = await spawn('n-plain');
     try {
       await settle();
@@ -752,7 +795,7 @@ describe('Claude assistant session', () => {
 
   test('a Claude Code without --tools stops the assistant with an error that says so', async () => {
     misbehave = { stderr: "error: unknown option '--tools='\n" };
-    const { session } = await spawn('n-assistant', assistantToolProfile());
+    const { session } = await spawn('n-assistant', restrictedChatProfile());
     // stderr arrives after spawnFresh returns; record what the process pushes.
     const events: any[] = [];
     const queue = (session as any).queue;
@@ -770,7 +813,7 @@ describe('Claude assistant session', () => {
 
   test('a Claude Code without --restricted stops the assistant with an error that says so', async () => {
     misbehave = { stderr: "error: unknown option '--restricted'\n" };
-    const { session } = await spawn('n-assistant', assistantToolProfile());
+    const { session } = await spawn('n-assistant', restrictedChatProfile());
     const events: any[] = [];
     const queue = (session as any).queue;
     const push = queue.push.bind(queue);
@@ -894,6 +937,13 @@ describe('Codex assistant session', () => {
     return { client, session, slot: slots[0] };
   }
 
+  test('interactive Assistant leaves native and user MCP tools enabled in Codex', async (t) => {
+    const { session } = await start(t, 'thread-unrestricted', assistantToolProfile(), { configured: ['user-server'] });
+    assert.equal(session.isAssistant, false, 'this legacy runtime flag means restricted, not Assistant identity');
+    assert.deepEqual(session.metaAgentToolProfile, assistantToolProfile(), 'resume retains Assistant identity without restricting tools');
+    assert.equal(session.enableFollowUps, false);
+  });
+
   test("an assistant conversation's first message opens with the marker, ahead of any context Michi adds", async (t) => {
     configureYolo();
     const client = stubCodexClient('thread-first');
@@ -902,7 +952,7 @@ describe('Codex assistant session', () => {
     const carried = 'Earlier in this conversation: the user asked which threads wait on them.';
     const session = await runtime.newSession({
       sessionId: 'n-first', cwd: '/tmp/test', model: 'test-model',
-      toolProfile: assistantToolProfile(), bootstrapInstructions: ASSISTANT_INSTRUCTIONS, mergeContexts: [carried],
+      toolProfile: restrictedChatProfile(), bootstrapInstructions: ASSISTANT_INSTRUCTIONS, mergeContexts: [carried],
     }) as CodexSession;
     const turn = (async () => { for await (const _event of session.send('What is waiting?')) { /* drain */ } })();
     t.after(async () => {
@@ -919,7 +969,7 @@ describe('Codex assistant session', () => {
   });
 
   test('the assistant runs read-only in YOLO mode and declines every approval', async (t) => {
-    const { client, session, slot } = await start(t, 'thread-assistant', assistantToolProfile(), { configured: ['asana-mcp', 'node_repl'] });
+    const { client, session, slot } = await start(t, 'thread-assistant', restrictedChatProfile(), { configured: ['asana-mcp', 'node_repl'] });
     assert.deepEqual([...slot.exposedToolNames].sort(), [...ASSISTANT_ALLOWED_TOOL_NAMES].sort());
     assert.equal(slot.restricted, true);
     const threadStart = client.requests.find((r: any) => r.method === 'thread/start' && !r.params.ephemeral);
@@ -975,7 +1025,7 @@ describe('Codex assistant session', () => {
     const registry = { create: (_p: string, _c: string, _o: unknown, cbs: unknown) => { slots.push(cbs); return { slotId: 'slot-meta-resume' }; }, dispose: async () => {}, get: () => undefined };
     const runtime = new CodexRuntime({ ...codexTestOptions(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry as any, { mcpPort: 3001 }) }, { client, followUpsHookPocEnabled: true, followUpsExperimentMode: 'hook-tool' });
     t.after(() => runtime.shutdown());
-    const session = await runtime.loadSession({ sessionId: 'n-meta-resume', cwd: '/tmp/test', model: 'test-model', toolProfile: assistantToolProfile(), enableFollowUps: true }) as CodexSession;
+    const session = await runtime.loadSession({ sessionId: 'n-meta-resume', cwd: '/tmp/test', model: 'test-model', toolProfile: restrictedChatProfile(), enableFollowUps: true }) as CodexSession;
     const resume = client.requests.find((r: any) => r.method === 'thread/resume');
     assert.equal(resume.params.config.hooks, undefined);
     assert.match(resume.params.developerInstructions, /^You are Michi,/);
@@ -993,7 +1043,7 @@ describe('Codex assistant session', () => {
   });
 
   test('a server config/read did not name is turned off on a second start, and that thread is used', async (t) => {
-    const { client } = await start(t, 'thread-retry', assistantToolProfile(), {
+    const { client } = await start(t, 'thread-retry', restrictedChatProfile(), {
       configured: ['asana-mcp'],
       statuses: (call) => ({ data: [
         { name: '__michi_internal__', runtimeStatus: 'connected' },
@@ -1022,7 +1072,7 @@ describe('Codex assistant session', () => {
       const runtime = new CodexRuntime({ ...codexTestOptions(), bridge, mcpSlots: fakeMcpRegistry(registry as unknown as Partial<McpSlotProvider>, { mcpPort: 3001 }) }, { client });
       try {
         await assert.rejects(
-          runtime.newSession({ sessionId: 'n-fatal', cwd: '/tmp/test', model: 'test-model', toolProfile: assistantToolProfile() }),
+          runtime.newSession({ sessionId: 'n-fatal', cwd: '/tmp/test', model: 'test-model', toolProfile: restrictedChatProfile() }),
           reason,
         );
         assert.equal(client.requests.filter((r: any) => r.method === 'thread/start').length, 1);
@@ -1042,7 +1092,7 @@ describe('Codex assistant session', () => {
     const runtime = new CodexRuntime({ ...codexTestOptions(), bridge, mcpSlots: fakeMcpRegistry(registry as unknown as Partial<McpSlotProvider>, { mcpPort: 3001 }) }, { client });
     try {
       await assert.rejects(
-        runtime.newSession({ sessionId: 'n-open', cwd: '/tmp/test', model: 'test-model', toolProfile: assistantToolProfile() }),
+        runtime.newSession({ sessionId: 'n-open', cwd: '/tmp/test', model: 'test-model', toolProfile: restrictedChatProfile() }),
         /late-mcp/,
       );
       assert.ok(client.requests.some((r: any) => r.method === 'thread/unsubscribe' && r.params.threadId === 'thread-open'),
@@ -1058,14 +1108,19 @@ describe('Codex assistant session', () => {
     assert.equal(slot.restricted, undefined);
     const threadStart = client.requests.find((r: any) => r.method === 'thread/start' && !r.params.ephemeral);
     assert.equal(threadStart.params.sandbox, 'workspace-write');
-    assert.equal(threadStart.params.config.features, undefined);
-    assert.equal(threadStart.params.config.mcp_servers['asana-mcp'], undefined);
-    assert.ok(!client.requests.some((r: any) => r.method === 'config/read' || r.method === 'mcpServerStatus/list'));
+    // An ordinary thread turns off only Codex goals, whose self-started turns Michi does not show.
+    assert.deepEqual(threadStart.params.config.features, { goals: false });
+    // The user's MCP servers are disabled by name (spec §2), checked afterwards without refusing the chat.
+    assert.deepEqual(threadStart.params.config.mcp_servers['asana-mcp'], { enabled: false });
+    assert.ok(threadStart.params.config.mcp_servers[CODEX_MICHI_MCP_SERVER], 'Michi\'s own server stays');
+    assert.ok(client.requests.some((r: any) => r.method === 'config/read'));
+    assert.ok(client.requests.some((r: any) => r.method === 'mcpServerStatus/list'));
     const turnStart = client.requests.find((r: any) => r.method === 'turn/start' && r.params.threadId === 'thread-plain');
     assert.equal(turnStart.params.sandboxPolicy.type, 'dangerFullAccess');
     assert.equal(session.isAssistant, false);
-    assert.ok(client.requests.some((r: any) => r.method === 'thread/start' && r.params.ephemeral),
-      'an ordinary chat still gets its title thread');
+    const titleStart = client.requests.find((r: any) => r.method === 'thread/start' && r.params.ephemeral);
+    assert.ok(titleStart, 'an ordinary chat still gets its title thread');
+    assert.deepEqual(titleStart.params.config.mcp_servers, { 'asana-mcp': { enabled: false } });
     assert.match(String(threadStart.params.developerInstructions), /save_artifact/, 'and its tool guidance');
   });
 });
@@ -1151,7 +1206,7 @@ describe('Codex Meta agent', () => {
   });
 
   for (const [label, profile, extra] of [
-    ['chat', assistantToolProfile(), 'send_to_thread'],
+    ['chat', restrictedChatProfile(), 'send_to_thread'],
     ['maintenance', maintenanceToolProfile(), 'list_workspaces'],
   ] as const) {
     test(`a ${label} thread whose Michi server lists a tool outside its toolset fails with MetaAgentGuardError`, async () => {

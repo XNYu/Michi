@@ -14,7 +14,7 @@ The workspace folder is the working root, not the Michi installation directory. 
 | --- | --- | --- |
 | Generated project file | Code, data and deliverables | Lives on the backend filesystem; chat history is not a backup of its bytes |
 | Document Artifact | Reusable report/spec/summary | `save_artifact` writes `.contexts/<name>.md` in the workspace and registers it |
-| Imported file/image Artifact | A reusable source | May be copied, referenced or linked depending on the import path |
+| Imported file/image Artifact | A reusable source of any file type | `save_artifact` with `name` and `path` registers an existing workspace file without changing its bytes; uploads copy files, desktop imports may link them |
 | External reference/symlink | Reuse a source without copying | Target must remain accessible; moving/deleting it can break the source |
 | Link Artifact | A URL you want to retain | Saving a link does not automatically download or authenticate its target |
 | Composer attachment | Material for a particular message | Uploads go under workspace `.attachments/`; they are not automatically shelf Artifacts |
@@ -28,7 +28,9 @@ The workspace's Artifacts tab lists Documents, Files, Images and Links. Use + Ad
 3. Open its preview to inspect the contents.
 4. In another chat, choose/type its `@` mention and ask the agent to read the relevant part.
 
-`update_artifact` replaces an existing Artifact's content. If a document was already written to `.contexts/` and registered, an extra save can be redundant. An Artifact preview is read-only; ask for an update or use your file editor when editing is required.
+`save_artifact` accepts exactly one of `body` (Markdown text) or `path` (an existing file inside the workspace). Use `path` for screenshots in `.attachments/`, PDFs, code, HTML, archives, audio, video or any other file type. Registration retains the source path; keep that file available. Browser and remote Artifacts uploads accept all file types. Supported raster images preview inline; other non-document files download in their original format.
+
+`update_artifact` replaces an existing Markdown document Artifact's content; for registered files, edit the source file and call `save_artifact` with the same name and path to refresh metadata. If a document was already written to `.contexts/` and registered, an extra save can be redundant. An Artifact preview is read-only; ask for an update or use your file editor when editing is required.
 
 Success check: the shelf entry points to the expected file and the next chat can read it. A shelf favorite affects ordering, not automatic full-content injection.
 

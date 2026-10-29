@@ -29,8 +29,7 @@ for (const engine of ['v2', 'v3'] as const) {
         const { tryForkChatSession } = require('../src/services/nativeFork') as typeof import('../src/services/nativeFork');
         closeDb(); initDb();
         configureRuntimeDeps({ historyStore: { getNode: repo.getNode, listMessages: repo.listMessages,
-            getWorkspace: repo.getWorkspace, getWorkspaceInstructions: repo.getWorkspaceInstructions,
-            hasGrant: repo.hasGrant, grantPermission: repo.grantPermission }, dataDir: directory,
+            getWorkspace: repo.getWorkspace, getWorkspaceInstructions: repo.getWorkspaceInstructions }, dataDir: directory,
             providerKeys: { getProviderApiKey: () => null },
             agentConfig: { getAgentConfig: config.getAgentConfig, resolveModel: config.resolveModel, resolveReasoning: config.resolveReasoning } });
         // Read once the server below listens: the port the runtime gets.

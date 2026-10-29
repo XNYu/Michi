@@ -150,6 +150,13 @@ describe('delegation status', () => {
     expect(delegationStatus(crew, [a, { ...b, status: 'terminated', outcome: 'failed' }])).toBe('failed');
   });
 
+  it('keeps a crew running while its own call runs, after every stage stopped', () => {
+    const crew: ToolCallState = { id: 'crew', title: 'Spawning agent crew', status: 'in_progress', kind: 'other' };
+    const stopped = (sessionId: string) => subagent({ sessionId, parentToolCallId: 'crew', status: 'terminated', outcome: 'cancelled' });
+    expect(delegationStatus(crew, [stopped('a'), stopped('b')])).toBe('in_progress');
+    expect(delegationStatus({ ...crew, status: 'completed' }, [stopped('a'), stopped('b')])).toBe('completed');
+  });
+
   it('rewrites only delegation chips and keeps identity when nothing changes', () => {
     const tools = [agentTool('toolu_1', 'completed'), { id: 'r', title: 'Read x', status: 'completed', kind: 'read' }];
     const roster = [subagent({ sessionId: 'toolu_1', parentToolCallId: 'toolu_1' })];

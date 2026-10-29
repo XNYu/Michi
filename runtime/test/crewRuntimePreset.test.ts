@@ -8,7 +8,7 @@ import type { McpSlotProvider } from '../src/contract/mcp';
 import type { AgentToolBridge } from '../src/contract/tools';
 import { createDefaultHost } from '../src/core/defaultHost';
 import { KiroRuntime } from '../src/adapters/kiro/KiroRuntime';
-import { KIRO_FLAVOR } from '../src/adapters/kiro/kiroFlavor';
+import { KIRO_FLAVOR, joinSessionMetadata } from '../src/adapters/kiro/kiroFlavor';
 import type { AcpLaunch } from '../src/adapters/kiro/acpClient';
 import { CREW_APP_VERSION } from '../src/adapters/crew/crewAppVersion';
 import {
@@ -187,5 +187,29 @@ describe('createCrewRuntime', () => {
     const child = spawnSync(launch.bin, launch.args(), { encoding: 'utf8', timeout: 10_000 });
     assert.equal(child.status, 1);
     assert.equal(child.stderr, 'Kiro Crew ACP adapter not found; set MICHI_CREW_ACP_BIN\n');
+  });
+});
+
+describe('Crew flavor session metadata', () => {
+  it("names the new session's workspace, and nothing without one", () => {
+    const host = createDefaultHost({ logLevel: 'silent', workspaces: [
+      { id: 'ws', name: '  Michi  ' }, { id: 'blank', name: '   ' }, { id: 'unnamed' },
+    ] });
+    const metadata = (workspaceId?: string) => CREW_KIRO_FLAVOR.sessionMetadata?.(host, { cwd: '/w', workspaceId });
+    assert.deepEqual(metadata('ws'), { crew: { workspaceName: 'Michi' } });
+    assert.equal(metadata('blank'), undefined);
+    assert.equal(metadata('unnamed'), undefined);
+    assert.equal(metadata('missing'), undefined);
+    assert.equal(metadata(undefined), undefined);
+  });
+
+  it('joins with the memory metadata inside the shared crew namespace', () => {
+    assert.deepEqual(
+      joinSessionMetadata({ crew: { memoryMode: 'persistent' }, kiro: { a: 1 } }, { crew: { workspaceName: 'Michi' } }),
+      { crew: { memoryMode: 'persistent', workspaceName: 'Michi' }, kiro: { a: 1 } },
+    );
+    assert.deepEqual(joinSessionMetadata(undefined, { crew: { workspaceName: 'Michi' } }), { crew: { workspaceName: 'Michi' } });
+    assert.deepEqual(joinSessionMetadata({ crew: { memoryMode: 'temporary' } }, undefined), { crew: { memoryMode: 'temporary' } });
+    assert.equal(joinSessionMetadata(undefined, undefined), undefined);
   });
 });

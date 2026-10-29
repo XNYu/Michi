@@ -81,6 +81,10 @@
   --m-gap: 9px;
   --m-textGap: 4px;
 }
+/* A long workspace name gives way before the remote note after it does. */
+.michi-menu[data-menu='workspace'] .michi-menu-label { display: flex; align-items: baseline; }
+.michi-menu[data-menu='workspace'] .michi-menu-label > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.michi-menu[data-menu='workspace'] .michi-menu-sublabel { flex-shrink: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
 .michi-menu[data-menu='context'] {
   --m-width: 252px;
   --m-minHeight: 32px;

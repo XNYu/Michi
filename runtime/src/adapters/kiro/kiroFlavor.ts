@@ -1,7 +1,7 @@
 import type { KiroForkAnchor, PreambleInput, RuntimeHost, RuntimePortName, TurnSuffixInput } from '../../contract/host';
 import type { AcpClient, AcpUpdate } from './acpClient';
 import type { NormalizedEvent } from '../../contract/events';
-import type { NewAgentSessionOptions } from '../../contract/types';
+import type { CancelAck, NewAgentSessionOptions } from '../../contract/types';
 
 // How an ACP agent that speaks Kiro's protocol differs from kiro-cli.
 // KiroRuntime and KiroSession read these differences, never the runtime id,
@@ -42,6 +42,61 @@ export interface KiroFlavor {
     readonly sessionAnchors: boolean;
     /** Memory the agent keeps per chat. Absent: none. */
     readonly memory?: KiroSessionMemory;
+    /**
+     * How the agent acknowledges a prompt cancel; the session reports a
+     * native ack only from this. Absent: a cancel is only dispatched
+     * (inferred). See KiroCancelAck.
+     */
+    readonly cancelAck?: KiroCancelAck;
+    /**
+     * The agent reports native metering at turn end (credits and context
+     * usage), forwarded as usage_summary. Absent: usage is not described.
+     */
+    readonly metersUsage?: boolean;
+    /**
+     * session/new metadata besides memory's, read once the session's agent
+     * process is ready. Absent or undefined: none.
+     */
+    sessionMetadata?(host: RuntimeHost, opts: NewAgentSessionOptions): Record<string, unknown> | undefined;
+}
+
+/**
+ * Where an agent's acknowledgement of a prompt cancel comes from.
+ *
+ * - `prompt-settlement`: the pending `session/prompt` settles with stopReason
+ *   "cancelled" within the cancel deadline (kiro-cli 2.35.1, 0-30 ms on both
+ *   engines).
+ * - `agent-record`: a record the agent keeps of the stop, read after the
+ *   cancel is dispatched (Kiro Crew's Gateway `stop_event`). `confirm`
+ *   returns undefined when no record came; the dispatch then stands as an
+ *   inferred ack.
+ *
+ * Either way the session holds the cancelled turn's end until the ack
+ * settles, so the host hears the ack first.
+ */
+export type KiroCancelAck =
+    | { readonly kind: 'prompt-settlement' }
+    | { readonly kind: 'agent-record'; confirm(client: AcpClient, sid: string): Promise<CancelAck | undefined> };
+
+/**
+ * Two session/new metadata objects as one. A namespace both name, such as
+ * `crew`, keeps the fields of both; on a clash `b` wins.
+ */
+export function joinSessionMetadata(
+    a: Record<string, unknown> | undefined,
+    b: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+    if (!a || !b) return a ?? b;
+    const joined: Record<string, unknown> = { ...a };
+    for (const [key, value] of Object.entries(b)) {
+        const prior = joined[key];
+        joined[key] = isPlainObject(prior) && isPlainObject(value) ? { ...prior, ...value } : value;
+    }
+    return joined;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Memory an agent keeps per chat, chosen when the chat's session opens. */
@@ -67,7 +122,9 @@ export interface KiroNewSessionMemory {
  * kiro-cli: the host's whole preamble, metadata through the host's tools, no
  * session info events; a lost native session is rebuilt from the host's
  * history, local v3 chats share an MCP catalog, and the agent keeps no
- * per-chat memory.
+ * per-chat memory. Both engines settle a cancelled prompt with stopReason
+ * "cancelled" and report credits and context usage (kiro-cli 2.35.1,
+ * docs/kiro-acp-validation.md).
  */
 export const KIRO_FLAVOR: KiroFlavor = {
     hostPorts: [],
@@ -78,4 +135,6 @@ export const KIRO_FLAVOR: KiroFlavor = {
     sessionInfoEvents: () => [],
     nativeSessions: { replaceable: true },
     sessionAnchors: true,
+    cancelAck: { kind: 'prompt-settlement' },
+    metersUsage: true,
 };

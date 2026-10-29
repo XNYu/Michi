@@ -16,6 +16,7 @@ import {
   refreshMetaAgent,
   retryMetaAgentGuard,
   saveMetaAgentSettings,
+  saveMetaAgentToolApproval,
   useMetaAgent,
 } from '../../../../state/metaAgent/useMetaAgent';
 import type { ResolvedNodeBinding } from '../../../../state/nodeBindingResolution';
@@ -158,6 +159,7 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
 
   return (
     <>
+      <ToolApprovals info={info} />
       <MetaAgentGuardAlert failures={failures} onRetry={retryMetaAgentGuard} onChangeRuntime={changeRuntime} />
 
       <section className="meta-set__sec" ref={runtimeRef} aria-labelledby={headingId}>
@@ -186,7 +188,7 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
             <input ref={customRef} type="radio" name={radioName} checked={custom} disabled={saving} onChange={chooseCustom} />
             <span>
               <span className="meta-set__radio-t">Custom</span>
-              <span className="meta-set__radio-d">Only for the Meta agent, not new conversations.</span>
+              <span className="meta-set__radio-d">Only for background maintenance. Assistant chat and new conversations use the global settings.</span>
             </span>
           </label>
           {custom && <CustomRuntime settings={settings} resolved={resolved} agentStatus={agentStatus} saving={saving} onSave={(patch) => { void save(patch); }} />}
@@ -195,8 +197,8 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
           <Shield size={15} strokeWidth={1.75} aria-hidden="true" />
           {isMetaAgentRuntimeSupported(resolved.runtimeId) ? (
             <p>
-              <b>Now using {metaAgentResolvedText(resolved)}</b>{restriction ? `: ${restriction}.` : '.'}{' '}
-              With any AI service, the Meta agent can only use its own tools: Michi checks them each time it starts and stops it if there is anything else.
+              <b>Now using {metaAgentResolvedText(resolved)}</b>{restriction ? `. Background maintenance: ${restriction}.` : '.'}{' '}
+              Background maintenance can change Michi content and use external read-only tools. Other external tools need your saved approval. Assistant chat runs on the global settings, or what you pick in its composer, with that AI service’s built-in and connected tools and ordinary chat permissions.
             </p>
           ) : (
             <p><b>{metaAgentRuntimeLabel(resolved.runtimeId)}</b>: {restriction}.</p>
@@ -492,4 +494,30 @@ function CustomRuntime({ settings, resolved, agentStatus, saving, onSave }: {
       </div>
     </div>
   );
+}
+
+function ToolApprovals({ info }: { info: MetaAgentInfo }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const decide = async (id: string, state: 'approved' | 'denied' | 'revoked') => {
+    setBusy(true); setError(null);
+    try { await saveMetaAgentToolApproval(id, state); }
+    catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t save approval'); }
+    finally { setBusy(false); }
+  };
+  if (!info.toolApprovals?.length) return null;
+  return <section className="meta-set__sec" aria-label="Tool approvals">
+    <h2>Tool approvals</h2>
+    <p>Approve a tool for future background runs, including external changes it supports, with any valid arguments. Approval lasts until revoked or its definition or connection configuration changes.</p>
+    {info.toolApprovals.map(request => <div className="meta-set__row" key={request.id}>
+      <span className="meta-set__row-k">{request.server} / {request.tool}</span>
+      <span className="meta-set__row-v">{request.description}<br />{request.state === 'pending' ? 'Needs your approval; not executed' : request.state}</span>
+      <span className="meta-set__ctl">
+        {request.state !== 'approved' && <Button disabled={busy} onClick={() => { void decide(request.id, 'approved'); }}>Always allow this tool</Button>}
+        {request.state === 'pending' && <Button disabled={busy} onClick={() => { void decide(request.id, 'denied'); }}>Deny</Button>}
+        {request.state === 'approved' && <Button disabled={busy} onClick={() => { void decide(request.id, 'revoked'); }}>Revoke</Button>}
+      </span>
+    </div>)}
+    {error && <p role="alert">{error}</p>}
+  </section>;
 }

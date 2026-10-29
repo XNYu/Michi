@@ -36,7 +36,10 @@ describe('Codex restricted profile', () => {
       web_search: 'disabled',
       mcp_servers: { 'user-server': { enabled: false }, [CODEX_HOST_MCP_SERVER]: host },
     });
-    assert.ok(Object.values(CODEX_RESTRICTED_FEATURES_OFF).every((value) => value === false));
+    // Every switch off; multi_agent_v2 is the off table with a one-thread limit, so spawns fail.
+    const { multi_agent_v2: multiAgentV2, ...switches } = CODEX_RESTRICTED_FEATURES_OFF;
+    assert.ok(Object.values(switches).every((value) => value === false));
+    assert.deepEqual(multiAgentV2, { enabled: false, max_concurrent_threads_per_session: 1 });
     assert.equal(CODEX_RESTRICTED_FEATURES_OFF.shell_tool, false);
   });
 

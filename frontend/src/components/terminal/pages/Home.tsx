@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react';
 import type { HomeCard } from 'michi-shared';
-import { useChatStore, useStructuralSelector } from '../../../state/chatStore';
+import { CHATS_WORKSPACE_ID, useChatStore, useStructuralSelector } from '../../../state/chatStore';
 import type { ChatNodeState } from '../../../state/chatTypes';
 import ManageComposer, { type ManageComposerHandle } from '../manage/ManageComposer';
 import { HomeWorkspaceChip } from '../HomeWorkspaceChip';
@@ -25,13 +25,17 @@ interface HomeProps {
  *  workspace name and model: first the chips drop their text, then the agent
  *  chip goes. Measured on the toolbar's border box. */
 const HOME_TOOLBAR_COMPACTION = { glyphsBelow: 640, hideAgentBelow: 480 };
+/** Below this toolbar width one row cannot also hold the workspace and
+ *  permission chips (a phone, or a narrow pane), so they move to a tray
+ *  under the composer and the toolbar keeps one row. */
+const HOME_TRAY_BELOW = 480;
 
 function openSpacesHome() {
   window.dispatchEvent(new CustomEvent('michi:nav-page', { detail: { page: entryPageForArea('spaces', 'home') } }));
 }
 
 export default function TerminalHome({ onSubmitted }: HomeProps) {
-  const { activeProject, projects, selectProject, hydrated } = useChatStore();
+  const { activeProject, projects, selectProject, hydrated, enterChatsWorkspace } = useChatStore();
 
   const liveProjects = useMemo(
     () => projects.filter((p) => !p.deletedAt && !p.archivedAt && !isSystemWorkspace(p)),
@@ -42,13 +46,17 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
   // of the user's — a thread started here must never land out of sight.
   const homeProject = activeProject && !isSystemWorkspace(activeProject) ? activeProject : null;
   useReturnFromSystemWorkspace(true, activeProject, projects, selectProject);
+  // The chip presents the folder-less Chats workspace as "no workspace", the
+  // state its × leads to, rather than as one more workspace to pick.
+  const chipProjects = useMemo(() => liveProjects.filter((p) => p.id !== CHATS_WORKSPACE_ID), [liveProjects]);
+  const chipActive = homeProject?.id === CHATS_WORKSPACE_ID ? null : homeProject;
 
   const hasConversationSelector = useCallback(
     (nodesMap: Record<string, ChatNodeState>) => buildContinueItems(liveProjects, nodesMap, null, 1).length > 0,
     [liveProjects],
   );
   const hasConversation = useStructuralSelector(hasConversationSelector);
-  const { cards: homeCards, markUsed } = useHomeCards();
+  const { cards: homeCards, loaded, markUsed } = useHomeCards();
   const clock = useMinuteClock(true);
   const [setIndex, setSetIndex] = useState(0);
 
@@ -67,9 +75,9 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
       style={{
         ['--message-body-size' as string]: '17px',
         ['--message-body-leading' as string]: '1.55',
-        // Open with room for a few lines so a card's prompt doesn't start
-        // out cramped; it still grows to the shared max-height cap.
-        ['--composer-min-rows' as string]: '3',
+        // Open with two lines so a card's prompt doesn't start out cramped;
+        // it still grows to the shared max-height cap.
+        ['--composer-min-rows' as string]: '2',
         ['--composer-chrome-size' as string]: 'var(--fs-lg)',
         // Hero chips: bigger font, but tighter horizontal padding and
         // letter-spacing so the row stays compact rather than sprawling.
@@ -86,19 +94,21 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
         onSubmitted={handleSubmitted}
         enableAgentSelect
         toolbarCompaction={HOME_TOOLBAR_COMPACTION}
+        trayBelow={HOME_TRAY_BELOW}
         toolbarLeftPrefix={
           <HomeWorkspaceChip
-            active={homeProject}
-            liveProjects={liveProjects}
+            active={chipActive}
+            liveProjects={chipProjects}
             onSelect={selectProject}
             onNewWorkspace={() =>
               window.dispatchEvent(new CustomEvent('michi:open-new-workspace'))
             }
+            onClear={() => { void enterChatsWorkspace(); }}
           />
         }
       />
     </div>
-  ), [handleSubmitted, homeProject, liveProjects, selectProject]);
+  ), [handleSubmitted, chipActive, chipProjects, selectProject, enterChatsWorkspace]);
 
   const fill = useCallback((text: string) => { composerRef.current?.insert(text); }, []);
 
@@ -115,7 +125,7 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
   };
 
   // A new user gets the getting-started cards; otherwise the Meta agent's, when it wrote some.
-  const onboarding = hydrated && !hasConversation && !homeCards.cardsCustomized;
+  const onboarding = loaded && hydrated && !hasConversation && !homeCards.cardsCustomized;
   let grid: React.ReactNode = null;
   if (onboarding) {
     grid = (
@@ -147,8 +157,13 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
     );
   }
 
+  // Keep the original hero until Home has something to show. The composer
+  // stays in the same position in the React tree so loading cannot lose a draft.
+  const defaultLayout = contentMode === 'default' && (!recommendations || (!homeCards.greeting && !grid && !homeCards.cardsCustomized));
+
   return (
     <div
+      className="home-scroll"
       style={{
         flex: 1,
         minHeight: 0,
@@ -158,8 +173,13 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
         background: 'var(--term-page-bg, var(--term-bg))',
       }}
     >
-      <div className="home-page">
-        <HomeGreeting greeting={recommendations ? homeCards.greeting : null} now={clock} />
+      <div className="home-page" data-default-layout={defaultLayout || undefined}>
+        {defaultLayout ? (
+          <h1 className="home-default-headline">
+            <span className="michi-home-headline__mark">_ </span>
+            Another road diverged in a yellow wood.
+          </h1>
+        ) : <HomeGreeting greeting={recommendations ? homeCards.greeting : null} now={clock} />}
         {/* The composer's own bottom margin spaces the quick starts. */}
         <div className="home-compose">
           {composer}

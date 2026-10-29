@@ -1,4 +1,5 @@
 import fs from "fs";
+import { assertWorkspaceRealpath, resolveWorkspaceRegularFile } from "../services/workspaceFiles";
 import path from "path";
 import { log } from "../services/logger";
 import type {
@@ -118,10 +119,24 @@ export function createAgentToolBridge(deps: AgentToolBridgeDeps): MichiAgentTool
         },
         saveContext(args: BridgeSaveContextArgs): BridgeSaveContextResult | null {
             // Path traversal protection — same regex as old ChatManager.handleSaveContext.
-            if (!isValidContextName(args.name) || typeof args.body !== "string") {
-                log.warn("bridge", "saveContext rejected (invalid name)", { name: args.name });
+            if (!isValidContextName(args.name) || (typeof args.body === "string") === (typeof args.path === "string")) {
+                log.warn("bridge", "saveContext rejected (invalid name or source)", { name: args.name });
                 return null;
             }
+            if (typeof args.path === "string") {
+                try {
+                    const root = fs.realpathSync(args.cwd);
+                    const source = assertWorkspaceRealpath(path.resolve(args.cwd, args.path), root);
+                    const { realPath, stat } = resolveWorkspaceRegularFile(path.relative(root, source), root);
+                    const filePath = path.relative(root, realPath).split(path.sep).join('/');
+                    const result = { name: args.name, filePath, size: stat.size };
+                    const id = persistContext({ chatId: args.chatId, ownerUserId: args.ownerUserId, ...result });
+                    return id === null ? null : { ...result, ...(id ? { id } : {}) };
+                } catch {
+                    return null;
+                }
+            }
+            if (typeof args.body !== "string") return null;
             const dir = path.join(args.cwd, ".contexts");
             fs.mkdirSync(dir, { recursive: true });
             const filePath = contextFilePath(args.name);

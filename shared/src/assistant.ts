@@ -12,9 +12,11 @@ import type { RuntimeReasoning } from './agentRuns';
 /** `settings.system` value marking the assistant's hidden workspace. */
 export const ASSISTANT_WORKSPACE_SYSTEM = 'assistant';
 
-/** The runtime/model/reasoning a new assistant conversation starts with. */
+/** A runtime/provider/model/reasoning an assistant conversation runs on. */
 export interface MichiAssistantSettings {
   runtimeId: string;
+  /** Provider runtimes (Pi) only; null elsewhere. Absent from older backends. */
+  providerId?: string | null;
   /** Null: the runtime's default model. */
   modelId: string | null;
   /** Null: the runtime's default reasoning. */
@@ -27,13 +29,17 @@ export interface MichiAssistantInfo {
   nodeId: string;
   workspaceId: string;
   treeId: string;
+  /** The global runtime settings resolved now: what a new conversation runs on. */
   settings: MichiAssistantSettings;
   /**
-   * What the conversation's next message runs on: the Meta agent settings
-   * resolved now. When it differs from the runtime the conversation last ran
-   * on, that message starts a new native session carrying the visible history.
+   * What the conversation's next message runs on: what the user picked in its
+   * composer, else `settings`. When it differs from the runtime the
+   * conversation last ran on, that message starts a new native session
+   * carrying the visible history.
    */
   conversation: MichiAssistantSettings;
+  /** True while the conversation has no pick of its own. Absent from older backends. */
+  conversationFollowsGlobal?: boolean;
   /** Runtimes that can host the assistant without file edits, shell or network. */
   supportedRuntimes: string[];
   /**
@@ -65,9 +71,15 @@ export interface MichiAssistantConversations {
   nextCursor: string | null;
 }
 
-/** PUT /api/assistant/settings. Omitted fields keep their value. */
+/**
+ * PUT /api/assistant/settings: the user's pick in one conversation's
+ * composer, which that conversation keeps. Omitted fields keep their value.
+ */
 export interface MichiAssistantSettingsPatch {
+  /** The conversation; the current one when omitted. */
+  nodeId?: string;
   runtimeId?: string;
+  providerId?: string | null;
   modelId?: string | null;
   reasoning?: RuntimeReasoning | null;
 }

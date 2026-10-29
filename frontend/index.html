@@ -53,39 +53,44 @@
          every preset except Geist, which pairs with Geist Mono. -->
 
 <script>
-      // Sync theme + background BEFORE React mounts so the first paint matches
-      // the user's saved theme. Without this, dark-theme users see a parchment
-      // flash; everyone else sees a white flash while the bundle parses.
+      // Paint the saved terminal palette's background BEFORE React mounts so the
+      // first frame matches it. Without this, dark-palette users see a light
+      // flash while the bundle parses. This script cannot import modules: keep
+      // the key, field, default and colors in sync with state/prefs.tsx
+      // (PREFS_KEY, terminalPalette, DEFAULT_PREFS) and the palette bg values
+      // in components/terminal/tokens.ts. state/prefs.firstFrame.test.ts checks.
       (function () {
-        var BG = {
-          parchment: '245 242 238', light: '245 242 238',
-          mist: '240 242 245', sage: '238 242 240',
-          night: '8 8 8', dark: '8 8 8', ember: '8 8 8',
-          abyss: '6 10 10',
-          dracula: '40 42 54', monokai: '39 40 34',
-          nord: '46 52 64', solarized: '0 43 54',
-          onedark: '40 44 52', gruvbox: '40 40 40'
-        };
-        var theme = 'parchment';
+        var BG = { bone: '#fdfdfc', slate: '#f3f4f6', monokai: '#272822', gruvbox: '#282828' };
+        var palette = 'slate';
         try {
-          var raw = localStorage.getItem('michi:v1:prefs');
-          if (raw) {
-            var parsed = JSON.parse(raw);
-            if (parsed && typeof parsed.theme === 'string' && BG[parsed.theme]) theme = parsed.theme;
-          } else {
-            var legacy = localStorage.getItem('michi:theme');
-            if (legacy === 'dark') theme = 'night';
-          }
+          var parsed = JSON.parse(localStorage.getItem('michi:v1:prefs') || 'null');
+          if (parsed && Object.prototype.hasOwnProperty.call(BG, parsed.terminalPalette)) palette = parsed.terminalPalette;
         } catch (e) { /* ignore */ }
-        document.documentElement.setAttribute('data-theme', theme);
-        document.documentElement.style.background = 'rgb(' + BG[theme] + ')';
+        document.documentElement.setAttribute('data-terminal-palette', palette);
+        document.documentElement.style.background = BG[palette];
         document.documentElement.lang = navigator.language || 'en';
       })();
     </script>
   </head>
-  <body style="background:rgb(245 242 238)">
+  <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"><div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;font-size:12px;color:#999;letter-spacing:.04em" id="pre-react-fallback"><span>loading…</span></div></div>
+    <script>
+      // React replaces this placeholder when it mounts. If a bundle download
+      // stalls (seen over the phone tunnel), offer a reload instead of spinning.
+      setTimeout(function () {
+        var fallback = document.getElementById('pre-react-fallback');
+        if (!fallback) return;
+        var message = document.createElement('span');
+        message.textContent = 'Michi did not finish loading.';
+        var reload = document.createElement('button');
+        reload.type = 'button';
+        reload.textContent = 'Reload';
+        reload.style.cssText = 'margin-left:10px;padding:6px 14px;font:inherit;color:inherit;background:none;border:1px solid currentColor;border-radius:6px;cursor:pointer';
+        reload.onclick = function () { location.reload(); };
+        fallback.replaceChildren(message, reload);
+      }, 20000);
+    </script>
     <script type="module" src="/src/index.tsx"></script>
   </body>
 </html>

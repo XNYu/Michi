@@ -112,7 +112,7 @@ export function MaintenanceStatus({ backendConnectionId, workspaceId, pendingPro
           {paused || notConfigured ? <button type="button" disabled={busy || loading} onClick={safeAction(enableOrPause)}>{busy ? 'Saving…' : 'Enable updates'}</button>
             : <button type="button" disabled={busy || loading} onClick={safeAction(togglePause)}>{busy ? 'Saving…' : 'Pause'}</button>}
           <button type="button" disabled={busy || loading || paused || notConfigured || updating} onClick={safeAction(runNow)}>{busy ? 'Working…' : 'Run now'}</button>
-          {jobId && onOpenJob && <button type="button" onClick={() => onOpenJob(jobId)}>Open job</button>}
+          {jobId && onOpenJob && <button type="button" onClick={() => onOpenJob(jobId)}>View automatic maintenance</button>}
         </div>
       </div>
 

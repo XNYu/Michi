@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import { HoverTip, PopoverSurface } from './Popover';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { HoverTip, PopoverSurface, Tooltip } from './Popover';
 
 describe('menu surface isolation', () => {
   it('only opts the requested surface into the exported menu tokens', () => {
@@ -77,5 +77,63 @@ describe('HoverTip', () => {
     expect(node).toBe(screen.getByRole('button'));
     fireEvent.mouseEnter(screen.getByRole('button'));
     expect(onMouseEnter).toHaveBeenCalledTimes(1);
+  });
+});
+
+// jsdom has no PointerEvent, so fireEvent would drop pointerType.
+class TestPointerEvent extends MouseEvent {
+  pointerType: string;
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init);
+    this.pointerType = init.pointerType ?? '';
+  }
+}
+
+describe('tooltips after a tap', () => {
+  beforeEach(() => { vi.stubGlobal('PointerEvent', TestPointerEvent); });
+  // A tap fires pointer events with pointerType "touch", then compatibility
+  // mouseenter and (on Android) focus, and no mouseleave until the next tap.
+  function tap(el: Element) {
+    fireEvent.pointerOver(el, { pointerType: 'touch' });
+    fireEvent.pointerDown(el, { pointerType: 'touch' });
+    fireEvent.mouseEnter(el);
+    fireEvent.focus(el);
+  }
+
+  afterEach(() => {
+    fireEvent.pointerOver(document.body, { pointerType: 'mouse' });
+    vi.unstubAllGlobals();
+  });
+
+  it('HoverTip ignores the synthetic hover and focus of a tap', () => {
+    render(<HoverTip label="Help" delayMs={0}><button type="button">?</button></HoverTip>);
+    const anchor = screen.getByRole('button');
+    tap(anchor);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.mouseLeave(anchor);
+    fireEvent.pointerOver(anchor, { pointerType: 'mouse' });
+    fireEvent.mouseEnter(anchor);
+    expect(screen.getByRole('tooltip').textContent).toContain('Help');
+  });
+
+  it('a Tooltip mounted by a tap renders nothing', () => {
+    function IconWithTip() {
+      const ref = React.useRef<HTMLButtonElement>(null);
+      const [hover, setHover] = React.useState(false);
+      return <>
+        <button ref={ref} type="button" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>+</button>
+        {hover && <Tooltip anchorRef={ref} label="New chat" />}
+      </>;
+    }
+    render(<IconWithTip />);
+    const anchor = screen.getByRole('button');
+    tap(anchor);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.mouseLeave(anchor);
+    fireEvent.pointerOver(anchor, { pointerType: 'mouse' });
+    fireEvent.mouseEnter(anchor);
+    expect(screen.getByRole('tooltip').textContent).toContain('New chat');
   });
 });

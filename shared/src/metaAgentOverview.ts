@@ -55,7 +55,7 @@ export interface MetaAgentCursorRow {
   /** When the cursor last moved; null when it never has. */
   lastRunAt: number | null;
   /** synced: read up to the counter; next: the next run reads `unread`; no-new: nothing completed since maintenance began. */
-  state: 'synced' | 'next' | 'no-new' | 'error';
+  state: 'synced' | 'next' | 'no-new' | 'error' | 'paused';
   error?: string;
   /** With state `error`: the same error in plain words, and whether runs stopped (true) or keep retrying (false). */
   problem?: { reason: MetaAgentStopReason; message: string; stopped: boolean };
@@ -113,6 +113,8 @@ export interface MetaAgentTodayMetrics {
 }
 
 export interface MetaAgentOverview {
+  /** Last database-only coordinator check, separate from AI executions. */
+  lastCheckedAt?: number | null;
   state: MetaAgentOverviewState;
   /** With state `error`: `stopped.message`. */
   error?: string;
@@ -124,7 +126,7 @@ export interface MetaAgentOverview {
   today: MetaAgentTodayMetrics;
   cursors: MetaAgentCursorRow[];
   recentRuns: MetaAgentRecentRun[];
-  /** Every managed maintenance job of the owner's, enabled or not; the Scheduled list shows them as this one system task. */
+  /** Legacy execution IDs for routing old links and filtering older backends; these are not public prompt jobs. */
   managedJobIds?: string[];
 }
 

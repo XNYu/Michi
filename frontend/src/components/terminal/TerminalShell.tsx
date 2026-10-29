@@ -1,3 +1,5 @@
+import TerminalSettingsArea from './rail/SettingsMain';
+import { deferredComponent } from '../deferredComponent';
 import { useShellNavigation, type ShellLocation } from './useShellNavigation';
 import { useLinkOpening } from './useLinkOpening';
 import { useScheduledRunOpening } from './scheduled/useScheduledRunOpening';
@@ -52,11 +54,13 @@ import { CreateSpaceDialog, OPEN_NATIVE_PAGE_EVENT, type NativePageRoute, type O
 import { SpacesSidebar, type SpacesSidebarCurrent } from './spaces/SpacesSidebar';
 import { SpacesSettings } from './spaces/SpacesSettings';
 import { SpaceConversationWatcher } from './spaces/conversation/SpaceConversationWatcher';
-import { AreaRail } from './rail/AreaRail';
+import { AreaRail, AreaTabs } from './rail/AreaRail';
 import { useRailBadges } from './rail/useRailBadges';
 import { ScheduledSidebar } from './rail/AreaSidebars';
-import { requestScheduledJobDetail } from './scheduled/scheduledNav';
-import { META_AGENT_PAGE_TITLE, OPEN_SETTINGS_SECTION_EVENT, useMetaAgentDetailOpen } from './scheduled/metaAgent/metaAgentNav';
+import type { SettingsLevel } from './rail/SettingsMain';
+import { openScheduledHome, requestScheduledJobDetail, setScheduledRoute, useScheduledRoute } from './scheduled/scheduledNav';
+import { META_AGENT_PAGE_TITLE, OPEN_SETTINGS_SECTION_EVENT } from './scheduled/metaAgent/metaAgentNav';
+import { useMetaAgentOverviewSnapshot } from './scheduled/metaAgent/useMetaAgentOverview';
 import { SpacesMetaChat, useMetaChatWindow, type SpacesChatView } from './spaces/metaChat';
 import { ALL_TASKS, SETTINGS_AREA_SECTIONS, SPACES_HOME, areaForPage, entryPageForArea, type SettingsAreaSection, type ShellArea, type SpacesHomeTarget } from '../../state/shellArea';
 import { SourcePopoverHost } from './source';
@@ -82,13 +86,12 @@ const TerminalSpaces = React.lazy(() => import('./spaces/SpacesPage'));
 const TerminalSpaceView = React.lazy(() => import('./spaces/SpaceView'));
 
 const NARROW_THRESHOLD = 700;
-const TerminalMap = React.lazy(() => import('./pages/Map'));
+const TerminalMap = deferredComponent<{ onNav: (page: PageId) => void }>(() => import('./pages/Map'), <PageLoading />);
 const TerminalBranches = React.lazy(() => import('./pages/Branches'));
 const TerminalDigest = React.lazy(() => import('./pages/Digest'));
-const TerminalSettingsArea = React.lazy(() => import('./rail/SettingsMain'));
 const ArtifactsDrawer = React.lazy(() => import('./ArtifactsDrawer'));
 const BackgroundWorkDrawer = React.lazy(() => import('./backgroundWork/BackgroundWorkDrawer'));
-const TerminalWorkspaces = React.lazy(() => import('./pages/Workspaces'));
+const TerminalWorkspaces = deferredComponent<{ onNav: (page: PageId) => void }>(() => import('./pages/Workspaces'), <PageLoading />);
 const TerminalWorkspaceManage = React.lazy(() => import('./pages/WorkspaceManage'));
 const TerminalTrash = React.lazy(() => import('./pages/Trash'));
 const TerminalArchived = React.lazy(() => import('./pages/Archived'));
@@ -99,27 +102,12 @@ const AgentLibraryPage = React.lazy(() => import('./agents/AgentLibraryPage'));
 const AgentEditorPage = React.lazy(() => import('./agents/AgentEditorPage'));
 const CommandPalette = React.lazy(() => import('./CommandPalette'));
 
+function PageLoading() {
+  return <div role="status" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--term-muted)', fontSize: 'var(--fs-md)' }}>loading…</div>;
+}
+
 function LazyPage({ children }: { children: React.ReactNode }) {
-  return (
-    <React.Suspense
-      fallback={
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--term-muted)',
-            fontSize: 'var(--fs-md)',
-          }}
-        >
-          loading…
-        </div>
-      }
-    >
-      {children}
-    </React.Suspense>
-  );
+  return <React.Suspense fallback={<PageLoading />}>{children}</React.Suspense>;
 }
 
 export default function TerminalShell() {
@@ -139,14 +127,28 @@ export default function TerminalShell() {
   const [settingsSection, setSettingsSection] = useState<SettingsAreaSection>('appearance');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPresent, setSettingsPresent] = useState(false);
-  const [scheduledJobId, setScheduledJobId] = useState<string | null>(null);
-  const metaAgentOpen = useMetaAgentDetailOpen();
+  // A phone's Settings drawer shows one level at a time: the section list,
+  // then one section. Opening it plainly starts on the list; a request for one
+  // section opens on that section. Back to the list once the drawer is gone.
+  const [settingsView, setSettingsView] = useState<SettingsLevel>('menu');
+  useEffect(() => {
+    if (!settingsOpen && !settingsPresent) setSettingsView('menu');
+  }, [settingsOpen, settingsPresent]);
+  const scheduledRoute = useScheduledRoute();
+  const scheduledJobId = scheduledRoute.kind === 'job' ? scheduledRoute.jobId : null;
+  const metaAgentOpen = scheduledRoute.kind === 'meta-agent';
+  const metaAgentOverview = useMetaAgentOverviewSnapshot();
+  // Managed jobs redirect to the system detail; their intermediate route is
+  // not a destination to revisit with Back, even if opened before data loaded.
+  const isScheduledJobLive = React.useCallback((jobId: string) =>
+    metaAgentOverview.kind !== 'ready' || !metaAgentOverview.overview.managedJobIds?.includes(jobId), [metaAgentOverview]);
   useEffect(() => {
     const onSection = (event: Event) => {
       const section = (event as CustomEvent<{ section?: SettingsAreaSection }>).detail?.section;
       const selected = SETTINGS_AREA_SECTIONS.find(item => item.id === section);
       if (selected) {
         setSettingsSection(selected.id);
+        setSettingsView('section');
         setSettingsOpen(true);
       }
     };
@@ -207,9 +209,9 @@ export default function TerminalShell() {
     setSettingsOpen(false);
     setSpacesSettingsOpen(false);
     if (next === 'spaces') { handleNav('spaces'); return; }
-    if (next === 'scheduled' && scheduledJobId) requestScheduledJobDetail(scheduledJobId);
+    if (next === 'scheduled') openScheduledHome();
     setPage(entryPageForArea(next, lastConversationPageRef.current));
-  }, [handleNav, scheduledJobId]);
+  }, [handleNav]);
   React.useEffect(() => {
     const onOpenPage = (event: Event) => {
       const detail = (event as CustomEvent<OpenNativePageRoute>).detail;
@@ -290,15 +292,16 @@ export default function TerminalShell() {
     revealBackendNode,
   } = useChatActions();
   const location = React.useMemo<ShellLocation>(() => ({
-    page, spaceRoute, spacesHome,
+    page, spaceRoute, spacesHome, scheduledRoute,
     chat: page === 'dashboard' && focusedPane && activeProject?.activeTreeId && activeProject.chatIds.includes(focusedPane)
       ? { nodeId: focusedPane, projectId: activeProject.id, treeId: activeProject.activeTreeId } : null,
-  }), [page, spaceRoute, spacesHome, focusedPane, activeProject]);
+  }), [page, spaceRoute, spacesHome, scheduledRoute, focusedPane, activeProject]);
   const restoreLocation = React.useCallback((target: ShellLocation) => {
     setSettingsOpen(false);
     setSpacesSettingsOpen(false);
     setSpaceRoute(target.spaceRoute);
     setSpacesHome(target.spacesHome);
+    if (target.page === 'scheduled') setScheduledRoute(target.scheduledRoute);
     setPage(target.page);
     if (target.page === 'space' || target.page === 'spaces') {
       try { sessionStorage.setItem('michi.native-page-route', JSON.stringify(target.page === 'space' ? target.spaceRoute : { type: 'spaces' })); } catch { /* optional session restore */ }
@@ -311,7 +314,7 @@ export default function TerminalShell() {
     return !!project && !project.deletedAt && project.chatIds.includes(entry.nodeId) && !deletedNodeIdsKey.split('\0').includes(entry.nodeId);
   }, [projects, deletedNodeIdsKey]);
   const navigation = useShellNavigation({
-    location, hydrated, restore: restoreLocation, isChatLive,
+    location, hydrated, restore: restoreLocation, isChatLive, isScheduledJobLive,
     deps: { projects, activeProjectId: activeProject?.id ?? null, selectProject, openPane, openPaneInTree, activateTree, setFocusedNodeId },
   });
   const { canBack: canNavBack, canForward: canNavForward, onBack: navBack, onForward: navForward } = navigation;
@@ -829,8 +832,10 @@ export default function TerminalShell() {
         // Clip drawer/overlay slide-in animations (e.g. SettingsDrawer's
         // slideInRight starts at translateX(100%), which would otherwise
         // overshoot the viewport right edge and flash a horizontal scrollbar
-        // on Windows where scrollbars take up space.
-        overflow: 'hidden',
+        // on Windows where scrollbars take up space. clip, unlike hidden,
+        // cannot be scrolled by focus or scrollIntoView, which on a phone
+        // shifted the whole shell sideways behind an overflowing topbar.
+        overflow: 'clip',
       }}
     >
       <TerminalTopbar
@@ -839,15 +844,16 @@ export default function TerminalShell() {
         page={page}
         onNav={handleNav}
         sidebarCollapsed={sidebarCollapsedEffective}
-        // The area rail stays in the layout whenever the sidebar is closed,
-        // narrow windows included (their overlay opens beside it).
-        sidebarRail={!profileFullscreen && sidebarCollapsedEffective}
+        // The area rail stays in the layout whenever the sidebar is closed.
+        // Narrow windows have none: their drawer carries the areas instead.
+        sidebarRail={!profileFullscreen && !narrowMode && sidebarCollapsedEffective}
         onToggleSidebar={handleToggleSidebarEffective}
         onNewThread={() => { setPage('home'); if (narrowMode) setNarrowOverlayOpen(false); }}
         onOpenPalette={() => { if (hydrated) setPaletteOpen(true); }}
         artifactsOpen={artifactsOpen}
         remoteRecoveryControl={<RemoteRecoveryIndicator onOpenDetails={openRemoteRecovery} />}
         spacesCrumb={spacesSettingsOpen ? 'Settings' : page === 'spaces' ? (spacesHome.kind === 'all-tasks' ? 'All tasks' : spacesChatView.kind === 'workspace' ? spacesChatView.name : 'Home') : undefined}
+        onAreaHome={page === 'scheduled' ? openScheduledHome : undefined}
         areaCrumb={page === 'scheduled' && metaAgentOpen ? META_AGENT_PAGE_TITLE : undefined}
         spacesAssistant={area === 'spaces' ? { open: !chat.state.minimized, onToggle: chat.toggleMinimized } : undefined}
       />
@@ -856,7 +862,7 @@ export default function TerminalShell() {
       {hydrated && <WarmFailedBanner />}
       {hydrated && <AskUserAlertBar onNav={handleNav} />}
       <div className="terminal-body" style={{ flex: 1, display: 'flex', minHeight: 0, gap: 'var(--term-content-gap, 0px)', position: 'relative' }}>
-        {!profileFullscreen && <ShellRail area={area} onSelect={selectArea} settingsOpen={settingsOpen} />}
+        {!profileFullscreen && !narrowMode && <ShellRail area={area} onSelect={selectArea} settingsOpen={settingsOpen} />}
         {!profileFullscreen && (
           <TerminalSidebar
             areaContent={area === 'spaces' ? (
@@ -873,7 +879,7 @@ export default function TerminalShell() {
                 onNewSpace={() => setCreateSpaceOpen(true)}
               />
             ) : area === 'scheduled' ? (
-              <ScheduledSidebar selectedJobId={scheduledJobId} onSelectJob={(jobId) => { setScheduledJobId(jobId); requestScheduledJobDetail(jobId); }} onNavigate={closeNarrowOverlay} />
+              <ScheduledSidebar selectedJobId={scheduledJobId} onSelectJob={requestScheduledJobDetail} onNavigate={closeNarrowOverlay} />
             ) : undefined}
             workspaceReady={hydrated}
             activePage={page}
@@ -884,6 +890,11 @@ export default function TerminalShell() {
             narrowMode={narrowMode}
             narrowOverlayOpen={narrowOverlayOpen}
             onCloseOverlay={() => setNarrowOverlayOpen(false)}
+            overlayHeader={<ShellAreaTabs area={area} settingsOpen={settingsOpen} onSelect={(next) => {
+              selectArea(next);
+              // Settings opens its own drawer; other areas swap this drawer's list.
+              if (next === 'settings') setNarrowOverlayOpen(false);
+            }} />}
           />
         )}
         <div className="terminal-content-col" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0 }}>
@@ -950,8 +961,11 @@ export default function TerminalShell() {
           setPage('home');
         }}
       />}
-      <DrawerShell open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" width={720} motion={drawerMotion} onPresenceChange={setSettingsPresent}>
-        <LazyPage><TerminalSettingsArea section={settingsSection} onSectionChange={setSettingsSection} workspaceReady={hydrated} onNav={handleNav} /></LazyPage>
+      {/* On a phone, Back (and Esc) first returns from a section to the list. */}
+      <DrawerShell open={settingsOpen} title="Settings" width={720} motion={drawerMotion} onPresenceChange={setSettingsPresent}
+        onClose={() => { if (narrowMode && settingsView === 'section') setSettingsView('menu'); else setSettingsOpen(false); }}
+        closeControl={narrowMode ? 'back' : 'close'}>
+        <TerminalSettingsArea section={settingsSection} onSectionChange={setSettingsSection} view={settingsView} onViewChange={setSettingsView} stacked={narrowMode} workspaceReady={hydrated} onNav={handleNav} />
       </DrawerShell>
       <RemoteRecoveryDrawer open={remoteRecoveryOpen} onClose={closeRemoteRecovery} motion={drawerMotion} onPresenceChange={setRemoteRecoveryPresent} />
       {hydrated && area !== 'spaces' && <AssistantPanelHost page={page} />}
@@ -1105,7 +1119,12 @@ function ShellRail({ area, onSelect, settingsOpen }: { area: ShellArea; onSelect
   return <AreaRail area={area} onSelect={onSelect} badges={badges} settingsOpen={settingsOpen} />;
 }
 
-function SpacesAreaSidebar(props: Omit<React.ComponentProps<typeof SpacesSidebar>, 'waitingCount'> & { current: SpacesSidebarCurrent }) {
+/** The areas as the phone drawer's first row, with the same badges. */
+function ShellAreaTabs({ area, onSelect, settingsOpen }: { area: ShellArea; onSelect: (area: ShellArea) => void; settingsOpen: boolean }) {
   const badges = useRailBadges();
-  return <SpacesSidebar {...props} waitingCount={badges.spacesWaiting} />;
+  return <AreaTabs area={area} onSelect={onSelect} badges={badges} settingsOpen={settingsOpen} />;
+}
+
+function SpacesAreaSidebar(props: Omit<React.ComponentProps<typeof SpacesSidebar>, 'waitingCount'> & { current: SpacesSidebarCurrent }) {
+  return <SpacesSidebar {...props} />;
 }

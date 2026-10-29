@@ -12,9 +12,10 @@ import type { NormalizedEvent } from '../src/services/chatEvents';
 
 // Explicit opt-in: uses the installed CLI, existing provider auth and model quota.
 // Only provider settings are copied; all histories and Michi data are disposable.
-test('real SDK: durable historical fork, restart, native question, policy and interrupt', {
-  skip: process.env.MICHI_CLAUDE_SDK_SMOKE !== '1', timeout: 420_000,
-}, async (t) => {
+const LIVE = { skip: process.env.MICHI_CLAUDE_SDK_SMOKE !== '1', timeout: 420_000 };
+
+/** A disposable Michi backend around the real Claude runtime (see the opt-in note above). */
+async function createLiveHarness() {
   const originalEnv = { ...process.env };
   const sourceConfig = process.env.MICHI_CLAUDE_SDK_LIVE_CONFIG_DIR ?? process.env.CLAUDE_CONFIG_DIR;
   assert.ok(sourceConfig, 'Set MICHI_CLAUDE_SDK_LIVE_CONFIG_DIR to an authenticated Claude config directory');
@@ -52,7 +53,7 @@ test('real SDK: durable historical fork, restart, native question, policy and in
   permissions.writeChatPermissionSettings({ global: false, mode: 'ask' });
   deps.configureRuntimeDeps({
     historyStore: { getNode: repo.getNode, listMessages: repo.listMessages, getWorkspace: repo.getWorkspace,
-      getWorkspaceInstructions: repo.getWorkspaceInstructions, hasGrant: repo.hasGrant, grantPermission: repo.grantPermission },
+      getWorkspaceInstructions: repo.getWorkspaceInstructions },
     dataDir: process.env.MICHI_DATA_DIR,
     agentConfig: { getAgentConfig: config.getAgentConfig, resolveModel: config.resolveModel, resolveReasoning: config.resolveReasoning },
     chatPermissions: { getMode: permissions.resolveChatPermissionMode, hasGrant: permissions.hasChatToolGrant,
@@ -103,6 +104,19 @@ test('real SDK: durable historical fork, restart, native question, policy and in
     assert.ok(message.content.trim(), 'Durable assistant answer is empty');
     return message;
   }
+  async function cleanup() {
+    await runtime.shutdown();
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    deps.__resetRuntimeDeps(); db.closeDb();
+    process.env = originalEnv;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  return { cwd, repo, runtime, hub, options, node, session, turn, durable, permissions, cleanup };
+}
+
+test('real SDK: durable historical fork, restart, native question, policy and interrupt', LIVE, async (t) => {
+  const { cwd, repo, runtime, hub, options, node, session, turn, durable, cleanup } = await createLiveHarness();
   try {
     await t.test('historical fork keeps 6241 while parent and resumed parent keep 7352', async () => {
       const parent = await session('parent');
@@ -232,11 +246,120 @@ test('real SDK: durable historical fork, restart, native question, policy and in
       assert.equal(fs.existsSync(forbidden), false);
     });
   } finally {
-    await runtime.shutdown();
-    server.closeAllConnections();
-    await new Promise<void>(resolve => server.close(() => resolve()));
-    deps.__resetRuntimeDeps(); db.closeDb();
-    process.env = originalEnv;
-    fs.rmSync(root, { recursive: true, force: true });
+    await cleanup();
+  }
+});
+
+// Capabilities proven by the standalone probes (.probe/claude, CLI 2.1.312):
+// the CLI's per-turn token counts, a steer sent during a running turn, and
+// native /compact, each through ChatHub as the routes use them.
+test('real SDK: native token usage, same-turn steer through ChatHub, and /compact', LIVE, async (t) => {
+  const { cwd, repo, hub, session, durable, cleanup } = await createLiveHarness();
+  const usageOf = (message: { metadata?: string | null }) => JSON.parse(message.metadata ?? '{}').usageSummary;
+  try {
+    const s = await session('capabilities');
+    await t.test('a durable turn records the CLI\'s own token counts and no cost', async () => {
+      const message = await durable(s, 'Remember the code word PELICAN-42 for later. Reply only ACK. Do not use tools.');
+      const usage = usageOf(message);
+      assert.equal(usage?.source, 'native', JSON.stringify(usage));
+      assert.ok(usage.inputTokens > 0 && usage.outputTokens > 0, JSON.stringify(usage));
+      assert.equal(usage.totalTokens, usage.inputTokens + usage.outputTokens);
+      assert.equal(usage.charge, undefined);
+      t.diagnostic(JSON.stringify({ scenario: 'usage', usage }));
+    });
+    await t.test('a steer sent through ChatHub during a running tool joins the same durable turn', async () => {
+      const startedFile = path.join(cwd, 'steer-started.txt');
+      const started = await hub.startTurn({ chatId: s.id, nodeId: s.id, session: s,
+        text: `Use the Bash tool exactly once to run: printf STARTED > ${startedFile}; sleep 6; echo STEP_ONE . After it finishes, reply with one short sentence that reports its output. Do not use any other tool.` });
+      const deadline = Date.now() + 60_000;
+      let steer: Awaited<ReturnType<typeof hub.steer>> | undefined;
+      while (!steer && Date.now() < deadline) {
+        const pending = hub.getPendingPermission(s.id);
+        if (pending) s.respondToPermission?.(pending.requestId, 'allow_once');
+        if (fs.existsSync(startedFile)) steer = await hub.steer(s.id, 'Additional instruction: your final reply must also contain the word BANANA.');
+        else await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.ok(steer, 'The Bash tool did not start');
+      assert.equal(steer.accepted, true, JSON.stringify(steer));
+      await started.done;
+      const messages = repo.listMessages(s.id);
+      const answer = messages.find(message => message.id === started.assistantId);
+      assert.ok(answer, 'Durable assistant answer is missing');
+      assert.match(answer.content, /BANANA/);
+      assert.ok(messages.some(message => message.role === 'user' && /BANANA/.test(message.content)), 'The steer was not persisted');
+      assert.equal(usageOf(answer)?.source, 'native');
+      // The steer did not become a turn of its own after this one.
+      const count = messages.length;
+      await new Promise(resolve => setTimeout(resolve, 3_000));
+      assert.equal(repo.listMessages(s.id).length, count);
+      t.diagnostic(JSON.stringify({ scenario: 'steer', answer: answer.content, usage: usageOf(answer) }));
+    });
+    await t.test('/compact through ChatHub compacts natively and the conversation still recalls the code word', async () => {
+      const result = await hub.compact(s.id, 'Keep the code word the user asked to remember.', s);
+      assert.equal(result.started, true, JSON.stringify(result));
+      assert.equal(result.completed, true);
+      assert.match(result.detail ?? '', /^Compacted .+ → .+ tokens\.$/);
+      const reply = await durable(s, 'What is the code word I asked you to remember? Reply only the code word. Do not use tools.');
+      assert.match(reply.content, /PELICAN-42/);
+      t.diagnostic(JSON.stringify({ scenario: 'compact', result, recall: reply.content }));
+    });
+  } finally {
+    await cleanup();
+  }
+});
+
+// Plan mode (probe .probe/claude/08-plan-switch.mjs): a work mode separate
+// from Ask / Trust / YOLO. The plan review always asks the user, and an
+// approved plan returns the chat to Default under the approval policy's mode.
+test('real SDK: Plan mode asks for the plan even under YOLO and returns to Default; a rejected plan keeps planning', LIVE, async (t) => {
+  const { cwd, session, turn, permissions, cleanup } = await createLiveHarness();
+  const prompt = (file: string, text: string) => `Create a file named ${file} in the current directory containing exactly ${text}. Keep the plan to one line.`;
+  // Production chats are not bare; --bare may drop native interaction tools
+  // (it drops AskUserQuestion), so plan mode is checked as chats run it.
+  const previousBare = process.env.MICHI_CLAUDE_BARE;
+  process.env.MICHI_CLAUDE_BARE = '0';
+  try {
+    await t.test('YOLO: the plan review is asked, then the CLI returns to the YOLO mode and carries out the plan', async () => {
+      const s = await session('plan-yolo');
+      // Set after the spawn, so the CLI's own pre-plan mode is 'default' and
+      // Michi has to restore bypassPermissions itself after the plan.
+      permissions.writeNodePermissionMode('plan-yolo', 'yolo');
+      assert.equal(s.currentModeId, 'default');
+      await s.setMode!('plan');
+      assert.equal(s.currentModeId, 'plan');
+      const result = await turn(s, prompt('plan-yolo.txt', 'PLANNED'));
+      const reviews = result.events.filter(event => event.kind === 'permission_request');
+      assert.deepEqual(reviews.map(event => event.kind === 'permission_request' && event.title), ['Approve the plan?'],
+        'YOLO asked for the plan review and nothing else');
+      assert.ok(result.events.some(event => event.kind === 'session_state' && event.state.currentModeId === 'default'),
+        'the turn stream reported the return to Default');
+      assert.equal(s.currentModeId, 'default');
+      assert.equal(fs.readFileSync(path.join(cwd, 'plan-yolo.txt'), 'utf8').trim(), 'PLANNED');
+      const status = await s.executeCommand!('status');
+      assert.equal((status.data as { permissionMode?: string }).permissionMode, 'bypassPermissions');
+      t.diagnostic(JSON.stringify({ scenario: 'plan-yolo', reviews: reviews.length, answer: result.answer }));
+    });
+    await t.test('Ask: a rejected plan keeps the chat in Plan and changes nothing', async () => {
+      const s = await session('plan-reject');
+      await s.setMode!('plan');
+      const events: NormalizedEvent[] = [];
+      const timer = setTimeout(() => { void s.cancel(); }, 90_000);
+      try {
+        for await (const event of s.send(prompt('plan-reject.txt', 'NOPE'))) {
+          events.push(event);
+          if (event.kind === 'permission_request') s.respondToPermission?.(event.requestId, 'reject_once');
+        }
+      } finally { clearTimeout(timer); }
+      const reviews = events.filter(event => event.kind === 'permission_request' && event.title === 'Approve the plan?');
+      assert.ok(reviews.length >= 1, 'the plan was put to the user');
+      assert.ok(events.some(event => event.kind === 'turn_end' && event.stopReason === 'end_turn'));
+      assert.equal(s.currentModeId, 'plan');
+      assert.equal(fs.existsSync(path.join(cwd, 'plan-reject.txt')), false);
+      t.diagnostic(JSON.stringify({ scenario: 'plan-reject', reviews: reviews.length }));
+    });
+  } finally {
+    if (previousBare === undefined) delete process.env.MICHI_CLAUDE_BARE;
+    else process.env.MICHI_CLAUDE_BARE = previousBare;
+    await cleanup();
   }
 });

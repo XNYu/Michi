@@ -1,14 +1,15 @@
 import React, { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { defaultUrlTransform } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkCjkFriendly from 'remark-cjk-friendly';
 import remarkCjkFriendlyGfmStrikethrough from 'remark-cjk-friendly-gfm-strikethrough';
 import remarkMath from 'remark-math';
 import { remarkCurrencyGuard } from './remarkCurrencyGuard';
+import { rehypeFileLinks, fileLinkPath } from './rehypeFileLinks';
 import { rehypeAutolinkBareUrls } from './rehypeAutolinkBareUrls';
 import { rehypeLocalOnly } from './rehypeLocalOnly';
-import MarkdownRendererAdapter from './MarkdownRendererAdapter';
 import LegacyCodeBlock, { languageFromClassName, trimCodeFenceNewline } from './LegacyCodeBlock';
 import MarkdownFeatureTable from './MarkdownFeatureTable';
 import MarkdownMermaidBlock from './MarkdownMermaidBlock';
@@ -99,6 +100,7 @@ function normalizeHtmlIndentation(text: string): string {
 
 const sanitizeSchema = {
   ...defaultSchema,
+  protocols: { ...defaultSchema.protocols, href: [...(defaultSchema.protocols?.href ?? []), 'file'] },
   tagNames: [...(defaultSchema.tagNames || []), 'br'],
   attributes: {
     ...defaultSchema.attributes,
@@ -113,7 +115,7 @@ const sanitizeSchema = {
 /** The sanitize schema plus a link renderer's own schemes (its exact links are checked again at render). */
 function sanitizeSchemaFor(linkRenderer: MarkdownLinkRenderer | null): typeof sanitizeSchema {
   if (!linkRenderer || linkRenderer.protocols.length === 0) return sanitizeSchema;
-  const href = defaultSchema.protocols?.href ?? [];
+  const href = sanitizeSchema.protocols.href;
   return {
     ...sanitizeSchema,
     protocols: { ...defaultSchema.protocols, href: [...href, ...linkRenderer.protocols] },
@@ -442,9 +444,7 @@ function MarkdownContentInner({
   // Opt-in app links (the assistant's chips); null for every other caller.
   const linkRenderer = useContext(MarkdownLinkRendererContext);
   const urlTransform = useMemo(
-    () => (linkRenderer
-      ? (url: string, key: string) => (key === 'href' && linkRenderer.matches(url) ? url : defaultUrlTransform(url))
-      : undefined),
+    () => (url: string, key: string) => key === 'href' && (fileLinkPath(url) || linkRenderer?.matches(url)) ? url : defaultUrlTransform(url),
     [linkRenderer],
   );
   const rehypePlugins = useMemo(() => {
@@ -460,6 +460,7 @@ function MarkdownContentInner({
     // (spans/MathML) is not stripped. Autolink and reveal follow it and both
     // skip katex output via isMathNode.
     if (rehypeKatex) plugins.push(rehypeKatex);
+    plugins.push(rehypeFileLinks);
     plugins.push(rehypeAutolinkBareUrls);
     if (revealPlugin) plugins.push(revealPlugin);
     if (appendStreamingTail) plugins.push(createStreamingTailPlugin());
@@ -479,6 +480,7 @@ function MarkdownContentInner({
       const external = /^https?:\/\//i.test(url);
       const mailto = /^mailto:/i.test(url);
       const content = ht ? highlightChildren(children, ht) : children;
+      const filePath = fileLinkPath(url);
       if (linkRenderer && url && linkRenderer.matches(url)) return <>{linkRenderer.render(url, content)}</>;
 
       // Non-external, non-mailto links (relative paths, hash anchors, bare
@@ -494,12 +496,12 @@ function MarkdownContentInner({
             if (url.startsWith('#')) return;
             e.preventDefault();
             if (onLinkClick) {
-              onLinkClick(url, e);
+              onLinkClick(filePath ?? url, e);
             } else {
               // Dispatch a bubbling custom event so ancestor components can
               // handle it without prop drilling (e.g. TPane → openArtifactPane).
               e.currentTarget.dispatchEvent(
-                new CustomEvent('michi:internal-link', { bubbles: true, detail: { href: url } }),
+                new CustomEvent('michi:internal-link', { bubbles: true, detail: { href: filePath ?? url } }),
               );
             }
           }
@@ -509,10 +511,12 @@ function MarkdownContentInner({
         <a
           {...props}
           href={href}
+          title={filePath ? `Open ${filePath} in pane` : props.title}
+          data-file-link={filePath ? true : undefined}
           onClick={handleClick}
           {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         >
-          {content}
+          {filePath ? <span aria-hidden="true" style={{ marginRight: 4 }}>▧</span> : null}{content}
         </a>
       );
     };
@@ -524,6 +528,16 @@ function MarkdownContentInner({
     // `a` is handled by anchorComponent (which also applies highlighting).
     return { p: wrap('p'), li: wrap('li'), td: wrap('td'), th: wrap('th'), h1: wrap('h1'), h2: wrap('h2'), h3: wrap('h3'), h4: wrap('h4'), h5: wrap('h5'), h6: wrap('h6'), strong: wrap('strong'), em: wrap('em'), blockquote: wrap('blockquote') };
   }, [ht]);
+  // Phone card layout makes each <td> a two-column grid: the column label
+  // (::before) and the value. A cell's text, code and line breaks must form a
+  // single grid item, or the later pieces wrap into the label column.
+  const tableCellComponent = useMemo(() => (
+    ({ children, node: _node, ...props }: any) => (
+      <td {...props}>
+        <span className="michi-table-cell">{ht ? highlightChildren(children, ht) : children}</span>
+      </td>
+    )
+  ), [ht]);
 
   useLayoutEffect(() => {
     if (probeEnabled) {
@@ -563,13 +577,11 @@ function MarkdownContentInner({
       dir={features?.autoDirection ? 'auto' : undefined}
       style={style}
     >
-      <MarkdownRendererAdapter
-        text={renderText}
-        remarkPluginsAfterGfm={cjkRemarkPlugins}
-        legacyRemarkPlugins={remarkPlugins}
-        legacyRehypePlugins={rehypePlugins}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, ...cjkRemarkPlugins, ...remarkPlugins]}
+        rehypePlugins={rehypePlugins}
         urlTransform={urlTransform}
-        legacyComponents={{
+        components={{
           ...hlComponents,
           a: anchorComponent,
           span({ children, node, ...props }: any) {
@@ -609,7 +621,7 @@ function MarkdownContentInner({
               </code>
             );
           },
-          ...(features?.tableControls ? { table: MarkdownFeatureTable } : {}),
+          ...(features?.tableControls ? { table: MarkdownFeatureTable, td: tableCellComponent } : {}),
           ...(features?.httpsImages && features.remoteMedia === false ? { img: MarkdownPicture } : {}),
           del({ children, ...props }: any) {
             return features?.strikethrough
@@ -617,7 +629,9 @@ function MarkdownContentInner({
               : <>{`~~`}{children}{`~~`}</>;
           },
         }}
-      />
+      >
+        {renderText}
+      </ReactMarkdown>
     </div>
   );
 }

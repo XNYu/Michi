@@ -1,4 +1,4 @@
-import { hydrateBackendWorkspaces } from './chatHydration';
+import { hydrateBackendWorkspaces, recoverPendingUserInput } from './chatHydration';
 import { remoteEntityIdentity } from '../config/backendIdentity';
 import type { ChatMessage, ChatNodeState, ArtifactEntry, Project, ProjectEdge, Tree } from './chatTypes';
 
@@ -120,10 +120,11 @@ function mergeGapNode(
   const messages = status === 'streaming'
     ? markLastAssistantStreaming(server.messages)
     : server.messages;
-  return {
+  return recoverPendingUserInput({
     ...server,
     chatId: server.chatId ?? local?.chatId ?? gap.chatId,
     status,
+    pendingUserInput: status === 'streaming' ? server.pendingUserInput : undefined,
     messages,
     messagesLoaded: true,
     messageCount: messages.length,
@@ -151,7 +152,7 @@ function mergeGapNode(
     // of a host command. Retain them while the binding still uses that runtime.
     sessionState: local?.runtimeId === server.runtimeId ? local?.sessionState : undefined,
     commandResult: local?.commandResult,
-  };
+  });
 }
 
 export interface BackendNodeInstallInput {

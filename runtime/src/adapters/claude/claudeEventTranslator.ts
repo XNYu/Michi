@@ -53,15 +53,64 @@ function reportedContextWindow(env: ClaudeEnvelope, modelName: string): number |
   return undefined;
 }
 
-function computeCost(usage: UsageShape, modelName: string): number {
-  const { entry } = getClaudeModelEntry(modelName);
-  const r = entry.rates;
-  return (
-    ((usage.input_tokens ?? 0) / 1e6) * r.input +
-    ((usage.output_tokens ?? 0) / 1e6) * r.output +
-    ((usage.cache_creation_input_tokens ?? 0) / 1e6) * r.cacheCreation +
-    ((usage.cache_read_input_tokens ?? 0) / 1e6) * r.cacheRead
-  );
+/** A turn's token counts, in the usage_summary fields Codex also reports. */
+interface TurnTokens {
+  totalTokens: number;
+  /** Every input token the turn's calls read: uncached, cache reads and cache writes. */
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  /** Thinking tokens, already counted in outputTokens. */
+  reasoningOutputTokens?: number;
+}
+
+/**
+ * The token counts of a result's `usage`: the main agent loop of that turn
+ * only (subagents report their own totals on the roster). The CLI's cost
+ * figures are list-price estimates (`costBasis: 'list'`), so no cost is
+ * derived from them or from a local price table.
+ */
+function resultTokens(value: unknown): TurnTokens | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const count = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : undefined);
+  const input = count(raw.input_tokens);
+  const cacheRead = count(raw.cache_read_input_tokens);
+  const cacheCreation = count(raw.cache_creation_input_tokens);
+  const output = count(raw.output_tokens);
+  if (input === undefined && cacheRead === undefined && cacheCreation === undefined && output === undefined) return undefined;
+  const details = raw.output_tokens_details;
+  const thinking = details && typeof details === 'object' ? count((details as Record<string, unknown>).thinking_tokens) : undefined;
+  const inputTokens = (input ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0);
+  return {
+    totalTokens: inputTokens + (output ?? 0),
+    inputTokens,
+    cachedInputTokens: cacheRead ?? 0,
+    outputTokens: output ?? 0,
+    ...(thinking !== undefined ? { reasoningOutputTokens: thinking } : {}),
+  };
+}
+
+function addTokens(a: TurnTokens | undefined, b: TurnTokens | undefined): TurnTokens | undefined {
+  if (!a || !b) return a ?? b;
+  const reasoning = a.reasoningOutputTokens === undefined && b.reasoningOutputTokens === undefined
+    ? undefined : (a.reasoningOutputTokens ?? 0) + (b.reasoningOutputTokens ?? 0);
+  return {
+    totalTokens: a.totalTokens + b.totalTokens,
+    inputTokens: a.inputTokens + b.inputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    ...(reasoning !== undefined ? { reasoningOutputTokens: reasoning } : {}),
+  };
+}
+
+/** What the last native compaction reported (system status + compact_boundary). */
+export interface ClaudeCompaction {
+  trigger?: 'manual' | 'auto';
+  preTokens?: number;
+  postTokens?: number;
+  result?: 'success' | 'failed';
+  error?: string;
 }
 
 function stringifyContent(content: unknown): string {
@@ -89,11 +138,26 @@ export interface TranslatorHandle {
   hasBackgroundSubagents: () => boolean;
   /** See ClaudeSubagentTracker.pendingBackground. */
   pendingBackgroundSubagents: () => SubagentInfo[];
+  /** The compaction reported since the last call, if any; clears it. */
+  takeCompaction: () => ClaudeCompaction | null;
+  /**
+   * End a host turn whose last result was held (TranslatorOptions.holdTurnEnd)
+   * when no further CLI turn follows: its summary and turn_end, as that
+   * result would have emitted them.
+   */
+  releaseHeldTurn: () => void;
 }
 
 export interface TranslatorOptions {
   /** See ClaudeSubagentTrackerOptions.onBackgroundChange. */
   onBackgroundSubagents?: (sessionIds: string[]) => void;
+  /**
+   * Asked at each successful `result`. True: the CLI runs another turn for
+   * input the host sent during this one (a steer that was not folded in), so
+   * this result is not the end of the host's turn. Its tokens are carried
+   * into the summary of the result that ends it, and no turn_end is emitted.
+   */
+  holdTurnEnd?: () => boolean;
 }
 
 export function createTranslator(emit: (ev: NormalizedEvent) => void, options: TranslatorOptions = {}): TranslatorHandle {
@@ -102,6 +166,10 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void, options: T
   let turnStartMs: number = Date.now();
   let modelName: string = CLAUDE_FALLBACK_MODEL;
   let latestUsage: UsageShape | undefined;
+  /** Tokens of held results (see TranslatorOptions.holdTurnEnd) in this host turn. */
+  let carriedTokens: TurnTokens | undefined;
+  let compacting = false;
+  let compaction: ClaudeCompaction | null = null;
   const contextWindows = new Map<string, number>();
   const contextPct = (usage: UsageShape) => computeContextPct(usage, modelName, contextWindows.get(modelName));
   const seenUnknownModels = new Set<string>();
@@ -176,10 +244,26 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void, options: T
   function startTurn(): void {
     turnStartMs = Date.now();
     latestUsage = undefined;
+    carriedTokens = undefined;
     forkAnchor = null;
     // A new turn must not inherit the previous turn's agents; the roster is
     // durable per assistant message, not per session.
     subagents.startTurn();
+  }
+
+  /** The host turn's summary (tokens of its held results included) and its end. */
+  function endTurnSummary(lastTokens: TurnTokens | undefined): void {
+    const tokens = addTokens(carriedTokens, lastTokens);
+    carriedTokens = undefined;
+    // Token counts are the CLI's own. No cost is reported: see resultTokens.
+    emit({ kind: 'usage_summary', contextUsagePercentage: latestUsage ? contextPct(latestUsage) : undefined,
+      source: tokens ? 'native' : 'unverifiable', turnDurationMs: Date.now() - turnStartMs, ...tokens });
+    emit({ kind: 'turn_end', stopReason: 'end_turn' });
+  }
+
+  function releaseHeldTurn(): void {
+    subagents.endTurn();
+    endTurnSummary(undefined);
   }
 
   function feed(env: ClaudeEnvelope): void {
@@ -218,6 +302,48 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void, options: T
       if (subtype === 'api_retry') {
         const error = (env['error'] as string | undefined) ?? 'retry';
         emit({ kind: 'warning', source: 'anthropic-api', category: 'provider', message: error });
+        return;
+      }
+
+      // Native compaction, manual (/compact) or automatic: status
+      // 'compacting', then a status carrying compact_result, then (on
+      // success) compact_boundary with the context size before and after.
+      if (subtype === 'status') {
+        const result = env['compact_result'];
+        if (env['status'] === 'compacting') {
+          if (!compacting) {
+            compacting = true;
+            compaction = {};
+            emit({ kind: 'compaction_start', detail: 'Claude Code is compacting the conversation' });
+          }
+          return;
+        }
+        if (compacting && (result === 'success' || result === 'failed' || env['status'] == null)) {
+          compacting = false;
+          const error = typeof env['compact_error'] === 'string' && env['compact_error'] ? env['compact_error'] : undefined;
+          compaction = { ...compaction, ...(result === 'success' || result === 'failed' ? { result } : {}), ...(error ? { error } : {}) };
+          emit({ kind: 'compaction_end', ...(result === 'failed' ? { detail: error ? `Compaction failed: ${error}` : 'Compaction failed' } : {}) });
+        }
+        return;
+      }
+
+      if (subtype === 'compact_boundary') {
+        const meta = env['compact_metadata'] && typeof env['compact_metadata'] === 'object'
+          ? env['compact_metadata'] as Record<string, unknown> : {};
+        const tokens = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : undefined);
+        const preTokens = tokens(meta.pre_tokens);
+        const postTokens = tokens(meta.post_tokens);
+        compaction = {
+          ...compaction,
+          ...(meta.trigger === 'manual' || meta.trigger === 'auto' ? { trigger: meta.trigger } : {}),
+          ...(preTokens !== undefined ? { preTokens } : {}),
+          ...(postTokens !== undefined ? { postTokens } : {}),
+        };
+        // The compacted context is what the next call sends.
+        if (postTokens !== undefined) {
+          latestUsage = { input_tokens: postTokens };
+          emit({ kind: 'context_usage', contextUsagePercentage: contextPct(latestUsage) });
+        }
         return;
       }
 
@@ -453,18 +579,21 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void, options: T
       const usage = (env['usage'] as UsageShape | undefined) ?? emptyUsage();
       if (usage) mergeUsage(usage);
 
+      // The CLI runs a queued steer as its own turn right after this one:
+      // the host's turn goes on (see TranslatorOptions.holdTurnEnd).
+      if (subtype === 'success' && options.holdTurnEnd?.()) {
+        carriedTokens = addTokens(carriedTokens, resultTokens(env['usage']));
+        return;
+      }
+
       // Safety: never leave a subagent pinned on "working" past the turn
       // (e.g. a missed hand-back). Emit before turn_end.
       subagents.endTurn();
 
       if (subtype === 'success') {
-        const turnDurationMs = Date.now() - turnStartMs;
-        const contextUsagePercentage = latestUsage ? contextPct(latestUsage) : undefined;
-        const totalCredits = computeCost(usage, modelName);
-
-        emit({ kind: 'usage_summary', contextUsagePercentage, charge: { amount: totalCredits, unit: 'USD', provenance: 'catalog_estimate' }, source: totalCredits > 0 ? 'estimated' : 'unverifiable', turnDurationMs });
-        emit({ kind: 'turn_end', stopReason: 'end_turn' });
+        endTurnSummary(resultTokens(env['usage']));
       } else {
+        carriedTokens = undefined;
         // error_* subtypes
         const message = (env['result'] as string | undefined) ?? 'error';
         emit({ kind: 'warning', source: 'claude-cli', category: 'runtime', code: subtype, message });
@@ -483,5 +612,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void, options: T
     getAccumulatedUsage: () => ({ ...accumulatedUsage }),
     hasBackgroundSubagents: () => subagents.hasBackgroundWork(),
     pendingBackgroundSubagents: () => subagents.pendingBackground(),
+    takeCompaction: () => { const taken = compaction; compaction = null; return taken; },
+    releaseHeldTurn,
   };
 }

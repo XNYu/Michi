@@ -105,11 +105,6 @@ export interface HighlightOptions {
 }
 
 export interface CodeHighlighterPlugin {
-  name: 'shiki';
-  type: 'code-highlighter';
-  supportsLanguage(language: string): boolean;
-  getSupportedLanguages(): string[];
-  getThemes(): ThemePair;
   highlight(
     opts: HighlightOptions,
     callback?: (result: HighlightResult) => void,
@@ -167,17 +162,6 @@ export function createCodePlugin(options: { themes?: ThemePair } = {}): CodeHigh
   const defaultThemes: ThemePair = options.themes ?? ['github-light', 'github-dark'];
 
   return {
-    name: 'shiki',
-    type: 'code-highlighter',
-    supportsLanguage(language: string) {
-      return supported.has(normalize(language));
-    },
-    getSupportedLanguages() {
-      return Array.from(supported);
-    },
-    getThemes() {
-      return defaultThemes;
-    },
     highlight(opts: HighlightOptions, callback?: (result: HighlightResult) => void): HighlightResult | null {
       const lang = supported.has(normalize(opts.language)) ? normalize(opts.language) : 'text';
       const themes = opts.themes ?? defaultThemes;

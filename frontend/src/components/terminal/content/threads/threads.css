@@ -293,7 +293,7 @@
   font-size: var(--fs-xs);
 }
 
-/* ── Batch bar (Michi's inverted selection bar) ───────────────── */
+/* ── Batch bar (Michi's raised selection surface) ───────────────── */
 .michi-batch {
   position: absolute;
   left: 50%;

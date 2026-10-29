@@ -15,6 +15,8 @@ import { pageComponents } from '../src/services/pages/components';
 import { applyUserDatabaseEdits } from '../src/services/pages/databaseWrites';
 import { ensureWorkspaceHomePageId } from '../src/services/pages/homePages';
 import { addLayoutRule, saveLayoutPreferences } from '../src/services/pages/layoutRules';
+import type { PageDatabase, PageWriteResult } from 'michi-shared';
+import { acceptProposal, revertChange, redoChange } from '../src/services/pages/pageChanges';
 
 const ownerUserId = 'alice';
 const workspaceId = 'ws';
@@ -57,7 +59,7 @@ afterEach(() => {
 });
 
 test('the Page tools are in the built-in catalog and page executor enforces owner and workspace scope', () => {
-  assert.deepEqual(PAGE_TOOL_NAMES, ['read_home', 'edit_home', 'list_pages', 'read_page', 'edit_page', 'create_page', 'read_database', 'edit_database', 'list_page_components', 'read_page_component', 'save_page_component', 'configure_database_view', 'open_task_database', 'list_tasks']);
+  assert.deepEqual(PAGE_TOOL_NAMES, ['read_home', 'edit_home', 'list_pages', 'read_page', 'edit_page', 'create_page', 'create_database', 'configure_database', 'read_database', 'edit_database', 'list_page_components', 'read_page_component', 'save_page_component', 'configure_database_view', 'open_task_database', 'list_tasks']);
   assert.deepEqual(BUILTIN_TOOLS.filter((tool) => PAGE_TOOL_NAMES.includes(tool.name as (typeof PAGE_TOOL_NAMES)[number])).map((tool) => tool.name).sort(), [...PAGE_TOOL_NAMES].sort());
 
   const page = createPage({ workspaceId, ownerUserId, title: 'Release' });
@@ -395,4 +397,142 @@ test('Chat Home embeds a native page and narrowly grants cross-workspace editing
   getDb().prepare('UPDATE pages SET deleted_at=1 WHERE id=?').run(home.id);
   assert.equal(readHomeCards(ownerUserId).contentMode, 'page');
   assert.equal(readHomeCards(ownerUserId).contentPage, null);
+});
+
+
+function createdTracker() {
+  const result = runPageTool('create_database', caller(), { title: 'Tickets and CRs', columns: [
+    { name: 'Number', type: 'text' }, { name: 'Status', type: 'select', options: [{ value: 'open' }, { value: 'done' }] },
+  ], source: { kind: 'user' } });
+  assert.equal(result.isError, undefined, JSON.stringify(result.details));
+  const payload = result.details as { database: PageDatabase; result: PageWriteResult; michiPageWrite: Record<string, unknown> };
+  return { ...payload, database: getDatabase(payload.database.id, ownerUserId) };
+}
+
+test('create, populate, configure and embed a general database with server IDs and chat source history', () => {
+  const made = createdTracker(), db = made.database;
+  assert.equal(made.michiPageWrite.created, true);
+  assert.equal(made.result.applied.length, 1);
+  assert.deepEqual(made.result.applied[0]!.source, { kind: 'chat', nodeId, turnId: 'turn', assistantId: 'assistant' });
+  assert.deepEqual(db.columns.map((column) => column.name), ['Number', 'Status']);
+  assert.equal(db.views[0]!.type, 'table');
+  assert.equal(db.views[0]!.edit, undefined);
+  const added = runPageTool('edit_database', caller(), { databaseId: db.id,
+    ops: [{ op: 'row.add', values: { [db.columns[0]!.id]: 'CR-123', [db.columns[1]!.id]: 'open' } }] });
+  assert.equal(added.isError, undefined);
+  const current = getDatabase(db.id, ownerUserId);
+  const configured = runPageTool('configure_database', caller(), { databaseId: db.id, revision: current.revision, ops: [
+    { op: 'column.add', column: { name: 'Next step', type: 'text' } },
+    { op: 'view.save', view: { name: 'By status', type: 'board', config: { filters: [], match: 'all', sorts: [], group: db.columns[1]!.id } } },
+  ] });
+  assert.equal(configured.isError, undefined, JSON.stringify(configured.details));
+  const final = getDatabase(db.id, ownerUserId);
+  assert.equal(final.columns.length, 3);
+  assert.equal(final.views[1]!.edit, undefined);
+  assert.deepEqual(final.rows, current.rows);
+  const page = createPage({ workspaceId, ownerUserId, title: 'Dashboard' });
+  const embed = runPageTool('edit_page', caller(), { pageId: page.id, ops: [{ op: 'insert', after: null,
+    block: { type: 'database-ref', databaseId: db.id, viewId: final.views[1]!.id } }] });
+  assert.equal(embed.isError, undefined, JSON.stringify(embed.details));
+  assert.equal(getPage(page.id, ownerUserId).blocks[0]!.type, 'database-ref');
+  assert.equal(getDb().prepare('SELECT database_id FROM page_database_refs WHERE page_id=?').get(page.id)?.database_id, db.id);
+});
+
+test('schema additions undo and redo, existing columns propose atomically and acceptance preserves human cells', () => {
+  const db = createdTracker().database;
+  const add = runPageTool('configure_database', caller(), { databaseId: db.id, revision: db.revision,
+    ops: [{ op: 'column.add', column: { name: 'Notes', type: 'text' } }] }).details as { result: PageWriteResult };
+  revertChange(add.result.applied[0]!.id, ownerUserId);
+  assert.equal(getDatabase(db.id, ownerUserId).columns.length, 2);
+  redoChange(add.result.applied[0]!.id, ownerUserId);
+  assert.equal(getDatabase(db.id, ownerUserId).columns.length, 3);
+  const revision = () => getDatabase(db.id, ownerUserId).revision;
+  applyUserDatabaseEdits({ databaseId: db.id, ownerUserId, revision: revision(), ops: [{ op: 'row.add', values: { [db.columns[0]!.id]: 'Human text' } }] });
+  const originalRows = getDatabase(db.id, ownerUserId).rows;
+  const proposed = runPageTool('configure_database', caller(), { databaseId: db.id, revision: revision(), ops: [
+    { op: 'column.update', id: db.columns[0]!.id, patch: { name: 'Ticket / CR' } },
+    { op: 'column.add', column: { name: 'Owner', type: 'text' } },
+  ] }).details as { result: PageWriteResult };
+  assert.equal(proposed.result.applied.length, 0);
+  assert.equal(proposed.result.proposed.length, 1);
+  assert.equal(getDatabase(db.id, ownerUserId).columns.length, 3, 'no partial addition while the batch is proposed');
+  const proposal = proposed.result.proposed[0]!;
+  acceptProposal(proposal.id, ownerUserId);
+  assert.equal(getDatabase(db.id, ownerUserId).columns[0]!.name, 'Ticket / CR');
+  assert.equal(getDatabase(db.id, ownerUserId).columns.length, 4);
+  assert.deepEqual(getDatabase(db.id, ownerUserId).rows, originalRows);
+  revertChange(proposal.id, ownerUserId);
+  assert.equal(getDatabase(db.id, ownerUserId).columns[0]!.name, 'Number');
+  redoChange(proposal.id, ownerUserId);
+  assert.equal(getDatabase(db.id, ownerUserId).columns[0]!.name, 'Ticket / CR');
+  const stale = runPageTool('configure_database', caller(), { databaseId: db.id, revision: revision(),
+    ops: [{ op: 'option.add', id: db.columns[1]!.id, option: { value: 'waiting' } }] }).details as { result: PageWriteResult };
+  applyUserDatabaseEdits({ databaseId: db.id, ownerUserId, revision: revision(), ops: [{ op: 'column.update', id: db.columns[0]!.id, patch: { name: 'Human name' } }] });
+  assert.throws(() => acceptProposal(stale.result.proposed[0]!.id, ownerUserId), /target has changed/);
+});
+
+test('human native views propose and accept without changing other views, columns or rows', () => {
+  const db = createdTracker().database, original = db.views[0]!;
+  const view = { id: original.id, name: 'My table', type: 'table', config: original.config };
+  applyUserDatabaseEdits({ databaseId: db.id, ownerUserId, revision: db.revision, ops: [{ op: 'view.save', view }] });
+  const current = getDatabase(db.id, ownerUserId);
+  const result = runPageTool('configure_database', caller(), { databaseId: db.id, revision: current.revision,
+    ops: [{ op: 'view.save', view: { ...view, name: 'Open tickets', config: { ...view.config, filters: [{ column: db.columns[1]!.id, op: 'is', value: 'open' }] } } }] }).details as { result: PageWriteResult };
+  assert.equal(result.result.proposed.length, 1);
+  assert.deepEqual(getDatabase(db.id, ownerUserId), current);
+  acceptProposal(result.result.proposed[0]!.id, ownerUserId);
+  assert.equal(getDatabase(db.id, ownerUserId).views[0]!.name, 'Open tickets');
+  assert.deepEqual(getDatabase(db.id, ownerUserId).columns, current.columns);
+  assert.ok(getDatabase(db.id, ownerUserId).views[0]!.edit);
+});
+
+test('invalid creation rolls back; configuration rejects stale revisions, spoofed IDs, destructive ops and task databases', () => {
+  const count = () => getDb().prepare('SELECT COUNT(*) AS count FROM page_databases').get()!.count;
+  for (const columns of [[], [{ name: 'Bad', type: 'unknown' }], [{ name: 'Forged', type: 'text', id: 'chosen' }], [{ name: 'Threads', type: 'threads' }]]) {
+    const before = count();
+    assert.equal(runPageTool('create_database', caller(), { title: 'Invalid', columns }).isError, true);
+    assert.equal(count(), before);
+  }
+  const db = createdTracker().database;
+  for (const ops of [
+    [{ op: 'column.add', column: { name: 'New', type: 'text' } }, { op: 'column.delete', id: db.columns[0]!.id }],
+    [{ op: 'view.save', view: { id: 'forged', name: 'Forged', type: 'table', config: { filters: [], match: 'all', sorts: [] } } }],
+    [{ op: 'view.save', view: { name: 'Bad', type: 'board', config: { filters: [], match: 'all', sorts: [], group: 'unknown' } } }],
+    [{ op: 'row.add', values: {} }],
+  ]) {
+    assert.equal(runPageTool('configure_database', caller(), { databaseId: db.id, revision: db.revision, ops }).isError, true);
+    assert.deepEqual(getDatabase(db.id, ownerUserId), db);
+  }
+  assert.equal(runPageTool('configure_database', caller(), { databaseId: db.id, revision: db.revision - 1,
+    ops: [{ op: 'column.add', column: { name: 'Stale', type: 'text' } }] }).isError, true);
+  const task = runPageTool('open_task_database', caller(), {}).details as { databaseId: string; revision: number };
+  assert.equal(runPageTool('configure_database', caller(), { databaseId: task.databaseId, revision: task.revision,
+    ops: [{ op: 'column.add', column: { name: 'Extra', type: 'text' } }] }).isError, true);
+  const denied = runPageTool('edit_database', caller(), { databaseId: db.id, ops: [{ op: 'column.add', column: { name: 'Bypass', type: 'text' } }] }).details as { result: PageWriteResult };
+  assert.equal(denied.result.rejected.length, 1, 'row-only parser stays closed');
+});
+
+test('new tools require an owning active turn and isolate workspace and owner scope', () => {
+  const args = { title: 'Tracker', columns: [{ name: 'Title', type: 'text' }] };
+  for (const c of [caller({ getActivePageTurnAttribution: () => null }), caller({ ownerKind: 'agent_run' }), caller({ ownerUserId: 'other' })]) {
+    assert.equal(runPageTool('create_database', c, args).isError, true);
+  }
+  getDb().prepare('INSERT INTO workspaces(id,name,owner_user_id,created_at,updated_at) VALUES (?,?,?,1,1)').run('other-ws', 'Other', ownerUserId);
+  const outside = createDatabase({ workspaceId: 'other-ws', ownerUserId, title: 'Other' });
+  const config = { databaseId: outside.id, revision: outside.revision, ops: [{ op: 'column.add', column: { name: 'Title', type: 'text' } }] };
+  assert.equal(runPageTool('configure_database', caller(), config).isError, true);
+  const db = createdTracker().database;
+  assert.equal(runPageTool('configure_database', caller({ getActivePageTurnAttribution: () => null }), { ...config, databaseId: db.id, revision: db.revision }).isError, true);
+  getDb().prepare('INSERT INTO workspaces(id,name,owner_user_id,created_at,updated_at,settings) VALUES (?,?,?,1,1,?)').run('sys', 'System', ownerUserId, JSON.stringify({ system: 'assistant' }));
+  getDb().prepare("INSERT INTO nodes(id,workspace_id,kind,status,created_at) VALUES ('snode','sys','chat','running',1)").run();
+  getDb().prepare("INSERT INTO turns(turn_id,node_id,assistant_message_id,status,started_at,updated_at) VALUES ('sturn','snode','sassistant','active',1,1)").run();
+  const meta = caller({ metaAgent: true, workspaceId: 'sys', nodeId: 'snode', getActivePageTurnAttribution: () => ({ turnId: 'sturn', assistantId: 'sassistant' }) });
+  const made = runPageTool('create_database', meta, { ...args, workspaceId: 'other-ws' });
+  assert.equal(made.isError, undefined, JSON.stringify(made.details));
+  assert.equal(made.structuredContent?.michiPageWrite && (made.structuredContent.michiPageWrite as Record<string, unknown>).workspaceId, 'other-ws');
+  assert.equal(runPageTool('configure_database', meta, config).isError, undefined);
+  assert.equal(runPageTool('create_database', meta, { ...args, workspaceId: 'sys' }).isError, true);
+  getDb().prepare("UPDATE workspaces SET owner_user_id='bob' WHERE id='other-ws'").run();
+  assert.equal(runPageTool('create_database', meta, { ...args, workspaceId: 'other-ws' }).isError, true);
+  assert.equal(runPageTool('configure_database', meta, config).isError, true);
 });

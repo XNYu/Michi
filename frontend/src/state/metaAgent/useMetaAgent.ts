@@ -1,7 +1,8 @@
+import { toast } from 'sonner';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { MetaAgentGuardStatus, MetaAgentSettingsPatch } from 'michi-shared';
 import {
-  fetchMetaAgent, isMetaAgentUnavailable, retryMetaAgentGuard as retryGuard, updateMetaAgentSettings, type MetaAgentInfo,
+  decideMetaAgentToolApproval, fetchMetaAgent, isMetaAgentUnavailable, retryMetaAgentGuard as retryGuard, updateMetaAgentSettings, type MetaAgentInfo,
 } from '../../services/api/metaAgent';
 
 /** `unavailable`: this backend has no Meta agent routes yet. */
@@ -16,6 +17,7 @@ export interface MetaAgentSnapshot {
 const INITIAL: MetaAgentSnapshot = { status: 'loading', info: null, error: null };
 const GUARD_POLL_MS = 60_000;
 
+const notifiedApprovals = new Set<string>();
 let snapshot = INITIAL;
 const listeners = new Set<() => void>();
 let inflight: Promise<void> | null = null;
@@ -24,6 +26,14 @@ let pollers = 0;
 let pollTimer: number | null = null;
 
 function publish(next: MetaAgentSnapshot): void {
+  for (const request of next.info?.toolApprovals ?? []) {
+    if (request.state === 'pending' && !notifiedApprovals.has(request.id)) {
+      notifiedApprovals.add(request.id);
+      toast(`Background maintenance needs approval for ${request.server} / ${request.tool}`, {
+        description: 'Review Settings → Meta agent → Tool approvals. Other permitted tools can still be used.', duration: 12000,
+      });
+    }
+  }
   snapshot = next;
   for (const listener of listeners) listener();
 }
@@ -122,8 +132,15 @@ export function useMetaAgentGuardFailed(): boolean {
 }
 
 export function resetMetaAgentStore(): void {
+  notifiedApprovals.clear();
   snapshot = INITIAL;
   inflight = null;
   readGeneration = 0;
   for (const listener of listeners) listener();
+}
+
+export async function saveMetaAgentToolApproval(id: string, state: 'approved' | 'denied' | 'revoked'): Promise<void> {
+  const info = await decideMetaAgentToolApproval(id, state);
+  readGeneration += 1;
+  publish({ status: 'ready', info, error: null });
 }

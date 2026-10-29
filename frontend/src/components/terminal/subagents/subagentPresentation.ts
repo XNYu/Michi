@@ -225,8 +225,9 @@ export function subagentToolCount(subagent: SubagentInfo): number {
  * agent's chip completes at launch); a heuristically matched legacy entry is
  * only trusted while the chip runs, because old rosters were never closed.
  * Several agents under one chip (Kiro crews, Codex spawns) stay working while
- * any of them works and only read as failed when every one failed — the
- * per-agent rows carry partial failures.
+ * any of them works, or while the chip's own call runs (a blocking crew
+ * waits for every stage, including one that stopped) — and only read as
+ * failed when every one failed. The per-agent rows carry partial failures.
  */
 export function delegationStatus(tool: ToolCallState, linked: readonly SubagentInfo[]): string {
   if (linked.length === 0) return tool.status;
@@ -237,6 +238,7 @@ export function delegationStatus(tool: ToolCallState, linked: readonly SubagentI
     return chipRunning ? subagentToolStatus(subagent) : tool.status;
   }
   if (linked.some((entry) => entry.status === 'working')) return 'in_progress';
+  if (isRunningStatus(tool.status)) return tool.status;
   if (isFailedStatus(tool.status)) return tool.status;
   return linked.every((entry) => subagentTone(entry) === 'failed') ? 'failed' : 'completed';
 }

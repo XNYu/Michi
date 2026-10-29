@@ -66,4 +66,32 @@ describe('ComposerPermissionControl runtime ownership', () => {
     render(<ComposerPermissionControl scope="global" mode="yolo" runtimeIds={['crew', 'codex']} onChange={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'Permissions: YOLO' })).toBeTruthy();
   });
+  it('offers Approve for me after Ask on Kiro V3 and saves the choice', async () => {
+    const onChange = vi.fn();
+    render(<ComposerPermissionControl mode="ask" runtimeIds={['kiro']} approveForMeRuntimeIds={['kiro']} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions: Ask' }));
+    const labels = (await screen.findAllByRole('menuitem')).map((item) => item.textContent ?? '');
+    expect(labels.findIndex((text) => text.startsWith('Ask'))).toBeLessThan(labels.findIndex((text) => text.startsWith('Approve for me')));
+    expect(labels.findIndex((text) => text.startsWith('Approve for me'))).toBeLessThan(labels.findIndex((text) => text.startsWith('Trust')));
+    fireEvent.click(screen.getByText('Approve for me'));
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith('approve'));
+  });
+
+  it('shows Approve for me as the current choice, with the Ask shield', () => {
+    render(<ComposerPermissionControl mode="approve" runtimeIds={['kiro']} approveForMeRuntimeIds={['kiro']} onChange={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Permissions: Approve for me' })).toBeTruthy();
+  });
+
+  it('shows and offers only Ask on a runtime without Approve for me', async () => {
+    render(<ComposerPermissionControl mode="approve" runtimeIds={['claude']} approveForMeRuntimeIds={['kiro']} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions: Ask' }));
+    await screen.findAllByRole('menuitem');
+    expect(screen.queryByText('Approve for me')).toBeNull();
+  });
+
+  it('notes in the global setting that other runtimes use Ask', async () => {
+    render(<ComposerPermissionControl scope="global" mode="ask" runtimeIds={['kiro', 'codex']} approveForMeRuntimeIds={['kiro']} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions: Ask' }));
+    expect((await screen.findByText(/Kiro approves routine work/)).textContent).toContain('Other runtimes use Ask.');
+  });
 });

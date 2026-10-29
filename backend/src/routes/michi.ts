@@ -5,18 +5,17 @@ import { subscribeSessionStates } from '../agents/sessionStateFeed';
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { normalizeWorkspaceCwd } from "../agents/tools/pathSandbox";
 import {
     assertCwdAllowed,
     getUserSandboxRoot,
     deriveSandboxCwd,
-    normalizeWorkspaceCwd,
     NotFoundError,
-} from "../agents/tools/pathSandbox";
+} from "../services/workspaceSandbox";
 import { ChatManager, ExtraContext, PrimaryAgentBindingError, primaryAgentSessionOptions } from "../services/chatManager";
-import { isAssistantNode } from "../assistant/identity";
-import { summarizeWorkspace, ExportRequest } from "../services/exportSummary";
+import { assistantPurposeOf, isAssistantNode } from "../assistant/identity";
 import { finalTerminalEvent } from "./chatStreamEvents";
-import { chatReplayUnavailable } from './chatReplay';
+import { chatReplayUnavailable, persistedChatReplay } from './chatReplay';
 import { getRuntime } from "../agents/registry";
 import { descriptorOf } from "michi-runtime/internal/core/descriptors";
 import { getModelReasoningOptions } from '../agents/modelReasoning';
@@ -30,8 +29,8 @@ import { chatHub, type BackgroundCursor, type HubSubscriber } from "../agents/ch
 import { encodeScheduledJobEvent, encodeScheduledJobsChangedEvent, scheduledJobEvents } from "../services/scheduledJobs/events";
 import { HEARTBEAT_INTERVAL_MS } from "../config/constants";
 import { CHAT_STREAM_EVENTS, encodeChatStreamEvent } from "michi-shared";
-import { MetaAgentChatContextError, parseMetaAgentChatTurnContext } from 'michi-shared';
-import { withMetaAgentContext } from "../services/metaAgent/chatTurnContext";
+import { MetaAgentChatContextError, hasSpacesTurnContext, isSystemWorkspaceSettings, parseMetaAgentChatTurnContext } from 'michi-shared';
+import { withMetaAgentContext, withScheduleAgentContext } from "../services/metaAgent/chatTurnContext";
 import { isChatPermissionMode } from 'michi-shared';
 import { writeNodePermissionMode } from '../services/chatPermissions';
 import { isCrewMemoryMode } from 'michi-shared';
@@ -40,6 +39,7 @@ const { getSessionForUser } = sessionRegistry;
 import type { AgentSession } from "../agents/types";
 import { LOCAL_AGENT_OWNER_ID } from "../services/agentOwner";
 import {
+    getAiGlobalContext,
     getNode,
     getNodeSessionBinding,
     getNodeWorkspaceId,
@@ -67,7 +67,6 @@ import { tryForkChatSession } from '../services/nativeFork';
 import { isNativeResumeEnabled } from '../services/agentConfig';
 import { requireWorkspaceOwner, requireChatOwner, requireNodeOwner } from "./middleware/ownership";
 import { META_AGENT_GUARD_ERROR_CODE, isMetaAgentGuardError } from '../agents/metaAgentGuard';
-import { recordAssistantGuardCheck } from '../assistant/binding';
 import {
     buildCompatibleResumeContext,
     buildTargetResumeSignature,
@@ -98,6 +97,19 @@ function resolvePublicNodeId(identifier: string, userId?: string | null): string
 function getSessionByIdentifier(identifier: string, userId?: string | null): AgentSession | null {
     const nodeId = resolvePublicNodeId(identifier, userId);
     return nodeId ? getSessionForUser(nodeId, userId ?? null) : null;
+}
+
+/**
+ * The Scheduled window's default workspace as its agent may use it: the
+ * user's own, not deleted, archived or a system workspace, with AI navigation
+ * on (assistant/tools.ts applies the same rules to every job). Null otherwise.
+ */
+function scheduleDefaultWorkspace(workspaceId: string | null, userId: string | null): { id: string; name: string } | null {
+    if (!workspaceId) return null;
+    const workspace = getWorkspace(workspaceId, userId ?? undefined);
+    if (!workspace || workspace.deleted_at != null || workspace.archived_at != null || isSystemWorkspaceSettings(workspace.settings)) return null;
+    if (!getAiGlobalContext(workspace.id, userId ?? undefined)) return null;
+    return { id: workspace.id, name: workspace.name };
 }
 
 export function canAccessRuntimeChat(chatId: string, userId?: string): boolean {
@@ -919,18 +931,22 @@ export function setupMichiRoutes(chatManager: ChatManager) {
 
     router.post("/chats/:chatId/load", requireChatOwner, async (req, res) => {
         const { chatId } = req.params;
-        const cwd: unknown = req.body?.cwd;
+        const isCloud = process.env.MICHI_CLOUD === "1";
+        // Cloud derives cwd from the node's own workspace below; body.cwd is ignored.
+        const bodyCwd: unknown = req.body?.cwd;
         const model: unknown = req.body?.model;
         const nodeId: unknown = req.body?.nodeId;
         const bodyRuntimeId: unknown = req.body?.runtimeId;
-        if (typeof cwd !== "string" || !path.isAbsolute(cwd)) {
-            return res.status(400).json({ error: "cwd must be an absolute path" });
-        }
-        try {
-            const s = fs.statSync(cwd);
-            if (!s.isDirectory()) return res.status(400).json({ error: "cwd is not a directory" });
-        } catch {
-            return res.status(400).json({ error: "cwd does not exist" });
+        if (!isCloud) {
+            if (typeof bodyCwd !== "string" || !path.isAbsolute(bodyCwd)) {
+                return res.status(400).json({ error: "cwd must be an absolute path" });
+            }
+            try {
+                const s = fs.statSync(bodyCwd);
+                if (!s.isDirectory()) return res.status(400).json({ error: "cwd is not a directory" });
+            } catch {
+                return res.status(400).json({ error: "cwd does not exist" });
+            }
         }
         if (model !== undefined && typeof model !== "string") {
             return res.status(400).json({ error: "model must be a string" });
@@ -955,6 +971,29 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const row = nodeRow ?? chatRow;
             if (row?.maintenance_job_id) {
                 return res.status(409).json({ error: 'Scheduled maintenance nodes cannot be loaded through ordinary session recovery', code: 'MAINTENANCE_PROFILE_LOCKED' });
+            }
+            // Cloud: the sandbox cwd and workspace come from the owned node
+            // (resolvedNodeId passed the binding check above), never the body.
+            let cwd: string;
+            let cloudWorkspaceId: string | null = null;
+            if (isCloud) {
+                const cloudUserId = req.user!.id;
+                cloudWorkspaceId = nodeRow?.workspace_id ?? null;
+                if (!cloudWorkspaceId) {
+                    return res.status(404).json({ error: "workspace not found" });
+                }
+                try {
+                    cwd = deriveSandboxCwd(cloudUserId, cloudWorkspaceId);
+                } catch (err) {
+                    if (err instanceof NotFoundError) {
+                        return res.status(404).json({ error: "workspace not found" });
+                    }
+                    return res.status(400).json({ error: (err as Error).message });
+                }
+                // assertCwdAllowed stays as defense-in-depth.
+                assertCwdAllowed(cwd, cloudUserId);
+            } else {
+                cwd = bodyCwd as string;
             }
             const primaryAgent = row?.workspace_id ? await chatManager.resolvePrimaryAgentBinding({
                 ownerUserId: req.user?.id ?? LOCAL_AGENT_OWNER_ID,
@@ -988,6 +1027,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 : null;
 
             // Resolve workspaceId for the reloaded session.
+            //   Cloud: always the owned node's workspace (resolvedNodeId is
+            //      the node id even when chatId is an ACP sid); body ignored.
+            //   Desktop:
             //   1. Client-supplied — required for Kiro because chatId is an
             //      ACP-minted sid, not a node id, so the getNode() fallback
             //      below cannot find it. Without this, list_threads /
@@ -996,13 +1038,15 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             //      in-memory session map) has been recycled.
             //   2. getNode(chatId) — works for Pi where chatId === nodeId.
             //      Kept as fallback for clients that don't send workspaceId.
-            let workspaceId: string | null = null;
-            const bodyWorkspaceId: unknown = req.body?.workspaceId;
-            if (typeof bodyWorkspaceId === "string" && bodyWorkspaceId.length > 0 && bodyWorkspaceId.length <= 128) {
-                workspaceId = bodyWorkspaceId;
-            }
-            if (!workspaceId) {
-                workspaceId = row?.workspace_id ?? null;
+            let workspaceId: string | null = cloudWorkspaceId;
+            if (!isCloud) {
+                const bodyWorkspaceId: unknown = req.body?.workspaceId;
+                if (typeof bodyWorkspaceId === "string" && bodyWorkspaceId.length > 0 && bodyWorkspaceId.length <= 128) {
+                    workspaceId = bodyWorkspaceId;
+                }
+                if (!workspaceId) {
+                    workspaceId = row?.workspace_id ?? null;
+                }
             }
             const live = sessionRegistry.getSessionForOwner(resolvedNodeId, chatOwner(resolvedNodeId), req.user?.id ?? null);
             const requestedModel = pinned ? pinned.modelId ?? undefined
@@ -1123,7 +1167,7 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         if (body.workspaceId && body.workspaceId !== durableNode.workspace_id) {
             return res.status(409).json({ code: 'IDENTITY_MISMATCH', error: 'node and workspace do not match' });
         }
-        writeNodePermissionMode(nodeId, isChatPermissionMode(body.permissionMode) ? body.permissionMode : 'ask', req.user?.id, true);
+        writeNodePermissionMode(nodeId, isChatPermissionMode(body.permissionMode) ? body.permissionMode : 'ask', req.user?.id, true, body.approveForMe === true);
 
         // In cloud mode, derive cwd server-side from the node's workspace ownership.
         // Desktop trusts client-supplied cwd.
@@ -1589,7 +1633,6 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             });
         } catch (err) {
             console.error("Failed to ensure session:", err);
-            recordAssistantGuardCheck(nodeId, err);
             startupMark("ensure_session_route_failed", {
                 nodeId,
                 durMs: Date.now() - routeStart,
@@ -1638,7 +1681,18 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 return res.status(400).json({ error: 'metaAgentContext is only accepted by the Michi assistant', code: 'invalid_meta_agent_context' });
             }
             try {
-                wireText = withMetaAgentContext(text, parseMetaAgentChatTurnContext(req.body.metaAgentContext));
+                const context = parseMetaAgentChatTurnContext(req.body.metaAgentContext);
+                // Each window's context goes only to its own conversation (assistant/store.ts records the purpose).
+                const scheduling = assistantPurposeOf(nodeId) === 'schedule';
+                if (scheduling ? hasSpacesTurnContext(context) : context.schedule !== undefined) {
+                    return res.status(400).json({
+                        error: scheduling ? 'This conversation takes the Scheduled context only' : 'The Scheduled context is only accepted by the Scheduled window',
+                        code: 'invalid_meta_agent_context',
+                    });
+                }
+                wireText = scheduling
+                    ? withScheduleAgentContext(text, scheduleDefaultWorkspace(context.schedule?.workspaceId ?? null, req.user?.id ?? null))
+                    : withMetaAgentContext(text, context);
             } catch (err) {
                 if (!(err instanceof MetaAgentChatContextError)) throw err;
                 return res.status(400).json({ error: err.message, code: 'invalid_meta_agent_context' });
@@ -1856,9 +1910,12 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         };
         try {
             detach = chatHub.subscribeBackground({
-            send: (chatId, event) => {
+            includeForeground: req.body?.includeForeground === true,
+            send: (chatId, event, selfInitiated) => {
                 if (res.writableEnded || res.destroyed) return;
-                if (!writeSseFrame(res, encodeChatStreamEvent(event))) detachSubscriber();
+                if (!writeSseFrame(res, selfInitiated === false
+                    ? `event: foreground_event\ndata: ${JSON.stringify(event)}\n\n`
+                    : encodeChatStreamEvent(event))) detachSubscriber();
             },
             gap: (chatId, durableCursor) => {
                 const nodeId = nodeIds.get(chatId)
@@ -1923,14 +1980,23 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         // Validate the replay cursor before committing HTTP/SSE headers so a
         // gap remains an actionable 410 response rather than a hung stream.
         const probe = chatHub.subscribeTurn(nodeId, fromTurnId, { send: () => {}, close: () => {} }, Number.isFinite(fromSeq) ? fromSeq : 0);
-        if (!probe) return res.status(410).json(chatReplayUnavailable(nodeId, fromTurnId));
-        probe();
+        const persistedReplay = probe ? null : persistedChatReplay(nodeId, fromTurnId, Number.isFinite(fromSeq) ? fromSeq : 0);
+        if (!probe && !persistedReplay) return res.status(410).json(chatReplayUnavailable(nodeId, fromTurnId));
+        probe?.();
 
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders?.();
+
+        if (persistedReplay) {
+            for (const event of persistedReplay) {
+                if (!writeSseFrame(res, encodeChatStreamEvent(event))) break;
+            }
+            res.end();
+            return;
+        }
 
         let detached = false;
         let detach = () => {};
@@ -2229,33 +2295,6 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             const result = await session.executeCommand(command, args ?? undefined);
             res.json({ ...result, sessionState: session.getSessionState?.() });
         } catch (err) {
-            res.status(500).json({ error: (err as Error).message });
-        }
-    });
-
-    router.post("/exports/summary", requireWorkspaceOwner, async (req, res) => {
-        try {
-            const body = req.body as ExportRequest;
-            if (!body || !Array.isArray(body.nodes) || body.nodes.length === 0) {
-                return res.status(400).json({ error: "nodes is required" });
-            }
-            if (body.cwd !== undefined) {
-                if (typeof body.cwd !== "string" || !path.isAbsolute(body.cwd)) {
-                    return res.status(400).json({ error: "cwd must be an absolute path" });
-                }
-                try {
-                    const s = fs.statSync(body.cwd);
-                    if (!s.isDirectory()) {
-                        return res.status(400).json({ error: "cwd is not a directory" });
-                    }
-                } catch {
-                    return res.status(400).json({ error: "cwd does not exist" });
-                }
-            }
-            const markdown = await summarizeWorkspace(chatManager, body);
-            res.json({ markdown });
-        } catch (err) {
-            console.error("Export failed:", err);
             res.status(500).json({ error: (err as Error).message });
         }
     });

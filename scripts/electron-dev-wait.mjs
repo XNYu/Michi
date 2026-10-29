@@ -3,29 +3,12 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { npm, run } from "./lib/proc.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const waitOn = require("wait-on");
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const url = process.env.MICHI_RENDERER_URL || "http://127.0.0.1:3001";
-
-function run(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: root,
-      env: process.env,
-      stdio: "inherit",
-      shell: process.platform === "win32",
-      windowsHide: true,
-    });
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${command} ${args.join(" ")} exited ${code}`));
-    });
-  });
-}
 
 await waitOn({ resources: [url], timeout: 120_000 });
 await run(npm, ["run", "electron:build-main"]);

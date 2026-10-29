@@ -78,6 +78,11 @@ Off 不会删除聊天记录；Michi 仍保存对话历史。
 **michi-crew** 模板中包含固定的 Michi 指令，用户消息只携带动态上下文和简短的输出格式说明。
 模型、推理档位、Memory 检索和排队仍会影响响应时间；简短交流可手动选 Medium / High。
 
+新建的 Michi 对话在 Crew 侧栏放在 **Michi Crew / <workspace 名>** 文件夹里。两层文件夹由
+App 创建；**Michi Crew** 可以拖进你自己的文件夹。文件夹按名字对应：workspace 改名后，
+新对话进新文件夹，旧对话不动。fork 跟着原对话的文件夹。项目目录在系统临时目录下的对话
+（如 live 测试）留在顶层。App 不能删除文件夹，不需要的请在 Crew 里手动删除。
+
 ## 5. 审批在哪里选，四个按钮有什么用
 
 在 **Michi Settings → Model → Permissions** 设置审批模式。
@@ -165,7 +170,7 @@ node -p 'require(require("node:path").join(process.env.KIROCREW_HOME || require(
 
 ## 当前边界和验证范围
 
-已接入文字/thinking、原生工具、模型/reasoning/模板、恢复、历史 fork、Crew Memory、Michi MCP 和审批。官方 App 调用者不支持同轮 steer，忙时消息排到下一轮；自动 compact 可用，但没有 Michi 手动 compact 命令。适配器未接入图片/音频，也没有专用 Crew 子 Agent 管理界面。私有 Member Memory 继承仍未实测。
+已接入文字/thinking、原生工具、模型/reasoning/模板、恢复、历史 fork、Crew Memory、Michi MCP 和审批。官方 App 调用者不支持同轮 steer，忙时消息排到下一轮。Crew 会自动 compact；空闲时在 Michi 输入 `/compact` 会执行 Crew 自己的压缩。Michi 会显示 Crew 启动的子 Agent，但每次启动都要在 Crew dashboard 的页面上批准（Michi 无法代答；没有打开 dashboard 页面时 Crew 会直接拒绝），Michi 也不能控制运行中的子 Agent。用量显示 Crew 每轮的 credits 和 context %。适配器未接入图片/音频。私有 Member Memory 继承仍未实测。
 
 2026-10-13 使用官方 **0.9.0-insider.6** 验证了 production manifest 的隔离安装/Sync，以及实际安装 App 的 UI Sync。真实模型验证了并发 MCP 隔离、adapter 重启恢复、独立 fork binding 和未绑定会话拒绝。带空格默认 HOME、空 Node PATH、stdio 连接内更新和构建恢复通过实际进程测试。这些实测在 macOS；Windows/Linux 还没有跨平台真实验收。
 

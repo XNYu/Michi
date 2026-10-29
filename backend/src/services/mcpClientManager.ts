@@ -14,8 +14,9 @@
  * call dispose() when the owning session/workspace is destroyed.
  */
 import { log } from "./logger";
+import { JSON_BODY_LIMIT_BYTES } from "./requestBodyLimit";
 import { abortable, withDeadline } from '../agents/runtimeLifecycle';
-import { getUserSandboxRoot } from '../agents/tools/pathSandbox';
+import { getUserSandboxRoot } from './workspaceSandbox';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv-provider.js';
 import type { JsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/types.js';
@@ -169,6 +170,9 @@ export class McpClientManager {
             env: mcpSubprocessEnvironment(config, this.options),
             cwd: config.cwd,
             stderr: "pipe",
+            // A result the SDK's default 10 MiB read buffer would refuse,
+            // closing the server's connection, is one Michi carries elsewhere.
+            maxBufferSize: JSON_BODY_LIMIT_BYTES,
         });
 
         const client = new Client(

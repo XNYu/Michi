@@ -10,6 +10,7 @@ import { resetMetaAgentOverviewStore } from '../../scheduled/metaAgent/useMetaAg
 import { MetaAgentSettings } from './MetaAgentSettings';
 
 const api = vi.hoisted(() => ({
+  decideMetaAgentToolApproval: vi.fn(),
   fetchMetaAgent: vi.fn(),
   updateMetaAgentSettings: vi.fn(),
   retryMetaAgentGuard: vi.fn(),
@@ -32,6 +33,7 @@ const catalog = vi.hoisted(() => ({
 
 vi.mock('../../../../services/api/metaAgent', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../services/api/metaAgent')>()),
+  decideMetaAgentToolApproval: api.decideMetaAgentToolApproval,
   fetchMetaAgent: api.fetchMetaAgent,
   updateMetaAgentSettings: api.updateMetaAgentSettings,
   retryMetaAgentGuard: api.retryMetaAgentGuard,
@@ -148,7 +150,7 @@ describe('Settings › Meta agent runtime', () => {
     await flush();
     expect(lastPatch()).toEqual({ runtimeId: 'kiro', providerId: null, modelId: null, reasoning: null });
     expect(screen.getByRole('button', { name: 'Kiro' }).getAttribute('aria-pressed')).toBe('true');
-    expect(runtimeSection().textContent).toContain('Now using Kiro · default model (custom): Michi gives Kiro its own agent with only Michi’s tools.');
+    expect(runtimeSection().textContent).toContain('Now using Kiro · default model (custom). Background maintenance: Michi checks tool access; external tools are read-only.');
   });
 
   it('says what each “Default” stands for, and the line the window’s chip repeats', async () => {
@@ -252,15 +254,15 @@ describe('Settings › Meta agent runtime', () => {
 
 describe('Settings › Meta agent restriction', () => {
   it.each([
-    ['claude', 'Now using Claude · default model (follows global): Claude’s own tools are off, and Michi checks every tool call.'],
-    ['pi', 'Now using Pi · default model (follows global): Michi gives Pi only Michi’s tools.'],
-    ['codex', 'Now using Codex · default model (follows global): Codex can’t run commands, edit files or search the web, and reaches only Michi’s tools.'],
-    ['kiro', 'Now using Kiro · default model (follows global): Michi gives Kiro its own agent with only Michi’s tools.'],
+    ['claude', 'Now using Claude · default model (follows global). Background maintenance: Michi checks tool access; external tools are read-only.'],
+    ['pi', 'Now using Pi · default model (follows global). Background maintenance: Michi checks tool access; external tools are read-only.'],
+    ['codex', 'Now using Codex · default model (follows global). Background maintenance: Michi checks tool access; external tools are read-only.'],
+    ['kiro', 'Now using Kiro · default model (follows global). Background maintenance: Michi checks tool access; external tools are read-only.'],
   ])('describes how %s is restricted', async (runtimeId, text) => {
     await mount(followOn(runtimeId));
     const section = runtimeSection();
     expect(section.textContent).toContain(text);
-    expect(section.textContent).toContain('With any AI service, the Meta agent can only use its own tools: Michi checks them each time it starts and stops it if there is anything else.');
+    expect(section.textContent).toContain('Background maintenance can change Michi content and use external read-only tools. Other external tools need your saved approval. Assistant chat runs on the global settings, or what you pick in its composer, with that AI service’s built-in and connected tools and ordinary chat permissions.');
   });
 
   it('names the resolved runtime in the follow-global line', async () => {
@@ -461,4 +463,16 @@ describe('Settings › Meta agent without a backend', () => {
     await flush();
     expect(screen.getByRole('radio', { name: /Follow global settings/ })).toBeTruthy();
   });
+});
+
+it('shows pending tool approval and saves persistent approval, then revokes it', async () => {
+  const request = { id: 'abc', server: 'mail', tool: 'send', description: 'Send a message', state: 'pending' as const, requestedAt: 1, updatedAt: 1 };
+  await mount({ ...FOLLOW, toolApprovals: [request] });
+  expect(screen.getByText(/Needs your approval; not executed/)).toBeTruthy();
+  api.decideMetaAgentToolApproval.mockResolvedValue({ ...FOLLOW, toolApprovals: [{ ...request, state: 'approved' }] });
+  fireEvent.click(screen.getByRole('button', { name: 'Always allow this tool' })); await flush();
+  expect(api.decideMetaAgentToolApproval).toHaveBeenLastCalledWith('abc', 'approved');
+  api.decideMetaAgentToolApproval.mockResolvedValue({ ...FOLLOW, toolApprovals: [{ ...request, state: 'revoked' }] });
+  fireEvent.click(screen.getByRole('button', { name: 'Revoke' })); await flush();
+  expect(api.decideMetaAgentToolApproval).toHaveBeenLastCalledWith('abc', 'revoked');
 });

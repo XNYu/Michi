@@ -1,13 +1,15 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import SettingsMain from './SettingsMain';
 
 const store = vi.hoisted(() => ({
+  metaAgentAlert: false,
   projects: [] as Array<{ id: string; deletedAt?: number }>,
   nodes: {} as Record<string, { nodeId: string; projectId: string; deletionGroupId?: string; pageId?: string | null }>,
 }));
-vi.mock('../pages/settings/assistant/MichiAssistantSettings', () => ({ MichiAssistantSettings: () => <div>Native assistant settings</div> }));
+vi.mock('../../../state/metaAgent/useMetaAgentOverview', () => ({ useMetaAgentSettingsAlert: () => store.metaAgentAlert }));
+vi.mock('../settings/metaAgent/MetaAgentSettings', () => ({ MetaAgentSettings: () => <div>Meta agent settings</div> }));
 
 vi.mock('../../../state/chatStore', async () => {
   const actual = await vi.importActual<any>('../../../state/chatStore');
@@ -62,8 +64,71 @@ describe('Settings › Data & backup', () => {
   });
 });
 
-it('opens the native Assistant settings from the Settings area', () => {
-  render(<SettingsMain section="assistant" onNav={vi.fn()} />);
-  expect(screen.getByRole('heading', { name: 'Assistant' })).toBeTruthy();
-  expect(screen.getByText('Native assistant settings')).toBeTruthy();
+it('has no Assistant section: the assistant follows the global runtime settings', () => {
+  render(<SettingsMain section="data" onNav={vi.fn()} onSectionChange={vi.fn()} />);
+  const sections = screen.getByRole('navigation', { name: 'Settings sections' });
+  expect(within(sections).queryByRole('button', { name: 'Assistant' })).toBeNull();
+  expect(within(sections).getByRole('button', { name: 'Runtime (global)' })).toBeTruthy();
+});
+
+it('identifies the category needing attention, keeps its dot when selected, and clears it after recovery', () => {
+  store.metaAgentAlert = true;
+  const onSectionChange = vi.fn();
+  const props = { onNav: vi.fn(), onSectionChange };
+  const view = render(<SettingsMain {...props} section="data" />);
+  const category = screen.getByRole('button', { name: 'Meta agent, needs attention' });
+  expect(category.querySelector('.terminal-settings-alert')).toBeTruthy();
+  expect(document.querySelectorAll('.terminal-settings-alert')).toHaveLength(1);
+  fireEvent.click(category);
+  expect(onSectionChange).toHaveBeenCalledWith('meta-agent');
+  view.rerender(<SettingsMain {...props} section="meta-agent" />);
+  expect(screen.getByRole('button', { name: 'Meta agent, needs attention' }).getAttribute('aria-current')).toBe('page');
+  expect(document.querySelector('.terminal-settings-alert')).toBeTruthy();
+  store.metaAgentAlert = false;
+  view.rerender(<SettingsMain {...props} section="meta-agent" />);
+  expect(screen.getByRole('button', { name: 'Meta agent' })).toBeTruthy();
+  expect(document.querySelector('.terminal-settings-alert')).toBeNull();
+});
+
+describe('Settings levels in a stacked (phone) drawer', () => {
+  beforeEach(() => {
+    store.metaAgentAlert = false;
+    store.projects = [];
+    store.nodes = {};
+  });
+  const root = () => document.querySelector('.terminal-settings--drawer')!;
+
+  it('asks for the section level when a row is picked and moves focus to its heading, then back to the row', () => {
+    const onSectionChange = vi.fn();
+    const onViewChange = vi.fn();
+    const props = { onNav: vi.fn(), onSectionChange, onViewChange, stacked: true };
+    const view = render(<SettingsMain {...props} section="data" view="menu" />);
+    expect(root().getAttribute('data-view')).toBe('menu');
+    expect(root().hasAttribute('data-stacked')).toBe(true);
+    expect(root().querySelectorAll('.terminal-settings-category__chevron')).toHaveLength(5);
+    fireEvent.click(screen.getByRole('button', { name: 'Meta agent' }));
+    expect(onViewChange).toHaveBeenCalledWith('section');
+    expect(onSectionChange).toHaveBeenCalledWith('meta-agent');
+    view.rerender(<SettingsMain {...props} section="meta-agent" view="section" />);
+    expect(root().getAttribute('data-view')).toBe('section');
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Meta agent' }));
+    // The host's header Back returns to the list.
+    view.rerender(<SettingsMain {...props} section="meta-agent" view="menu" />);
+    expect(root().getAttribute('data-view')).toBe('menu');
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Meta agent' }));
+  });
+
+  it('keeps the list beside the section and focus on the row when not stacked', () => {
+    const onViewChange = vi.fn();
+    const props = { onNav: vi.fn(), onSectionChange: vi.fn(), onViewChange };
+    const view = render(<SettingsMain {...props} section="data" view="menu" />);
+    expect(root().hasAttribute('data-view')).toBe(false);
+    expect(root().querySelector('.terminal-settings-category__chevron')).toBeNull();
+    const row = screen.getByRole('button', { name: 'Meta agent' });
+    row.focus();
+    fireEvent.click(row);
+    view.rerender(<SettingsMain {...props} section="meta-agent" view="section" />);
+    expect(root().hasAttribute('data-view')).toBe(false);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Meta agent' }));
+  });
 });

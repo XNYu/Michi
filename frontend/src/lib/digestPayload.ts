@@ -1,6 +1,5 @@
-import type { ChatNodeState, Project } from '../state/chatStore';
-import { activeTreeRootNodeId } from '../state/chatStore';
-import { findTreeIdForNode } from '../state/tree';
+import type { ChatNodeState, Project } from '../state/chatTypes';
+import { activeTreeRootNodeId, findTreeIdForNode } from '../state/tree';
 import { digestSourceSnapshot } from './digestSource';
 import type { DigestGenerationPayload } from '../services/digestApi';
 

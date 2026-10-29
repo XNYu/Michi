@@ -55,6 +55,29 @@ npm run remote:stop
 npm run remote:service:remove
 ```
 
+These run against the checkout they are typed in, so after an update they must
+be run from the release that is serving. Each launch for the default data
+directory instead points `~/.local/bin/michi` at its build, and `michi`
+always acts on the build that serves the data directory:
+
+```bash
+michi            # start, same as michi start
+michi status     # includes the running revision
+michi restart
+michi stop
+michi logs
+michi update     # build the latest dev beside the backend, then switch to it
+```
+
+`michi update` follows the same steps as **Update remote Michi** below: it
+builds in a new directory under `~/.local/share/michi/devdesktop/releases/`
+while the current backend keeps running, stops that backend from its own
+checkout, starts the new build with the same data directory, port and token,
+restarts the old build if the new one does not start, and checks the running
+revision. It shares the desktop update's lock, so the two cannot run at once.
+`MICHI_REMOTE_SOURCE_URL` and `MICHI_REMOTE_SOURCE_REF` select another source,
+and `--data-dir` another installation.
+
 Useful launch options:
 
 ```bash
@@ -75,8 +98,8 @@ Loopback (`127.0.0.1`) is the default and recommended binding for Michi's
 built-in SSH tunnel. `--public` binds `0.0.0.0`; use it only behind a firewall,
 private network, or HTTPS reverse proxy.
 
-Use Node.js 22.19 or newer. `remote:setup` intentionally installs only the
-`backend` and `shared` workspaces. The repository root also contains desktop
+Use Node.js 22.19 or newer. `remote:setup` installs the `backend`, `shared`, `runtime` and `frontend`
+workspaces, and builds both the API and the Web UI for phone access. The repository root also contains desktop
 dependencies such as `node-pty`; a plain root `npm install` would try to build
 those Electron-only modules on Linux even though the remote Backend never uses
 them.
@@ -279,8 +302,11 @@ an unknown or changed host must be verified separately.
 
 The user enters credentials directly in the terminal and completes any browser,
 OTP or security-key steps. Authentication terminal output is ephemeral, is not
-saved in diagnostic logs, and is not sent to agents. Cancel/close destroys that
-terminal process. A cancelled prompt can be reopened from the sign-in notice.
+saved in diagnostic logs, and is not sent to agents. When the sign-in command
+exits successfully and Michi reconnects, the dialog closes by itself. A failed
+sign-in or reconnection keeps it open with the error and **Try sign-in again**.
+Cancel/close destroys that terminal process. A cancelled prompt can be reopened
+from the sign-in notice.
 Browsers and older desktop builds show a selectable/copyable command and a
 reconnect button. The desired agent runtime must still be installed and signed in.
 

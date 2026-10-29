@@ -4,12 +4,10 @@ import type { ChatNodeState } from '../chatTypes';
 import type { ResolvedNodeBinding } from '../nodeBindingResolution';
 
 /**
- * The runtime, model and reasoning an assistant conversation runs on, for
- * its composer to show. The backend pins them from the assistant settings
- * (Settings → Assistant) on every session path, so the composer neither
- * offers its own choice nor falls back to the global defaults of the
- * user's chats (another runtime's provider, a model the settings never
- * named): a send carries none of them.
+ * The runtime, model and reasoning an assistant conversation that is not the
+ * current one runs on, for its composer to show. The backend pins them on
+ * every session path (the conversation's own pick, else the global
+ * settings), so this composer offers no choice and a send carries none.
  *
  * A conversation that has run says what it ran on itself (each send writes
  * the backend's binding back to the node); before its first send, the

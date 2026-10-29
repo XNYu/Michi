@@ -231,11 +231,13 @@ describe('TPane drag-and-drop', () => {
 describe('TPane composer draft freshness', () => {
   it('switches Stop to Send next before the draft store RAF while streaming', () => {
     mockNode.status = 'streaming';
-    render(<TPane nodeId="n1" />);
+    render(<TPane nodeId="n1" composerPreBlocks={hasText => !hasText && <span>Starter questions</span>} />);
+    expect(screen.getByText('Starter questions')).toBeTruthy();
 
     fireEvent.change(screen.getByTestId('composer-editor'), {
       target: { value: 'queue this next' },
     });
+    expect(screen.queryByText('Starter questions')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Send next|Stop stream/ }));
 
     expect(cancelStreamFn).not.toHaveBeenCalled();
