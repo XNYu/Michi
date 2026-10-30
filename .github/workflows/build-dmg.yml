@@ -25,6 +25,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Retry transient Apple ticket delivery failures
+        run: |
+          chmod +x scripts/ci/bin/xcrun
+          echo "$GITHUB_WORKSPACE/scripts/ci/bin" >> "$GITHUB_PATH"
+
       - name: Import signing certificate
         env:
           CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}

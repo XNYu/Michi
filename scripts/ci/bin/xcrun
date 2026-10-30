@@ -1,0 +1,24 @@
+#!/bin/bash
+# Keep Apple's tool and arguments intact; retry only ticket-delivery failures.
+xcrun_with_retry() {
+  local tool="$1"
+  shift
+  local attempt=1 status
+  while true; do
+    if "$tool" "$@"; then
+      return 0
+    else
+      status=$?
+    fi
+    if [[ "${1:-}" != stapler || "${2:-}" != staple || "$status" != 68 || "$attempt" -ge 5 ]]; then
+      return "$status"
+    fi
+    echo "Apple ticket delivery failed (68); retrying staple ($attempt/4) in $((attempt * 15))s" >&2
+    sleep "$((attempt * 15))"
+    attempt=$((attempt + 1))
+  done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  xcrun_with_retry /usr/bin/xcrun "$@"
+fi
