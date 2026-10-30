@@ -12,6 +12,9 @@ import { randomUUID } from 'node:crypto';
 import { tryForkChatSession } from './services/nativeFork';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
 import { setupSpaFallback } from './routes/spaFallback';
+import { setupMobileAccessRoutes } from './routes/mobileAccess';
+import { readMobileAccessChoice, saveMobileAccessChoice } from './services/mobileAccess';
+import { createMobileAccess, defaultMobileAccessProvider } from './services/mobileAccessManager';
 import { setupAssistantRoutes } from './routes/assistant';
 import { setupMetaAgentRoutes } from './routes/metaAgent';
 import { setupMetaAgentOverviewRoutes } from './routes/metaAgentOverview';
@@ -786,6 +789,27 @@ app.use('/api', setupAgentRunRoutes({
 // Runs a previous process left open lost their runtime with it.
 workflowRunHub.recover();
 app.use('/api', setupWorkflowRunRoutes({ hub: workflowRunHub, backgroundSubagents: backgroundSubagentRegistry }));
+const mobileAccessChoice = path.join(getMichiDataDir(), 'mobile-access.json');
+const mobileAccess = createMobileAccess({
+  target: () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Michi is not listening yet');
+    const host = address.address === '::1' || address.address === '::' ? '[::1]' : '127.0.0.1';
+    return `http://${host}:${address.port}`;
+  },
+  token: () => remoteAccessEnabled() ? remoteAccessToken() : null,
+  unavailableReason: () => REQUIRE_AUTH || process.env.MICHI_CLOUD === '1'
+    ? 'Mobile tunnels are available on personal Michi backends.'
+    : !servingFrontend
+      ? 'Build the web UI with npm run build, then restart this backend before enabling phone access.' : null,
+});
+// The choice belongs to this personal backend, including the desktop host.
+app.use('/api', setupMobileAccessRoutes(mobileAccess, {
+  remember: (enabled, provider) => {
+    try { saveMobileAccessChoice(mobileAccessChoice, enabled, provider); }
+    catch (error) { log.warn('http', 'could not save phone access choice', { error: (error as Error).message }); }
+  },
+}));
 // Saved credentials belong to the desktop gateway, not execution backends.
 if (!remoteAccessEnabled()) {
   app.use('/api', setupBackendConnectionRoutes());
@@ -870,6 +894,7 @@ const server = app.listen(Number(port), listenHost, (error?: Error) => {
   }
   log.info('boot', 'listening', { port: Number(port), host: listenHost });
   markListening();
+  if (process.env.MICHI_MOBILE_ACCESS === '1' || readMobileAccessChoice(mobileAccessChoice, defaultMobileAccessProvider())) void mobileAccess.start().catch(error => log.warn('boot', 'mobile access start failed', { error: (error as Error).message }));
   startupMark('express_listen_ready', { port: Number(port) });
   printEnvInfo(Number(port));
 
@@ -909,6 +934,7 @@ const gracefulShutdown = async (): Promise<void> => {
   // keep POSTing to /api/mcp/:slotId on the old port and the next backend
   // instance 404s them ("unknown mcp slot").
   await Promise.allSettled(listRuntimes().map((runtime) => runtime.shutdown()));
+  await mobileAccess.stop();
   sshTunnelManager.shutdown();
   closeAllArtifactWatchers();
   // Coalesced workflow snapshots would otherwise lose their last revisions.

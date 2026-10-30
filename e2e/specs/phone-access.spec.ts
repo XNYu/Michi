@@ -1,0 +1,53 @@
+import { test, expect } from '@playwright/test';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import type { MobileAccessStatus } from '../../shared/src/mobileAccess';
+import { bootWithWorkspace, installMockApi } from '../fixtures/mockApi';
+import { openSettings } from '../fixtures/shell';
+
+test('Tailscale setup guides login and HTTPS consent before showing a private reusable phone QR', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let status: MobileAccessStatus = { state: 'stopped', url: '', error: '', available: true,
+    provider: 'tailscale', providers: ['tailscale'], tailscale: { state: 'needs-login', message: 'Connect this machine to Tailscale.' } };
+  const url = 'https://michi.tail123.ts.net';
+  const actions: string[] = [];
+  await installMockApi(page, { custom: async route => {
+    const pathname = new URL(route.request().url()).pathname.replace(/^.*\/api/, '');
+    if (!pathname.startsWith('/mobile-access')) return false;
+    const action = pathname.slice('/mobile-access'.length);
+    if (route.request().method() === 'POST') actions.push(action);
+    if (action === '/login') status = { ...status, tailscale: { state: 'needs-login', actionUrl: 'https://login.tailscale.com/a/fixture' } };
+    if (action === '/start') status = { ...status, state: 'starting', tailscale: { state: 'needs-approval', actionUrl: 'https://login.tailscale.com/f/serve?node=fixture' } };
+    if (action === '/stop') status = { ...status, state: 'stopped', url: '' };
+    await route.fulfill({ json: action === '/link' ? { url: url + '/', reusable: true, expiresAt: 1 } : status });
+    return true;
+  } });
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await bootWithWorkspace(page, 'Phone access');
+  await openSettings(page, 'General');
+  const section = page.locator('.mobile-access');
+  await expect(section.getByRole('button', { name: 'Enable phone access' })).toBeDisabled();
+  await section.getByRole('button', { name: 'Connect Tailscale', exact: true }).click();
+  await expect(section.getByRole('button', { name: 'Continue Tailscale sign-in' })).toBeVisible();
+  status = { ...status, tailscale: { state: 'ready', account: 'owner@example.com' } };
+  await expect(section.getByRole('button', { name: 'Enable phone access' })).toBeEnabled();
+  await section.getByRole('button', { name: 'Enable phone access' }).click();
+  await expect(section.getByRole('button', { name: 'Allow Tailscale HTTPS' })).toBeVisible();
+  await expect(section.getByRole('img')).toHaveCount(0);
+  status = { ...status, state: 'connected', url, tailscale: { state: 'ready', account: 'owner@example.com' } };
+  await expect(section.getByRole('img', { name: 'Scan to connect to Michi' })).toBeVisible();
+  await expect(section.getByRole('button', { name: 'Copy phone link' })).toBeVisible();
+  await expect(section.getByRole('button', { name: 'Allow Tailscale HTTPS' })).toHaveCount(0);
+  await expect(section.getByText(/expires|One use/)).toHaveCount(0);
+  const evidence = resolve('.artifacts/tailscale-phone-access'); mkdirSync(evidence, { recursive: true });
+  await section.screenshot({ path: resolve(evidence, 'desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(section.getByRole('img')).toBeVisible();
+  expect(await section.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await section.screenshot({ path: resolve(evidence, 'phone.png') });
+  await section.getByRole('button', { name: 'Turn off' }).click();
+  await expect(section.getByRole('img')).toHaveCount(0);
+  expect(actions).toEqual(['/login', '/start', '/link', '/stop']);
+  expect(errors).toEqual([]);
+});

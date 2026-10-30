@@ -1,0 +1,16 @@
+/* Settings › General › Phone access; the section and the Machine row come from SettingsSection. */
+.mobile-access p { color: var(--term-muted); font-size: var(--fs-md); line-height: 1.6; }
+.mobile-access > p { margin: 8px 0 0; }
+.mobile-access [role='alert'] { color: var(--term-danger); }
+.mobile-access__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.mobile-access__link { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin: 20px 0; }
+.mobile-access__link svg { flex: none; border-radius: var(--ui-radius); }
+.mobile-access__link > div { flex: 1; min-width: 160px; }
+.mobile-access__url { display: block; margin-top: 16px; overflow-wrap: anywhere; color: var(--term-accent); font-size: var(--fs-sm); }
+.mobile-access__install code { font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.mobile-access__setup { margin-top: 12px; color: var(--term-muted); font-size: var(--fs-md); line-height: 1.6; }
+.mobile-access__setup ol { margin: 0 0 12px; padding-left: 20px; list-style: decimal; }
+.mobile-access__setup li + li { margin-top: 8px; }
+.mobile-access__setup strong { color: var(--term-fg); font-weight: 500; }
+.mobile-access__setup > button + button { margin-left: 8px; }
+.mobile-access__text-link { padding: 0; border: 0; background: none; color: var(--term-accent); cursor: pointer; font: inherit; text-decoration: underline; }

@@ -34,3 +34,5 @@ export * from './desktopContracts';
 export * from './pages';
 export * from './database/viewModel';
 export * from './artifactType';
+
+export * from './mobileAccess';

@@ -24,6 +24,7 @@ import { RemoteDesktopConnect } from '../../../RemoteDesktopConnect';
 import { RemoteUpdateNotice } from '../../../RemoteUpdateNotice';
 import { useRemoteWorkspaces, type RemoteWorkspacesState } from './useRemoteWorkspaces';
 import { SettingsSection } from './SettingsSection';
+import { MobileAccessPanel } from './MobileAccessPanel';
 
 type ConnectionDraft = {
   id?: string;
@@ -266,6 +267,8 @@ export function ConnectionsPane({ projects, onOpenWorkspace }: { projects: Proje
         {message.text}
       </div>}
     </SettingsSection>
+
+    <MobileAccessPanel connections={connections} />
 
   </>);
 }

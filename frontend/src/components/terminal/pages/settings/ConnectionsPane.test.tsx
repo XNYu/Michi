@@ -23,6 +23,8 @@ vi.mock('../../../../services/api', () => ({
 }));
 
 vi.mock('../../../../services/api/remoteWorkspaces', () => ({ fetchRemoteWorkspaces: mocks.workspaces }));
+// Phone setup has its own API and lifecycle tests; keep connection editing isolated.
+vi.mock('./MobileAccessPanel', () => ({ MobileAccessPanel: () => null }));
 
 const desktop = { id: 'remote-1', name: 'Build box', transport: 'ssh' as const, sshHost: 'build+', hasToken: true, createdAt: 1, updatedAt: 1 };
 const other = { id: 'remote-2', name: 'Other machine', transport: 'direct' as const, apiUrl: 'https://example.com/api', hasToken: true, createdAt: 1, updatedAt: 1 };
