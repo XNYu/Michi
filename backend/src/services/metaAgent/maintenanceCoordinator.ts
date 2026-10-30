@@ -1,7 +1,7 @@
 import { getDb } from '../db';
 import { log } from '../logger';
 import { conversationCompletionCounter } from '../conversationUpdates';
-import { getMaintenanceConfig, listMaintenanceBacklog, listQueuedMaintenanceRequests } from '../pages/maintenanceRepository';
+import { getMaintenanceConfig, listMaintenanceBacklog, listQueuedMaintenanceRequests, maintenancePlanWaitsOnEditLeases } from '../pages/maintenanceRepository';
 import { homeMaintenancePending } from './firstRun';
 import type { ScheduledJobRecord } from '../scheduledJobs/repository';
 import { LOCAL_AGENT_OWNER_ID, workspaceOwnerMatches } from '../agentOwner';
@@ -28,9 +28,12 @@ export function maintenanceHasWork(workspaceId: string, ownerUserId: string, now
     .get(workspaceId) as { owner_user_id: string | null; settings: string | null } | undefined;
   if (!workspace || !workspaceOwnerMatches(workspace.owner_user_id, ownerUserId) || isSystemWorkspaceSettings(workspace.settings)) return false;
   if (homeMaintenancePending(workspaceId, ownerUserId, now)) return true;
-  if (conversationCompletionCounter(workspaceId) > config.completionCursor) return true;
   if (listQueuedMaintenanceRequests(workspaceId, ownerUserId).length) return true;
-  return listMaintenanceBacklog(workspaceId, ownerUserId).plans.some(plan => plan.state === 'routing' || plan.state === 'processing');
+  // A run resumes the first unfinished plan before it reads new turns (scheduler.execute). While
+  // that plan only waits for conversations editing its pages, a run could do nothing but defer again.
+  const unfinished = listMaintenanceBacklog(workspaceId, ownerUserId).plans.find(plan => plan.state === 'routing' || plan.state === 'processing');
+  if (unfinished) return !maintenancePlanWaitsOnEditLeases(unfinished.id, ownerUserId, now).waiting;
+  return conversationCompletionCounter(workspaceId) > config.completionCursor;
 }
 
 /** One coordinator shares the existing host lease and execution admission.

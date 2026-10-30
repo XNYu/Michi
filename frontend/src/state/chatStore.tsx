@@ -74,7 +74,7 @@ import type { ChatAction, ChatActionsValue, ChatContextValue, ChatNodeState, Cha
 import { computeSurvivingMessageIds, cleanupOrphanedAnchors } from './branchAnchors';
 import { sleep } from '../utils/sleep';
 import { installBackendWorkspaceNode, reconcileBackgroundWorkspaceSnapshot } from './backgroundGapReconcile';
-import { describeScheduledRunNotice } from './scheduledRunNotice';
+import { describeScheduledRunNotice, latestTurnIsScheduled } from './scheduledRunNotice';
 import type { StreamHandlers } from '../services/chatStreamEvents';
 import type { CreateChildChatOptions } from './chatTypes';
 import { backendEntityId, serverEntityId, remoteEntityIdentity } from '../config/backendIdentity';
@@ -2823,6 +2823,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     // A scheduled run reports its own completion (with the job's name).
     if (scheduledNodeIdsRef.current.has(nodeId)) return;
     const node = nodesRef.current[nodeId];
+    if (latestTurnIsScheduled(node?.messages)) return;
     notify({
       title: node?.title ?? 'Branch complete',
       body: 'Streaming finished',

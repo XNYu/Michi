@@ -10,9 +10,12 @@ import { setupArtifactRoutes } from '../src/routes/artifacts';
 import { NotFoundError } from '../src/services/workspaceSandbox';
 
 test('downloads arbitrary original bytes with ownership and containment checks', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'artifact-download-'));
+  // Like the scratch root ~/.michi/workspaces/<id>, the workspace sits inside a dot directory.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'artifact-download-'));
+  const root = path.join(home, '.michi', 'workspaces', 'owned');
+  fs.mkdirSync(root, { recursive: true });
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'artifact-outside-'));
-  t.after(() => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
+  t.after(() => { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }); });
   const bytes = Buffer.from([0, 255, 128, 42]);
   fs.writeFileSync(path.join(root, 'data.unknown'), bytes);
   fs.writeFileSync(path.join(root, 'page.html'), '<script>alert(1)</script>');

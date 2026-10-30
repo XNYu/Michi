@@ -3,10 +3,16 @@ import { LOCAL_BACKEND_CONNECTION_ID, type BackendConnectionSummary } from '../c
 import { useBackendConnections } from '../state/useBackendConnections';
 import './WorkspaceLocation.css';
 
-export function workspaceMachineLabel(connectionId: string | undefined, connections: BackendConnectionSummary[], separator = ' · '): string {
-  if (!connectionId || connectionId === LOCAL_BACKEND_CONNECTION_ID) return 'Local';
+/** The remote machine a workspace lives on, by its connection's name; null for a local workspace. */
+export function remoteMachineName(connectionId: string | undefined, connections: BackendConnectionSummary[]): string | null {
+  if (!connectionId || connectionId === LOCAL_BACKEND_CONNECTION_ID) return null;
   const connection = connections.find(item => item.id === connectionId);
-  return `Remote${separator}${connection?.name || connection?.sshHost || 'Unavailable connection'}`;
+  return connection?.name || connection?.sshHost || 'Unavailable connection';
+}
+
+export function workspaceMachineLabel(connectionId: string | undefined, connections: BackendConnectionSummary[], separator = ' · '): string {
+  const remote = remoteMachineName(connectionId, connections);
+  return remote === null ? 'Local' : `Remote${separator}${remote}`;
 }
 
 /** The note a workspace picker shows after a remote workspace's name; none for a local one. */

@@ -48,14 +48,12 @@ test('Chat Home renders and edits a native Page below its working composer, surv
   const home = page.locator('.home-page');
   await expect(home).toHaveAttribute('data-default-layout', 'true');
   await expect(page.getByRole('heading', { name: 'Another road diverged in a yellow wood.', exact: false })).toBeVisible();
-  await expect(page.getByRole('group', { name: 'Quick starts' })).toBeVisible();
   await page.locator(COMPOSER_EDITOR).first().fill('A draft while Pages loads');
   releaseHome();
   const body = page.getByRole('region', { name: 'Home content' });
   await expect(body.getByRole('heading', { name: 'My weekly focus' })).toBeVisible();
   await expect(home).not.toHaveAttribute('data-default-layout');
   await expect(page.locator(COMPOSER_EDITOR).first()).toContainText('A draft while Pages loads');
-  await expect(page.getByRole('group', { name: 'Quick starts' })).toHaveCount(0);
   const links = body.locator('[data-region-id="links"]');
   const todos = body.locator('[data-region-id="todos"]');
   await expect.poll(async () => {
@@ -90,7 +88,7 @@ test('Chat Home renders and edits a native Page below its working composer, surv
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('michi:v1:prefs')!).homeRecommendations)).toBe(false);
   await page.reload();
   await expect(body).toHaveCount(0);
-  await expect(page.getByRole('group', { name: 'Quick starts' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Another road diverged in a yellow wood.', exact: false })).toBeVisible();
   await expect(page.locator('.terminal-sidebar').getByRole('button', { name: /^All threads/ })).toHaveCount(0);
   await openArea(page, 'settings');
   await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
@@ -102,11 +100,12 @@ test('Chat Home renders and edits a native Page below its working composer, surv
   contentMode = 'hidden';
   await page.reload();
   await expect(page.locator('.home-page')).toBeVisible();
+  await expect(home).not.toHaveAttribute('data-default-layout');
   await expect(body).toHaveCount(0);
-  await expect(page.getByRole('group', { name: 'Quick starts' })).toHaveCount(0);
+  await expect(page.locator('[data-testid="home-card"]')).toHaveCount(0);
   contentMode = 'default';
   await page.reload();
-  await expect(page.getByRole('group', { name: 'Quick starts' })).toBeVisible();
+  await expect(page.locator('[data-testid="home-card"]', { hasText: 'Start a conversation' })).toBeVisible();
   expect(mock.pages.get(doc.id)?.blocks).toHaveLength(4);
   expect(errors).toEqual([]);
 });

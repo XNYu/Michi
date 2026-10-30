@@ -31,6 +31,24 @@ describe('buildAnchorMap', () => {
     expect(ordered?.[1].createdAt).toBe(200);
   });
 
+  it('pairs the branch’s first question with its reply in plain words, leaving out a reply still streaming', () => {
+    const parent = node('A', [msg('m1')]);
+    const edges: ProjectEdge[] = [
+      { source: 'A', target: 'B', kind: 'branch', anchorMessageId: 'm1', createdAt: 100 },
+    ] as unknown as ProjectEdge[];
+    const reply = msg('b2', 'assistant', '## Result\n\n- **Mode** changes and [usage](https://x.example), see `run_id`.');
+    // Later turns do not replace the opening exchange.
+    const later = { ...msg('b4', 'assistant', 'Half a later rep'), streaming: true } as ChatMessage;
+    const child = node('B', [msg('b1', 'user', 'Which\n ones?'), reply, msg('b3', 'user', 'more'), later], { status: 'streaming' });
+    const [anchor] = buildAnchorMap('A', edges, { A: parent, B: child }).get('m1')!;
+    expect(anchor).toMatchObject({ question: 'Which ones?', reply: 'Result Mode changes and usage, see run_id.' });
+
+    const live = node('B', [msg('b1', 'user', 'Which ones?'), msg('b2', 'assistant', 'Half a rep')], { status: 'streaming' });
+    const [running] = buildAnchorMap('A', edges, { A: parent, B: live }).get('m1')!;
+    expect(running.question).toBe('Which ones?');
+    expect(running.reply).toBeUndefined();
+  });
+
   it('hides soft-deleted children', () => {
     const parent = node('A', [msg('m1')]);
     const child = node('B', [msg('x')], { deletedAt: 1 });

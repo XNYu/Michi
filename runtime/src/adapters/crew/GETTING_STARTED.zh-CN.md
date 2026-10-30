@@ -16,7 +16,7 @@ michi update
 
 macOS 更新会重建并替换 App，同时退出 Michi，之后重新打开。本地 dev 提交必须发布到安装器使用的分支后，其他用户才能通过 update 获得。
 
-默认安装现在已经包含完整的 `~/.michi/crew-app`，**首次接入无须运行 setup 脚本，也无须复制文件**。只有桌面包产生的数据目录不算代码安装目录；安装目录应包含 `crew-app/launch.py`、`backend/dist/crewMcpHost.js`、`crewMcp.js` 和 `crew-node.json`。
+默认安装现在已经包含完整的 `~/.michi/crew-app`，**首次接入无须运行 setup 脚本，也无须复制文件**。只有桌面包产生的数据目录不算代码安装目录；安装目录应包含 `package.json`、`crew-app/launch.py`、`backend/dist/crewMcpHost.js`、`crewMcp.js` 和 `crew-node.json`。
 
 ## 2. 在 Crew 中直接安装
 

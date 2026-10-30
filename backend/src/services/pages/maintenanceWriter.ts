@@ -9,6 +9,8 @@ import {
 import { applyMaintenancePageSet } from './pageWrites';
 import { applyMaintenanceDatabaseSet } from './databaseWrites';
 import { PageWriteError } from './core';
+import { deferMaintenancePageForEditLease } from './maintenanceRepository';
+import { livePageEditLease, maintenanceBusyError, PageEditBusyError } from './editLeases';
 import { runInTransaction } from '../db';
 import { getPage } from './repository';
 import { canonical } from './canonicalJson';
@@ -229,6 +231,17 @@ export function reobserveRoutedResource(context: MaintenanceExecutionContext, so
   if (result.outcome === 'skipped') throw new PageWriteError(409, 'stale_revision', `${result.reason}. It needs no more work in this run; continue with the source's other resources.`);
 }
 
+/**
+ * Leaves a routed page pending while a conversation holds its edit lease:
+ * records the deferral for this run, then refuses the read, write or no-change.
+ */
+export function deferIfPageLeased(context: MaintenanceExecutionContext, sourceTurnId: string, pageId: string, at = now()): void {
+  const lease = livePageEditLease(pageId, at);
+  if (!lease) return;
+  deferMaintenancePageForEditLease({ planId: context.planId, sourceTurnId, pageId, runId: context.runId, now: at });
+  throw maintenanceBusyError(lease);
+}
+
 function maintenancePagePath(pageId: string, pages: Map<string, { id: string; parentId: string | null; title: string }>): string {
   const parts: string[] = [];
   let current = pages.get(pageId);
@@ -258,6 +271,7 @@ export function createMaintenanceWriter() {
     const saved = replayResult(operationKey, context, sourceTurnId, payload, assignedIds);
     if (saved) return requireSuccessfulResourceResult(saved);
     if (!['routing', 'processing'].includes(plan.state)) throw new PageWriteError(409, 'stale_revision', 'Maintenance plan is terminal');
+    deferIfPageLeased(context, sourceTurnId, pageId);
     assertMaintenanceSourceCoverageComplete(context.planId, context.ownerUserId, sourceTurnId);
     assertMaintenanceResourceCurrent({ workspaceId: context.workspaceId, ownerUserId: context.ownerUserId,
       planId: context.planId, sourceTurnId, resource });
@@ -267,12 +281,21 @@ export function createMaintenanceWriter() {
       ops.flatMap(op => op.op === 'insert' || op.op === 'update' ? [op.block] : []), page.blocks, resourceEvidence(context, sourceTurnId));
     const frozen = freezeMaintenanceResourcePayload({ ...authority(context), planId: context.planId, sourceTurnId,
       kind: 'page', resourceId: pageId, payload, assignedIds, now: now() });
-    const result = applyMaintenancePageSet({ workspaceId: context.workspaceId, ownerUserId: context.ownerUserId,
-      pageId, expectedRevision: resource.revision, source: { kind: 'maintenance', ...context.execution,
-        jobId: context.jobId, runId: context.runId, evidence: [resourceEvidence(context, sourceTurnId)] },
-      evidence: resourceEvidence(context, sourceTurnId), operationKey, payloadHash: frozen.payloadHash, planId: context.planId,
-      sourceTurnId, generation: plan.generation, ops,
-      assignedIds: frozen.assignedIds as { blockIds: string[] }, execution: context.execution, authority: authority(context), now: now() });
+    let result: PageWriteResult;
+    try {
+      result = applyMaintenancePageSet({ workspaceId: context.workspaceId, ownerUserId: context.ownerUserId,
+        pageId, expectedRevision: resource.revision, source: { kind: 'maintenance', ...context.execution,
+          jobId: context.jobId, runId: context.runId, evidence: [resourceEvidence(context, sourceTurnId)] },
+        evidence: resourceEvidence(context, sourceTurnId), operationKey, payloadHash: frozen.payloadHash, planId: context.planId,
+        sourceTurnId, generation: plan.generation, ops,
+        assignedIds: frozen.assignedIds as { blockIds: string[] }, execution: context.execution, authority: authority(context), now: now() });
+    } catch (error) {
+      // A conversation took the lease after the checks above; the write rolled back, so record the deferral outside it.
+      if (error instanceof PageEditBusyError) {
+        deferMaintenancePageForEditLease({ planId: context.planId, sourceTurnId, pageId, runId: context.runId, now: now() });
+      }
+      throw error;
+    }
     return requireSuccessfulResourceResult(result);
   }
   function database(context: MaintenanceExecutionContext, sourceTurnId: string, databaseId: string, rawOps: unknown): PageWriteResult {

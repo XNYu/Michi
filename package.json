@@ -5,6 +5,9 @@
   "author": "Nan Yu",
   "license": "ISC",
   "main": "electron/dist/main.js",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "workspaces": [
     "frontend",
     "backend",
@@ -41,6 +44,7 @@
     "electron:build": "node scripts/electron-build.mjs",
     "postelectron:build": "node scripts/install-app.mjs",
     "electron:install": "node scripts/install-app.mjs",
+    "icons:generate": "node scripts/generate-icons.mjs",
     "startup:analyze": "node scripts/analyze-startup.mjs",
     "metrics:analyze": "node scripts/analyze-metrics.mjs",
     "perf:pane": "node scripts/run-pane-perf.mjs",
@@ -55,7 +59,7 @@
     "test:dev-port": "node --test scripts/find-open-port.test.mjs scripts/electron-dev-env.test.mjs scripts/kill-stale-dev.test.mjs scripts/lib/proc.test.mjs",
     "test:stream-transport": "node scripts/test-stream-transport.mjs",
     "test:perf": "node --test scripts/pane-perf-tools.test.mjs scripts/bench-startup.test.mjs scripts/jsonl-events.test.mjs",
-    "test:contracts": "npm run shared:build && npm run electron:build-main && node --test scripts/build-info.test.mjs scripts/electron-browser-theme.test.mjs scripts/electron-preload-contract.test.mjs scripts/electron-workspace-files.test.mjs scripts/native-content-boundary.test.mjs scripts/pages-real-runtime-helpers.test.mjs scripts/pages-real-ui-capability-evidence.test.mjs scripts/remote-auth.test.mjs scripts/knip-baseline.test.mjs",
+    "test:contracts": "npm run shared:build && npm run electron:build-main && node --test scripts/build-info.test.mjs scripts/electron-browser-theme.test.mjs scripts/electron-preload-contract.test.mjs scripts/electron-workspace-files.test.mjs scripts/native-content-boundary.test.mjs scripts/pages-real-runtime-helpers.test.mjs scripts/pages-real-ui-capability-evidence.test.mjs scripts/remote-auth.test.mjs scripts/knip-baseline.test.mjs scripts/icons.test.mjs",
     "check:knip": "node scripts/knip-baseline.mjs",
     "check:deps": "node backend/scripts/dependencyRules.cjs",
     "check": "npm run test:contracts && npm test -w michi-shared && npm run check:knip && npm run check:deps",

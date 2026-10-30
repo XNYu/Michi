@@ -140,7 +140,7 @@ export function AppearancePane() {
           onChange={(value) => setPref('homeRecommendations', value)}
         />
         <p style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', marginTop: 8 }}>
-          On: show Pages recommendations or your custom Home page. Off: use the default composer and quick starts.
+          On: show Pages recommendations or your custom Home page. Off: show only the composer.
         </p>
       </Row>
       <Row k="theme.palette" label="Palette">

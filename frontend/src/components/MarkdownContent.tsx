@@ -19,6 +19,8 @@ import { loadableImageUrl } from '../lib/pictureAddress';
 import { hasCjkText, performanceNowMs, rendererStreamProbeEnabled, writeRendererStreamProbe } from '../lib/streamProbe';
 import { countRender } from '../services/renderCounters';
 import { MarkdownLinkRendererContext, type MarkdownLinkRenderer } from './markdownLinkRenderer';
+import { MarkdownQuoteMarksContext } from './markdownQuoteMarks';
+import { quoteMarkKeys, rehypeQuoteMarks } from './rehypeQuoteMarks';
 import type { MarkdownBlockKind } from '../lib/streamingMarkdownBlocks';
 
 const isLoadableImage = (src: string) => loadableImageUrl(src) !== null;
@@ -443,6 +445,9 @@ function MarkdownContentInner({
   const mayContainRawHtml = renderText.includes('<');
   // Opt-in app links (the assistant's chips); null for every other caller.
   const linkRenderer = useContext(MarkdownLinkRendererContext);
+  // Opt-in marks over quoted passages (branches quoting a message); null for every other caller.
+  const quoteMarks = useContext(MarkdownQuoteMarksContext);
+  const quotes = quoteMarks && quoteMarks.quotes.length > 0 ? quoteMarks.quotes : null;
   const urlTransform = useMemo(
     () => (url: string, key: string) => key === 'href' && (fileLinkPath(url) || linkRenderer?.matches(url)) ? url : defaultUrlTransform(url),
     [linkRenderer],
@@ -462,6 +467,8 @@ function MarkdownContentInner({
     if (rehypeKatex) plugins.push(rehypeKatex);
     plugins.push(rehypeFileLinks);
     plugins.push(rehypeAutolinkBareUrls);
+    // Before reveal and the streaming tail, which only wrap text inside a mark.
+    if (quotes) plugins.push([rehypeQuoteMarks, { quotes }]);
     if (revealPlugin) plugins.push(revealPlugin);
     if (appendStreamingTail) plugins.push(createStreamingTailPlugin());
     // Last, so it sees every element sanitize and the autolinkers left.
@@ -470,7 +477,7 @@ function MarkdownContentInner({
     const keepImage = features?.httpsImages === true ? isLoadableImage : undefined;
     if (!remoteMedia || httpsLinksOnly) plugins.push([rehypeLocalOnly, { remoteMedia, httpsLinksOnly, keepImage }]);
     return plugins;
-  }, [appendStreamingTail, features?.httpsImages, features?.httpsLinksOnly, features?.remoteMedia, linkRenderer, mayContainRawHtml, rehypeKatex, revealPlugin]);
+  }, [appendStreamingTail, features?.httpsImages, features?.httpsLinksOnly, features?.remoteMedia, linkRenderer, mayContainRawHtml, quotes, rehypeKatex, revealPlugin]);
   // External links open in a new context (system browser in Electron via
   // setWindowOpenHandler; a new tab in a plain browser) instead of replacing
   // the app. Internal/relative/mailto/hash links keep default behavior.
@@ -586,6 +593,8 @@ function MarkdownContentInner({
           a: anchorComponent,
           span({ children, node, ...props }: any) {
             if (isStreamingTailMarker(node)) return <MarkdownStreamingTail />;
+            const keys = quoteMarks ? quoteMarkKeys(node) : null;
+            if (keys) return <>{quoteMarks!.render(keys, children)}</>;
             return <span {...props}>{children}</span>;
           },
           pre({ children, node: _node, ...props }: any) {

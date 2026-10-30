@@ -89,19 +89,57 @@ test('placeholder is not draft content and clearing restores the empty state', a
   await expect(page.getByRole('button', { name: 'Send (Enter)', exact: true })).toBeDisabled();
 });
 
-test('workspace controls remain usable in a phone width', async ({ page }, info) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await boot(page);
-  await page.getByLabel('Open sidebar', { exact: true }).click();
-  await page.getByRole('button', { name: 'Workspaces', exact: true }).click();
-  const search = page.getByRole('searchbox', { name: 'Filter workspaces' });
-  await expect(search).toBeVisible();
-  await search.fill('Research');
-  await expect(page.getByTestId('workspace-table-row-design')).toBeVisible();
-  const actions = await page.locator('.michi-workspaces__actions').boundingBox();
-  expect(actions!.x + actions!.width).toBeLessThanOrEqual(390);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
-  await page.screenshot({ animations: 'disabled', path: info.outputPath('mobile-workspaces.png') });
+test('a phone lists workspaces as rows, acts on them from a sheet and manages one in a single column', async ({ browser, baseURL }, info) => {
+  const context = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  try {
+    await boot(page);
+    await page.getByLabel('Open sidebar', { exact: true }).click();
+    await page.getByRole('button', { name: 'Workspaces', exact: true }).click();
+    const row = page.getByTestId('workspace-row-design');
+    await expect(row).toBeVisible();
+    await expect(page.getByRole('table')).toHaveCount(0);
+    // Search reaches thread titles and marks the hit.
+    const search = page.getByRole('searchbox', { name: 'Filter workspaces' });
+    await search.fill('quieter');
+    await expect(row.locator('mark')).toHaveText('quieter');
+    await search.fill('');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+    for (const control of [row.getByRole('button', { name: 'More actions' }), page.getByRole('button', { name: 'New workspace' }), search]) {
+      expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(40);
+    }
+    await page.screenshot({ animations: 'disabled', path: info.outputPath('mobile-workspaces.png') });
+
+    await row.getByRole('button', { name: 'More actions' }).tap();
+    const sheet = page.getByRole('dialog', { name: 'Research journal' });
+    await expect(sheet).toBeVisible();
+    // It rises from below; once settled it sits on the bottom edge, full width.
+    await expect.poll(async () => {
+      const box = (await sheet.boundingBox())!;
+      return [Math.round(box.y + box.height), Math.round(box.width)];
+    }).toEqual([844, 390]);
+    await page.screenshot({ animations: 'disabled', path: info.outputPath('mobile-workspace-sheet.png') });
+    await sheet.getByRole('button', { name: 'Rename…' }).tap();
+    const field = page.getByRole('textbox', { name: 'Workspace name' });
+    await expect(field).toBeFocused();
+    await field.fill('Field notes');
+    await field.press('Enter');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(row).toContainText('Field notes');
+
+    // A tap opens the workspace; on a phone its side panels follow the lists.
+    await row.getByRole('button', { name: /Field notes/ }).tap();
+    const manage = page.getByTestId('workspace-manage');
+    await expect(manage).toBeVisible();
+    expect(await manage.evaluate((element) => element.scrollWidth - element.clientWidth)).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+    const tabs = (await page.getByRole('button', { name: /^Chats/ }).boundingBox())!;
+    const settings = (await page.getByRole('complementary', { name: 'Workspace settings' }).boundingBox())!;
+    expect(settings.y).toBeGreaterThan(tabs.y + tabs.height);
+    expect(settings.x).toBeGreaterThanOrEqual(0);
+    expect(settings.x + settings.width).toBeLessThanOrEqual(390);
+    await page.screenshot({ animations: 'disabled', path: info.outputPath('mobile-workspace-manage.png'), fullPage: true });
+  } finally { await context.close(); }
 });
 
 

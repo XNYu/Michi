@@ -49,7 +49,7 @@ import { isSystemWorkspace, systemWorkspaceIds } from '../../state/assistant/sys
 
 const ASSISTANT_TITLE = 'Assistant';
 
-const TOPBAR_HEIGHT = 44;
+export const TOPBAR_HEIGHT = 44;
 /** The breadcrumb's bold title (active thread, Michi project). */
 const BREADCRUMB_TITLE_STYLE: React.CSSProperties = {
   fontSize: 'var(--fs-lg)',

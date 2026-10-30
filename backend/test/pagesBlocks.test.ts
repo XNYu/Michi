@@ -221,16 +221,48 @@ describe('native page block contracts', () => {
     assert.equal(pageBlockProblem(PAGE_BLOCK_CATALOG.chart.example), '');
     assert.match(pageBlockProblem({ type: 'pie' }), /^Unknown block type "pie"; the types are heading, markdown, /);
     assert.equal(pageBlockProblem('x'), 'A block is an object with a type');
-    assert.match(pageBlockProblem({ type: 'chart', title: 'T', kind: 'bar', labels: ['a'], series: [], colour: 'red' }), /^A chart block has no colour\. Its fields: \{title, kind/);
-    assert.match(pageBlockProblem({ type: 'threads' }), /^A threads block needs nodeIds\./);
-    assert.match(pageBlockProblem({ type: 'threads', nodeIds: ['a', 'a'] }), /^This threads block breaks a rule of its fields: .*each once/);
+    assert.match(pageBlockProblem({ type: 'chart', title: 'T', kind: 'bar', labels: ['a'], series: [], colour: 'red' }),
+      /^This chart block is not valid: colour is not a field; series needs at least 1 item\. Its fields: \{title, kind: bar\|line\|area, series/);
+    assert.match(pageBlockProblem({ type: 'threads' }), /^This threads block is not valid: nodeIds is required\./);
+    assert.match(pageBlockProblem({ type: 'threads', nodeIds: ['a', 'a'] }), /^This threads block is not valid: nodeIds must not repeat an entry\. Its fields: .*each once/);
     assert.match(agentPageOpProblem({ op: 'insert', after: null, block: { type: 'conflict', question: 'Q', options: [{ text: 'A', at: 'Oct 14' }, { text: 'B' }] } }),
-      /^This conflict block breaks a rule of its fields: .*at\?: epoch ms or ISO 8601/);
+      /^This conflict block is not valid: options\[0\]\.at must be epoch milliseconds or an ISO 8601 date \(YYYY-MM-DD\) or date-time, not "Oct 14"\./);
+    // A table row's width is a rule the schema cannot say: the fields say it instead.
+    assert.match(pageBlockProblem({ type: 'table', columns: ['A', 'B'], rows: [['x']] }), /^This table block breaks a rule of its fields: .*one per column/);
     assert.match(agentPageOpProblem({ op: 'rename', id: 'b' }), /^Invalid rename operation\. insert takes/);
     assert.equal(agentPageOpProblem({ op: 'delete', id: 'b', expectRev: 1 }), '');
     assert.equal(agentPageOpProblem(null), 'An operation is an object whose op is insert, update, delete or move');
     const threads = (pageBlockInputSchema().oneOf.find((branch: any) => branch.properties.type.enum[0] === 'threads') as any).properties.nodeIds;
     assert.equal(threads.uniqueItems, true);
+  });
+
+  test('names every wrong field of a rich block, nested ones included, with what was sent', () => {
+    const problem = (block: unknown) => pageBlockProblem(block).replace(/ Its fields: .*$/, '');
+    assert.equal(problem({ type: 'milestones', items: [{ title: 'Beta', date: 'Oct 1' }] }),
+      'This milestones block is not valid: items[0].label is required; items[0].done is required; items[0].title is not a field.');
+    assert.equal(problem({ type: 'ring', items: [{ label: 'Tests', value: 60, color: 'green' }] }),
+      'This ring block is not valid: items[0].value must be at most 1, not 60; items[0].color is not a field.');
+    assert.equal(problem({ type: 'stepper', steps: [{ label: 'Build', note: 'x' }], current: 0 }), 'This stepper block is not valid: steps[0].note is not a field.');
+    assert.equal(problem({ type: 'stat', label: 'Run', value: '1', deltaTone: '成功' }), 'This stat block is not valid: deltaTone must be one of up|down|flat, not "成功".');
+    assert.equal(problem({ type: 'gauge', title: 'G', value: 1, min: 3, max: 2 }), 'This gauge block is not valid: the block breaks the rule "max is greater than min".');
+    assert.equal(problem({ type: 'gantt', items: [{ label: 'a', start: '2026-10-05', end: '2026-10-01' }] }),
+      'This gantt block is not valid: items[0] breaks the rule "each item ends on or after its start".');
+    assert.equal(problem({ type: 'checklist', items: [{ text: 'a' }, { text: 'b', done: 'yes', extra: 1 }] }),
+      'This checklist block is not valid: items[0].done is required; items[1].extra is not a field; items[1].done must be true or false, not "yes".');
+    assert.equal(problem({ type: 'toggle', title: 'T', blocks: [{ type: 'progress', title: 'P', actual: 3 }, { type: 'database-ref', databaseId: 'd' }] }),
+      'This toggle block is not valid: blocks[0].actual must be at most 1, not 3; blocks[1] is a database-ref block, which stays at the top level of the page.');
+    assert.equal(problem({ type: 'callout', text: 'x', interaction: { label: 'More' } }), 'This callout block is not valid: interaction.action is required.');
+  });
+
+  test('tells agents every rich field, with its kind, range, list size and cross-field rule', () => {
+    assert.equal(PAGE_BLOCK_CATALOG.milestones.fields, '{title?, items: [{label, date, done: boolean, note?, tone?: info|warn|success|danger}] (1-50)}');
+    assert.equal(PAGE_BLOCK_CATALOG.ring.fields, '{title?, items: [{label, value: number 0..1}] (1-8)}');
+    assert.equal(PAGE_BLOCK_CATALOG.stepper.fields, '{title?, steps: [{label, text?}] (1-50), current: integer ≥ 0}; current is at most the number of steps');
+    assert.equal(PAGE_BLOCK_CATALOG.actions.fields, '{buttons: [{label, prompt: text sent to the assistant when pressed}] (1-6)}');
+    assert.equal(PAGE_BLOCK_CATALOG.stat.fields, '{label, value, delta?, deltaTone?: up|down|flat, spark?: [number] (2-100)}');
+    assert.match(PAGE_BLOCK_CATALOG.form.fields, /fields: \[\{key, label, type: text\|number\|select\|date\|checkbox, required\?: boolean/);
+    assert.match(PAGE_BLOCK_CATALOG.chart.fields, /\{title, kind: pie, slices: \[\{label, value: number ≥ 0\}\] \(1-50\), donut\?: boolean\}/);
+    assert.doesNotMatch(pageBlockFieldsDoc(), /see schema/);
   });
 
   test('takes a line chart that says it does not stack, and epochs only as far as dates go', () => {

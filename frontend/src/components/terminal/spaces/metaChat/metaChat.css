@@ -138,12 +138,12 @@
   position: absolute; right: 8px; top: -4px; width: 10px; height: 10px; border-radius: 50%;
   background: var(--term-accent); border: 2px solid var(--term-surface);
 }
-/* With text ("Create with agent"): a capsule as wide as its label, same corner and height. */
+/* With text ("Create with agent"): the same button, only as wide as its label.
+   The icon keeps its place and size: 11px padding + 1px border puts it 12px in, as in the 44px square. */
 .meta-chat-pill[data-labelled] {
-  display: inline-flex; align-items: center; gap: 8px; width: auto; padding: 0 16px 0 14px;
-  border-radius: 999px; font: 500 var(--fs-md)/1 var(--ui-font); white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 8px; width: auto; padding: 0 14px 0 11px;
+  font: 500 var(--fs-md)/1 var(--ui-font); white-space: nowrap;
 }
-.meta-chat-pill[data-labelled] .meta-chat-pill__dot { right: 14px; }
 
 /* ── Host in the shell's content column, hidden outside Spaces ── */
 .spaces-meta-host { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }

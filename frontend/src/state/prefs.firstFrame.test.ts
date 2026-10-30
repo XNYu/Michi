@@ -10,9 +10,10 @@ const bootScript = [...head.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) =
 
 function firstFrame(stored: Record<string, string>) {
   const attributes: Record<string, string> = {};
+  const properties: Record<string, string> = {};
   const documentElement = {
     lang: '',
-    style: {} as Record<string, string>,
+    style: { setProperty(name: string, value: string) { properties[name] = value; } },
     setAttribute(name: string, value: string) { attributes[name] = value; },
   };
   const localStorage = { getItem: (key: string) => stored[key] ?? null };
@@ -21,7 +22,7 @@ function firstFrame(stored: Record<string, string>) {
     { documentElement },
     { language: 'en-US' },
   );
-  return { background: documentElement.style.background, palette: attributes['data-terminal-palette'] };
+  return { background: properties['--michi-boot-bg'], palette: attributes['data-terminal-palette'] };
 }
 
 describe('index.html first-frame palette', () => {
@@ -40,5 +41,10 @@ describe('index.html first-frame palette', () => {
 
   it('leaves the body background to the painted root', () => {
     expect(indexHtml).not.toMatch(/<body[^>]*background/);
+  });
+
+  it('leaves the root background to index.css so the live palette can replace it', () => {
+    // An inline html background would outrank the stylesheet and freeze the boot color.
+    expect(bootScript).not.toMatch(/style\.background\s*=/);
   });
 });

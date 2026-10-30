@@ -1,0 +1,93 @@
+/* Phone action sheet (BottomSheet.tsx). Layering and the scrim come from the
+   modal rungs; colours, corners, type and motion from the shared tokens. */
+.ui-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 0 calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--term-surface);
+  color: var(--term-fg);
+  border-top: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-lg) var(--ui-radius-lg) 0 0;
+  box-shadow: var(--term-float-shadow);
+  font-family: var(--ui-font);
+  outline: none;
+  animation: ui-sheet-in var(--t-enter) var(--t-ease) both;
+  -webkit-app-region: no-drag;
+}
+@keyframes ui-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+
+/* One group of actions; groups are divided by a hairline. */
+.ui-sheet__group {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  border-top: 1px solid var(--term-line);
+}
+.ui-sheet__action {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 50px;
+  padding: 0 18px;
+  border: 0;
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  font-size: var(--fs-2xl);
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-sheet__action > svg { flex: none; color: var(--term-mid); }
+.ui-sheet__action:active,
+.ui-sheet__action:hover { background: var(--term-hover-bg, var(--term-alt)); }
+.ui-sheet__action:focus-visible { outline: 2px solid var(--term-accent); outline-offset: -2px; }
+.ui-sheet__action[data-danger],
+.ui-sheet__action[data-danger] > svg { color: var(--term-danger-text); }
+.ui-sheet__action:disabled { color: var(--term-faint); cursor: not-allowed; }
+
+.ui-sheet__title {
+  margin: 0;
+  font-size: var(--fs-3xl);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--term-fg);
+  overflow-wrap: anywhere;
+}
+.ui-sheet__body {
+  margin: 0;
+  font-size: var(--fs-xl);
+  line-height: 1.55;
+  color: var(--term-mid);
+}
+.ui-sheet__section { display: grid; gap: 10px; padding: 8px 18px 4px; }
+
+/* Full-width buttons along the bottom: side by side, or stacked. */
+.ui-sheet__buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 16px 16px 0;
+}
+.ui-sheet__buttons[data-stacked] { grid-template-columns: 1fr; }
+.ui-sheet__buttons > .ui-btn {
+  min-height: 48px;
+  font-size: var(--fs-2xl);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-sheet { animation: none; }
+}
+:root[data-reduce-motion='on'] .ui-sheet { animation: none; }

@@ -17,6 +17,7 @@ import { createMaintenanceConfig, getMaintenanceConfig, getMaintenancePlan, getM
 import { createMaintenanceTools } from '../src/services/pages/maintenanceTools';
 import type { MaintenanceExecutionContext } from '../src/services/pages/maintenanceWriter';
 import { createPage, getDatabase, getPage } from '../src/services/pages/repository';
+import { acquirePageEditLease } from '../src/services/pages/editLeases';
 import { ScheduledJobEventBus } from '../src/services/scheduledJobs/events';
 import type { ScheduledJobRecord, ScheduledJobRunRecord } from '../src/services/scheduledJobs/repository';
 import { ScheduledJobsRepository } from '../src/services/scheduledJobs/repository';
@@ -261,6 +262,50 @@ function describeTest(): void {
     }
   });
 
+  test('a page a conversation is editing defers the plan: the run succeeds, waits for the lease, then resumes', async () => {
+    const { scheduler, executor, jobId } = fixture();
+    try {
+      const page = createPage({ workspaceId: 'ws', ownerUserId: OWNER, title: 'Release', now });
+      completeSource('source-a', 'Is the release ready?', 'The release is ready. Update the release page.');
+      getDb().prepare("INSERT INTO nodes(id,workspace_id,kind,status,created_at) VALUES('editor-node','ws','chat','streaming',?)").run(now);
+      getDb().prepare("INSERT INTO turns(turn_id,node_id,assistant_message_id,status,started_at,updated_at) VALUES('editor-turn','editor-node','editor-a','active',?,?)").run(now, now);
+      acquirePageEditLease({ pageId: page.id, ownerUserId: OWNER, workspaceId: 'ws', holder: { nodeId: 'editor-node', turnId: 'editor-turn' }, now });
+
+      const run = await beginManagedRun(scheduler, executor, jobId);
+      acknowledgeSource(run, 'source-a');
+      route(run, 'source-a', [{ kind: 'page', id: page.id }]);
+      const busy = tool(run, 'maintenance_read_page').execute({ sourceTurnId: 'source-a', pageId: page.id });
+      assert.equal(busy.isError, true);
+      assert.match(busy.content[0]!.text, /PAGE_BUSY/);
+      await finish(scheduler, run);
+
+      const job = scheduler.getJob(jobId);
+      assert.equal(job.lastStatus, 'succeeded');
+      assert.equal(job.consecutiveFailures, 0);
+      assert.match(scheduler.listRuns(jobId)[0]!.summary ?? '', /Waiting for a conversation to finish editing 1 page/);
+      assert.equal(job.conversationCursor, 0, 'the deferred source is not consumed');
+      const planId = run.hooks.maintenanceContext!.planId;
+      assert.equal(getMaintenancePlan(planId, OWNER)?.state, 'processing');
+      assert.equal((scheduler.startNow(jobId) as { refused?: string }).refused, 'no_work', 'no run while the page is held');
+
+      getDb().prepare("UPDATE turns SET status='completed' WHERE turn_id='editor-turn'").run();
+      const resumed = await beginManagedRun(scheduler, executor, jobId);
+      assert.equal(resumed.hooks.maintenanceContext!.planId, planId);
+      checked(tool(resumed, 'maintenance_read_page').execute({ sourceTurnId: 'source-a', pageId: page.id }));
+      checked(tool(resumed, 'maintenance_write_page').execute({ sourceTurnId: 'source-a', pageId: page.id,
+        ops: [{ op: 'insert', block: { type: 'callout', text: 'Release ready', tone: 'success' }, after: null }] }));
+      await finish(scheduler, resumed);
+      assert.equal(scheduler.getJob(jobId).lastStatus, 'succeeded');
+      assert.equal(getMaintenancePlan(planId, OWNER)?.state, 'terminal');
+      // As for any resumed plan, the next run recovers the terminal plan and advances the cursor without a model turn.
+      await scheduler.runNow(jobId);
+      await until(() => scheduler.getJob(jobId).activeRunId === null && scheduler.getJob(jobId).conversationCursor === 1);
+      assert.equal(executor.started.length, 2);
+    } finally {
+      await scheduler.stop();
+    }
+  });
+
   test('oversized managed source is loaded without inline feed content and acknowledged in bounded parts', async () => {
     const { scheduler, executor, jobId } = fixture();
     try {
@@ -419,7 +464,10 @@ function describeTest(): void {
       assert.deepEqual(first.hooks.runtimeProfile, { runtimeId: 'claude', providerId: null, modelId: 'opus', reasoning: 'high' });
 
       // A change during the run applies from the next run on.
-      updateAgentConfig({ runtime: 'pi', modelByRuntime: { pi: 'pi-model' }, reasoningByRuntime: { pi: 'low' } });
+      // The Pi provider is pinned: unpinned, it depends on the keys saved in the real ~/.michi credentials
+      // file and falls back to the model-locked free provider, whose model replaces the configured one.
+      updateAgentConfig({ runtime: 'pi', providerByRuntime: { pi: 'anthropic' }, modelByRuntime: { pi: 'pi-model' },
+        reasoningByRuntime: { pi: 'low' } });
       assert.equal(first.hooks.runtimeProfile?.runtimeId, 'claude');
       await finish(scheduler, first);
       const second = await beginManagedRun(scheduler, executor, jobId);

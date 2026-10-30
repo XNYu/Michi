@@ -1017,6 +1017,13 @@ body,
   height: 100%;
 }
 
+/* The canvas shows wherever the body box does not reach, such as behind the
+   iOS keyboard accessory bar. Follow the live palette, which TerminalShell
+   mirrors onto <html>; before it mounts, use the color index.html saved. */
+html {
+  background: var(--term-bg, var(--michi-boot-bg, #f3f4f6));
+}
+
 /* An application shell, not a document: the page itself never scrolls. Without
    this, iOS rubber-bands the whole page when a drag starts on fixed chrome (the
    composer, top bar, drawer tabs) or runs past the end of a transcript or list,
@@ -2537,64 +2544,124 @@ html[data-vibrancy="on"],
   .t-branch-anchor-meta { grid-column: 2; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; }
 }
 
-/* Quote-anchored links retain their existing inline treatment. */
-.t-branch-anchor-title {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--term-fg);
-  font: inherit;
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-color: var(--term-mauve);
-  text-underline-offset: 2px;
-}
-.t-branch-anchor-title:hover {
-  color: var(--term-mauve);
-}
-.t-branch-anchor-pulse {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--term-mauve);
-  color: var(--term-mauve);
-  box-shadow: 0 0 6px 0 currentColor;
-  animation: tpulse var(--t-loop) ease-in-out infinite;
-  margin-left: 6px;
-  vertical-align: middle;
-}
-
-/* BranchQuoteUnderline — in-message dotted underline + portaled hover card */
+/* BranchQuoteUnderline: a dotted underline over a passage that branches
+   quoted, and the card that peeks into them: each branch as a footnote with
+   its title, the question asked in it and the reply. */
 .t-branch-anchor-underline {
-  border-bottom: 1px dotted var(--term-mauve);
+  text-decoration: underline dotted var(--term-mauve) 1.5px;
+  text-underline-offset: 4px;
+  border-radius: var(--ui-radius-sm);
   cursor: pointer;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background var(--t-quick) var(--t-ease);
 }
-
-.t-branch-anchor-card {
+/* A tint lighter than the text's background in every palette (--term-mauve-f
+   is darker than the pane in dark ones). */
+.t-branch-anchor-underline:hover,
+.t-branch-anchor-underline[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--term-mauve) 15%, transparent);
+}
+.t-branch-anchor-underline:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: 2px;
+}
+.t-branch-card {
   position: fixed;
   z-index: var(--z-popover);
-  background: var(--term-surface);
-  border: 1px solid var(--term-line-s);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  width: min(364px, calc(100vw - 16px)); /* = CARD_WIDTH in BranchQuoteUnderline.tsx */
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  background: var(--term-float-bg, var(--term-surface));
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius-lg);
+  box-shadow: var(--term-float-shadow);
+  color: var(--term-fg);
   font-family: var(--ui-font);
-  font-size: var(--fs-sm);
-  padding: 6px 0;
-  min-width: 200px;
-  max-width: 320px;
+  -webkit-app-region: no-drag;
+  animation: fadeIn var(--t-soft) ease-out both;
 }
-
-.t-branch-anchor-card-row {
+.t-branch-card-item {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 100%;
+  padding: 11px 14px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-quick) var(--t-ease);
+}
+.t-branch-card-item + .t-branch-card-item { border-top: 1px solid var(--term-line); }
+.t-branch-card-item.is-compact { padding-block: 9px; }
+.t-branch-card-item:hover { background: color-mix(in srgb, var(--term-fg) 5%, transparent); }
+.t-branch-card-item:focus-visible { outline: 2px solid var(--term-accent); outline-offset: -2px; }
+.t-branch-card-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  color: var(--term-fg);
+  gap: 8px;
+  min-width: 0;
 }
-
-.t-branch-anchor-card-row .t-branch-anchor-time {
+.t-branch-card-glyph { flex-shrink: 0; color: var(--term-mauve); }
+.t-branch-card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.t-branch-card-item.is-compact .t-branch-card-title { font-weight: 500; }
+.t-branch-card-state {
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+.t-branch-card-time { color: var(--term-muted); }
+.t-branch-card-open {
+  flex-shrink: 0;
+  margin-left: -2px;
   color: var(--term-mid);
-  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--t-quick) var(--t-ease);
+}
+.t-branch-card-item:is(:hover, :focus-visible) .t-branch-card-open { opacity: 1; }
+/* The opening exchange: a label column (you / michi) beside the words. */
+.t-branch-card-exchange {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 5px 8px;
+  font-size: var(--fs-md);
+  line-height: 1.65;
+}
+.t-branch-card-who { color: var(--term-faint); font-size: var(--fs-sm); line-height: 1.8; }
+.t-branch-card-question,
+.t-branch-card-reply {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.t-branch-card-question { color: var(--term-fg); -webkit-line-clamp: 2; }
+.t-branch-card-reply { color: var(--term-mid); -webkit-line-clamp: 3; }
+.t-branch-card-typing { display: inline-flex; align-items: center; height: 1.65em; }
+.t-branch-card-typing .typing-dot { background: var(--term-select); }
+@media (hover: none) and (pointer: coarse) {
+  .t-branch-card-item { min-height: 44px; }
+  .t-branch-card-open { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .t-branch-anchor-underline, .t-branch-card-item, .t-branch-card-open { transition: none; }
+  .t-branch-card { animation: none; }
+  .t-branch-card-typing .typing-dot { animation: none; }
 }
 
 .t-att-chips {
@@ -3605,6 +3672,52 @@ html[data-vibrancy="on"],
   max-height: 40vh;
   overflow-y: auto;
 }
+/* Title line plus one `Label: value` fact per line (approval questions):
+   the facts form a two-column list; a quoted value (a job's prompt) gets
+   the full width as a quote. */
+.ask-card-qtext-structured {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  white-space: normal;
+}
+.ask-card-qtitle {
+  font-weight: 600;
+  white-space: pre-wrap;
+}
+.ask-card-details {
+  display: grid;
+  grid-template-columns: fit-content(40%) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 14px;
+  row-gap: 7px;
+  padding: 10px 12px;
+  border-radius: var(--ui-radius-sm);
+  background: color-mix(in srgb, var(--term-fg) 4%, transparent);
+  font-size: var(--fs-md);
+  font-weight: 400;
+}
+.ask-card-detail { display: contents; }
+.ask-card-detail-label {
+  color: var(--term-muted);
+  font-size: var(--fs-sm);
+}
+.ask-card-detail-value {
+  color: var(--term-fg);
+  white-space: pre-wrap;
+}
+.ask-card-detail.is-quoted .ask-card-detail-label,
+.ask-card-detail.is-quoted .ask-card-detail-value,
+.ask-card-detail.is-note { grid-column: 1 / -1; }
+.ask-card-detail.is-quoted .ask-card-detail-label { margin-top: 3px; }
+.ask-card-detail.is-quoted .ask-card-detail-value {
+  margin-top: -3px;
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, var(--term-accent) 45%, transparent);
+  color: var(--term-mid);
+  line-height: 1.5;
+}
+.ask-card-detail.is-note { color: var(--term-mid); }
 .ask-card-hint {
   color: var(--term-mid);
   font-size: var(--fs-sm);
@@ -4206,17 +4319,13 @@ html[data-vibrancy="on"],
    cursor blink, spinning glyphs) so the GPU + compositor can idle when the tab
    is backgrounded. Set via a visibilitychange listener on <html>. */
 html[data-page-hidden] *,
-html[data-page-hidden] .typing-dot,
-html[data-page-hidden] .t-branch-anchor-pulse {
+html[data-page-hidden] .typing-dot {
   animation-play-state: paused !important;
 }
 
 /* GPU layer promotion for frequently-animated micro elements. */
 .typing-dot {
   will-change: transform;
-}
-.t-branch-anchor-pulse {
-  will-change: opacity;
 }
 
 /* Map — Glass Workbench effects. All colors via theme tokens (the only literal

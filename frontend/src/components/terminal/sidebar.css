@@ -13,3 +13,41 @@
   text-transform: uppercase;
   color: var(--term-muted);
 }
+
+/* Phone drawer: the current lens name and the Activity on/off switch. */
+.sidebar-lens-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 4px calc(6px + var(--sb-inset, 0px)) 0 calc(var(--sb-area-left, 20px) + var(--sb-inset, 0px));
+}
+.sidebar-lens-header__title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--term-mid);
+}
+.sidebar-lens-header__toggle {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+}
+.sidebar-lens-header__toggle[aria-pressed='true'] {
+  background: var(--term-accent-f);
+  color: var(--term-accent);
+}
+.sidebar-lens-header__toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent);
+  outline-offset: -2px;
+}

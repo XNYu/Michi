@@ -1,7 +1,8 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import SelectionActions, { placeTouchPopup, stickyPlacement, findMessageIdForRange, type SelectionActionsProps } from './SelectionActions';
+import { DOCK_ROOM_VAR } from './selectionDockRoom';
+import SelectionActions, { dockClearance, placeDock, placeTouchPopup, stickyPlacement, findMessageIdForRange, type SelectionActionsProps } from './SelectionActions';
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return {
@@ -603,11 +604,11 @@ describe('SelectionActions', () => {
     const bar = () => document.body.querySelector('.sel-actions-enter') as HTMLElement;
 
     // Pane 0..1000 × 0..600, fallback bar 280 × 36, selection 300..460 ×
-    // 200..240. The platform menu fits above it (200 ≥ 64), so the bar goes
-    // below, clear of the end handle: 240 + 24.
+    // 200..240. The platform menu may open on either side, even with room
+    // above, so the bar goes below, beyond the menu's lower slot: 240 + 64.
     select(5, 'touch');
     expect(bar().style.left).toBe('240px');
-    expect(bar().style.top).toBe('264px');
+    expect(bar().style.top).toBe('304px');
 
     // Near the composer there is no room below: above the selection, beyond
     // the platform menu's slot: 500 − 64 − 36.
@@ -615,8 +616,7 @@ describe('SelectionActions', () => {
     select(11, 'touch');
     expect(bar().style.top).toBe('400px');
 
-    // Near the top the platform menu goes below the selection: the bar goes
-    // under that slot as well: 70 + 64.
+    // Near the top the same rule holds: 70 + 64.
     lineRects = [rect(300, 30, 120, 18), rect(300, 52, 160, 18)];
     select(5, 'touch');
     expect(bar().style.top).toBe('134px');
@@ -627,6 +627,148 @@ describe('SelectionActions', () => {
     expect(bar()).toBeNull();
     select(11, 'mouse');
     expect(bar().style.top).toBe('448px');
+  });
+});
+
+describe('SelectionActions on a phone', () => {
+  const originalWidth = window.innerWidth;
+  const originalGetBoundingClientRect = Range.prototype.getBoundingClientRect;
+  const originalGetClientRects = Range.prototype.getClientRects;
+  let line = rect(50, 200, 290, 20);
+  beforeEach(() => {
+    vi.useFakeTimers();
+    line = rect(50, 200, 290, 20);
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      configurable: true,
+      value: vi.fn(() => [line] as unknown as DOMRectList),
+    });
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: vi.fn(() => line),
+    });
+  });
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: originalGetBoundingClientRect });
+    Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: originalGetClientRects });
+    window.getSelection()?.removeAllRanges();
+    vi.useRealTimers();
+  });
+
+  function Harness({ onBranch = vi.fn(), scrollBy }: { onBranch?: () => void; scrollBy?: (options: ScrollToOptions) => void }) {
+    const ref = React.useRef<HTMLDivElement>(null);
+    const composerRef = React.useRef<HTMLDivElement>(null);
+    React.useEffect(() => {
+      if (ref.current) ref.current.getBoundingClientRect = () => rect(0, 90, 390, 600);
+      if (ref.current && scrollBy) {
+        // Scrolled to the end: 400 + 600 = 1000.
+        Object.defineProperty(ref.current, 'scrollHeight', { configurable: true, value: 1000 });
+        Object.defineProperty(ref.current, 'clientHeight', { configurable: true, value: 600 });
+        ref.current.scrollTop = 400;
+        ref.current.scrollBy = scrollBy as HTMLElement['scrollBy'];
+      }
+      if (composerRef.current) composerRef.current.getBoundingClientRect = () => rect(12, 712, 366, 50);
+    }, [scrollBy]);
+    return (
+      <div>
+        <div ref={ref}>
+          hello world foobar
+          <SelectionActions containerRef={ref} onBranch={onBranch} onQuote={vi.fn()} onComment={vi.fn()} />
+        </div>
+        <div ref={composerRef} className="terminal-composer">Reply…</div>
+      </div>
+    );
+  }
+
+  const select = (pointerType: string) => {
+    const textNode = screen.getByText(/hello world foobar/).firstChild!;
+    act(() => {
+      pointerDown(pointerType);
+      const range = document.createRange();
+      range.setStart(textNode, 0);
+      range.setEnd(textNode, 5);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+      vi.advanceTimersByTime(80);
+    });
+  };
+  const bar = () => document.body.querySelector('.sel-actions-enter') as HTMLElement | null;
+
+  it('docks the bar of a touch selection over the composer', () => {
+    render(<Harness />);
+    select('touch');
+    expect(bar()!.classList.contains('is-dock')).toBe(true);
+    expect(bar()!.style.left).toBe('12px');
+    expect(bar()!.style.top).toBe('712px');
+    expect(bar()!.style.width).toBe('366px');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    expect(bar()).toBeNull();
+    expect(window.getSelection()?.isCollapsed).toBe(true);
+  });
+
+  it('opens the Branch sheet from the docked bar', () => {
+    render(<Harness />);
+    select('touch');
+    fireEvent.click(screen.getByRole('button', { name: 'Branch' }));
+    expect(bar()!.classList.contains('is-sheet')).toBe(true);
+    expect(bar()!.classList.contains('is-dock')).toBe(false);
+  });
+
+  it('keeps a mouse selection beside the text', () => {
+    render(<Harness />);
+    select('mouse');
+    expect(bar()!.classList.contains('is-dock')).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
+  });
+
+  it('scrolls a selection on the last lines up clear of the docked bar, adding room at the end', () => {
+    // Last line ends at 690; the platform menu below it needs up to 754,
+    // the docked bar starts at 712: 42px.
+    line = rect(50, 670, 290, 20);
+    const scrollBy = vi.fn();
+    const { container } = render(<Harness scrollBy={scrollBy} />);
+    const scroller = container.firstElementChild!.firstElementChild as HTMLElement;
+    select('touch');
+    expect(scrollBy).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(350); });
+    expect(scrollBy).toHaveBeenCalledWith({ top: 42, behavior: 'smooth' });
+    expect(scroller.style.getPropertyValue(DOCK_ROOM_VAR)).toBe('42px');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    expect(scroller.style.getPropertyValue(DOCK_ROOM_VAR)).toBe('');
+  });
+
+  it('does not scroll a selection already clear of the docked bar', () => {
+    const scrollBy = vi.fn();
+    render(<Harness scrollBy={scrollBy} />);
+    select('touch');
+    act(() => { vi.advanceTimersByTime(350); });
+    expect(scrollBy).not.toHaveBeenCalled();
+  });
+});
+
+describe('dockClearance', () => {
+  it('lifts the last line so the platform menu below it ends above the bar', () => {
+    expect(dockClearance([rect(50, 670, 290, 20)], 712, 90)).toBe(42);
+    expect(dockClearance([rect(50, 600, 290, 20)], 712, 90)).toBe(0);
+  });
+
+  it('leaves a selection alone when lifting it would push its first line out of view', () => {
+    expect(dockClearance([rect(50, 100, 290, 20), rect(50, 670, 290, 20)], 712, 90)).toBe(0);
+  });
+});
+
+describe('placeDock', () => {
+  it('fills one composer row along its bottom edge', () => {
+    expect(placeDock({ left: 12, bottom: 762, width: 366, height: 50 }))
+      .toEqual({ left: 12, top: 712, width: 366, height: 50 });
+    // A tall composer keeps the top of its draft visible.
+    expect(placeDock({ left: 12, bottom: 762, width: 366, height: 140 }).top).toBe(706);
+    // A short one still gets a touch-sized bar.
+    expect(placeDock({ left: 12, bottom: 762, width: 366, height: 30 }).height).toBe(44);
   });
 });
 
@@ -641,9 +783,10 @@ describe('placeTouchPopup', () => {
   const pane = { left: 0, top: 100, right: 390, bottom: 800, width: 390, height: 700 };
   const line = (top: number) => rect(50, top, 290, 20);
 
-  it('goes below the selection, clear of the end handle, when the platform menu is above', () => {
+  it('goes below the selection, beyond the platform menu, even with room above for the menu', () => {
+    // iOS 26 can open its menu below such a selection (IMG_3705).
     expect(placeTouchPopup(pane, [line(300)], 700, 280, 40))
-      .toEqual({ left: 55, top: 344, above: false });
+      .toEqual({ left: 55, top: 384, above: false });
   });
 
   it('goes above the selection, beyond the platform menu, when there is no room below', () => {
@@ -651,13 +794,10 @@ describe('placeTouchPopup', () => {
       .toEqual({ left: 55, top: 536, above: true });
   });
 
-  it('goes under the platform menu when the selection is too near the top for the menu above', () => {
+  it('goes under the platform menu when the selection is near the top', () => {
     const topPane = { ...pane, top: 0 };
     expect(placeTouchPopup(topPane, [line(40)], 700, 280, 40))
       .toEqual({ left: 55, top: 124, above: false });
-    // Measured from the visible viewport top, not the layout viewport.
-    expect(placeTouchPopup(pane, [line(300)], 700, 280, 40, 250))
-      .toEqual({ left: 55, top: 384, above: false });
   });
 
   it('docks above the composer when the selection fills the pane', () => {

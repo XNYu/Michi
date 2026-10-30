@@ -1,4 +1,4 @@
-/* Michi Home: greeting, quick starts and the "Start here" cards. Tokens only. */
+/* Michi Home: greeting and the "Start here" cards. Tokens only. */
 
 .home-scroll {
   container: home-scroll / inline-size;
@@ -93,22 +93,6 @@
 @media (pointer: coarse) {
   .home-compose .terminal-composer,
   .home-compose .composer-tray { --composer-chip-height: 40px; }
-}
-
-.home-starters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ui-btn.home-starter {
-  color: var(--term-mid);
-  background: var(--term-surface);
-  padding: 5px 10px;
-}
-.ui-btn.home-starter:hover:not(:disabled) {
-  color: var(--term-fg);
-  border-color: var(--term-line-s);
-  background: var(--term-surface);
 }
 
 .home-cards {

@@ -177,7 +177,10 @@ describe('FilePane reading position across page navigation', () => {
   it('preserves reading past an already handled source request on remount', async () => {
     const item = makeItem({ sourceLocation: { line: 10 } });
     const view = render(<Page item={item} />);
-    (await loadedScroll(view.container)).scrollTop = 740;
+    const scroll = await loadedScroll(view.container);
+    // Loading text precedes the effect that handles the source-line request.
+    await waitFor(() => expect(scroll.scrollTop).toBeGreaterThan(0));
+    scroll.scrollTop = 740;
     view.rerender(<Page item={item} visible={false} />);
     view.rerender(<Page item={item} />);
     expect((await loadedScroll(view.container)).scrollTop).toBe(740);

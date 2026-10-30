@@ -19,7 +19,7 @@ import { runInTransaction } from '../db';
 import { withoutSources } from '../metaAgent/firstRunSources';
 import { PageWriteError } from './core';
 import {
-  createMaintenanceWriter, getPlannedMaintenanceResource, reobserveRoutedResource, requireMaintenanceResource, requireMaintenanceSource,
+  createMaintenanceWriter, deferIfPageLeased, getPlannedMaintenanceResource, reobserveRoutedResource, requireMaintenanceResource, requireMaintenanceSource,
   listMaintenanceSourceResources, routeMaintenanceSource, type MaintenanceExecutionContext,
 } from './maintenanceWriter';
 
@@ -133,6 +133,8 @@ function noChange(context: MaintenanceExecutionContext, args: Record<string, unk
   });
   if (prior) return prior;
   if (!['routing', 'processing'].includes(plan.state)) throw new PageWriteError(409, 'stale_revision', 'Maintenance plan is terminal');
+  // Giving up on a busy page would lose this source's update to it: leave it pending instead.
+  if (kind === 'page') deferIfPageLeased(context, sourceTurnId as string, args.resourceId, now);
   // Check before freezing: a payload frozen against a moved target could never be recorded or replaced.
   assertMaintenanceResourceCurrent({ workspaceId: context.workspaceId, ownerUserId: context.ownerUserId,
     planId: context.planId, sourceTurnId: sourceTurnId as string, resource });
@@ -209,6 +211,8 @@ export function createMaintenanceTools(
         // The first range refreshes a routed page's revision; a continuation must still match the one it started from.
         if (!args.offset) reobserveRoutedResource(context, args.sourceTurnId as string, 'page', args.pageId as string);
         const ref = requireMaintenanceResource(context, args.sourceTurnId as string, 'page', args.pageId as string);
+        // A page a conversation is editing is not read: it could not be written in this run anyway.
+        deferIfPageLeased(context, args.sourceTurnId as string, ref.id, currentTime());
         const page = getMaintenancePageBlocks(ref.id, context.ownerUserId, {
           ...(typeof args.offset === 'number' ? { offset: args.offset } : {}),
           ...(typeof args.limit === 'number' ? { limit: args.limit } : {}),

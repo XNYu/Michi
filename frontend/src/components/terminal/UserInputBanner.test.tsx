@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { vi, describe, it, expect, afterEach } from 'vitest';
-import UserInputBanner, { ResolvedUserInput } from './UserInputBanner';
+import UserInputBanner, { ResolvedUserInput, questionLayout } from './UserInputBanner';
 import type { UserInputRequest } from '../../state/chatTypes';
 
 vi.mock('../../state/prefs', () => ({
@@ -94,6 +94,36 @@ describe('UserInputBanner', () => {
     expect((next as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(prev);
     expect(screen.getByText('1 / 2')).toBeTruthy();
+  });
+
+  it('lays out an approval question as a title and labelled facts', () => {
+    expect(questionLayout([
+      'Create scheduled job “Digest”?',
+      'Permissions: Ask: tool approvals wait for you',
+      'Permissions (unchanged): Trust',
+      'Name → Nightly',
+      'Removes the job and its run history.',
+      'Prompt: “Summarize 18:00 changes…”',
+    ].join('\n'))).toEqual({
+      title: 'Create scheduled job “Digest”?',
+      details: [
+        { label: 'Permissions', value: 'Ask: tool approvals wait for you' },
+        { label: 'Permissions (unchanged)', value: 'Trust' },
+        { label: 'Name', value: 'Nightly' },
+        { value: 'Removes the job and its run history.' },
+        { label: 'Prompt', value: 'Summarize 18:00 changes…', quoted: true },
+      ],
+    });
+  });
+
+  it('keeps questions without labelled facts, or with a blank line, as written', () => {
+    expect(questionLayout('Which auth approach?')).toBeNull();
+    expect(questionLayout('Send this message to "A"?\n\nStatus: done\nNext: review')).toBeNull();
+    expect(questionLayout('Pick one\nsee https://example.com/a:b')).toBeNull();
+    const text = 'Send this message?\n\nStatus: done';
+    render(<UserInputBanner userInput={req({ questions: [{ question: text, options: [{ label: 'Send' }], multiSelect: false }] })} onSubmit={() => {}} onSkip={() => {}} />);
+    expect(document.querySelector('.ask-card-qtext')?.textContent).toBe(text);
+    expect(document.querySelector('.ask-card-details')).toBeNull();
   });
 
   it('renders resolved answers read-only', () => {

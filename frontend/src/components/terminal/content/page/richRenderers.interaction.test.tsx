@@ -10,8 +10,14 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('native rich content', () => {
   it('keeps a renderer for every persisted content type drawn by MichiBlock', () => {
-    // NativePageDocument handles definitions, resource links, components and Home sections; MichiBlock handles view entries directly.
+    // NativePageDocument renders resource links, sandboxed components and live Home sections;
+    // MichiBlock itself draws view links as entries and view definitions as nothing.
     for (const type of PAGE_BLOCK_TYPES.filter((type) => !['page-link', 'component', 'home-section', 'view', 'view-link'].includes(type))) expect(rendererFor(type), type).toBeTypeOf('function');
+    const link = render(<MichiBlock block={{ type: 'view-link', label: 'Open details', action: { type: 'open-view', viewId: 'details' } }} ctx={{ depth: 0 }} />);
+    expect(link.container.querySelector('a.page-view-entry[href="#view/details"]')?.textContent).toContain('Open details');
+    expect(link.container.querySelector('[data-michi-block="unknown"]')).toBeNull();
+    const view = render(<MichiBlock block={{ type: 'view', viewId: 'details', title: 'Details', blockIds: ['a'] }} ctx={{ depth: 0 }} />);
+    expect(view.container.innerHTML).toBe('');
   });
 
   it('adapts existing charts without changing their stored values or metadata', () => {

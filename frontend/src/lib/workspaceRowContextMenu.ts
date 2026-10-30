@@ -1,6 +1,19 @@
 import type { Project } from '../state/chatTypes';
 
+/** Stable names for the workspace actions, for surfaces that draw their own
+ *  glyph per action (the phone action sheet). */
+export type WorkspaceRowActionId =
+  | 'manage'
+  | 'folder'
+  | 'rename'
+  | 'pin'
+  | 'unpin'
+  | 'archive'
+  | 'unarchive'
+  | 'delete';
+
 export interface ContextMenuItem {
+  id?: WorkspaceRowActionId;
   label: string;
   onSelect: () => void;
   danger?: boolean;
@@ -24,6 +37,9 @@ export interface WorkspaceRowActions {
   openManageWorkspace: (projectId: string) => void;
   /** Ask the desktop shell to bind a different absolute folder. */
   changeFolder?: (projectId: string) => void;
+  /** Ask for confirmation in the caller's own UI; without it, Delete asks
+   *  through window.confirm and deletes. */
+  requestDelete?: (projectId: string) => void;
 }
 
 export interface BuildWorkspaceRowArgs {
@@ -41,11 +57,13 @@ export function buildWorkspaceRowContextMenu(
     {
       items: [
         {
+          id: 'manage',
           label: 'Manage workspace',
           keys: 'M',
           onSelect: () => actions.openManageWorkspace(project.id),
         },
         ...(actions.changeFolder ? [{
+          id: 'folder' as const,
           label: project.cwd ? 'Change folder…' : 'Link folder…',
           onSelect: () => actions.changeFolder!(project.id),
         }] : []),
@@ -54,20 +72,23 @@ export function buildWorkspaceRowContextMenu(
     {
       items: [
         {
+          id: 'rename',
           label: 'Rename…',
           keys: 'R',
           onSelect: () => actions.beginInlineRename(project.id),
         },
         pinned
-          ? { label: 'Unpin', keys: 'P', onSelect: () => actions.unpinProject(project.id) }
-          : { label: 'Pin', keys: 'P', onSelect: () => actions.pinProject(project.id) },
+          ? { id: 'unpin', label: 'Unpin', keys: 'P', onSelect: () => actions.unpinProject(project.id) }
+          : { id: 'pin', label: 'Pin', keys: 'P', onSelect: () => actions.pinProject(project.id) },
         archived
           ? {
+              id: 'unarchive',
               label: 'Unarchive',
               keys: 'A',
               onSelect: () => actions.unarchiveProject(project.id),
             }
           : {
+              id: 'archive',
               label: 'Archive',
               keys: 'A',
               onSelect: () => actions.archiveProject(project.id),
@@ -77,10 +98,15 @@ export function buildWorkspaceRowContextMenu(
     {
       items: [
         {
+          id: 'delete',
           label: 'Delete workspace…',
           danger: true,
           keys: 'D',
           onSelect: () => {
+            if (actions.requestDelete) {
+              actions.requestDelete(project.id);
+              return;
+            }
             if (
               window.confirm(
                 `Delete "${project.name}" and all its threads? You can restore it from Trash.`,

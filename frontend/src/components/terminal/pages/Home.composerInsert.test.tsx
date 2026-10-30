@@ -7,7 +7,6 @@ import type { HomeCardsDto } from 'michi-shared';
 import TerminalHome from './Home';
 import { __resetManageComposerSessionStateForTests } from '../manage/ManageComposer';
 import { __resetHomeCardsCacheForTests } from '../../../state/homeCards/useHomeCards';
-import { HOME_STARTERS } from '../home/HomeGreeting';
 import { docToDraft, draftToDoc } from '../../mentionDoc';
 import type { ChatNodeState, Project } from '../../../state/chatTypes';
 
@@ -85,36 +84,24 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('Michi Home puts prompts into the shared composer', () => {
-  it.each(HOME_STARTERS)('$label fills the editor with an editable prompt without sending', async ({ label, prompt }) => {
-    const onSubmitted = await renderHome();
-    fireEvent.click(screen.getByRole('button', { name: label }));
-    expect(composerText()).toBe(prompt);
-    await waitFor(() => expect(editorOf().view.dom.contains(document.activeElement)).toBe(true));
-    expect(caretAtEnd()).toBe(true);
-    act(() => { editorOf().commands.insertContent(' Include a short checklist.'); });
-    expect(composerText()).toBe(`${prompt} Include a short checklist.`);
-    expect(store.createThread).not.toHaveBeenCalled();
-    expect(store.sendMessage).not.toHaveBeenCalled();
-    expect(onSubmitted).not.toHaveBeenCalled();
-  });
-
-  it('a card fills the empty composer, the caret waits after it, and nothing is sent', async () => {
+  it('a card fills the empty composer with an editable prompt, the caret waits after it, and nothing is sent', async () => {
     const onSubmitted = await renderHome();
     fireEvent.click(screen.getByTestId('home-card'));
     expect(composerText()).toBe('把事务回滚和跨工作区移动两个用例跑完。');
     await waitFor(() => expect(editorOf().view.dom.contains(document.activeElement)).toBe(true));
     expect(caretAtEnd()).toBe(true);
+    act(() => { editorOf().commands.insertContent('再补一个回归用例。'); });
+    expect(composerText()).toBe('把事务回滚和跨工作区移动两个用例跑完。再补一个回归用例。');
     expect(store.createThread).not.toHaveBeenCalled();
     expect(store.sendMessage).not.toHaveBeenCalled();
     expect(onSubmitted).not.toHaveBeenCalled();
   });
 
-  it('a card and a quick start go on new lines under what the user wrote', async () => {
+  it('a card goes on a new line under what the user wrote', async () => {
     await renderHome();
     act(() => { editorOf().commands.setContent(draftToDoc('my own words', [])); });
     fireEvent.click(screen.getByTestId('home-card'));
-    fireEvent.click(screen.getByRole('button', { name: 'Recap today' }));
-    expect(composerText()).toBe(`my own words\n把事务回滚和跨工作区移动两个用例跑完。\n${HOME_STARTERS[0]!.prompt}`);
+    expect(composerText()).toBe('my own words\n把事务回滚和跨工作区移动两个用例跑完。');
     expect(caretAtEnd()).toBe(true);
     expect(store.sendMessage).not.toHaveBeenCalled();
   });

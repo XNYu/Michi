@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
 
+/** The bottom of the layout viewport that the visual viewport leaves uncovered. */
+export function keyboardInsetOf(viewport: VisualViewport): number {
+  return Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop));
+}
+
 /**
  * How much of the layout viewport's bottom an on-screen keyboard covers, in
  * CSS px. Mobile Safari does not resize the layout viewport for the keyboard,
@@ -14,7 +19,7 @@ export function useKeyboardInset(active: boolean): number {
       setInset(0);
       return;
     }
-    const measure = () => setInset(Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)));
+    const measure = () => setInset(keyboardInsetOf(viewport));
     measure();
     viewport.addEventListener('resize', measure);
     viewport.addEventListener('scroll', measure);

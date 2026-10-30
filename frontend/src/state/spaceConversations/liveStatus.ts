@@ -29,7 +29,8 @@ export function progressStatusLine(node: ChatNodeState): string {
   return progressCardStatusLine({ awaiting: nodeAwaiting(node), activity: node.runtimeActivity, reply: lastAssistant(node) });
 }
 
-function nodeAwaiting(node: ChatNodeState): ProgressCardAwaiting | null {
+/** What kind of answer a conversation in this window waits on from you, if any. */
+export function nodeAwaiting(node: ChatNodeState): ProgressCardAwaiting | null {
   if (node.pendingPermission) return 'approval';
   return node.pendingUserInput && !node.pendingUserInput.resolved ? 'question' : null;
 }
@@ -41,7 +42,7 @@ function oneLine(text: string | null | undefined): string | null {
 }
 
 /** The request a conversation in this window waits on: the approval's title, or the question it asks. */
-function nodeWaitingFor(node: ChatNodeState): string | null {
+export function nodeWaitingFor(node: ChatNodeState): string | null {
   if (node.pendingPermission) return oneLine(node.pendingPermission.title);
   const question = node.pendingUserInput && !node.pendingUserInput.resolved ? node.pendingUserInput.questions?.[0] : undefined;
   return oneLine(question ? question.question || question.header : null);

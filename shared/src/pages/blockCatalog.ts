@@ -7,11 +7,13 @@
  * blocks.ts.
  */
 import { RICH_BLOCK_CATALOG, richContentText } from './richCatalog';
-import { richBlockJsonSchema, richChartSchema } from './richBlocks';
+import {
+  RICH_BLOCK_SCHEMAS, RICH_CHART_RULES, blockPath, briefJsonSchema, richBlockJsonSchema, richChartSchema, sentValue, zodBlockIssues, type RichBlockType,
+} from './richBlocks';
 import { PAGE_VIEW_PRESENTATIONS } from './viewInteractions';
 import {
   BLOCK_TONES, CHART_KINDS, CRITERION_STATES, FORGOT_STATES, METRIC_TONES, NEXT_STEP_WHO, PAGE_BLOCK_LIMITS as LIMITS,
-  parsePageBlockInput, type CriterionState, type PageBlockInput, type PlanActualAmount, type PlanActualSpan,
+  isPageDay, isTimelineAt, parsePageBlockInput, type CriterionState, type PageBlockInput, type PlanActualAmount, type PlanActualSpan,
 } from './blocks';
 
 export type PageBlockType = PageBlockInput['type'];
@@ -287,7 +289,8 @@ export const PAGE_BLOCK_CATALOG: { readonly [T in PageBlockType]: PageBlockCatal
     type: 'chart', label: 'Chart', category: 'data',
     blurb: 'Twelve chart designs, including bars, lines, pies and heatmaps.',
     describe: 'Chart kind chooses the data: bar/line/area/composite use series with points; pie uses slices; scatter/bubble use numeric x/y; radar uses axes and values; heatmap uses days; funnel uses steps; sparkline uses values; sankey uses nodes and links. Existing bar/line charts with labels and series values remain supported.',
-    fields: '{title, kind: bar|line|area|composite|pie|scatter|bubble|radar|heatmap|funnel|sparkline|sankey, ...kind-specific data}; legacy: {title, kind: bar|line, labels: [text], series: [{label, values: [number ≥ 0, one per label]}], stacked?, unit?}',
+    fields: `${briefJsonSchema(richBlockJsonSchema(richChartSchema))}; ${Object.values(RICH_CHART_RULES).join('; ')}; `
+      + 'legacy: {title, kind: bar|line, labels: [text], series: [{label, values: [number ≥ 0, one per label]}], stacked?, unit?}',
     schema: { type: 'object', properties: { type: { type: 'string', enum: ['chart'] } }, anyOf: [richBlockJsonSchema(richChartSchema), block('chart', 'A simple bar or line chart: labels along the bottom and up to 3 series, each with one value per label; stacked stacks the bars.', {
       title, kind: { type: 'string', enum: [...CHART_KINDS] }, labels: list(str(LIMITS.chartLabel), LIMITS.chartLabels, 1),
       series: list(object({ label: str(LIMITS.value), values: list(amount, LIMITS.chartLabels, 1) }, ['label', 'values']), LIMITS.chartSeries, 1),
@@ -495,32 +498,129 @@ export function pageBlockFieldsDoc(): string {
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+const kindOf = (value: unknown): string => (Array.isArray(value) ? 'a list' : value === null ? 'null' : typeof value === 'object' ? 'an object' : typeof value);
+const has = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key);
+
+/** Content that a container may not hold, as blocks.ts refuses it. */
+const TOP_LEVEL_ONLY = new Set<string>(['database-ref', 'page-link', 'component', 'threads', 'conflict', 'home-section', 'view']);
+/** Containers nest at most this deep, as blocks.ts counts it. */
+const MAX_DEPTH = 2;
+
+type Schema = Record<string, unknown>;
+
+/**
+ * Where a value breaks a block's JSON Schema, one sentence per field:
+ * `items[0].done is required`. Rules the schema cannot say (a table row's
+ * width, a chart's matching lengths) find nothing here and fall back to the
+ * type's fields.
+ */
+function schemaIssues(schema: Schema, value: unknown, path: string, depth: number): string[] {
+  const where = path || 'the block';
+  const sent = sentValue(value);
+  if (value === undefined) return [`${where} is required`];
+  if (schema === at) return isTimelineAt(value) ? [] : [`${where} must be epoch milliseconds or an ISO 8601 date (YYYY-MM-DD) or date-time${sent}`];
+  if (schema === day) return isPageDay(value) ? [] : [`${where} must be a real date YYYY-MM-DD${sent}`];
+  const branches = (schema.anyOf ?? schema.oneOf) as Schema[] | undefined;
+  if (Array.isArray(branches)) {
+    const results = branches.map((branch) => schemaIssues(branch, value, path, depth));
+    if (results.some((issues) => issues.length === 0)) return [];
+    if (typeof schema.description === 'string' && (typeof value !== 'object' || value === null)) return [`${where} must be ${schema.description}${sent}`];
+    return results.reduce((best, issues) => (issues.length < best.length ? issues : best));
+  }
+  if (has(schema, 'const')) return value === schema.const ? [] : [`${where} must be ${JSON.stringify(schema.const)}${sent}`];
+  if (Array.isArray(schema.enum)) return schema.enum.includes(value) ? [] : [`${where} must be one of ${schema.enum.join('|')}${sent}`];
+  switch (schema.type) {
+    case 'string': {
+      if (typeof value !== 'string') return [`${where} must be text, not ${kindOf(value)}`];
+      if (typeof schema.minLength === 'number' && value.length < schema.minLength) return [schema.minLength === 1 ? `${where} must not be empty` : `${where} must be at least ${schema.minLength} characters`];
+      if (typeof schema.maxLength === 'number' && value.length > schema.maxLength) return [`${where} is longer than ${schema.maxLength} characters`];
+      if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern).test(value)) return [`${where} must match ${schema.pattern}${sent}`];
+      return [];
+    }
+    case 'number':
+    case 'integer': {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return [`${where} must be a number, not ${kindOf(value)}`];
+      if (schema.type === 'integer' && !Number.isInteger(value)) return [`${where} must be a whole number${sent}`];
+      if (typeof schema.minimum === 'number' && value < schema.minimum) return [`${where} must be at least ${schema.minimum}${sent}`];
+      if (typeof schema.maximum === 'number' && value > schema.maximum) return [`${where} must be at most ${schema.maximum}${sent}`];
+      return [];
+    }
+    case 'boolean': return typeof value === 'boolean' ? [] : [`${where} must be true or false${sent}`];
+    case 'array': {
+      if (!Array.isArray(value)) return [`${where} must be a list, not ${kindOf(value)}`];
+      const issues: string[] = [];
+      if (typeof schema.minItems === 'number' && value.length < schema.minItems) issues.push(`${where} needs at least ${schema.minItems} item${schema.minItems === 1 ? '' : 's'}`);
+      if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) issues.push(`${where} has more than ${schema.maxItems} items`);
+      if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) issues.push(`${where} must not repeat an entry`);
+      const items = schema.items as Schema | undefined;
+      // An open object in a list is a nested content block, checked as its own type.
+      const children = items?.type === 'object' && !items.properties;
+      if (items) value.forEach((item, index) => issues.push(...(children
+        ? contentIssues(item, `${path}[${index}]`, depth + 1)
+        : schemaIssues(items, item, `${path}[${index}]`, depth))));
+      return issues;
+    }
+    case 'object': {
+      if (!isObject(value)) return [`${where} must be an object, not ${kindOf(value)}`];
+      const properties = schema.properties as Record<string, Schema> | undefined;
+      if (!properties) return [];
+      const issues: string[] = [];
+      if (schema.additionalProperties === false) {
+        for (const key of Object.keys(value)) if (!has(properties, key)) issues.push(`${blockPath(path, [key])} is not a field`);
+      }
+      for (const key of (schema.required as string[] | undefined) ?? []) if (value[key] === undefined) issues.push(`${blockPath(path, [key])} is required`);
+      for (const [key, child] of Object.entries(properties)) if (value[key] !== undefined) issues.push(...schemaIssues(child, value[key], blockPath(path, [key]), depth));
+      return issues;
+    }
+    default: return [];
+  }
+}
+
+/** Where one block's content is wrong, top-level (depth 0) or inside a container. */
+function contentIssues(value: unknown, path: string, depth: number): string[] {
+  const where = path || 'the block';
+  if (!isObject(value)) return [`${where} must be a block object with a type, not ${kindOf(value)}`];
+  const type = value.type;
+  if (typeof type !== 'string' || !has(PAGE_BLOCK_CATALOG, type)) return [`${blockPath(path, ['type'])} is not a block type${sentValue(type)}`];
+  if (depth > MAX_DEPTH) return [`${where} is nested too deep; containers nest at most ${MAX_DEPTH} levels`];
+  if (depth > 0 && TOP_LEVEL_ONLY.has(type)) return [`${where} is a ${type} block, which stays at the top level of the page`];
+  const { interaction: entry, visibility, ...content } = value;
+  const issues: string[] = [];
+  if (entry !== undefined) {
+    if (type === 'view') issues.push(`${blockPath(path, ['interaction'])} is not a field`);
+    else issues.push(...schemaIssues(interaction, entry, blockPath(path, ['interaction']), depth));
+  }
+  if (visibility !== undefined) {
+    if (visibility !== 'detail') issues.push(`${blockPath(path, ['visibility'])} must be "detail"${sentValue(visibility)}`);
+    else if (depth > 0 || type === 'view') issues.push(`${blockPath(path, ['visibility'])} applies only to top-level content blocks`);
+  }
+  if (has(RICH_BLOCK_SCHEMAS, type)) return [...issues, ...zodBlockIssues(RICH_BLOCK_SCHEMAS[type as RichBlockType], content, path)];
+  if (type === 'chart') {
+    const legacy = (PAGE_BLOCK_CATALOG.chart.schema.anyOf as Schema[])[1];
+    return [...issues, ...('labels' in content ? schemaIssues(legacy, content, path, depth) : zodBlockIssues(richChartSchema, content, path))];
+  }
+  return [...issues, ...schemaIssues(PAGE_BLOCK_CATALOG[type as PageBlockType].schema, content, path, depth)];
+}
+
+/** Issues listed in one refusal; the rest are counted. */
+const SHOWN_ISSUES = 12;
 
 /**
  * Why a block's content is not valid, in words for the agent that wrote it:
- * an unknown type, fields the type has not got or is missing, else the
- * type's fields and rules. '' when it is valid.
+ * an unknown type, else every field that is wrong with where it is
+ * (`items[0].done is required`), then the type's fields and rules. '' when
+ * it is valid.
  */
 export function pageBlockProblem(value: unknown): string {
   if (parsePageBlockInput(value)) return '';
   if (!isObject(value)) return 'A block is an object with a type';
   const type = value.type;
-  if (typeof type !== 'string' || !Object.prototype.hasOwnProperty.call(PAGE_BLOCK_CATALOG, type)) {
+  if (typeof type !== 'string' || !has(PAGE_BLOCK_CATALOG, type)) {
     return `Unknown block type ${JSON.stringify(type) ?? 'undefined'}; the types are ${PAGE_BLOCK_TYPES.join(', ')}`;
   }
   const entry = PAGE_BLOCK_CATALOG[type as PageBlockType];
-  type InputSchema = { properties?: Record<string, { const?: unknown; enum?: unknown[] }>; required?: string[]; anyOf?: InputSchema[] };
-  let schema = entry.schema as InputSchema;
-  if (type === 'chart' && schema.anyOf) {
-    schema = 'labels' in value ? schema.anyOf[1] : schema.anyOf[0].anyOf?.find((candidate) => {
-      const kind = candidate.properties?.kind;
-      return kind?.const === value.kind || kind?.enum?.includes(value.kind);
-    }) ?? schema;
-  }
-  if (!schema.properties) return `This ${type} block breaks a rule of its fields: ${entry.fields}`;
-  const unknown = Object.keys(value).filter((key) => !Object.prototype.hasOwnProperty.call(schema.properties!, key));
-  if (unknown.length) return `A ${type} block has no ${unknown.join(', ')}. Its fields: ${entry.fields}`;
-  const missing = (schema.required ?? []).filter((key) => value[key] === undefined);
-  if (missing.length) return `A ${type} block needs ${missing.join(', ')}. Its fields: ${entry.fields}`;
-  return `This ${type} block breaks a rule of its fields: ${entry.fields}`;
+  const issues = contentIssues(value, '', 0);
+  if (!issues.length) return `This ${type} block breaks a rule of its fields: ${entry.fields}`;
+  const shown = issues.slice(0, SHOWN_ISSUES).join('; ') + (issues.length > SHOWN_ISSUES ? `; and ${issues.length - SHOWN_ISSUES} more` : '');
+  return `This ${type} block is not valid: ${shown}. Its fields: ${entry.fields}`;
 }

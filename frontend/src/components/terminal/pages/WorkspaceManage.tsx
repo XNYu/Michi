@@ -19,6 +19,7 @@ import ChatTreeList from '../manage/ChatTreeList';
 import ContextList from '../manage/ContextList';
 import DigestList from '../manage/DigestList';
 import ManageSidebar from '../manage/ManageSidebar';
+import { usePhoneLayout } from '../../../hooks/usePhoneLayout';
 
 interface Props {
   workspaceId: string | null;
@@ -47,6 +48,9 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
   const [droppedFileCount, setDroppedFileCount] = React.useState(0);
   const [manageMode, setManageMode] = React.useState(false);
   const managedProjectId = project?.id ?? null;
+  // A phone has no room for the 360px side column: the page becomes one
+  // scrolling column with the side panels after the lists.
+  const phone = usePhoneLayout();
 
   // ManageComposer creates a thread through the active-workspace action. The
   // manager can be opened from the all-workspaces page without activating its
@@ -258,7 +262,16 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
 
   return (
     <div
-      style={{
+      data-testid="workspace-manage"
+      className={phone ? 'term-scrollbar' : undefined}
+      style={phone ? {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        overflowY: 'auto',
+        overscrollBehavior: 'contain',
+        background: 'var(--term-page-bg, var(--term-bg))',
+      } : {
         flex: 1,
         display: 'grid',
         gridTemplateColumns: '1fr 360px',
@@ -272,8 +285,8 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
         onDragLeave={handleDragLeave}
         onDrop={(e) => { void handleDrop(e); }}
         style={{
-          padding: '20px 56px 60px',
-          overflowY: 'auto',
+          padding: phone ? '16px 16px 24px' : '20px 56px 60px',
+          overflowY: phone ? 'visible' : 'auto',
           minWidth: 0,
           position: 'relative',
         }}
@@ -286,6 +299,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
           contextsCount={counts.artifacts}
           branchesCount={counts.branches}
           lastActiveAt={counts.lastActiveAt}
+          compact={phone}
         />
         <ManageComposer
           workspaceId={project.id}
@@ -298,6 +312,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
           counts={tabCounts}
           filter={filter}
           onFilterChange={setFilter}
+          compact={phone}
         />
         {tab === 'chats' && (
           <ChatTreeList
@@ -423,6 +438,7 @@ export default function WorkspaceManage({ workspaceId, onNav }: Props) {
       </main>
       <ManageSidebar
         workspace={project}
+        stacked={phone}
         onSaveInstructions={(text) => store.setProjectInstructions(project.id, text)}
         onAddFolder={store.addFolder}
         onRemoveFolder={store.removeFolder}

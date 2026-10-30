@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatNodeState } from '../../../state/chatTypes';
 import { DEFAULT_PREFS } from '../../../state/prefs';
@@ -61,7 +61,10 @@ describe('source popover host', () => {
     const link = document.createElement('button');
     document.body.appendChild(link);
     act(() => { openExactSourcePopover({ backendConnectionId: 'local' }, { nodeId: 'n1', assistantId: 'm4' }, { anchor: link, page }); });
-    fireEvent.click(await screen.findByRole('button', { name: /Continue this chat/ }));
+    // The button is drawn disabled until the preview loads; a click before that does nothing.
+    const go = await screen.findByRole('button', { name: /Continue this chat/ }) as HTMLButtonElement;
+    await waitFor(() => expect(go.disabled).toBe(false));
+    fireEvent.click(go);
     await act(async () => {});
     expect(navigator.reveal).toHaveBeenCalledWith('ws-1', 'n1');
     expect(screen.queryByRole('dialog')).toBeNull();

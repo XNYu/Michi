@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { HomeCard, HomeCardsDto } from 'michi-shared';
 import TerminalHome from './Home';
 import { PrefsProvider } from '../../../state/prefs';
@@ -116,7 +116,7 @@ describe('TerminalHome', () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-checked')).toBe('false');
     expect(screen.queryByRole('region', { name: 'Home content' })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Quick starts' })).toBeTruthy();
+    expect(cardTitles()).toEqual([]);
     expect(screen.getByTestId('composer')).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Another road diverged');
     await waitFor(() => expect(JSON.parse(localStorage.getItem('michi:v1:prefs')!).homeRecommendations).toBe(false));
@@ -136,13 +136,11 @@ describe('TerminalHome', () => {
     const input = screen.getByTestId('composer');
     expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Another road diverged');
     expect(document.querySelector('.home-page')?.getAttribute('data-default-layout')).toBe('true');
-    expect(screen.getByRole('group', { name: 'Quick starts' })).toBeTruthy();
     expect(screen.queryByRole('status')).toBeNull();
     await act(async () => resolve(answer({ greeting: null, contentMode: 'page', contentPage: { id: 'home', title: 'My home layout' } as never })));
     await screen.findByRole('region', { name: 'Home content' });
     expect(document.querySelector('.home-page')?.hasAttribute('data-default-layout')).toBe(false);
     expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
-    expect(screen.queryByRole('group', { name: 'Quick starts' })).toBeNull();
     expect(screen.getByTestId('composer')).toBe(input);
   });
 
@@ -189,10 +187,9 @@ describe('TerminalHome', () => {
     api.fetchHomeCards.mockRejectedValue(new Error('offline'));
     await renderHome();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toContain('Another road diverged');
-    expect(screen.getByRole('group', { name: 'Quick starts' })).toBeTruthy();
   });
 
-  it('shows the date, the greeting with its second line, the composer, quick starts and six cards', async () => {
+  it('shows the date, the greeting with its second line, the composer and six cards', async () => {
     useZhCnDefaultLocale();
     await renderHome();
     // English on a Chinese browser too.
@@ -200,11 +197,11 @@ describe('TerminalHome', () => {
     const h1 = screen.getByRole('heading', { level: 1 });
     expect(h1.textContent).toBe('_ 早上好。昨晚 3 条线有进展。Michi 0.9 还有 5 天发布。');
     expect(screen.getByTestId('composer')).toBeTruthy();
-    expect(within(screen.getByRole('group', { name: 'Quick starts' })).getAllByRole('button')).toHaveLength(4);
     expect(cardTitles()).toEqual(['Title a0', 'Title a1', 'Title a2', 'Title a3', 'Title a4', 'Title a5']);
-    // Recent threads and the stalled list are gone from Home.
+    // Recent threads, the stalled list and the quick starts are gone from Home.
     expect(screen.queryByTestId('home-continue-row')).toBeNull();
     expect(screen.queryByTestId('michi-home-row')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Quick starts' })).toBeNull();
   });
 
   it('leaves the greeting out when the Meta agent wrote none', async () => {
@@ -222,23 +219,6 @@ describe('TerminalHome', () => {
     expect(api.markHomeCardUsed).toHaveBeenCalledWith('a0', expect.any(String));
     // It stays on screen until the next read.
     expect(cardTitles()[0]).toBe('Title a0');
-  });
-
-  it.each([
-    ['Recap today', "Review today's conversations", 'completed work, key decisions, unresolved blockers'],
-    ['Draft release notes', 'Draft release notes for this workspace', 'breaking changes or migration steps'],
-    ['Find threads stalled 3+ days', 'Find unfinished threads in this workspace', 'at least 3 days'],
-    ['Plan tomorrow', 'propose a practical plan for tomorrow', 'up to three main priorities'],
-  ])('%s inserts a complete task without sending or switching workspaces', async (label, task, detail) => {
-    await renderHome();
-    fireEvent.click(screen.getAllByTestId('home-card')[1]!);
-    fireEvent.click(screen.getByRole('button', { name: label }));
-    expect(inserted()).toEqual(['Prompt a1', expect.stringContaining(task)]);
-    expect(inserted()[1]).toContain(detail);
-    expect(inserted()[1]).toContain('this workspace');
-    expect(inserted()[1]).not.toBe(label);
-    expect(store.selectProject).not.toHaveBeenCalled();
-    expect(submitted).not.toHaveBeenCalled();
   });
 
   it('a card moves the composer to its workspace when that is one of the user\'s', async () => {
@@ -304,11 +284,10 @@ describe('TerminalHome', () => {
     expect(screen.getByTestId('composer')).toBeTruthy();
   });
 
-  it('a custom Page replaces both starters and cards while keeping the composer', async () => {
+  it('a custom Page replaces the cards while keeping the composer', async () => {
     api.fetchHomeCards.mockResolvedValue(answer({ contentMode: 'page', contentPage: { id: 'home', title: 'My home layout' } as never }));
     await renderHome();
     expect(await screen.findByRole('region', { name: 'Home content' })).toBeTruthy();
-    expect(screen.queryByRole('group', { name: 'Quick starts' })).toBeNull();
     expect(cardTitles()).toEqual([]);
     expect(screen.getByTestId('composer')).toBeTruthy();
   });
@@ -321,7 +300,6 @@ describe('TerminalHome', () => {
     view.unmount();
     api.fetchHomeCards.mockResolvedValue(answer({ contentMode: 'hidden' }));
     await renderHome();
-    expect(screen.queryByRole('group', { name: 'Quick starts' })).toBeNull();
     expect(cardTitles()).toEqual([]);
     expect(screen.getByTestId('composer')).toBeTruthy();
   });

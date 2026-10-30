@@ -24,6 +24,26 @@ const mkActions = () => ({
   openManageWorkspace: vi.fn(),
 });
 
+describe('buildWorkspaceRowContextMenu — item ids and delete confirmation', () => {
+  it('names each action, following the workspace’s pinned and archived state', () => {
+    const ids = (project: Project) => buildWorkspaceRowContextMenu({ project, actions: mkActions() })
+      .flatMap((s) => s.items.map((i) => i.id));
+    expect(ids(mkProject())).toEqual(['manage', 'rename', 'pin', 'archive', 'delete']);
+    expect(ids(mkProject({ pinnedAt: 1, archivedAt: 2 }))).toEqual(['manage', 'rename', 'unpin', 'unarchive', 'delete']);
+  });
+
+  it('lets the caller confirm deletion in its own UI', () => {
+    const requestDelete = vi.fn();
+    const actions = { ...mkActions(), requestDelete };
+    const del = buildWorkspaceRowContextMenu({ project: mkProject(), actions })
+      .flatMap((s) => s.items)
+      .find((i) => i.id === 'delete')!;
+    del.onSelect();
+    expect(requestDelete).toHaveBeenCalledWith('p1');
+    expect(actions.deleteProject).not.toHaveBeenCalled();
+  });
+});
+
 describe('buildWorkspaceRowContextMenu — Manage workspace item', () => {
   it('exposes a Manage workspace item that calls openManageWorkspace with the project id', () => {
     const actions = mkActions();

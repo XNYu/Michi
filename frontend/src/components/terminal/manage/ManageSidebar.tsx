@@ -6,6 +6,8 @@ import FolderList from './FolderList';
 
 interface Props {
   workspace: Project;
+  /** Below the lists in one column (a phone) instead of beside them. */
+  stacked?: boolean;
   onSaveInstructions: (text: string) => void;
   onAddFolder: (projectId: string, path: string, label?: string) => void;
   onRemoveFolder: (projectId: string, folderId: string) => void;
@@ -65,6 +67,7 @@ const faintMeta: React.CSSProperties = {
 
 export default function ManageSidebar({
   workspace,
+  stacked = false,
   onSaveInstructions,
   onAddFolder,
   onRemoveFolder,
@@ -85,7 +88,11 @@ export default function ManageSidebar({
 
   return (
     <aside
-      style={{
+      aria-label="Workspace settings"
+      style={stacked ? {
+        padding: '8px 16px calc(40px + env(safe-area-inset-bottom, 0px))',
+        minWidth: 0,
+      } : {
         padding: '24px 36px 60px 8px',
         overflowY: 'auto',
         minHeight: 0,

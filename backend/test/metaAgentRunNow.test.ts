@@ -192,7 +192,10 @@ describe('Meta agent run-now', () => {
       const app = express();
       app.use(express.json());
       // What the remote-access middleware sets for a request carrying the connection's token.
-      if (remote) app.use((_req, res, next) => { res.locals.remoteAccessAuthenticated = true; next(); });
+      if (remote) app.use((req, res, next) => {
+        if (req.headers.authorization === 'Bearer remote-token') res.locals.remoteAccessAuthenticated = true;
+        next();
+      });
       app.use('/api', setupMetaAgentRunNowRoutes({ scheduler: withScheduler, clock: () => now }));
       app.use('/api', setupMetaAgentRoutes());
       server = app.listen(0, '127.0.0.1');
@@ -237,10 +240,12 @@ describe('Meta agent run-now', () => {
       maintained(jobs, 'ws-a', 2);
       await listen(jobs, true);
       const remoteHost = { host: 'devbox.example:3000' };
-      const run = await call('POST', '/api/meta-agent/run-now', remoteHost, '{}');
+      const remote = { ...remoteHost, authorization: 'Bearer remote-token' };
+      const run = await call('POST', '/api/meta-agent/run-now', remote, '{}');
       assert.equal(run.status, 200, JSON.stringify(run.body));
       assert.deepEqual(run.body.workspaces.map((row: { outcome: string }) => row.outcome), ['no_new']);
-      assert.equal((await call('GET', '/api/meta-agent', remoteHost)).status, 200);
+      assert.equal((await call('GET', '/api/meta-agent', remote)).status, 200);
+      assert.equal((await call('GET', '/api/meta-agent', remoteHost)).status, 403, 'a remote host without the connection token stays refused');
     });
 
     test('without scheduled jobs it answers 503', async () => {

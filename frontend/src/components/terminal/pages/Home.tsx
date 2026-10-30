@@ -10,7 +10,7 @@ import { isSystemWorkspace } from '../../../state/assistant/systemWorkspace';
 import { useReturnFromSystemWorkspace } from '../../../state/assistant/userWorkspace';
 import { entryPageForArea } from '../../../state/shellArea';
 import { useHomeCards } from '../../../state/homeCards/useHomeCards';
-import { HomeGreeting, HomeStarters } from '../home/HomeGreeting';
+import { HomeGreeting } from '../home/HomeGreeting';
 import { HomeCardGrid } from '../home/HomeCards';
 import { useHomeRecommendations } from '../../../state/prefs';
 import { ONBOARDING_CARDS } from '../home/onboardingCards';
@@ -180,10 +180,8 @@ export default function TerminalHome({ onSubmitted }: HomeProps) {
             Another road diverged in a yellow wood.
           </h1>
         ) : <HomeGreeting greeting={recommendations ? homeCards.greeting : null} now={clock} />}
-        {/* The composer's own bottom margin spaces the quick starts. */}
         <div className="home-compose">
           {composer}
-          {contentMode === 'default' && <HomeStarters onPick={fill} />}
         </div>
         {contentMode === 'default' ? (recommendations ? grid : null) : contentMode === 'page' ? (
           homeCards.contentPage ? <Suspense fallback={<p role="status">Loading Home content…</p>}>

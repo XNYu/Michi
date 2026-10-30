@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import TerminalShell from './components/terminal/TerminalShell';
+import { TOPBAR_HEIGHT } from './components/terminal/Topbar';
 import ApiKeyGate from './components/ApiKeyGate';
 import FirstRunSetup from './components/FirstRunSetup';
 import { ConfirmDialogHost } from './components/ui/ConfirmDialog';
@@ -192,7 +193,20 @@ function ExportPanelManager() {
 function AppToaster() {
   const { prefs } = usePrefs();
   const isDark = DARK_PALETTES.has(prefs.terminalPalette);
-  return <Toaster position="bottom-right" theme={isDark ? 'dark' : 'light'} richColors offset={16} />;
+  // Top-right, just below the topbar (which carries the pane captions), so a
+  // toast never covers the Composer the user is typing in. Phones use the
+  // same top inset: sonner's full-width mobile layout would otherwise sit on
+  // the Composer.
+  const offset = { top: TOPBAR_HEIGHT + 8, right: 16 };
+  return (
+    <Toaster
+      position="top-right"
+      theme={isDark ? 'dark' : 'light'}
+      richColors
+      offset={offset}
+      mobileOffset={{ top: offset.top }}
+    />
+  );
 }
 
 function ShellSwitcher() {

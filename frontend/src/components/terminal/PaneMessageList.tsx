@@ -58,10 +58,9 @@ interface PaneMessageListProps {
    * message. Built by buildAnchorMap() in TPane and passed down so this
    * component stays pure/testable.
    *
-   * v1: all anchors render as BranchAnchorRow turn markers after the anchored
-   * message. Quote-anchored underlines (BranchQuoteUnderline) are deferred to
-   * a future iteration because integrating into MarkdownContent's render tree
-   * safely requires a dedicated pass.
+   * Every anchor renders as a BranchAnchorRow turn marker after the anchored
+   * message. A branch made from a selection (quotedText) also underlines the
+   * quoted passage inside the message (BranchQuoteUnderline).
    */
   anchorsByMessage?: Map<string, ChildAnchor[]>;
   /** Called when the user clicks a child-branch title. */
@@ -211,10 +210,11 @@ function PaneMessageListInner({
           i === node.messages.length - 1 &&
           node.status === 'streaming';
 
-        // Collect turn-marker anchors for this message. They are passed into
+        // Collect branch anchors for this message. They are passed into
         // MessageBlock and rendered between the message body and the
         // MessageActions row, so the marker sits closer to the message
-        // content than the action chrome.
+        // content than the action chrome; quoted passages are underlined in
+        // the body. The array comes from the anchor map, stable across chunks.
         const anchorsForMsg = anchorsByMessage?.get(m.id) ?? [];
 
         const editingIdx = editingMessageId
@@ -324,6 +324,7 @@ function PaneMessageListInner({
                 }
                 subagents={roster}
                 runtimeId={node.runtimeId}
+                quoteAnchors={anchorsForMsg.some((a) => a.quotedText) ? anchorsForMsg : undefined}
                 turnAnchors={anchorsForMsg.length > 0 ? anchorsForMsg : undefined}
                 onOpenBranch={onOpenBranch}
                 contextNames={contextNames}

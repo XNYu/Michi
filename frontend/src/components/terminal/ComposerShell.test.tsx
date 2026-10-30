@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ComposerShell, type ComposerShellHandle } from './ComposerShell';
 
 describe('ComposerShell', () => {
@@ -132,6 +132,55 @@ describe('ComposerShell on a phone', () => {
     act(() => screen.getByRole('textbox').focus());
     act(() => handle.current!.settle());
     expect(document.activeElement).toBe(screen.getByRole('textbox'));
+  });
+
+  describe('when the keyboard goes down', () => {
+    const viewport = Object.assign(new EventTarget(), { height: window.innerHeight, offsetTop: 0, scale: 1 });
+    const keyboard = (inset: number) => act(() => {
+      viewport.height = window.innerHeight - inset;
+      viewport.dispatchEvent(new Event('resize'));
+    });
+    beforeEach(() => {
+      viewport.height = window.innerHeight;
+      Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+    });
+    afterEach(() => { delete (window as { visualViewport?: unknown }).visualViewport; });
+
+    it('rests as one row even with a draft or pre-blocks, and lets go of the field', () => {
+      setWidth(390);
+      render(<Shell hasContent preBlocks={<div>Queued: ship it</div>} />);
+      expect(collapsed()).toBe(false);
+      act(() => screen.getByRole('textbox').focus());
+      keyboard(300);
+      expect(collapsed()).toBe(false);
+      // Android's back key: the keyboard leaves while the field keeps focus.
+      keyboard(0);
+      expect(collapsed()).toBe(true);
+      expect(document.activeElement).not.toBe(screen.getByRole('textbox'));
+      // The next engagement opens it again.
+      act(() => screen.getByRole('textbox').focus());
+      expect(collapsed()).toBe(false);
+    });
+
+    it('keeps a chip in place while its menu is open, then rests', () => {
+      setWidth(390);
+      const { rerender } = render(<Shell hasContent />);
+      act(() => screen.getByRole('textbox').focus());
+      keyboard(300);
+      rerender(<Shell hasContent holdOpen />);
+      keyboard(0);
+      expect(collapsed()).toBe(false);
+      rerender(<Shell hasContent />);
+      expect(collapsed()).toBe(true);
+    });
+
+    it('ignores a keyboard raised for another input', () => {
+      setWidth(390);
+      render(<Shell hasContent />);
+      keyboard(300);
+      keyboard(0);
+      expect(collapsed()).toBe(false);
+    });
   });
 
   it('keeps the full composer in a wide window and where it is not collapsible', () => {

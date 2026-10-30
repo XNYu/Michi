@@ -42,6 +42,16 @@ interface Props {
   manageMode?: boolean;
 }
 
+// A touch screen cannot hover, and a tap on a row opens the thread, so the
+// row's ⋯ stays visible there instead of waiting for a hover.
+const NO_HOVER = '(hover: none)';
+function subscribeNoHover(notify: () => void) {
+  const query = window.matchMedia?.(NO_HOVER);
+  query?.addEventListener?.('change', notify);
+  return () => query?.removeEventListener?.('change', notify);
+}
+const cannotHover = () => window.matchMedia?.(NO_HOVER).matches ?? false;
+
 function toMenuSections(sections: ThreadCtxSection[]): UiMenuSection[] {
   return sections.map((s, si) => ({
     label: s.label,
@@ -130,6 +140,7 @@ export default function ChatTreeList({
   const [menu, setMenu] = React.useState<{ x: number; y: number; tree: Tree } | null>(null);
   const [archivedExpanded, setArchivedExpanded] = React.useState(false);
   const lastClickedRef = React.useRef<string | null>(null);
+  const touch = React.useSyncExternalStore(subscribeNoHover, cannotHover, () => false);
 
   const treeById = React.useMemo(() => {
     const m = new Map<string, Tree>();
@@ -229,6 +240,7 @@ export default function ChatTreeList({
       }}
       onMoreClick={(rect, tree) => openMenuForTree(tree, rect.right, rect.bottom)}
       menuEnabled={!!menuActions && !manageMode}
+      alwaysShowMore={touch}
       manageMode={manageMode}
       checked={bulkActions ? bulkActions.treeSelection.has(g.treeId) : false}
       onCheck={(e) => handleTreeClick(g.treeId, e)}
@@ -361,6 +373,7 @@ interface TreeBlockProps {
   onContextMenu: (e: React.MouseEvent, tree: Tree | undefined) => void;
   onMoreClick: (rect: DOMRect, tree: Tree | undefined) => void;
   menuEnabled: boolean;
+  alwaysShowMore?: boolean;
   manageMode?: boolean;
   checked?: boolean;
   onCheck?: (e: React.MouseEvent) => void;
@@ -377,6 +390,7 @@ function TreeBlock({
   onContextMenu,
   onMoreClick,
   menuEnabled,
+  alwaysShowMore,
   manageMode,
   checked,
   onCheck,
@@ -434,6 +448,7 @@ function TreeBlock({
             onContextMenu={(e) => onContextMenu(e, tree)}
             onMoreClick={(r) => onMoreClick(r, tree)}
             menuEnabled={menuEnabled}
+            alwaysShowMore={alwaysShowMore}
             isArchived={isArchived}
           />
         </div>
@@ -478,6 +493,8 @@ interface ChatRowProps {
   onContextMenu: (e: React.MouseEvent) => void;
   onMoreClick: (rect: DOMRect) => void;
   menuEnabled: boolean;
+  /** Show ⋯ without a hover, for screens that cannot hover. */
+  alwaysShowMore?: boolean;
   isArchived?: boolean;
 }
 
@@ -491,6 +508,7 @@ function ChatRow({
   onContextMenu,
   onMoreClick,
   menuEnabled,
+  alwaysShowMore = false,
   isArchived,
 }: ChatRowProps) {
   const node = row.node;
@@ -611,7 +629,7 @@ function ChatRow({
             <BranchGlyph /> {branchCount}
           </span>
         )}
-        {isRoot && menuEnabled && hovered ? (
+        {isRoot && menuEnabled && (hovered || alwaysShowMore) ? (
           <button
             type="button"
             aria-label="more actions"
@@ -629,6 +647,8 @@ function ChatRow({
               lineHeight: 1,
               padding: '2px 6px',
               flexShrink: 0,
+              // A finger-sized target; the negative margins keep the row's height.
+              ...(alwaysShowMore ? { minWidth: 40, minHeight: 36, margin: '-9px -8px -9px 0' } : {}),
             }}
           >
             ⋯

@@ -14,45 +14,25 @@ import { getElectron } from '../../../lib/electronBridge';
 import { toast } from 'sonner';
 import { Search, X } from 'lucide-react';
 import { Button } from '../../ui/controls';
-import { WorkspaceLocation, workspaceMachineLabel } from '../../WorkspaceLocation';
+import { WorkspaceLocation } from '../../WorkspaceLocation';
 import { useBackendConnections } from '../../../state/useBackendConnections';
 import { isSystemWorkspace } from '../../../state/assistant/systemWorkspace';
 import { isVisibleConversationNode } from '../../../state/conversationVisibility';
-
-function formatRelative(ts: number): string {
-  if (!ts) return '—';
-  const diff = Date.now() - ts;
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return 'just now';
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d`;
-  return `${Math.floor(d / 7)}w`;
-}
-
-interface ThreadPreview { title: string; age: string; branches: number; activeAt: number }
-interface NodeMeta { title: string; lastActiveAt: number; kind: 'chat' | 'digest' }
-interface WorkspaceCardData {
-  id: string;
-  name: string;
-  cwd?: string;
-  backendConnectionId?: string;
-  active: boolean;
-  liveCount: number;
-  branches: number;
-  threadCount: number;
-  streaming: number;
-  digests: number;
-  lastTs: number;
-  threads: ThreadPreview[];
-  /** All live nodes with a derivable title — used for filter scope and for the
-   * search-result preview that replaces the latest thread while a query is
-   * active. */
-  nodes: NodeMeta[];
-  models: string[];
-}
+import { threadTitle } from '../../../state/spaceConversations/liveStatus';
+import { usePhoneLayout } from '../../../hooks/usePhoneLayout';
+import {
+  EmptyState,
+  formatAgo,
+  formatRelative,
+  Highlight,
+  matchesWorkspaceQuery,
+  matchingNodes,
+  pathForQuery,
+  type NodeMeta,
+  type ThreadPreview,
+  type WorkspaceCardData,
+} from './workspaceList';
+import PhoneWorkspaces from './WorkspacesPhone';
 
 export function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, streamingIds: Set<string>, activeProjectId: string | null): WorkspaceCardData {
   // Page helpers and Meta agent maintenance runs are not the user's conversations.
@@ -94,15 +74,25 @@ export function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, s
   // workspace. Falls back to tree.lastActiveAt, then to project.createdAt for
   // legacy workspaces with no messages persisted.
   let lastMsgTs = 0;
+  let latestNodeId: string | undefined;
   for (const id of liveIds) {
     const n = snapshot[id];
     if (!n) continue;
     for (const m of n.messages || []) {
-      if (m.createdAt && m.createdAt > lastMsgTs) lastMsgTs = m.createdAt;
+      if (m.createdAt && m.createdAt > lastMsgTs) {
+        lastMsgTs = m.createdAt;
+        latestNodeId = id;
+      }
     }
   }
   const lastTreeTs = sortedTrees[0]?.lastActiveAt || 0;
   const lastTs = lastMsgTs || lastTreeTs || p.createdAt;
+  // Only the newest conversation's error describes the workspace now; an older
+  // failure the user has since moved on from does not.
+  const latest = latestNodeId ? snapshot[latestNodeId] : undefined;
+  const failed = latest?.status === 'error'
+    ? { title: threadTitle(latest), outcomeUnknown: latest.errorKind === 'turn_outcome_unknown' }
+    : null;
 
   const nodes: NodeMeta[] = [];
   for (const id of liveIds) {
@@ -129,12 +119,14 @@ export function buildCard(p: Project, snapshot: Record<string, ChatNodeState>, s
     cwd: p.cwd,
     backendConnectionId: p.backendConnectionId,
     active: p.id === activeProjectId,
+    pinnedAt: p.pinnedAt ?? null,
     liveCount,
     branches: branchesTotal,
     threadCount: liveTrees.length,
     streaming,
     digests,
     lastTs,
+    failed,
     threads,
     nodes,
     models: Array.from(modelSet).slice(0, 3),
@@ -161,24 +153,6 @@ function shortModelLabel(modelId: string): string {
   if (m.includes('sonnet')) return 'sonnet';
   if (m.includes('haiku')) return 'haiku';
   return modelId.split('/').pop()!.split(':')[0];
-}
-
-/** `/Users/<name>/…` and `/home/<name>/…` read as `~/…` — the home prefix is
- *  the same on every row and only costs width. `/Users/Shared` is not anyone's
- *  home, so it stays as written. */
-function displayPath(cwd: string): string {
-  return cwd.replace(/^\/(?:Users|home)\/(?!Shared(?:\/|$))[^/]+(?=\/|$)/, '~');
-}
-
-/** The path as the row should show it for a given filter: shortened, unless the
- *  query only hits inside the part shortening would hide — then the full path,
- *  so the highlight has something to land on. */
-function pathForQuery(cwd: string, query: string): string {
-  const short = displayPath(cwd);
-  if (!query) return short;
-  const q = query.toLowerCase();
-  if (short.toLowerCase().includes(q)) return short;
-  return cwd.toLowerCase().includes(q) ? cwd : short;
 }
 
 type SortKey = 'name' | 'last';
@@ -264,6 +238,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
     projects,
     activeProjectId,
     deleteProject,
+    restoreProject,
     renameProject,
     setProjectCwd,
     archiveProject,
@@ -339,6 +314,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   const [query, setQuery] = React.useState('');
   const connections = useBackendConnections();
   const searchRef = React.useRef<HTMLInputElement>(null);
+  const phone = usePhoneLayout();
 
   const allCards = React.useMemo(() => {
     return projects
@@ -347,20 +323,17 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
       .sort((a, b) => b.lastTs - a.lastTs);
   }, [projects, nodesSnapshot, streamingIds, activeProjectId]);
 
+  // Only the phone list shows archived workspaces (under a disclosure at its end).
+  const archivedCards = React.useMemo(() => {
+    if (!phone) return [];
+    return projects
+      .filter((p) => !p.deletedAt && !!p.archivedAt && !isSystemWorkspace(p))
+      .map((p) => buildCard(p, nodesSnapshot, streamingIds, activeProjectId))
+      .sort((a, b) => b.lastTs - a.lastTs);
+  }, [phone, projects, nodesSnapshot, streamingIds, activeProjectId]);
+
   const cards = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const matching = !q
-      ? allCards
-      : allCards.filter((c) =>
-          c.name.toLowerCase().includes(q)
-          || workspaceMachineLabel(c.backendConnectionId, connections, ' - ').toLowerCase().includes(q)
-          || (connections.find(connection => connection.id === c.backendConnectionId)?.sshHost?.toLowerCase().includes(q) ?? false)
-          || (c.cwd?.toLowerCase().includes(q) ?? false)
-          // …and the path as the row displays it, so typing `~/code` finds it.
-          || (c.cwd ? displayPath(c.cwd).toLowerCase().includes(q) : false)
-          || c.threads.some((t) => t.title.toLowerCase().includes(q))
-          || c.nodes.some((n) => n.title.toLowerCase().includes(q)),
-        );
+    const matching = allCards.filter((c) => matchesWorkspaceQuery(c, query, connections));
     // allCards arrives newest-first; Array.prototype.sort is stable, so ties on
     // the chosen column keep that recency order.
     const sign = sort.dir === 'asc' ? 1 : -1;
@@ -386,6 +359,40 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
   }, [allCards]);
 
   const openNew = () => window.dispatchEvent(new CustomEvent('michi:open-new-workspace'));
+  const openManage = (id: string) => {
+    setManageWorkspaceId(id);
+    onNav('workspace-manage');
+  };
+
+  // A phone gets a list of its own: a 760px table only scrolls sideways there,
+  // hiding each workspace's activity and its actions.
+  if (phone) {
+    return (
+      <PhoneWorkspaces
+        cards={allCards}
+        archivedCards={archivedCards}
+        projects={projects}
+        connections={connections}
+        query={query}
+        onQueryChange={setQuery}
+        onOpen={openManage}
+        onNew={openNew}
+        onNav={onNav}
+        actions={{
+          archiveProject,
+          unarchiveProject,
+          pinProject,
+          unpinProject,
+          deleteProject,
+          restoreProject,
+          openManageWorkspace: openManage,
+          // Linking a folder needs the desktop app's folder picker.
+          changeFolder: getElectron() ? (id) => { void changeFolder(id); } : undefined,
+        }}
+        onRename={renameProject}
+      />
+    );
+  }
 
   return (
     <div
@@ -393,7 +400,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
       style={{
         flex: 1,
         overflowY: 'auto',
-        padding: 'var(--mobile-workspace-padding, 40px 48px 56px)',
+        padding: '40px 48px 56px',
         background: 'var(--term-bg)',
       }}
     >
@@ -415,8 +422,8 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
               style={{
                 margin: 0,
                 fontFamily: 'var(--ui-font)',
-                fontSize: 'var(--mobile-workspace-heading-size, var(--fs-4xl))',
-                fontWeight: 'var(--mobile-workspace-heading-weight, 700)',
+                fontSize: 'var(--fs-4xl)',
+                fontWeight: 700,
                 letterSpacing: 'var(--ls-tight)',
                 color: 'var(--term-fg)',
               }}
@@ -435,7 +442,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
           <div className="michi-workspaces__actions" style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, justifyContent: 'flex-end' }}>
             {/* The shared page-search field and primary Button — the same
                 controls the Trash page's header uses. */}
-            <label className="ui-search" style={{ minWidth: 'var(--mobile-workspace-search-min, 220px)', maxWidth: 320, flex: '0 1 280px' }}>
+            <label className="ui-search" style={{ minWidth: 220, maxWidth: 320, flex: '0 1 280px' }}>
               <Search size={14} aria-hidden="true" />
               <input
                 ref={searchRef}
@@ -485,7 +492,7 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
           {totals.lastTs > 0 && (
             <span style={{ fontVariantNumeric: 'tabular-nums', fontFamily: 'var(--font-mono, ui-monospace, monospace)', fontSize: 'var(--fs-sm)' }}>
               last activity{' '}
-              <span style={{ color: 'var(--term-fg)' }}>{formatRelative(totals.lastTs)} ago</span>
+              <span style={{ color: 'var(--term-fg)' }}>{formatAgo(totals.lastTs)}</span>
             </span>
           )}
         </div>
@@ -668,13 +675,7 @@ function WorkspaceTableRow({
   // While the filter is active, the latest-thread cell shows the newest
   // matching node instead, so the user sees *why* this row matched. Falls back
   // to the latest thread if only name/cwd matched (no node-title hit).
-  const matchedNodes = React.useMemo(() => {
-    if (!query) return [];
-    const q = query.toLowerCase();
-    return w.nodes
-      .filter((n) => n.title.toLowerCase().includes(q))
-      .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
-  }, [query, w.nodes]);
+  const matchedNodes = React.useMemo(() => matchingNodes(w.nodes, query), [query, w.nodes]);
   const topMatch = matchedNodes[0];
   const latest = w.threads[0];
   const accent = workspaceAccent(w.id);
@@ -906,77 +907,5 @@ function Metric({ label, value, color, pulse }: { label: string; value: number; 
       </span>
       <span style={{ textTransform: 'uppercase', letterSpacing: 'var(--ls-caps)', fontSize: 'var(--fs-2xs)' }}>{label}</span>
     </span>
-  );
-}
-
-function Highlight({ text, q }: { text: string; q: string }) {
-  if (!q) return <>{text}</>;
-  const needle = q.toLowerCase();
-  const haystack = text.toLowerCase();
-  const parts: React.ReactNode[] = [];
-  let cursor = 0;
-  let key = 0;
-  while (cursor < text.length) {
-    const hit = haystack.indexOf(needle, cursor);
-    if (hit < 0) { parts.push(text.slice(cursor)); break; }
-    if (hit > cursor) parts.push(text.slice(cursor, hit));
-    parts.push(
-      <mark
-        key={key++}
-        style={{
-          background: 'color-mix(in srgb, var(--term-accent) 28%, transparent)',
-          color: 'inherit',
-          padding: '0 1px',
-          borderRadius: 'var(--ui-radius-sm)',
-        }}
-      >
-        {text.slice(hit, hit + q.length)}
-      </mark>,
-    );
-    cursor = hit + q.length;
-  }
-  return <>{parts}</>;
-}
-
-function EmptyState({ onNew }: { onNew: () => void }) {
-  return (
-    <div
-      style={{
-        margin: '40px auto',
-        maxWidth: 520,
-        padding: '40px 32px',
-        border: '1px solid var(--term-line)',
-        background: 'var(--term-surface)',
-        textAlign: 'center',
-        boxShadow: '0 1px 2px rgba(26,25,22,.04), 0 6px 18px rgba(26,25,22,.05)',
-      }}
-    >
-      <div
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-3xl)',
-          lineHeight: 1.3,
-          fontWeight: 600,
-          color: 'var(--term-fg)',
-          marginBottom: 8,
-        }}
-      >
-        Nothing here yet.
-      </div>
-      <p
-        style={{
-          margin: '0 0 20px',
-          fontSize: 'var(--fs-lg)',
-          color: 'var(--term-muted)',
-          lineHeight: 1.6,
-        }}
-      >
-        Workspaces hold all the threads, branches, and digests for one corner of your
-        thinking. Make one for a project, a question, or whatever you keep coming back to.
-      </p>
-      <Button variant="primary" onClick={onNew} style={{ padding: '10px 18px' }}>
-        + new workspace
-      </Button>
-    </div>
   );
 }

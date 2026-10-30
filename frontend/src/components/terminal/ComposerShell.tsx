@@ -11,6 +11,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import { usePhoneLayout } from '../../hooks/usePhoneLayout';
+import { useKeyboardDismiss } from '../../hooks/useKeyboardDismiss';
 import { composerMotionAllowed, morphComposer, snapshotComposer, type ComposerSnapshot } from './composerMorph';
 
 export type ComposerShellPosition = 'absolute' | 'static';
@@ -137,7 +138,22 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
       document.addEventListener('pointerdown', onPointerDown, true);
       return () => document.removeEventListener('pointerdown', onPointerDown, true);
     }, [canCollapse, engaged]);
-    const collapsed = canCollapse && !engaged && !hasContent && !holdOpen && !hasPreBlocks;
+    // Whenever the keyboard goes down, rest as one row, even with a draft or
+    // pre-blocks; the next engagement opens it again. Android's back key
+    // lowers the keyboard but leaves focus in the field, so let go of it too.
+    const [resting, setResting] = useState(false);
+    useKeyboardDismiss(canCollapse, () => fieldHasFocus(), () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && rootRef.current?.contains(active)) active.blur();
+      setEngaged(false);
+      setResting(true);
+    });
+    const engage = () => {
+      setEngaged(true);
+      setResting(false);
+    };
+    // A menu opened from a chip still needs that chip; it rests once the menu closes.
+    const collapsed = canCollapse && !holdOpen && (resting || (!engaged && !hasContent && !hasPreBlocks));
     const canCollapseRef = useRef(canCollapse);
     canCollapseRef.current = canCollapse;
 
@@ -194,7 +210,7 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
     // field inside the same gesture, which iOS requires to show the keyboard.
     const handleClickCapture = (e: React.MouseEvent<HTMLDivElement>) => {
       if (!canCollapse) return;
-      if (collapsed) setEngaged(true);
+      if (collapsed) engage();
       const target = e.target as Element;
       if (target.closest(TOOLBAR_CONTROL) || target.closest('.composer-pre-blocks-scroll') || fieldHasFocus()) return;
       const el = field();
@@ -264,7 +280,7 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
         ref={rootRef}
         className={className}
         data-collapsed={collapsed || undefined}
-        onFocus={() => { setIsFocused(true); if (canCollapse) setEngaged(true); }}
+        onFocus={() => { setIsFocused(true); if (canCollapse) engage(); }}
         onClickCapture={canCollapse ? handleClickCapture : undefined}
         onMouseDown={phone ? handleMouseDown : undefined}
         onCompositionStart={hintAsPlaceholder ? () => setComposing(true) : undefined}

@@ -320,8 +320,9 @@ npm run remote:stop           # stop the remote backend
 npm run remote:setup          # install/build web + backend + shared + runtime (no Electron/node-pty)
 npm run remote:start          # foreground remote backend on loopback, for the SSH tunnel (requires MICHI_REMOTE_TOKEN)
 npm run server                # install, build artifact, then start
-npm run electron:build        # unsigned macOS arm64 dmg in dist-electron/
-npm run electron:install      # copy the built app into ~/Applications
+npm run electron:build        # package; on macOS also quit and replace the installed app
+npm run electron:install      # macOS: quit Michi and replace ~/Applications/michi.app
+npm run icons:generate        # rebuild .icns/.ico and web icons from assets/icons/icon.png
 
 # Verification
 npm run test:changed -w frontend # tests affected by uncommitted Git changes

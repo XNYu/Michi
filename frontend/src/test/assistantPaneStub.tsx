@@ -27,6 +27,7 @@ export default function AssistantPaneStub({
     seenFocus.current = composerFocusToken;
     input.current?.focus();
   }, [composerFocusToken]);
+  // Same contract as TPane: the pre-blocks may depend on whether the draft has text.
   return <>
     {typeof composerPreBlocks === 'function' ? composerPreBlocks(Boolean(draft.trim())) : composerPreBlocks}
     <textarea ref={input} aria-label="Message the assistant" disabled={composerDisabled}

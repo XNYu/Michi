@@ -30,6 +30,7 @@ import { usePaneLayout } from '../usePaneLayout';
 import { bindPaneCaptionScroll } from '../paneCaptionScroll';
 import { afterPaneMotion, scrollWithPaneLayout } from '../paneReveal';
 import { paneEntrance, PANE_EASE } from '../paneMotion';
+import { isFreshBranch, playBranchPush } from '../branchMotion';
 import { RetainedPaneContent, usePresentedPanes, usePresentedPaneFocus } from '../PanePresentation';
 
 const FilePane = lazy(() => import('../FilePane'));
@@ -510,6 +511,27 @@ export default function TerminalDashboard() {
     const running = entrances.current;
     return () => { for (const animation of running.values()) animation.cancel(); running.clear(); };
   }, []);
+
+  // Runs after the reveal above has scrolled the strip to the new pane.
+  const previousPhonePane = useRef({ scope: paneScope, id: visiblePhonePane, ids: activePanes });
+  const stopBranchPush = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => {
+    const previous = previousPhonePane.current;
+    previousPhonePane.current = { scope: paneScope, id: visiblePhonePane, ids: activePanes };
+    if (phone && previous.scope === paneScope && previous.id === visiblePhonePane) return;
+    stopBranchPush.current?.();
+    stopBranchPush.current = null;
+    if (!phone || !layout.ready || previous.scope !== paneScope || !previous.id || !visiblePhonePane) return;
+    if (previous.ids.includes(visiblePhonePane) || !isFreshBranch(activeProject?.edges, visiblePhonePane)) return;
+    // A launcher becomes the new chat in place; there is no parent to leave.
+    if (activeItems[previous.id]?.kind === 'launcher') return;
+    const incoming = paneRefs.current[visiblePhonePane];
+    const outgoing = paneRefs.current[previous.id];
+    if (!incoming || !outgoing) return;
+    const title = incoming.closest('.terminal-shell')?.querySelector('.mobile-pane-title');
+    stopBranchPush.current = playBranchPush(incoming, outgoing, title);
+  }, [paneScope, visiblePhonePane, activePanes, phone, layout.ready, activeProject?.edges, activeItems]);
+  useLayoutEffect(() => () => { stopBranchPush.current?.(); }, []);
 
   if (!activeProject) {
     return (

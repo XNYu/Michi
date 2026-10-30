@@ -65,7 +65,8 @@ interface MetaChatPanelProps extends MetaChatContentProps {
   sizeLabel: string | null;
   onTitlePointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onResizePointerDown: (dir: ResizeDir, event: ReactPointerEvent<HTMLElement>) => void;
-  onToggleDock: () => void;
+  /** Absent where the window has no half screen (a phone). */
+  onToggleDock?: () => void;
   onMinimize: () => void;
   onToggleFullscreen: () => void;
 }
@@ -158,7 +159,7 @@ export function MetaChatPanel({
             {form === 'full' ? <Minimize2 size={15} aria-hidden /> : <Maximize2 size={15} aria-hidden />}
           </button>
         </HoverTip>
-        <HoverTip label={floating ? 'Dock as half screen' : 'Back to floating'}>
+        {onToggleDock && <HoverTip label={floating ? 'Dock as half screen' : 'Back to floating'}>
           <button
             type="button"
             className="t-icon-btn"
@@ -167,7 +168,7 @@ export function MetaChatPanel({
           >
             {floating ? <PanelRight size={15} aria-hidden /> : <PictureInPicture2 size={15} aria-hidden />}
           </button>
-        </HoverTip>
+        </HoverTip>}
         <HoverTip label="Minimize" kbd={MINIMIZE_KEYS}>
           <button type="button" className="t-icon-btn" aria-label="Minimize" onClick={onMinimize}>
             <Minus size={15} aria-hidden />

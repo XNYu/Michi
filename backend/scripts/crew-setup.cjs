@@ -17,6 +17,8 @@ manifest.mcpServers.michi.env = {
     MICHI_CREW_MCP_DIR: process.env.MICHI_CREW_MCP_DIR || path.join(os.homedir(), '.michi', 'crew-mcp'),
 };
 fs.writeFileSync(path.join(target, 'app.json'), JSON.stringify(manifest, null, 2) + '\n');
+// The manifest command starts <MICHI_CREW_INSTALL_DIR>/crew-app/launch.py, and
+// the launcher uses the installation it was started from.
 console.log(`Prepared App: ${target}`);
 console.log('Copy the prepared files into a persistent App source for first installation, or the existing App’s registered source before Sync. Crew Sync reuses that source; it does not choose this new temporary directory. Preserve the existing App secret; do not uninstall.');
 console.log('Michi MCP and Approvals are included and required. In Crew Apps, complete sessionApproval consent and confirm the App is Enabled. The official grant also permits user-owned chats; it is broader than App-only access.');

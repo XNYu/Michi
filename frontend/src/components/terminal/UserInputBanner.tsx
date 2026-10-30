@@ -10,6 +10,58 @@ interface UserInputBannerProps {
   readOnly?: boolean;
 }
 
+export interface QuestionDetail {
+  label?: string;
+  value: string;
+  /** The value was wrapped in “…”: a quoted text such as a prompt. */
+  quoted?: boolean;
+}
+
+/** `Label: value`, `Label：value` or `Label → value`, with a short label. */
+const DETAIL_LINE = /^([^\s:：→“”"][^:：→“”"]{0,39}?)(?::\s+|：\s*|\s+→\s+)(\S[\s\S]*)$/;
+const QUOTED = /^“([\s\S]*)”$/;
+
+/**
+ * A question written as a title line followed by one fact per line, at least
+ * one of them `Label: value` (approval questions, such as scheduled jobs).
+ * Returns null for any other shape, including text separated by a blank line
+ * (a message to approve), which keeps rendering as written.
+ */
+export function questionLayout(text: string): { title: string; details: QuestionDetail[] } | null {
+  const lines = text.split('\n').map((line) => line.trim());
+  if (lines.length < 2 || lines.some((line) => !line)) return null;
+  const details = lines.slice(1).map((line): QuestionDetail => {
+    const match = DETAIL_LINE.exec(line);
+    if (!match) return { value: line };
+    const quoted = QUOTED.exec(match[2]);
+    return quoted
+      ? { label: match[1].trim(), value: quoted[1], quoted: true }
+      : { label: match[1].trim(), value: match[2] };
+  });
+  if (!details.some((detail) => detail.label)) return null;
+  return { title: lines[0], details };
+}
+
+function QuestionText({ text }: { text: string }) {
+  const layout = questionLayout(text);
+  if (!layout) return <span className="ask-card-qtext">{text}</span>;
+  return (
+    <div className="ask-card-qtext ask-card-qtext-structured">
+      <div className="ask-card-qtitle">{layout.title}</div>
+      <div className="ask-card-details">
+        {layout.details.map((detail, i) => detail.label ? (
+          <div key={i} className={`ask-card-detail${detail.quoted ? ' is-quoted' : ''}`}>
+            <span className="ask-card-detail-label">{detail.label}</span>
+            <span className="ask-card-detail-value">{detail.value}</span>
+          </div>
+        ) : (
+          <div key={i} className="ask-card-detail is-note">{detail.value}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Delay between picking a single-select option and auto-advancing to the next question. */
 const ADVANCE_MS = 320;
 /** Horizontal gap between questions in the sliding track. Must match `.ask-track` CSS. */
@@ -232,7 +284,7 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
               >
                 <div className="ask-card-qheader">
                   {question.header && <span className="ask-card-chip">{question.header}</span>}
-                  <span className="ask-card-qtext">{question.question}</span>
+                  <QuestionText text={question.question} />
                   {question.multiSelect && <span className="ask-card-hint">Select all that apply.</span>}
                 </div>
                 <div className="ask-card-options" role={question.multiSelect ? 'group' : 'radiogroup'} aria-label={question.question}>

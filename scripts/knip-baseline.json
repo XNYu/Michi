@@ -258,7 +258,6 @@
     "files\tbackend/src/agents/capabilityDescriptors.ts",
     "files\tbackend/src/agents/runs/runMcpSlot/index.ts",
     "files\tbackend/src/agents/runtimeModelCatalog/index.ts",
-    "files\tfrontend/src/components/terminal/BranchQuoteUnderline.tsx",
     "files\tfrontend/src/components/terminal/content/db/dbTestData.ts",
     "files\tfrontend/src/components/terminal/content/page/vendor-blocks/shared/block-tree.ts",
     "files\tfrontend/src/components/terminal/pages/AllThreads.tsx",

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { PaneMessageList } from './PaneMessageList';
@@ -89,5 +89,26 @@ describe('PaneMessageList — branch anchor turn markers', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Click me/ }));
     expect(onOpenBranch).toHaveBeenCalledWith('child-x');
+  });
+
+  it('underlines the passage a selection branch quoted; its card opens the branch', async () => {
+    const u1 = makeMsg('u1', 'user', 'q');
+    const a1 = makeMsg('a1', 'assistant', 'The quick **brown fox** jumps over the lazy dog.');
+    const parent = makeNode('parent', [u1, a1]);
+    const anchors = new Map<string, ChildAnchor[]>([
+      ['a1', [{ ...makeAnchor('child-q', 'Why a fox?', Date.now()), quotedText: 'brown fox jumps' }]],
+    ]);
+    const onOpenBranch = vi.fn();
+    const { container } = renderList(parent, anchors, { onOpenBranch });
+
+    const underline = container.querySelector('[data-msg-id="a1"] .t-branch-anchor-underline') as HTMLElement;
+    expect(underline.textContent).toBe('brown fox jumps');
+    // The turn marker stays: touch screens cannot hover.
+    expect(screen.getByRole('button', { name: 'Open branch: Why a fox?' })).toBeTruthy();
+
+    fireEvent.pointerEnter(underline);
+    const card = await screen.findByRole('group', { name: 'Branch from this passage' });
+    fireEvent.click(within(card).getByRole('button', { name: 'Open branch: Why a fox?' }));
+    expect(onOpenBranch).toHaveBeenCalledWith('child-q');
   });
 });

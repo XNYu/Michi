@@ -201,6 +201,8 @@ export interface ChatMessage {
   blocks?: AssistantBlock[];
   steeringReports?: SteeringReport[];
   steered?: boolean;
+  /** User message the scheduler sent for this scheduled job (or Space maintenance). */
+  scheduledJobId?: string;
   streaming?: boolean;
   /** Legacy aggregate reasoning text for assistant messages created before blocks. */
   thought?: string;

@@ -1,6 +1,6 @@
 /** Labels and examples for Michi's rich blocks, adapted from agent-desk 0c7e619. */
 import type { PageBlockCatalogEntry } from './blockCatalog';
-import { RICH_BLOCK_SCHEMAS, richBlockJsonSchema, type RichBlockType } from './richBlocks';
+import { RICH_BLOCK_RULES, RICH_BLOCK_SCHEMAS, briefJsonSchema, richBlockJsonSchema, type RichBlockType } from './richBlocks';
 
 /** Plain text for copy, history and assistant context; never executable markup. */
 export function richContentText(value: unknown): string {
@@ -553,10 +553,11 @@ const definitions = [
 
 export const RICH_BLOCK_CATALOG = Object.fromEntries(definitions.map((entry) => {
   const schema = richBlockJsonSchema(RICH_BLOCK_SCHEMAS[entry.type]);
-  const properties = schema.properties as Record<string, unknown>;
+  const rule = RICH_BLOCK_RULES[entry.type];
   return [entry.type, {
     ...entry, blurb: entry.describe, schema,
-    fields: `{${Object.keys(properties).filter((key) => key !== 'type').join(', ')}}; see schema for bounds and required fields`,
+    // Written from the schema the write is checked against, so the two cannot drift apart.
+    fields: `${briefJsonSchema(schema)}${rule ? `; ${rule}` : ''}`,
     title: (b: Record<string, unknown>) => String(b.title ?? b.question ?? b.name ?? b.label ?? ''),
     text: (block: unknown) => richContentText(block) || entry.label,
   }];

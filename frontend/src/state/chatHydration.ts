@@ -456,6 +456,8 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
     text: threadMessage ? threadMessageBody(rawContent) : rawContent,
     ...(threadMessage ? { threadMessage } : {}),
     ...(role === 'user' && metadata.steered === true ? { steered: true } : {}),
+    ...(role === 'user' && typeof metadata.scheduledJobId === 'string' && metadata.scheduledJobId
+      ? { scheduledJobId: metadata.scheduledJobId } : {}),
     toolCalls: parseToolCalls(row.tool_calls),
     blocks: role === 'assistant' ? parseAssistantBlocks(row.blocks) : undefined,
     streaming: false,

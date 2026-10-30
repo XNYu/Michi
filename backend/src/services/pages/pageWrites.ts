@@ -13,6 +13,7 @@ import {
 } from './maintenanceRepository';
 import type { AuthorityInput } from './maintenanceRepository';
 import { validateMaintenanceSegmentSourceReferences, validateSegmentSourceReferences } from './segmentSources';
+import { acquirePageEditLease, chatBusyError, livePageEditLease, maintenanceBusyError } from './editLeases';
 
 export { PageWriteError, pagesTransaction, newPageId, invalidatePages, assertPageRequestSize, requireChatChangeSource };
 export type { ChatChangeSource };
@@ -314,6 +315,10 @@ export function applyAgentPageEdits(args: {
     const page = getPage(args.pageId, args.ownerUserId, { write: true });
     if (page.workspaceId !== args.workspaceId) throw new PageWriteError(404, 'not_found', 'Page not found');
     requireChatChangeSource(page.workspaceId, args.ownerUserId, args.source, page.id);
+    // Writing takes or renews this turn's edit lease; another live turn's lease refuses the whole call.
+    const lease = acquirePageEditLease({ pageId: page.id, ownerUserId: args.ownerUserId, workspaceId: page.workspaceId,
+      holder: { nodeId: args.source.nodeId, turnId: args.source.turnId }, now });
+    if (!lease.acquired) throw chatBusyError(lease.lease, now);
     const planned = planAgentEdits({ page, ownerUserId: args.ownerUserId,
       source: { nodeId: args.source.nodeId, turnId: args.source.turnId, assistantId: args.source.assistantId },
       rawOps: args.ops as unknown[], now });
@@ -408,6 +413,9 @@ export function applyMaintenancePageSet(args: ApplyMaintenancePageSetInput): Pag
 
     const page = getPage(args.pageId, args.ownerUserId, { write: true });
     if (page.workspaceId !== args.workspaceId) throw new PageWriteError(404, 'not_found', 'Page not found');
+    // Checked before the revision: a conversation editing the page outranks maintenance, which retries later.
+    const lease = livePageEditLease(page.id, now);
+    if (lease) throw maintenanceBusyError(lease);
     if (page.revision !== args.expectedRevision) throw new PageWriteError(409, 'stale_revision', 'Page revision changed');
     if (args.assignedIds.blockIds.some((id) => page.blocks.some((block) => block.id === id))) {
       throw new PageWriteError(409, 'stale_revision', 'Frozen maintenance block ID already exists on the page');

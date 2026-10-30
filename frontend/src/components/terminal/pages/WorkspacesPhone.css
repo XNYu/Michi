@@ -1,0 +1,441 @@
+/* Workspaces on a phone (WorkspacesPhone.tsx). Palette, type, radius and
+   motion tokens only; the workspace badge keeps its fixed decorative palette. */
+.ws-phone {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 16px calc(40px + env(safe-area-inset-bottom, 0px));
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font-family: var(--ui-font);
+}
+
+.ws-phone__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+.ws-phone__title {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--fs-5xl);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: var(--ls-tight);
+}
+.ws-phone__count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-lg);
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--term-muted);
+}
+.ws-phone__new.ui-btn {
+  min-height: 40px;
+  padding: 0 12px 0 10px;
+  border-color: var(--term-line-s);
+  font-size: var(--fs-xl);
+  font-weight: 500;
+}
+
+/* Running / needs-you counts, each a filter toggle. */
+.ws-phone__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.ws-phone__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-lg);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--t-soft) var(--t-ease), border-color var(--t-soft) var(--t-ease);
+}
+.ws-phone__chip b {
+  margin-right: -3px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ws-phone__chip[data-tone='running'] b { color: var(--term-select); }
+.ws-phone__chip[data-tone='waiting'] { border-color: color-mix(in srgb, var(--term-accent) 45%, var(--term-line)); }
+.ws-phone__chip[data-tone='waiting'] b { color: var(--term-accent); }
+.ws-phone__chip[aria-pressed='true'] {
+  color: var(--term-fg);
+  background: var(--term-alt);
+  border-color: var(--term-line-s);
+}
+.ws-phone__chip[data-tone='waiting'][aria-pressed='true'] {
+  background: var(--term-accent-f);
+  border-color: var(--term-accent);
+}
+
+.ws-phone__search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-top: 14px;
+  padding: 0 2px 0 12px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+  background: var(--term-surface);
+  color: var(--term-muted);
+}
+.ws-phone__search:focus-within {
+  border-color: color-mix(in srgb, var(--term-accent) 70%, var(--term-line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--term-accent) 14%, transparent);
+}
+.ws-phone__search > svg { flex: none; }
+.ws-phone__search input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--term-fg);
+  font: inherit;
+  font-size: var(--fs-xl);
+}
+.ws-phone__search input::placeholder { color: var(--term-muted); }
+.ws-phone__search input::-webkit-search-cancel-button { display: none; }
+.ws-phone__search button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+}
+.ws-phone__note {
+  margin: 12px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--term-muted);
+}
+
+.ws-phone__section {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 22px 0 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--term-line) 85%, transparent);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 400;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+  color: var(--term-muted);
+}
+.ws-phone__section-count { letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
+/* Rows run edge to edge so the current workspace's fill reaches both sides. */
+.ws-phone__list {
+  margin: 0 -16px;
+  padding: 0;
+  list-style: none;
+}
+.ws-phone__list[data-flat] {
+  margin-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--term-line) 60%, transparent);
+}
+.ws-phone__row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid color-mix(in srgb, var(--term-line) 60%, transparent);
+}
+.ws-phone__row[data-current] {
+  background: color-mix(in srgb, var(--term-alt) 75%, var(--term-bg));
+  box-shadow: inset 3px 0 0 var(--term-accent);
+}
+.ws-phone__open {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: start;
+  padding: 12px 0 12px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  /* A held finger opens the action sheet, not the text callout. */
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.ws-phone__open:active,
+.ws-phone__more:active { background: var(--term-hover-bg, var(--term-alt)); }
+@media (hover: hover) {
+  .ws-phone__open:hover,
+  .ws-phone__more:hover { background: var(--term-hover-bg, var(--term-alt)); }
+}
+.ws-phone__open:focus-visible,
+.ws-phone__more:focus-visible,
+.ws-phone__chip:focus-visible,
+.ws-phone__link:focus-visible {
+  outline: 2px solid var(--term-accent);
+  outline-offset: -2px;
+}
+.ws-phone__badge {
+  width: 32px;
+  height: 32px;
+  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ui-radius-sm);
+  /* Part of the fixed badge palette, like the badge fill. */
+  color: #fff;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+}
+.ws-phone__badge[data-size='lg'] {
+  width: 40px;
+  height: 40px;
+  margin: 0;
+  font-size: var(--fs-2xl);
+}
+.ws-phone__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ws-phone__line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.ws-phone__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xl);
+  font-weight: 500;
+}
+.ws-phone__row[data-archived] .ws-phone__name { color: var(--term-mid); }
+.ws-phone__pin {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  color: var(--term-muted);
+}
+.ws-phone__age {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+  color: var(--term-muted);
+}
+.ws-phone__line2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  font-size: var(--fs-xl);
+  color: var(--term-mid);
+}
+.ws-phone__label {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-phone__label[data-tone='running'] { color: var(--term-select); }
+.ws-phone__label[data-tone='waiting'] { color: var(--term-accent); }
+.ws-phone__label[data-tone='failed'] { color: var(--term-danger-text); }
+.ws-phone__detail {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-phone__detail[data-quiet] { color: var(--term-muted); }
+.ws-phone__more-count {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--term-muted);
+}
+.ws-phone__sep { flex: none; color: var(--term-faint); }
+/* Needs-you is a diamond in the accent; a digest match a square in its hue. */
+.ws-phone__mark {
+  flex: none;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: var(--term-accent);
+  transform: rotate(45deg);
+}
+.ws-phone__mark[data-tone='digest'] {
+  background: var(--term-digest);
+  transform: none;
+  border-radius: var(--ui-radius-sm);
+}
+.ws-phone__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--term-muted);
+}
+.ws-phone__meta > span { flex: none; }
+.ws-phone__meta > .ws-phone__path {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-phone__machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ws-phone__more {
+  flex: none;
+  width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ws-phone__empty {
+  margin: 32px 0;
+  text-align: center;
+  font-size: var(--fs-xl);
+  color: var(--term-muted);
+}
+
+.ws-phone__foot {
+  display: grid;
+  margin-top: 24px;
+}
+.ws-phone__link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--term-line) 60%, transparent);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-size: var(--fs-xl);
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ws-phone__link > svg:first-child { flex: none; color: var(--term-muted); }
+.ws-phone__link-end {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--term-muted);
+}
+.ws-phone__chevron { transition: transform var(--t-soft) var(--t-ease); }
+.ws-phone__chevron[data-open] { transform: rotate(180deg); }
+
+/* Action sheet contents (the sheet itself is ui/BottomSheet). */
+.ws-phone__sheet-head {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: center;
+  padding: 10px 18px 14px;
+}
+.ws-phone__sheet-name {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-2xl);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ws-phone__field {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--term-line-s);
+  border-radius: var(--ui-radius);
+  background: var(--term-bg);
+  color: var(--term-fg);
+  font: inherit;
+  font-size: var(--fs-2xl);
+  outline: none;
+  box-sizing: border-box;
+}
+.ws-phone__field:focus {
+  border-color: var(--term-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--term-accent) 14%, transparent);
+}
+.ws-phone__field-note {
+  margin: 0;
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+  color: var(--term-muted);
+}
+.ws-phone__danger-icon {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ui-radius);
+  color: var(--term-danger-text);
+  background: color-mix(in srgb, var(--term-danger) 14%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-phone__chevron { transition: none; }
+}
+:root[data-reduce-motion='on'] .ws-phone__chevron { transition: none; }

@@ -18,7 +18,7 @@ michi update
 
 On macOS the update rebuilds/replaces the application and quits Michi; reopen it afterward. A local development commit becomes available to other installer users only after it is published to the installer's source branch.
 
-A default installation already contains the complete **~/.michi/crew-app** directory. **Do not run crew-setup.cjs or copy App files for a new default installation.** A data directory from a standalone desktop bundle alone is not an installation checkout: it must contain `crew-app/launch.py`, `backend/dist/crewMcpHost.js`, `backend/dist/crewMcp.js` and `backend/dist/crew-node.json`.
+A default installation already contains the complete **~/.michi/crew-app** directory. **Do not run crew-setup.cjs or copy App files for a new default installation.** A data directory from a standalone desktop bundle alone is not an installation checkout: it must contain `package.json`, `crew-app/launch.py`, `backend/dist/crewMcpHost.js`, `backend/dist/crewMcp.js` and `backend/dist/crew-node.json`.
 
 ## 2. Install the App directly in Crew
 

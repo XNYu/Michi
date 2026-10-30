@@ -80,30 +80,9 @@ function copyAssets() {
 copyAssets();
 
 const stagedOutfile = stagingOutfile();
-const buildOptions = {
-  entryPoints: [resolve(root, "src/server.ts")],
-  outfile: stagedOutfile,
-  bundle: true,
-  platform: "node",
-  target: "node22",
-  format: "cjs",
-  sourcemap: process.env.SOURCEMAP === "1" || WATCH,
-  legalComments: "none",
-  define: {
-    __MICHIBUNDLE__: "true",
-    ...(WATCH ? {} : { __MICHI_BUILD_INFO__: JSON.stringify(michiBuildInfo(resolve(root, '..'))) }),
-  },
-  external: [
-    "node:*",
-    "@anthropic-ai/claude-agent-sdk", // source execution; bundles load dist/claude-sdk
-  ],
-};
 
-// Database worker thread — bundled as a separate entry point so
-// `new Worker('dist/dbWorkerThread.js')` can load it independently.
-const workerBuildOptions = {
-  entryPoints: [resolve(root, "src/services/dbWorkerThread.ts")],
-  outfile: resolve(dist, "dbWorkerThread.js"),
+// Options every bundle shares; bundleOptions() adds each entry's own fields.
+const baseOptions = {
   bundle: true,
   platform: "node",
   target: "node22",
@@ -118,45 +97,59 @@ const workerBuildOptions = {
   ],
 };
 
-const metricsWorkerBuildOptions = {
-  ...workerBuildOptions,
-  entryPoints: [resolve(root, "src/services/metaAgentMetricsWorker.ts")],
-  outfile: resolve(dist, "metaAgentMetricsWorker.js"),
-};
+// crewMcpHost.js reloads crewMcp.js while it runs, so that bundle is written
+// to a temporary file and renamed into place instead of being written in place.
+const atomicCrewRelay = { name: "atomic-crew-relay", setup(pluginBuild) {
+  pluginBuild.onEnd((result) => {
+    if (result.errors.length) return;
+    for (const file of result.outputFiles ?? []) {
+      const temporary = `${file.path}.${process.pid}.tmp`;
+      try {
+        mkdirSync(dirname(file.path), { recursive: true });
+        writeFileSync(temporary, file.contents);
+        renameSync(temporary, file.path);
+      } finally { rmSync(temporary, { force: true }); }
+    }
+  });
+} };
 
-// Crew ACP adapter — its own process, launched by the `crew` runtime as
-// `node dist/crewAcp.js acp ...` (see runtime/src/adapters/crew/crewLaunch.ts).
-const crewAcpBuildOptions = {
-  ...workerBuildOptions,
-  entryPoints: [resolve(root, "../runtime/src/adapters/crew/acp/main.ts")],
-  outfile: resolve(dist, "crewAcp.js"),
-};
+// One row per bundle, in build order. Output file names are loaded by name
+// elsewhere, so do not rename them. Fields: entry (relative to backend/),
+// outfile, extra define/external, atomicWrite (write through atomicCrewRelay),
+// restartOnRebuild (--watch restarts the server child after this bundle).
+const bundles = [
+  // Meta agent metrics worker thread, loaded by name like the database worker.
+  { entry: "src/services/metaAgentMetricsWorker.ts", outfile: resolve(dist, "metaAgentMetricsWorker.js") },
+  // Database worker thread, loaded by `new Worker('dist/dbWorkerThread.js')`.
+  { entry: "src/services/dbWorkerThread.ts", outfile: resolve(dist, "dbWorkerThread.js") },
+  // Crew ACP adapter — its own process, launched by the `crew` runtime as
+  // `node dist/crewAcp.js acp ...` (see runtime/src/adapters/crew/crewLaunch.ts).
+  { entry: "../runtime/src/adapters/crew/acp/main.ts", outfile: resolve(dist, "crewAcp.js") },
+  { entry: "../runtime/src/adapters/crew/crewMcpMain.ts", outfile: resolve(dist, "crewMcp.js"), atomicWrite: true },
+  { entry: "../runtime/src/adapters/crew/crewMcpHost.ts", outfile: resolve(dist, "crewMcpHost.js") },
+  {
+    entry: "src/server.ts",
+    outfile: stagedOutfile,
+    define: WATCH ? {} : { __MICHI_BUILD_INFO__: JSON.stringify(michiBuildInfo(resolve(root, '..'))) },
+    external: [
+      "@anthropic-ai/claude-agent-sdk", // source execution; bundles load dist/claude-sdk
+    ],
+    restartOnRebuild: true,
+  },
+];
 
-const crewMcpBuildOptions = {
-  ...workerBuildOptions,
-  entryPoints: [resolve(root, "../runtime/src/adapters/crew/crewMcpMain.ts")],
-  outfile: resolve(dist, "crewMcp.js"),
-  write: false,
-  plugins: [{ name: "atomic-crew-relay", setup(pluginBuild) {
-    pluginBuild.onEnd((result) => {
-      if (result.errors.length) return;
-      for (const file of result.outputFiles ?? []) {
-        const temporary = `${file.path}.${process.pid}.tmp`;
-        try {
-          mkdirSync(dirname(file.path), { recursive: true });
-          writeFileSync(temporary, file.contents);
-          renameSync(temporary, file.path);
-        } finally { rmSync(temporary, { force: true }); }
-      }
-    });
-  } }],
-};
-
-const crewMcpHostBuildOptions = {
-  ...workerBuildOptions,
-  entryPoints: [resolve(root, "../runtime/src/adapters/crew/crewMcpHost.ts")],
-  outfile: resolve(dist, "crewMcpHost.js"),
-};
+function bundleOptions(entry, extraPlugins = []) {
+  const plugins = [...(entry.atomicWrite ? [atomicCrewRelay] : []), ...extraPlugins];
+  return {
+    ...baseOptions,
+    entryPoints: [resolve(root, entry.entry)],
+    outfile: entry.outfile,
+    define: { ...baseOptions.define, ...entry.define },
+    external: [...baseOptions.external, ...(entry.external ?? [])],
+    ...(entry.atomicWrite ? { write: false } : {}),
+    ...(plugins.length ? { plugins } : {}),
+  };
+}
 
 if (WATCH) {
   // Dev: watch + run in one process. esbuild rebuilds dist/server.js on each
@@ -247,37 +240,26 @@ if (WATCH) {
       });
     },
   };
-  const ctx = await context({ ...buildOptions, plugins: [runOnRebuild] });
-  await ctx.watch();
-  // Worker thread bundle: rebuild alongside the main server but no restart
-  // trigger — the main server's Worker constructor loads the fresh file.
-  const metricsWorkerCtx = await context(metricsWorkerBuildOptions);
-  await metricsWorkerCtx.watch();
-  const workerCtx = await context(workerBuildOptions);
-  await workerCtx.watch();
-  // Crew ACP adapter: same as the worker, picked up on the next adapter spawn.
-  const crewAcpCtx = await context(crewAcpBuildOptions);
-  await crewAcpCtx.watch();
-  const crewMcpCtx = await context(crewMcpBuildOptions);
-  await crewMcpCtx.watch();
-  const crewMcpHostCtx = await context(crewMcpHostBuildOptions);
-  await crewMcpHostCtx.watch();
+  // Every bundle rebuilds on source change; only the server's rebuild restarts
+  // the child. The others are picked up when next loaded: the server's Worker
+  // constructor, the next Crew adapter spawn, crewMcpHost's relay reload.
+  const contexts = [];
+  for (const entry of bundles) {
+    const ctx = await context(bundleOptions(entry, entry.restartOnRebuild ? [runOnRebuild] : []));
+    await ctx.watch();
+    contexts.push(ctx);
+  }
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
     void stopChild()
-      .then(() => Promise.all([ctx.dispose(), metricsWorkerCtx.dispose(), workerCtx.dispose(), crewAcpCtx.dispose(), crewMcpCtx.dispose(), crewMcpHostCtx.dispose()]))
+      .then(() => Promise.all(contexts.map((ctx) => ctx.dispose())))
       .finally(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 } else {
-  await build(metricsWorkerBuildOptions);
-  await build(workerBuildOptions);
-  await build(crewAcpBuildOptions);
-  await build(crewMcpBuildOptions);
-  await build(crewMcpHostBuildOptions);
-  await build(buildOptions);
+  for (const entry of bundles) await build(bundleOptions(entry));
   if (stagedOutfile !== outfile) {
     copyTree(stagedOutfile, outfile);
     rmSync(stagedOutfile, { force: true });

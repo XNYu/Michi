@@ -460,9 +460,10 @@ export function serializeMessageRowsForNode(
     const metadata = m.role === 'assistant'
       ? (m.plan?.length || persisted.steeringReports?.length || persisted.subagents?.length
           ? { plan: m.plan, steeringReports: persisted.steeringReports, subagents: persisted.subagents } : null)
-      : (m.steered || m.quotedText || m.attachments?.length || m.comments?.length
+      : (m.steered || m.scheduledJobId || m.quotedText || m.attachments?.length || m.comments?.length
           ? {
               ...(m.steered ? { steered: true } : {}),
+              ...(m.scheduledJobId ? { scheduledJobId: m.scheduledJobId } : {}),
               quotedText: m.quotedText,
               quoteSource: m.quoteSource,
               attachments: m.attachments,

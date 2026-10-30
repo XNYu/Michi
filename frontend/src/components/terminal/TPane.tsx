@@ -15,6 +15,7 @@ import { usePrefs } from '../../state/prefs';
 import { usePaneShellStyle } from '../../hooks/usePaneShellStyle';
 import { stripBranchPrefix, parseFanoutCommand, shouldBranchOnSubmit } from '../nodes/chatNodeUtils';
 import SelectionActions from '../SelectionActions';
+import { DOCK_ROOM_VAR } from '../selectionDockRoom';
 import type { MentionEditorHandle } from '../MentionEditor';
 const MentionEditor = React.lazy(() => import('../MentionEditor'));
 import type { MentionRecord } from '../mentions';
@@ -215,7 +216,9 @@ function anchorEqual(a: ChildAnchor, b: ChildAnchor): boolean {
     (a.messageCount ?? 0) === (b.messageCount ?? 0) &&
     a.createdAt === b.createdAt &&
     a.status === b.status &&
-    (a.quotedText ?? '') === (b.quotedText ?? '')
+    (a.quotedText ?? '') === (b.quotedText ?? '') &&
+    (a.question ?? '') === (b.question ?? '') &&
+    (a.reply ?? '') === (b.reply ?? '')
   );
 }
 
@@ -2459,7 +2462,8 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
             prefs.terminalDensity === 'dense' ? 22 : prefs.terminalDensity === 'compact' ? 24 : 32,
           // Reserve clearance equal to the measured composer height + 12px top
           // gutter + 12px breathing buffer so the last message scrolls clear.
-          paddingBottom: n.pendingPermission ? 12 : composerHeight + 24,
+          // A docked phone selection can add room below it (SelectionActions).
+          paddingBottom: `calc(${n.pendingPermission ? 12 : composerHeight + 24}px + var(${DOCK_ROOM_VAR}, 0px))`,
           fontSize:
             prefs.terminalDensity === 'dense'
               ? 11

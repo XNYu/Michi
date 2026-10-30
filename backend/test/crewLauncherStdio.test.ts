@@ -26,6 +26,8 @@ test('production manifest launches stdio MCP from default home with spaces and n
     const dist = path.join(install, 'backend/dist');
     await fs.mkdir(dist, { recursive: true });
     await fs.cp(path.join(root, 'crew-app'), path.join(install, 'crew-app'), { recursive: true, filter: p => !p.includes('__pycache__') });
+    // The launcher reads the Node minimum from the installation's package.json.
+    await fs.copyFile(path.join(root, 'package.json'), path.join(install, 'package.json'));
     // The normal backend suite builds shared, not dist. Bundle current source so
     // this check never tests a stale build or changes the checkout's dist.
     const { build } = await import('esbuild');

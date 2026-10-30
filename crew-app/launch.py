@@ -13,9 +13,22 @@ import subprocess
 import sys
 
 
-def supported_node_version(value):
+def minimum_node_version(root):
+    """Michi's minimum Node: engines.node (">=X.Y.Z") in the installation's
+    package.json, the value bin/michi and the remote launcher also read."""
+    try:
+        engines = json.loads((root / "package.json").read_text()).get("engines") or {}
+    except (OSError, ValueError, AttributeError) as error:
+        raise RuntimeError("Michi installation is incomplete: cannot read " + str(root / "package.json") + " (" + str(error) + ")")
+    match = re.fullmatch(r">=(\d+)\.(\d+)\.(\d+)", str(engines.get("node", "")))
+    if not match:
+        raise RuntimeError('package.json engines.node must be ">=X.Y.Z"')
+    return tuple(map(int, match.groups()))
+
+
+def supported_node_version(value, minimum):
     match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", value.strip())
-    return bool(match and tuple(map(int, match.groups())) >= (22, 19, 0))
+    return bool(match and tuple(map(int, match.groups())) >= minimum)
 
 
 def node_candidates(root, env):
@@ -53,20 +66,27 @@ def node_candidates(root, env):
 
 
 def resolve_node(root, env):
+    minimum = minimum_node_version(root)
     for candidate in node_candidates(root, env):
         if not Path(candidate).is_absolute() or not Path(candidate).is_file():
             continue
         try:
             probe = subprocess.run([candidate, "--version"], capture_output=True, text=True, timeout=5)
-            if probe.returncode == 0 and supported_node_version(probe.stdout):
+            if probe.returncode == 0 and supported_node_version(probe.stdout, minimum):
                 return candidate
         except (OSError, subprocess.SubprocessError):
             continue
-    raise RuntimeError("Node.js 22.19 or newer was not found. Update Michi or set MICHI_CREW_NODE to a supported Node executable in the App MCP environment.")
+    raise RuntimeError("Node.js " + ".".join(map(str, minimum)) + " or newer was not found. Update Michi or set MICHI_CREW_NODE to a supported Node executable in the App MCP environment.")
+
+
+def install_root():
+    # app.json picks the installation (MICHI_CREW_INSTALL_DIR, else ~/.michi)
+    # and runs its crew-app/launch.py, so this file's location is that root.
+    return Path(__file__).resolve().parents[1]
 
 
 def main():
-    root = Path(os.environ.get("MICHI_CREW_INSTALL_DIR") or Path.home() / ".michi").resolve()
+    root = install_root()
     host = root / "backend/dist/crewMcpHost.js"
     relay = root / "backend/dist/crewMcp.js"
     if not host.is_file() or not relay.is_file():

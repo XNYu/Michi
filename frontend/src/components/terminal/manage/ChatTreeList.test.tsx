@@ -116,4 +116,32 @@ describe('ChatTreeList', () => {
     fireEvent.click(screen.getByLabelText(/more actions/i));
     expect(screen.queryByText('Unpin')).not.toBeNull();
   });
+
+  it('keeps ⋯ visible on a screen that cannot hover, where a tap opens the thread', () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      ...original(query),
+      matches: query === '(hover: none)',
+    })) as typeof window.matchMedia;
+    try {
+      const onOpen = vi.fn();
+      render(
+        <ChatTreeList
+          workspace={mkProject()}
+          nodes={NODES}
+          filter=""
+          onOpen={onOpen}
+          menuActions={{
+            activateTree: vi.fn(), archiveTree: vi.fn(), unarchiveTree: vi.fn(), pinTree: vi.fn(),
+            unpinTree: vi.fn(), renameTree: vi.fn(), deleteTree: vi.fn(), exportTree: vi.fn(),
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByLabelText(/more actions/i));
+      expect(screen.queryByText('Pin')).not.toBeNull();
+      expect(onOpen).not.toHaveBeenCalled();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
 });

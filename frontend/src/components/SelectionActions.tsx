@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import { usePhoneLayout } from '../hooks/usePhoneLayout';
 import { useKeyboardInset } from '../hooks/useKeyboardInset';
+import { DOCK_ROOM_VAR } from './selectionDockRoom';
 
 interface ViewRect {
   left: number;
@@ -137,13 +138,13 @@ const FILE_BAR_WIDTH = 320;
 const COMPOSER_WIDTH = 340;
 const COMPOSER_MIN_HEIGHT = 110;
 const VIEWPORT_MARGIN = 8;
-/** Clearance for the touch selection handles drawn past the first / last line. */
-const HANDLE_ROOM = 24;
 /**
  * Room the platform edit menu takes beside a touch selection, handle included.
  * Measured on iOS: about 40px tall, its far edge about 53px from the line.
  */
 const PLATFORM_MENU_ROOM = 64;
+/** Quiet time after the last selection edit before scrolling for the dock. */
+const DOCK_SETTLE_MS = 350;
 /**
  * Selection-driven placement changes smaller than this (px, per axis) are
  * ignored and the popup keeps its current position. See `stickyPlacement`.
@@ -155,8 +156,9 @@ const POSITION_DEADZONE = 8;
  * escape pane clipping and overlap neighboring panes.
  *
  *   1. Select text inside containerRef → `[branch] [comment] [quote reply]`
- *      bar appears beside the selection. For a touch selection it goes on the
- *      side away from the platform's edit menu (`placeTouchPopup`).
+ *      bar appears beside the selection. For a touch selection it leaves the
+ *      platform edit menu's slot free on both sides (`placeTouchPopup`); on a
+ *      phone it covers the pane's composer instead (`placeDock`).
  *   2. Branch / Comment → a composer replaces the bar at the same anchor:
  *      a compact quote preview and input. The textarea steals native selection
  *      focus, so we keep painting a lightweight highlight over the saved
@@ -490,6 +492,38 @@ export default function SelectionActions({
   const phone = usePhoneLayout();
   const keyboardInset = useKeyboardInset(phone && popupVisible && composerMode !== 'closed');
 
+  // A docked bar sits where the platform edit menu opens when it goes below a
+  // selection on the transcript's last lines. Once the selection settles,
+  // scroll it up clear of that slot, adding room under the transcript when
+  // it is already at the end. The room goes when the selection does.
+  const docking = phone && !!anchor?.touch && composerMode === 'closed' && !renderSelectionContext;
+  const dockRange = docking ? anchor?.range : undefined;
+  useEffect(() => {
+    const scroller = containerRef.current;
+    if (!dockRange || !scroller) return;
+    const timer = setTimeout(() => {
+      const composer = findComposer(scroller)?.getBoundingClientRect();
+      const measured = measureRange(dockRange, scroller);
+      if (!composer || composer.width === 0 || !measured) return;
+      const view = scroller.getBoundingClientRect();
+      const shift = dockClearance(measured.highlightRects, placeDock(composer).top, view.top);
+      if (shift <= 0) return;
+      const room = parseFloat(scroller.style.getPropertyValue(DOCK_ROOM_VAR)) || 0;
+      const shortfall = scroller.scrollTop + shift - (scroller.scrollHeight - scroller.clientHeight);
+      if (shortfall > 0) scroller.style.setProperty(DOCK_ROOM_VAR, `${Math.ceil(room + shortfall)}px`);
+      scroller.scrollBy?.({ top: shift, behavior: 'smooth' });
+    }, DOCK_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [dockRange, containerRef]);
+  useEffect(() => {
+    if (popupVisible) return;
+    containerRef.current?.style.removeProperty(DOCK_ROOM_VAR);
+  }, [popupVisible, containerRef]);
+  useEffect(() => {
+    const scroller = containerRef.current;
+    return () => { scroller?.style.removeProperty(DOCK_ROOM_VAR); };
+  }, [containerRef]);
+
   // Measure actual rendered popup size so placement uses real height/width
   // instead of the constant estimates — those underestimate the composer
   // and let it overlap the selection when placed above.
@@ -551,9 +585,15 @@ export default function SelectionActions({
   const popupWidth = measuredSize?.width ?? fallbackWidth;
   const popupHeight = measuredSize?.height ?? fallbackHeight;
   const bottomBoundary = getComposerTopBoundary(containerRef.current);
-  // The bar for a touch selection goes on the side of the selection away from
-  // the platform's edit menu. The composer replaces that menu (the textarea
-  // takes the focus), so it keeps its usual placement.
+  // A touch selection on a phone puts the bar over the pane's composer, far
+  // from the platform edit menu beside the selection, whichever side that is.
+  // A bar carrying selection context controls is taller than one row; it
+  // keeps the floating placement.
+  const dockRect = phone && anchor.touch && !composerOpen && !renderSelectionContext ? findComposer(containerRef.current)?.getBoundingClientRect() : undefined;
+  const dock = dockRect && dockRect.width > 0 ? placeDock(dockRect) : null;
+  // Elsewhere the bar for a touch selection stays clear of the platform edit
+  // menu's slot on either side of the selection. The composer replaces that
+  // menu (the textarea takes the focus), so it keeps its usual placement.
   const rawPlacement = anchor.touch && !composerOpen
     ? placeTouchPopup(
       containerRef.current ? toViewRect(containerRef.current.getBoundingClientRect()) : viewportRect(),
@@ -561,7 +601,6 @@ export default function SelectionActions({
       bottomBoundary,
       popupWidth,
       popupHeight,
-      window.visualViewport?.offsetTop ?? 0,
     )
     : placePopup(
       anchor.bounds,
@@ -615,17 +654,18 @@ export default function SelectionActions({
         // panel's Esc always yields to it.
         data-escape-layer="over"
         key={composerOpen ? `composer-${composerMode}` : 'bar'}
-        className={`${composerOpen ? styles.composerWrap : styles.barWrap}${sheet ? ' is-sheet' : ''}${renderSelectionContext ? ' sel-actions-with-context' : ''} sel-actions-enter`}
+        className={`${composerOpen ? styles.composerWrap : styles.barWrap}${sheet ? ' is-sheet' : ''}${dock ? ' is-dock' : ''}${renderSelectionContext ? ' sel-actions-with-context' : ''} sel-actions-enter`}
         style={{
           position: 'fixed',
-          left: sheet ? 0 : placement.left,
+          left: sheet ? 0 : dock ? dock.left : placement.left,
           right: sheet ? 0 : undefined,
-          top: sheet ? undefined : placement.top,
+          top: sheet ? undefined : dock ? dock.top : placement.top,
           bottom: sheet ? keyboardInset : undefined,
           '--keyboard-inset': `${keyboardInset}px`,
-          width: sheet ? undefined : composerOpen ? COMPOSER_WIDTH : renderSelectionContext ? FILE_BAR_WIDTH : undefined,
+          width: dock ? dock.width : sheet ? undefined : composerOpen ? COMPOSER_WIDTH : renderSelectionContext ? FILE_BAR_WIDTH : undefined,
+          minHeight: dock ? dock.height : undefined,
           zIndex: 'var(--z-selection)',
-          transformOrigin: `left ${originY}`,
+          transformOrigin: dock ? 'center bottom' : `left ${originY}`,
           WebkitAppRegion: 'no-drag',
         } as React.CSSProperties}
         onMouseDown={(e) => e.stopPropagation()}
@@ -728,6 +768,20 @@ export default function SelectionActions({
                 </svg>
                 Quote
               </button>
+              {dock && (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={close}
+                  className={`${styles.barBtn} is-close`}
+                  aria-label="Clear selection"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
+                </button>
+              )}
             </div>
             {renderSelectionContext && (
               <div className="sel-actions-term-routing">{renderSelectionContext(anchor.context, replaceContext)}</div>
@@ -893,29 +947,18 @@ function viewportRect(): ViewRect {
  * Placement of the bar for a selection made by touch.
  *
  * The platform draws its own edit menu next to such a selection, and a page
- * can neither move nor suppress it. Its position is predictable:
+ * can neither move nor suppress it. On a phone that menu spans nearly the
+ * full width, is about 40px tall and sits about 15px from the selection,
+ * either directly above the first line or directly below the last one.
+ * Which side cannot be predicted from the page: iOS documents "above unless
+ * there is no room", yet on iOS 26 it also opens below a selection with
+ * plenty of room above (IMG_3705, after dragging the end handle).
  *
- *   - iOS (UIMenuController / UIEditMenuInteraction) centres it above the
- *     target rect, or below when there is not enough space above. WebKit's
- *     target is the selection clipped to the viewport and to every scrolling
- *     ancestor, which is what `measureRange` reports in `highlightRects`.
- *   - WebKit only evades page UI above the selection for a focused
- *     contentEditable / textarea, so a transcript selection always gets the
- *     default.
- *   - Android's floating toolbar uses the same above-then-below order.
+ * So the bar leaves the menu's slot free on both sides of the selection:
  *
- * On a phone that menu spans nearly the full width (about 40px tall, its
- * bottom about 15px above the first line), so the bar goes on the other side
- * of the selection rather than beside the menu:
- *
- *   1. Below the selection: clear of the end handle when the menu is above,
- *      or of the menu as well when it is below.
- *   2. Otherwise above the selection, beyond the room the menu takes there.
+ *   1. Below the selection, beyond the menu's lower slot.
+ *   2. Otherwise above the selection, beyond the menu's upper slot.
  *   3. Otherwise, a selection filling the pane: dock just above the composer.
- *
- * Predicting "below" is the safe error. A bar placed under the selection and
- * the menu's lower slot is clear of the menu on either side, so the threshold
- * for "the menu is above" leans high.
  */
 export function placeTouchPopup(
   pane: ViewRect,
@@ -923,7 +966,6 @@ export function placeTouchPopup(
   bottomBoundary: number,
   width: number,
   height: number,
-  viewportTop = 0,
 ): { left: number; top: number; above: boolean } {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -932,9 +974,7 @@ export function placeTouchPopup(
   const lastBottom = Math.max(...rects.map(r => r.bottom));
   const floor = Math.min(bottomBoundary, pane.bottom, vh) - VIEWPORT_MARGIN;
   const ceiling = Math.max(pane.top, 0) + VIEWPORT_MARGIN;
-  const menuAbove = firstTop - viewportTop >= PLATFORM_MENU_ROOM;
-
-  const below = lastBottom + (menuAbove ? HANDLE_ROOM : PLATFORM_MENU_ROOM);
+  const below = lastBottom + PLATFORM_MENU_ROOM;
   const above = firstTop - PLATFORM_MENU_ROOM - height;
   let top: number;
   let isAbove = false;
@@ -995,17 +1035,47 @@ export function stickyPlacement(
  * the floating composer.
  */
 function getComposerTopBoundary(container: HTMLElement | null): number {
-  const fallback = typeof window !== 'undefined' ? window.innerHeight : 0;
-  if (!container) return fallback;
-  let node: HTMLElement | null = container.parentElement;
+  const composer = findComposer(container);
+  if (composer) return composer.getBoundingClientRect().top;
+  return typeof window !== 'undefined' ? window.innerHeight : 0;
+}
+
+function findComposer(container: HTMLElement | null): HTMLElement | null {
+  let node: HTMLElement | null = container?.parentElement ?? null;
   while (node) {
     const composer = node.querySelector('.terminal-composer');
-    if (composer instanceof HTMLElement) {
-      return composer.getBoundingClientRect().top;
-    }
+    if (composer instanceof HTMLElement) return composer;
     node = node.parentElement;
   }
-  return fallback;
+  return null;
+}
+
+/** Docked bar height bounds: a touch target at least, one composer row at most. */
+const DOCK_MIN_HEIGHT = 44;
+const DOCK_MAX_HEIGHT = 56;
+
+/**
+ * How far to scroll a touch selection up so the platform edit menu, when it
+ * opens below the last line, ends above the docked bar. Zero when it already
+ * does, or when scrolling would push the first line out of the view.
+ */
+export function dockClearance(highlightRects: ViewRect[], dockTop: number, viewTop: number): number {
+  if (highlightRects.length === 0) return 0;
+  const firstTop = Math.min(...highlightRects.map(r => r.top));
+  const lastBottom = Math.max(...highlightRects.map(r => r.bottom));
+  const shift = Math.ceil(lastBottom + PLATFORM_MENU_ROOM - dockTop);
+  if (shift <= 0 || firstTop - shift < viewTop) return 0;
+  return shift;
+}
+
+/**
+ * Bar docked over the composer for a touch selection on a phone: the
+ * composer's width, along its bottom edge, one row tall. A composer grown by
+ * a long draft keeps the top of that draft visible.
+ */
+export function placeDock(composer: Pick<ViewRect, 'left' | 'bottom' | 'width' | 'height'>): { left: number; top: number; width: number; height: number } {
+  const height = Math.max(DOCK_MIN_HEIGHT, Math.min(composer.height, DOCK_MAX_HEIGHT));
+  return { left: composer.left, top: composer.bottom - height, width: composer.width, height };
 }
 
 // ---------- Styles ----------
@@ -1180,6 +1250,29 @@ const TERMINAL_CSS = `
   .sel-actions-term-btn { min-height: 40px; padding: 0 12px; }
   .file-selection-picker select { min-height: 40px; }
   .sel-actions-term-close { width: 40px; height: 40px; }
+}
+/* Phone touch selection: the bar covers the composer, buttons share its width. */
+.sel-actions-term-bar.is-dock {
+  border-radius: var(--term-composer-radius, 0px);
+  overflow: hidden;
+}
+.sel-actions-term-bar.is-dock .sel-actions-term-toolbar {
+  flex: 1;
+  align-items: stretch;
+  padding: 0;
+}
+.sel-actions-term-bar.is-dock .sel-actions-term-btn {
+  flex: 1 1 0;
+  justify-content: center;
+  gap: 7px;
+  min-height: 0;
+  padding: 0 8px;
+  border-radius: 0;
+  font-size: var(--fs-xl);
+}
+.sel-actions-term-bar.is-dock .sel-actions-term-btn.is-close {
+  flex: 0 0 48px;
+  color: var(--sel-bar-muted);
 }
 
 `;

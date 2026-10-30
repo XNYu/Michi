@@ -41,6 +41,23 @@ describe('TerminalSidebar BottomNav', () => {
     expect(screen.queryByText('Artifacts')).toBeNull();
   });
 
+  it('gives the narrow drawer an Activity switch that the wide sidebar leaves to the Topbar', () => {
+    const { rerender } = render(wrap(<TerminalSidebar activePage="dashboard" onNav={() => {}} />));
+    expect(screen.queryByRole('button', { name: 'Activity view' })).toBeNull();
+
+    rerender(wrap(<TerminalSidebar activePage="dashboard" onNav={() => {}} narrowMode narrowOverlayOpen />));
+    const toggle = screen.getByRole('button', { name: 'Activity view' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('Structure')).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('Activity')).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  });
+
   it('quiets sidebar scrollbars until the pointer enters, then lingers for 2s', () => {
     vi.useFakeTimers();
     try {

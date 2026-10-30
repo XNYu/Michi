@@ -7,6 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { paneScopeKey } from '../../state/paneState';
 import { useTerminalColors } from './useTerminalColors';
+import { useEdgeSwipe } from '../../hooks/useEdgeSwipe';
 import TerminalSidebar from './Sidebar';
 import TerminalTopbar from './Topbar';
 import { RemoteRecoveryDrawer, RemoteRecoveryIndicator } from '../RemoteRecoveryBanner';
@@ -705,12 +706,6 @@ export default function TerminalShell() {
   }, [hydrated]);
 
   useEffect(() => {
-    const onEvt = () => setPage('home');
-    window.addEventListener('michi:goto-home', onEvt as EventListener);
-    return () => window.removeEventListener('michi:goto-home', onEvt as EventListener);
-  }, []);
-
-  useEffect(() => {
     const onEvt = () => { if (hydrated) setArtifactsOpen((v) => !v); };
     window.addEventListener('michi:toggle-artifacts', onEvt as EventListener);
     return () => window.removeEventListener('michi:toggle-artifacts', onEvt as EventListener);
@@ -792,6 +787,13 @@ export default function TerminalShell() {
   // Profile owns its own navigation rail, so the application sidebar stays
   // out of the layout without overwriting the user's persisted preference.
   const profileFullscreen = page === 'profile';
+  // A swipe right from the left screen edge opens the narrow drawer.
+  const openNarrowOverlay = React.useCallback(() => setNarrowOverlayOpen(true), []);
+  useEdgeSwipe(
+    narrowMode && !narrowOverlayOpen && !profileFullscreen
+      && !settingsOpen && !paletteOpen && !remoteAuthenticationOpen && !remoteRecoveryOpen,
+    openNarrowOverlay,
+  );
   const sidebarCollapsedEffective = profileFullscreen
     || (narrowMode ? !narrowOverlayOpen : prefs.sidebarCollapsed);
   const handleToggleSidebarEffective = React.useCallback(() => {
@@ -807,6 +809,16 @@ export default function TerminalShell() {
   const closeNarrowOverlay = React.useCallback(() => {
     if (narrowMode) setNarrowOverlayOpen(false);
   }, [narrowMode]);
+  // Home opens in the main column, so a narrow drawer would cover it
+  // (e.g. a workspace row's "+"). Wide windows never hold the overlay open.
+  useEffect(() => {
+    const onEvt = () => {
+      setPage('home');
+      setNarrowOverlayOpen(false);
+    };
+    window.addEventListener('michi:goto-home', onEvt as EventListener);
+    return () => window.removeEventListener('michi:goto-home', onEvt as EventListener);
+  }, []);
 
   return (
     <>

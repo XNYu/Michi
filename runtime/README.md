@@ -1,10 +1,10 @@
 # michi-runtime
 
-Run local coding agents from your own Node service through one interface.
-`michi-runtime` puts **Kiro CLI**, **Kiro Crew**, **Codex** and
-**Claude Code** behind the same `AgentRuntime` / `AgentSession` contract, so a
-host writes its session handling, event rendering, approvals and tools once
-and can switch or mix agents without rewriting them.
+Put an agent in your app. `michi-runtime` is a library for building
+agentic software in Node: it puts **Kiro CLI**, **Kiro Crew**, **Codex** and
+**Claude Code** behind the same `AgentRuntime` / `AgentSession` contract, so
+your app writes its session handling, event rendering, approvals and tools
+once and can switch or mix agents without rewriting them.
 
 It is Michi's repository-local runtime layer. The workspace remains in this
 repository and is private; Michi uses its source directly.
@@ -66,7 +66,9 @@ when you build:
     accepts.
   - A session opens or resumes with a model and a level.
   - Where the agent supports it, `setModel` and `setMode` change them on an
-    open session.
+    open session. `runtime.listModes(sessionId)` lists the modes a session can
+    switch to: Kiro agents, Crew templates, and Default and Plan on Codex and
+    Claude Code.
 - **Unattended runs.** `startHeadlessSession` drives a session without a user.
   - It answers approvals and questions through your callbacks, or pauses on
     them.
@@ -88,8 +90,8 @@ when you build:
 
 | Runtime | Entry | Talks to | Process model | Needs on the machine |
 |---|---|---|---|---|
-| Kiro CLI | `./adapters/kiro` (`KiroRuntime`) | `kiro-cli` over ACP, engine v3 by default, or v2 | one `kiro-cli` per working directory, sessions multiplexed on it, warm sessions | `kiro-cli`, signed in |
-| Kiro Crew | `./adapters/crew` (`createCrewRuntime`) | the Kiro Crew Gateway through the bundled Crew ACP adapter | one adapter process per working directory | the Kiro Crew App, installed and approved for sessions |
+| Kiro CLI | `./adapters/kiro` (`KiroRuntime`) | `kiro-cli` over ACP, engine v2 (default) or v3 | one `kiro-cli` per working directory, sessions multiplexed on it, warm sessions | `kiro-cli`, signed in |
+| Kiro Crew | `./adapters/crew` (`createCrewRuntime`) | the Kiro Crew Gateway through the bundled Crew ACP adapter | one adapter process per working directory | Kiro Crew, and the Michi Crew App from a Michi installation; see [Using Kiro Crew](#using-kiro-crew) |
 | Codex | `./adapters/codex` (`CodexRuntime`) | `codex app-server` over JSON-RPC | one app-server for the runtime, a thread per session | `codex`, signed in |
 | Claude Code | `./adapters/claude` (`ClaudeRuntime`, `claudeAdapterOptions`) | the Claude Agent SDK and the installed Claude CLI | one CLI process per session, warm processes per (cwd, model) | `claude`, signed in, and the optional peer `@anthropic-ai/claude-agent-sdk@0.3.306` |
 
@@ -132,8 +134,10 @@ negotiated them.
 | Turns the agent starts itself | v3: when a workflow it launched finishes | — | — (goals are off) | ✓ when a background task completes |
 | Unattended runs (`startHeadlessSession`) | ✓ steering queued natively | — | ✓ steering through `turn/steer` | ✓ allowlisted tools, steering on the next turn |
 
-Kiro starts on engine v3 unless the host asks for v2 (`resolveKiroEngine`).
-Kiro v3 also runs Kiro workflows for users who turn them on. Claude Code's
+Kiro runs engine v2 unless the host passes `engine: 'v3'`.
+`resolveKiroEngine(value)` reads an environment-style value, where unset means
+v3, Michi's default. Approve for me, Kiro workflows and MCP session groups
+need v3. Claude Code's
 Plan mode always asks the person to approve the plan, whatever the
 permission mode. For what a restricted session can call, see
 [Restricted sessions](#restricted-sessions).
@@ -201,6 +205,117 @@ without starting an agent, using the private local validation artifact
 described under [Building and packing](#building-and-packing). Its head
 comment documents the optional live checks, which require a configured agent.
 
+## Constructing each runtime
+
+Every adapter takes the same `host` object and, for the host's tools, the same
+`mcpSlots` provider. `bridge` carries the optional product tools: `{}` offers
+none. Without `mcpSlots` a session gets no host tools.
+
+```ts
+import { createDefaultHost, type AgentToolBridge, type McpSlot } from 'michi-runtime';
+import { createMcpHost, createMcpSlotProvider } from 'michi-runtime/mcp-host';
+import { KiroRuntime } from 'michi-runtime/adapters/kiro';
+import { createCrewRuntime } from 'michi-runtime/adapters/crew';
+import { CodexRuntime } from 'michi-runtime/adapters/codex';
+import { ClaudeRuntime, claudeAdapterOptions } from 'michi-runtime/adapters/claude';
+
+const host = createDefaultHost({ principal: 'me' });
+const mcpHost = createMcpHost<McpSlot>({ basePath: '/api/mcp', serverName: 'my-host' });
+await mcpHost.listen();                                 // 127.0.0.1; '/api/mcp' is the shape Crew needs
+const mcpSlots = createMcpSlotProvider(mcpHost);
+const bridge: AgentToolBridge = {};
+const cwd = process.cwd();
+
+const kiro = new KiroRuntime({ host, bridge, mcpSlots, defaultCwd: cwd, engine: 'v3' });
+const crew = createCrewRuntime({ host, bridge, mcpSlots, defaultCwd: cwd });
+const codex = new CodexRuntime({ host, bridge, mcpSlots, spawnEnv: () => process.env });
+const claude = new ClaudeRuntime({ ...claudeAdapterOptions({ host, spawnEnv: () => process.env }), bridge, mcpSlots });
+
+const status = crew.checkAvailability?.();              // { available, detail }: what is missing, if anything
+```
+
+- **Kiro CLI.** `engine` picks the protocol generation, `'v2'` by default.
+  Engine v3 adds Approve for me (`createDefaultHost({ approveForMe: true })`
+  turns it on under Ask), Kiro workflows (`createDefaultHost({ workflows: true })`,
+  and override the `workflows` port to follow their runs) and one MCP session
+  group per directory. A restricted session needs `restrictedAgent`; see
+  [Restricted sessions](#restricted-sessions).
+- **Kiro Crew.** `createCrewRuntime` presets Kiro's adapter for Crew. Crew
+  needs a one-time setup outside the package; see
+  [Using Kiro Crew](#using-kiro-crew).
+- **Codex.** Pass `spawnEnv`: without it `codex app-server` starts with an
+  empty environment. In every thread Codex turns off the user's own configured
+  MCP servers and keeps the host's.
+- **Claude Code.** Install the optional SDK peer. `claudeAdapterOptions` fills
+  in the limits and CLI flags; pass `restrictedToolApproval` for the host tools
+  a restricted session may call. Plan mode is offered in chats only.
+- **Modes.** `await runtime.listModes?.(sessionId)` returns a session's modes
+  (`{ id, label, description }`), and `session.setMode?.(id)` switches to one.
+  Check `runtime.capabilities.modes` first.
+
+## Using Kiro Crew
+
+Kiro Crew runs its agents behind its own local Gateway. The Crew adapter
+connects to that Gateway as a Crew App, `michi-crew-runtime`, which comes with
+Michi rather than with this package: the App's manifest, its launcher and the
+MCP relay that carries the host's tools live in a Michi installation
+(`~/.michi` by default; `MICHI_CREW_INSTALL_DIR` in the App's environment
+points elsewhere). Until every step below is done, `checkAvailability()`
+reports Crew unavailable and names the step that is missing.
+
+One-time setup, in Kiro Crew:
+
+1. Install and start Kiro Crew and sign in. Its Gateway listens on
+   `http://127.0.0.1:5476` by default; a custom `CREW_GATEWAY_URL` must stay a
+   loopback address.
+2. In **Apps**, use **Install from path** with the absolute path of the Michi
+   installation's `crew-app` directory, `~/.michi/crew-app` written out in
+   full: the path field does not expand `~` or `$HOME`. This release expects
+   App version 0.6.1; after the Michi installation updates, **Sync** the App.
+3. Consent to **sessionApproval** and confirm the App is **Enabled**.
+4. In **Developer → MCP Management**, enable `michi-crew-runtime:michi`
+   **Stub / Routed** and approve its launch. After a Sync, approve it again
+   when the page reports **command changed**.
+5. After the first install, restart the Gateway once (`kirocrew restart`, after
+   active work finishes): Sync alone keeps the old broker route.
+
+In your host:
+
+- Serve the MCP host on `/api/mcp` with `listen()`, or mount `handler()` so
+  that slot URLs come out as `http://127.0.0.1:<port>/api/mcp/<slotId>`: the
+  App's relay accepts no other shape.
+- The adapter process inherits this process's environment (`spawnEnv` does not
+  apply) and reads its Crew settings from it; see
+  [Environment and defaults](#environment-and-defaults). The adapter and the
+  App's relay must agree on `MICHI_CREW_MCP_DIR`.
+- `bindings.crewMemory` picks each new chat's memory mode: `persistent`
+  (recall and learn), `incognito` (recall only) or `temporary` (no learned
+  memory). The mode is pinned when the chat opens, and forks inherit it.
+  `createDefaultHost` uses `persistent`. Chat history is kept in every mode.
+- A new session is filed in the Crew sidebar under **Michi Crew / <workspace
+  name>**, the name of the workspace its `workspaceId` names
+  (`bindings.workspace`).
+- The `crew` option points at another Crew home or App (`kirocrewHome`,
+  `appName`) or at an external adapter executable (`acpBinOverride`). Given as
+  a function, it is read at each spawn.
+
+What to expect:
+
+- Pending tool requests reach the host's permission policy: under Ask they
+  arrive as `permission_request` events, under Trust the policy answers them,
+  and YOLO acts as Trust. Crew's own allowlists, governance and global YOLO
+  apply first, so a tool Crew approves itself never reaches the host.
+- The sessionApproval grant also lets the App control the user's own Crew
+  chats; the adapter limits itself to its own local App sessions. Do not drive
+  one chat from Crew and from the host at the same time: Crew's approve API
+  takes only a request id, so its check and its answer are not atomic.
+- There is no same-turn steer: the Gateway queues an App's input for the next
+  turn.
+- Subagent spawns are approved on a Crew dashboard tab, not by the host; with
+  no dashboard tab open, Crew refuses the spawn.
+- `/compact` takes no instructions. Images and audio are not supported, and
+  restricted sessions are refused.
+
 ## What the package provides, and what the host provides
 
 The package provides:
@@ -236,12 +351,11 @@ The product tools of `AgentToolBridge` (`spawn_branches`, `save_artifact`,
 `update_artifact`) are optional: an adapter offers each one only when the
 bridge implements its method, so `bridge: {}` offers none.
 
-Crew's host tools need a Michi installation. The Crew App starts its MCP relay
-from `$MICHI_CREW_INSTALL_DIR/backend/dist/crewMcpHost.js`, with `~/.michi` as
-the default directory. The package carries the same relay
-(`dist/adapters/crew/crewMcpHost.js`), but the v1 App does not look for it
-there. Without that installation Crew sessions still run, without the host's
-tools.
+Crew needs a Michi installation, for its App and for the relay that carries
+the host's tools: the App starts that relay from
+`$MICHI_CREW_INSTALL_DIR/backend/dist/crewMcpHost.js` (`~/.michi` by default).
+The package carries the same relay (`dist/adapters/crew/crewMcpHost.js`), but
+the App does not look for it there. See [Using Kiro Crew](#using-kiro-crew).
 
 ## Host ports
 
@@ -395,8 +509,8 @@ environment. The host passes everything else:
 
 | Runtime | Defaults in the package | The host must pass | Left to the host |
 |---|---|---|---|
-| Kiro | at most 20 `kiro-cli` processes (`processCap`), an idle one stopped after 5 min, 3 warm sessions per cwd, 100 bound sessions, `ask_user` waits 5 min, custom agents off, ACP idle timeout 180 s, `kiro-cli` looked up in its fixed locations; without `spawnEnv`, or with `launch`, the child inherits this process's environment | `host`, `bridge` | where else to look for `kiro-cli` (`kiroCli`), and every other setting |
-| Crew (`createCrewRuntime`) | engine v2, id `crew`, label `Kiro Crew`, Crew's flavor, descriptor and capabilities, no sidecar titles, the bundled adapter resolved at each spawn, Crew's offline availability check | `host`, `bridge` | `crew`: where the adapter and App are (default: the bundled adapter, `~/.kiro/crew`, App `michi-crew-runtime`), a function to read it at each spawn |
+| Kiro | engine v2, at most 20 `kiro-cli` processes (`processCap`), an idle one stopped after 5 min, 3 warm sessions per cwd, 100 bound sessions, `ask_user` waits 5 min, custom agents off, ACP idle timeout 180 s, `kiro-cli` looked up in its fixed locations; without `spawnEnv`, or with `launch`, the child inherits this process's environment | `host`, `bridge`; `mcpSlots` for the host's tools | where else to look for `kiro-cli` (`kiroCli`), and every other setting |
+| Crew (`createCrewRuntime`) | engine v2, id `crew`, label `Kiro Crew`, Crew's flavor, descriptor and capabilities, no sidecar titles, the bundled adapter resolved at each spawn, Crew's offline availability check | `host`, `bridge`; `mcpSlots` for the host's tools | `crew`: where the adapter and App are (default: the bundled adapter, `~/.kiro/crew`, App `michi-crew-runtime`), a function to read it at each spawn |
 | Codex | requests and initialize 30 s, approvals 5 min, titles 10 s, no concurrency cap, `codexHome` `~/.codex`, the CLI found on PATH or in its standard locations, no Stop hook | `host`, `bridge`, `mcpSlots`, and `spawnEnv`: without it the child gets an empty environment, no PATH or HOME | |
 | Claude (`claudeAdapterOptions`) | `DEFAULT_CLAUDE_LIMITS` (15 processes; pool on, 2 per cwd, waits for warm; init 60 s; approvals 5 min; dispose 2 s, then 1 s after SIGKILL), `DEFAULT_CLAUDE_CLI_FLAGS` (bare off, strict MCP off, subagent text and human origin on), Stop hook off, the CLI found on PATH or in its standard locations | `host`, `spawnEnv`; then `bridge`, `mcpSlots` | `configDir`, `stderrWarning`, `restrictedToolApproval`, `hostText`, `modelCatalog` |
 
@@ -486,15 +600,6 @@ as plain renames, with no shims left at their old paths; Pi stays in
 have thin re-export shims at their old backend paths, as directory indexes such
 as `backend/src/agents/types/index.ts`.
 
-## Crew App version
-
-The Crew adapter asks for a Sync when the installed Crew App is older than
-`CREW_APP_VERSION` (`src/adapters/crew/crewAppVersion.ts`). The App itself lives
-outside this package, in the repository's `crew-app/`, so its version is copied
-into that constant rather than imported. To release a new App version, bump
-`version` in `crew-app/app.json` and `CREW_APP_VERSION` in the same commit;
-`test/crewAppVersion.test.ts` fails while the two differ.
-
 ## Building and packing
 
 From the repository root:
@@ -578,3 +683,12 @@ package (`shared/` in this repository), whose entry is its built `dist/`, so
 these scripts and `build` run `shared:build` first.
 After pulling the commit that added this workspace, run `npm install` once from
 the repository root to create the `node_modules/michi-runtime` link.
+
+## For maintainers: the Crew App version
+
+The Crew adapter asks for a Sync when the installed Crew App is older than
+`CREW_APP_VERSION` (`src/adapters/crew/crewAppVersion.ts`). The App itself lives
+outside this package, in the repository's `crew-app/`, so its version is copied
+into that constant rather than imported. To release a new App version, bump
+`version` in `crew-app/app.json` and `CREW_APP_VERSION` in the same commit;
+`test/crewAppVersion.test.ts` fails while the two differ.

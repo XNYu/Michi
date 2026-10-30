@@ -9,6 +9,8 @@ interface Props {
   contextsCount: number;
   branchesCount: number;
   lastActiveAt: number;
+  /** A phone's narrower column: a smaller title. */
+  compact?: boolean;
 }
 
 function relative(ts: number): string {
@@ -42,26 +44,28 @@ export default function ManageHeader({
   contextsCount,
   branchesCount: _branchesCount,
   lastActiveAt,
+  compact = false,
 }: Props) {
   return (
     <header
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 10,
-        marginBottom: 24,
+        gap: compact ? 8 : 10,
+        marginBottom: compact ? 18 : 24,
         WebkitAppRegion: 'drag',
       } as React.CSSProperties}
     >
       <h1
         style={{
           fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-6xl)',
+          fontSize: compact ? 'var(--fs-5xl)' : 'var(--fs-6xl)',
           lineHeight: 1.15,
           fontWeight: 500,
           letterSpacing: 'var(--ls-tight)',
           margin: 0,
           color: 'var(--term-fg)',
+          overflowWrap: 'anywhere',
         }}
       >
         {titleCase(name)}
@@ -80,9 +84,10 @@ export default function ManageHeader({
         <WorkspaceLocation connectionId={backendConnectionId} />
         {dot}
         {cwd && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          // A long path wraps instead of pushing the page sideways.
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: '100%', overflowWrap: 'anywhere' }}>
             <FolderGlyph />
-            {cwd}
+            <span style={{ minWidth: 0 }}>{cwd}</span>
           </span>
         )}
         {cwd && dot}
@@ -107,6 +112,7 @@ function FolderGlyph() {
       strokeWidth="1.3"
       strokeLinejoin="round"
       aria-hidden
+      style={{ flexShrink: 0 }}
     >
       <path d="M2 4.5C2 3.7 2.7 3 3.5 3h2.7L7.5 4.5h5c.8 0 1.5.7 1.5 1.5v6c0 .8-.7 1.5-1.5 1.5h-9C2.7 13.5 2 12.8 2 12V4.5z" />
     </svg>

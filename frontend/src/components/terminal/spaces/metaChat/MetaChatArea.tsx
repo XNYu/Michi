@@ -22,10 +22,12 @@ import {
   resizeRect,
   type Bounds,
   type ColumnSpan,
+  type MetaChatForm,
   type Rect,
   type ResizeDir,
 } from '../../../../state/metaChat/metaChatWindowModel';
 import type { MetaChatWindowController } from '../../../../state/metaChat/useMetaChatWindow';
+import { usePhoneLayout } from '../../../../hooks/usePhoneLayout';
 import { firstRunActive, useSpacesFirstRun } from '../../../../state/metaAgent/spacesFirstRun';
 import { MetaChatPanel, MINIMIZE_KEYS, type MetaChatContentProps } from './MetaChatPanel';
 import './metaChat.css';
@@ -112,6 +114,10 @@ export function MetaChatArea({
   const liveRef = useRef<Live | null>(null);
   const [live, setLiveState] = useState<Live | null>(null);
   const detachRef = useRef<(() => void) | null>(null);
+  const phone = usePhoneLayout();
+  // On a phone the window opens full screen each time; this session-only flag is the user shrinking it to the floating box.
+  const [phoneWindowed, setPhoneWindowed] = useState(false);
+  if (phoneWindowed && controller.state.minimized) setPhoneWindowed(false);
 
   const measure = useCallback(() => {
     const el = areaRef.current;
@@ -190,7 +196,7 @@ export function MetaChatArea({
       setLive({
         kind: 'move',
         rect: moveRect(op.start, event.clientX - op.sx, event.clientY - op.sy, b),
-        hint: isDockHint(event.clientX - op.left, b),
+        hint: !phone && isDockHint(event.clientX - op.left, b),
       });
     } else if (op.kind === 'resize') {
       setLive({ kind: 'resize', rect: resizeRect(op.start, op.dir, event.clientX - op.sx, event.clientY - op.sy, b) });
@@ -246,9 +252,12 @@ export function MetaChatArea({
   };
 
   const minimized = state.minimized;
-  const fullscreen = visible && !state.minimized && controller.fullscreen;
-  const floating = state.form === 'float' && !fullscreen;
-  const docked = visible && !minimized && state.form === 'dock' && !fullscreen;
+  // A phone has no half screen: full screen, or the floating box when the user shrinks it.
+  // The stored form stays as it is for wider screens.
+  const form: MetaChatForm = phone ? 'float' : state.form;
+  const fullscreen = visible && !minimized && (phone ? !phoneWindowed : controller.fullscreen);
+  const floating = form === 'float' && !fullscreen;
+  const docked = visible && !minimized && form === 'dock' && !fullscreen;
   const ratio = live?.ratio ?? state.dockRatio;
   const rect = live?.rect ? clampRect(live.rect, bounds) : committedRect;
   const panelStyle = floating
@@ -262,7 +271,7 @@ export function MetaChatArea({
     <div
       ref={areaRef}
       className="meta-chat-area"
-      data-form={!visible ? 'hidden' : minimized ? 'min' : fullscreen ? 'full' : state.form}
+      data-form={!visible ? 'hidden' : minimized ? 'min' : fullscreen ? 'full' : form}
       data-op={live?.kind}
     >
       <div className="meta-chat-area__page" hidden={fullscreen} style={docked ? { flexBasis: `${100 - ratio}%` } : undefined}>
@@ -285,23 +294,23 @@ export function MetaChatArea({
           {live?.kind === 'split' ? <span className="meta-chat-divider__pct">{pageShare} : {100 - pageShare}</span> : null}
         </div>
       ) : null}
-      {visible && floating && !minimized ? (
+      {visible && floating && !minimized && !phone ? (
         <div className="meta-chat-dock-ghost" data-on={live?.hint ? '' : undefined} aria-hidden={!live?.hint}>
           Release to dock as half screen
         </div>
       ) : null}
       <MetaChatPanel
         {...content}
-        form={fullscreen ? 'full' : state.form}
+        form={fullscreen ? 'full' : form}
         hidden={!visible || minimized}
         style={panelStyle}
         focusToken={focusToken}
         sizeLabel={live?.kind === 'resize' && rect ? `${rect.w} × ${rect.h}` : null}
         onTitlePointerDown={onTitlePointerDown}
         onResizePointerDown={onResizePointerDown}
-        onToggleDock={floating ? controller.dock : controller.float}
+        onToggleDock={phone ? undefined : floating ? controller.dock : controller.float}
         onMinimize={controller.minimize}
-        onToggleFullscreen={controller.toggleFullscreen}
+        onToggleFullscreen={phone ? () => setPhoneWindowed((value) => !value) : controller.toggleFullscreen}
       />
       {visible && minimized ? (
         <button
@@ -312,7 +321,7 @@ export function MetaChatArea({
           title={pillLabel ?? `Ask assistant (${MINIMIZE_KEYS})`}
           onClick={controller.restore}
         >
-          <Sparkle className="meta-chat-pill__icon" size={pillLabel ? 16 : 20} aria-hidden />
+          <Sparkle className="meta-chat-pill__icon" size={20} aria-hidden />
           {pillLabel ? <span className="meta-chat-pill__label">{pillLabel}</span> : null}
           <PillWorkingDot busy={Boolean(content.busy)} firstRun={firstRunDot} />
         </button>

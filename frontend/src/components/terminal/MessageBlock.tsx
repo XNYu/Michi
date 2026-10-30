@@ -28,6 +28,7 @@ import {
 import { hasAssistantBlocks } from '../../state/assistantBlocks';
 import type { ChildAnchor } from '../../state/branchAnchors';
 import { BranchAnchorRow } from './BranchAnchorRow';
+import { BranchQuoteMarks } from './BranchQuoteMarks';
 import { ImageBlockView } from './ImageBlockView';
 import { SteeringReports } from './SteeringReports';
 import { streamingMarkdownBlocksEnabled } from './streamingMarkdownBlocksFlag';
@@ -1723,10 +1724,12 @@ interface MessageBlockProps {
   onEditSave?: (newText: string) => void;
   onEditCancel?: () => void;
   /**
-   * Child branch anchors whose quotedText was found inside this message.
-   * v1: reserved for future quote-underline rendering; not consumed yet.
-   * When implemented, these will be rendered as BranchQuoteUnderline spans
-   * inside the MarkdownContent render tree rather than as turn markers.
+   * Child branch anchors of this message. Those whose first message quotes
+   * a passage of it (quotedText, from Branch on a selection) underline that
+   * passage where it renders (BranchQuoteMarks / BranchQuoteUnderline), and
+   * hovering it shows the branches. The branches keep their turn markers
+   * too: touch screens have no hover, and a selection that crossed messages
+   * or picked up UI text cannot be found again. Others are ignored.
    */
   quoteAnchors?: ChildAnchor[];
   /**
@@ -1782,6 +1785,7 @@ function MessageBlockInner({
   onTestConnection,
   subagents,
   runtimeId,
+  quoteAnchors,
   turnAnchors,
   onOpenBranch,
   contextNames,
@@ -1823,6 +1827,7 @@ function MessageBlockInner({
         animation: 'fadeIn var(--t-enter) ease-out both',
       }}
     >
+      <BranchQuoteMarks anchors={quoteAnchors} onOpenBranch={onOpenBranch}>
       <MessageHighlight mark={highlight}>
       {!isUser && (
         <div
@@ -2042,6 +2047,7 @@ function MessageBlockInner({
         </section>
       )}
       </MessageHighlight>
+      </BranchQuoteMarks>
       {!(m.streaming || hideActions) && (
         isUser ? (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -2105,7 +2111,9 @@ function childAnchorsEqual(
       (left.messageCount ?? 0) !== (right.messageCount ?? 0) ||
       left.createdAt !== right.createdAt ||
       left.status !== right.status ||
-      left.quotedText !== right.quotedText
+      left.quotedText !== right.quotedText ||
+      left.question !== right.question ||
+      left.reply !== right.reply
     ) {
       return false;
     }

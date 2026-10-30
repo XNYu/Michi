@@ -5,6 +5,7 @@ import type {
 } from 'michi-shared';
 import { getDb, runInTransaction } from '../db';
 import { PageWriteError, requirePagesWorkspace } from './core';
+import { livePageEditLease } from './editLeases';
 import { workspaceOwnerMatches } from '../agentOwner';
 import { backgroundMaintenanceResources } from '../metaAgent/homeWrites';
 
@@ -891,6 +892,37 @@ export function reobserveRoutedMaintenanceResource(input: AuthorityInput & {plan
     updatePlanState(input.planId,now);
     return {outcome:'skipped',reason};
   });
+}
+
+/** Marks a pending routed page as left for later because a conversation holds its edit lease; it stays pending. */
+export function deferMaintenancePageForEditLease(input:{planId:string;sourceTurnId:string;pageId:string;runId:string;now:number}):void {
+  const now=nowValue(input.now);
+  db().prepare(`UPDATE page_maintenance_resources SET deferred_run_id=?,updated_at=?
+    WHERE plan_id=? AND source_turn_id=? AND resource_kind='page' AND resource_id=? AND state='pending'`)
+    .run(input.runId,now,input.planId,input.sourceTurnId,input.pageId);
+}
+
+/**
+ * Whether an unfinished plan is held only by conversations editing its pages:
+ * every open source is routed, and every pending resource is a page that has a
+ * live edit lease (or, with runId, that this run deferred for one). Such a plan
+ * needs no run until a lease ends, and a run that stopped there succeeded.
+ */
+export function maintenancePlanWaitsOnEditLeases(planId:string,ownerUserId:string,now:number,runId?:string):{waiting:boolean;pages:number} {
+  const plan=getMaintenancePlan(planId,ownerUserId);
+  if(!plan||!['routing','processing'].includes(plan.state))return {waiting:false,pages:0};
+  const open=plan.sources.filter(source=>source.state!=='terminal'&&source.state!=='skipped');
+  if(!open.length||open.some(source=>source.state==='attention'||!source.routingComplete))return {waiting:false,pages:0};
+  const rows=db().prepare(`SELECT source_turn_id,resource_kind,resource_id,state,deferred_run_id FROM page_maintenance_resources
+    WHERE plan_id=? AND state IN ('pending','attention')`).all(planId) as unknown as Array<{source_turn_id:string;resource_kind:string;resource_id:string;state:string;deferred_run_id:string|null}>;
+  if(!rows.length||rows.some(row=>row.state!=='pending'||row.resource_kind!=='page'))return {waiting:false,pages:0};
+  const pages=new Set<string>();
+  for(const row of rows){
+    const held=(runId!==undefined&&row.deferred_run_id===runId)||livePageEditLease(row.resource_id,now)!==null;
+    if(!held)return {waiting:false,pages:0};
+    pages.add(row.resource_id);
+  }
+  return {waiting:true,pages:pages.size};
 }
 
 export type MaintenanceResourceState='pending'|'attention'|'skipped'|'written'|'proposed'|'no_change';

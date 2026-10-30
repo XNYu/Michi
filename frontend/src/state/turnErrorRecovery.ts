@@ -22,6 +22,7 @@ export function inspectOriginalTurn(options: {
   let completeReplay = true;
   let started = false;
   let finished = false;
+  // eslint-disable-next-line prefer-const -- finish() reads detach and may run inside subscribeChat() before it returns; const would throw there.
   let detach: (() => void) | undefined;
   const finish = (persisted: boolean, completedAt?: number) => {
     if (finished) return;

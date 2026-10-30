@@ -383,10 +383,14 @@ function createLines(fields: ParsedJobFields, env: Env, workspace: string | null
       + (fields.enabled ? (next !== null ? `, first run ${formatTime(next, tz)}` : "") : " (starts paused)"),
     `Permissions: ${PERMISSION_TEXT[fields.permissionMode]}`,
     `Thread: ${SESSION_TEXT[fields.sessionMode]}`,
-    `Notify when a run finishes: ${fields.notify ? "yes" : "no"}`,
-    `Time limit per run: ${minutes(fields.timeoutSeconds)}`,
+    `Notify: ${notifyText(fields.notify)}`,
+    `Time limit: ${minutes(fields.timeoutSeconds)} per run`,
     `Prompt: “${preview(fields.prompt)}”`,
   ];
+}
+
+function notifyText(notify: boolean): string {
+  return notify ? "when each run finishes" : "off";
 }
 
 function updateLines(job: ScheduledJobDto, patch: Partial<ParsedJobFields>, env: Env): string[] {
@@ -396,8 +400,8 @@ function updateLines(job: ScheduledJobDto, patch: Partial<ParsedJobFields>, env:
   if (patch.enabled !== undefined) lines.push(patch.enabled ? "Turns the job back on" : "Pauses the job");
   if (patch.permissionMode !== undefined) lines.push(`Permissions → ${PERMISSION_TEXT[patch.permissionMode]}`);
   if (patch.sessionMode !== undefined) lines.push(`Thread → ${SESSION_TEXT[patch.sessionMode]}`);
-  if (patch.notify !== undefined) lines.push(`Notify when a run finishes → ${patch.notify ? "yes" : "no"}`);
-  if (patch.timeoutSeconds !== undefined) lines.push(`Time limit per run → ${minutes(patch.timeoutSeconds)}`);
+  if (patch.notify !== undefined) lines.push(`Notify → ${notifyText(patch.notify)}`);
+  if (patch.timeoutSeconds !== undefined) lines.push(`Time limit → ${minutes(patch.timeoutSeconds)} per run`);
   if (patch.prompt !== undefined) lines.push(`Prompt → “${preview(patch.prompt)}”`);
   if (patch.permissionMode === undefined) lines.push(`Permissions (unchanged): ${PERMISSION_TEXT[job.permissionMode]}`);
   return lines;

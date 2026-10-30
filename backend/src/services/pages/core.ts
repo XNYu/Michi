@@ -6,7 +6,7 @@ import { workspaceOwnerMatches } from '../agentOwner';
 export class PageWriteError extends Error {
   constructor(
     public readonly status: 400 | 404 | 409,
-    public readonly code: 'not_found' | 'invalid' | 'stale_revision' | 'proposal_stale' | 'undo_conflict' | 'tasks_need_workspace' | 'task_board_needs_workspace',
+    public readonly code: 'not_found' | 'invalid' | 'stale_revision' | 'proposal_stale' | 'undo_conflict' | 'tasks_need_workspace' | 'task_board_needs_workspace' | 'page_busy',
     message: string,
   ) { super(message); this.name = 'PageWriteError'; }
 }

@@ -18,6 +18,16 @@ const base = (size: number): React.SVGProps<SVGSVGElement> => ({
   'aria-hidden': true,
 });
 
+/** The Activity lens: the same filled dot in a ring as the Topbar's Activity button. */
+export function ActivityIcon({ size = 14, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <circle cx="8" cy="8" r="3" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="8" r="6" />
+    </svg>
+  );
+}
+
 export function HomeIcon({ size = 14, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>

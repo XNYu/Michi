@@ -62,7 +62,7 @@ export interface HomeGreeting {
 
 /** GET /api/home/cards. Used cards are already left out of `sets`; empty sets are dropped. */
 export interface HomeCardsDto {
-  /** The complete area below the composer, replacing starters and recommendations. */
+  /** The complete area below the composer, replacing the recommendation cards. */
   contentMode?: 'default' | 'page' | 'hidden';
   contentPage?: PageDto | null;
   /** User selected custom/hidden cards; do not substitute onboarding recommendations. */

@@ -11,6 +11,7 @@ import { PageWriteError, requireChatChangeSource, requirePagesWorkspace, type Ch
 import { createPage, getDatabase, getPage, listPages } from '../services/pages/repository';
 import { pageLayoutContext } from '../services/pages/layoutRules';
 import { applyAgentPageEdits, type AgentPageWriteResult } from '../services/pages/pageWrites';
+import { acquirePageEditLease, describeOtherLease, livePageEditLease } from '../services/pages/editLeases';
 import { openTaskDatabase } from '../services/pages/taskDatabase';
 import { listTasks, type TaskListInput, type TaskListScope } from '../services/pages/taskList';
 import type { PageDatabase, PageDto, PageSummaryDto, PageWriteResult } from 'michi-shared';
@@ -271,6 +272,29 @@ function pageRead(page: PageDto, blockIds?: string[]) {
   };
 }
 
+/**
+ * read_page's editLease: forEdit takes or renews this turn's lease, so a
+ * maintenance run or another conversation does not change the page between
+ * this read and the edit. Any read reports another conversation's live lease.
+ */
+function readEditLease(caller: PageToolCaller, scope: PageScope, page: PageDto, forEdit: boolean): { editLease?: Record<string, unknown> } {
+  const now = Date.now();
+  if (!forEdit) {
+    const other = livePageEditLease(page.id, now);
+    const mine = caller.getActivePageTurnAttribution?.()?.turnId;
+    return other && other.turnId !== mine ? { editLease: describeOtherLease(other, now) } : {};
+  }
+  const source = writeSource(caller, scope, page.workspaceId);
+  const result = acquirePageEditLease({ pageId: page.id, ownerUserId: scope.ownerUserId, workspaceId: page.workspaceId,
+    holder: { nodeId: source.nodeId, turnId: source.turnId }, now });
+  if (!result.acquired) {
+    return { editLease: { ...describeOtherLease(result.lease, now),
+      note: 'Another conversation is editing this page; edit_page is refused until its lease ends.' } };
+  }
+  return { editLease: { status: 'held', expiresAt: result.lease.expiresAt,
+    note: 'This turn holds the page until it ends; each read with forEdit or edit_page renews it.' } };
+}
+
 function databaseRead(database: PageDatabase, limit: number) {
   const rows = database.rows.slice(0, limit).map((row) => ({
     ...row,
@@ -394,9 +418,11 @@ export function runPageTool(name: PageToolName, caller: PageToolCaller, rawArgs:
           if (!Array.isArray(args.blockIds) || args.blockIds.length > MAX_READ_BLOCKS || args.blockIds.some((id) => typeof id !== 'string' || id.length > 200)) fail('blockIds must contain at most 40 block IDs');
           blockIds = args.blockIds as string[];
         }
+        if (args.forEdit !== undefined && typeof args.forEdit !== 'boolean') fail('forEdit must be a boolean');
         const page = getPage(pageId, ownerUserId);
         if (!inScope(scope, page.workspaceId) && !isChatHomePage(scope, page.id)) throw new PageWriteError(404, 'not_found', 'Page not found');
-        return toolResult({ ...pageRead(page, blockIds), ...pageLayoutContext(page.id, ownerUserId) });
+        return toolResult({ ...pageRead(page, blockIds), ...pageLayoutContext(page.id, ownerUserId),
+          ...readEditLease(caller, scope, page, args.forEdit === true) });
       }
       case 'edit_page': {
         const pageId = parseString(args.pageId, 'pageId')!;

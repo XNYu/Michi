@@ -9,6 +9,7 @@ import ResizeHandle from '../ResizeHandle';
 import { rowGeom, rowPadding, spinePadding, WORKSPACE_ICON_SIZE, WORKSPACE_ICON_GAP, type RowGeom } from './sidebarRowStyle';
 import './sidebar.css';
 import {
+  ActivityIcon,
   AgentIcon,
   HomeIcon,
   WorkspacesIcon,
@@ -97,8 +98,8 @@ export default function TerminalSidebar({
     if (scrollbarTimer.current !== undefined) window.clearTimeout(scrollbarTimer.current);
   }, []);
   const contents = useMemo(
-    () => areaContent ?? <SidebarContents activePage={activePage} workspaceReady={workspaceReady} customAgentsEnabled={customAgentsEnabled} onNav={onNav} />,
-    [areaContent, activePage, workspaceReady, customAgentsEnabled, onNav],
+    () => areaContent ?? <SidebarContents activePage={activePage} workspaceReady={workspaceReady} customAgentsEnabled={customAgentsEnabled} onNav={onNav} lensToggle={narrowMode} />,
+    [areaContent, activePage, workspaceReady, customAgentsEnabled, onNav, narrowMode],
   );
 
   // Clamp persisted width to current MIN so legacy narrower values auto-correct.
@@ -314,11 +315,34 @@ export default function TerminalSidebar({
   return aside;
 }
 
-function SidebarContents({ activePage, workspaceReady, customAgentsEnabled, onNav }: {
+/** Phone drawer header for the conversation list. Narrow windows hide the
+ *  Topbar's Activity button and have no ⌥⌘U, so the lens switch lives here. */
+function SidebarLensHeader() {
+  const { prefs, setPref } = usePrefs();
+  const activity = prefs.sidebarView === 'activity';
+  return (
+    <div className="sidebar-lens-header">
+      <span className="sidebar-lens-header__title">{activity ? 'Activity' : 'Structure'}</span>
+      <button
+        type="button"
+        className="sidebar-lens-header__toggle"
+        aria-label="Activity view"
+        aria-pressed={activity}
+        onClick={() => setPref('sidebarView', activity ? 'structure' : 'activity')}
+      >
+        <ActivityIcon size={16} />
+      </button>
+    </div>
+  );
+}
+
+function SidebarContents({ activePage, workspaceReady, customAgentsEnabled, onNav, lensToggle = false }: {
   activePage: PageId;
   workspaceReady: boolean;
   customAgentsEnabled: boolean;
   onNav: (p: PageId) => void;
+  /** Show the Structure/Activity switch; the narrow drawer has no other one. */
+  lensToggle?: boolean;
 }) {
   const { prefs } = usePrefs();
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
@@ -331,6 +355,7 @@ function SidebarContents({ activePage, workspaceReady, customAgentsEnabled, onNa
         ))}
       </div>
     ) : <>
+    {lensToggle && <SidebarLensHeader />}
     <TreeSelectionBar />
     {prefs.sidebarView === 'activity' ? (
       <ActivityView onActivate={onActivate} />

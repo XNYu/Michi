@@ -1,6 +1,8 @@
 import { describe, it, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import type { RuntimeHost } from '../src/contract/host';
 import type { McpSlot, McpSlotCallbacks, McpSlotProvider } from '../src/contract/mcp';
 import type { NormalizedEvent } from '../src/contract/events';
@@ -8,7 +10,7 @@ import { createDefaultHost } from '../src/core/defaultHost';
 import type { CodexAppServerClient, ServerRequestHandler } from '../src/adapters/codex/CodexAppServerClient';
 import { CodexRuntime } from '../src/adapters/codex/CodexRuntime';
 import type { CodexSession } from '../src/adapters/codex/CodexSession';
-import { CodexAuthMissingError } from '../src/adapters/codex/codexBinary';
+import { CodexAuthMissingError, resetCodexBinaryCacheForTest } from '../src/adapters/codex/codexBinary';
 import { createCodexTranslator } from '../src/adapters/codex/codexEventTranslator';
 import {
   buildCodexCollaborationMode, CODEX_HOST_MCP_SERVER, CODEX_THREAD_FEATURES_OFF, codexAccountLoginMissing,
@@ -104,10 +106,27 @@ function slotProvider(): McpSlotProvider {
 
 const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
 
+/**
+ * checkAvailability looks up the Codex CLI before it reports the login state.
+ * A placeholder file passed as binaryPath (the host's CODEX_CLI_BIN) satisfies
+ * that lookup, so these tests do not depend on a codex install.
+ */
+function fakeCodexBinary(t: TestContext): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-capabilities-bin-'));
+  const binary = path.join(dir, 'codex');
+  fs.writeFileSync(binary, '');
+  resetCodexBinaryCacheForTest();
+  t.after(() => {
+    resetCodexBinaryCacheForTest();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  return binary;
+}
+
 function codexRuntime(t: TestContext, options: FakeOptions & { host?: RuntimeHost; authFileMissing?: string } = {}) {
   const server = fakeAppServer(options);
   const runtime = new CodexRuntime(
-    { host: options.host ?? createDefaultHost({ logLevel: 'silent' }), bridge, mcpSlots: slotProvider() },
+    { host: options.host ?? createDefaultHost({ logLevel: 'silent' }), bridge, mcpSlots: slotProvider(), binaryPath: fakeCodexBinary(t) },
     { client: server.client, followUpsHookPocEnabled: false, ...(options.authFileMissing ? { authFileMissing: options.authFileMissing } : {}) },
   );
   t.after(() => runtime.shutdown());

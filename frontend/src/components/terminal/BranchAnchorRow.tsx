@@ -22,6 +22,16 @@ const branchStatuses = {
   error: { label: 'Needs attention', Icon: CircleAlert },
 } as const;
 
+/** A branch's state as its glyph and word; the branch hover card shows it too. */
+export function BranchStatusLabel({ status, size = 13 }: { status: ChatNodeState['status']; size?: number }): React.JSX.Element {
+  const { label, Icon } = branchStatuses[status];
+  return (
+    <span className={`t-branch-anchor-status is-${status}`}>
+      <Icon size={size} aria-hidden />{label}
+    </span>
+  );
+}
+
 export const BranchAnchorRow = React.memo(function BranchAnchorRow({
   title,
   messageCount,
@@ -32,7 +42,6 @@ export const BranchAnchorRow = React.memo(function BranchAnchorRow({
   const msgLabel = messageCount === 1 ? '1 message' : `${messageCount} messages`;
   const timeLabel = relativeTime(createdAt);
   const metaId = React.useId();
-  const { label, Icon } = branchStatuses[status];
 
   return (
     <button
@@ -45,9 +54,7 @@ export const BranchAnchorRow = React.memo(function BranchAnchorRow({
       <span className="t-branch-anchor-glyph" aria-hidden><BranchIcon size={18} /></span>
       <span className="t-branch-anchor-name">{title}</span>
       <span className="t-branch-anchor-meta" id={metaId}>
-        <span className={`t-branch-anchor-status is-${status}`}>
-          <Icon size={13} aria-hidden />{label}
-        </span>
+        <BranchStatusLabel status={status} />
         <span className="t-branch-anchor-details">
           <span>{msgLabel}</span><span aria-hidden>·</span><span>{timeLabel}</span>
         </span>

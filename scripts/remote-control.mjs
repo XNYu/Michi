@@ -22,10 +22,20 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const REMOTE_SERVICE_NAME = 'michi-remote.service';
-export const MIN_NODE_VERSION = [22, 19, 0];
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..');
+
+/** Michi's minimum Node version: root package.json engines.node, ">=X.Y.Z"
+ *  (also read by bin/lib/node-select.sh and crew-app/launch.py). */
+export function readMinimumNodeVersion(repoRoot = REPO_ROOT) {
+  const range = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).engines?.node;
+  const match = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(range ?? '');
+  if (!match) throw new Error(`package.json engines.node must be ">=X.Y.Z" (found ${JSON.stringify(range)})`);
+  return match.slice(1).map(Number);
+}
+
+export const MIN_NODE_VERSION = readMinimumNodeVersion();
 const SERVER_PATH = path.join(REPO_ROOT, 'backend', 'dist', 'server.js');
 const HEALTH_TIMEOUT_MS = 20_000;
 

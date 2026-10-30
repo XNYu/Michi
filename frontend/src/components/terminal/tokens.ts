@@ -195,6 +195,10 @@ export function cssVarsFor(
     '--term-float-shadow': isLight
       ? '0 1px 2px rgba(0, 0, 0, 0.08), 0 12px 34px rgba(0, 0, 0, 0.08)'
       : '0 2px 8px rgba(0, 0, 0, 0.55), 0 16px 40px rgba(0, 0, 0, 0.4)',
+    // Surface of a floating card over reading text (the branch hover card),
+    // worn with --term-float-shadow: the pane surface in light themes, one
+    // step lighter in dark ones, where a raised surface reads as lighter.
+    '--term-float-bg': isLight ? p.surface : `color-mix(in srgb, ${p.surface} 40%, ${p.alt})`,
     '--term-line': p.line,
     '--term-line-s': p.lineS,
     '--term-fg': p.fg,

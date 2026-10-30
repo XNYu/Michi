@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
 # ---------- builder ----------
-# node:22-slim (Debian/glibc) instead of alpine. Vite 8's rolldown bundler
-# and esbuild ship platform-specific native bindings as optional deps; a
-# musl-libc base would need yet another set of bindings, and Alpine is
-# also more prone to subtle ABI mismatches with native modules we'll add
+# node:22-slim (Debian/glibc) instead of alpine. esbuild, Rollup,
+# lightningcss and Tailwind's oxide ship platform-specific native bindings as
+# optional deps (the lockfile lists their Linux builds), and Alpine's musl
+# libc is more prone to subtle ABI mismatches with native modules we'll add
 # later (sqlite, argon2 for Better-Auth, etc.).
 FROM node:22-slim AS builder
 WORKDIR /app

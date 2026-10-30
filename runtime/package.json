@@ -1,6 +1,6 @@
 {
   "name": "michi-runtime",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "license": "ISC",
   "description": "Run Kiro-CLI, Kiro Crew, Codex and Claude Code agents from a server-side Node host behind one AgentRuntime / AgentSession contract.",
@@ -14,7 +14,7 @@
     "claude-code"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

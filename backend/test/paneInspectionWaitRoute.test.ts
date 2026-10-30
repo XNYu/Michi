@@ -146,12 +146,15 @@ describe('POST /api/panes/wait', () => {
     let cancelled = false;
     let onDisconnect!: () => void;
     const disconnected = new Promise<void>((resolve) => { onDisconnect = resolve; });
+    let onReached!: () => void;
+    const reached = new Promise<void>((resolve) => { onReached = resolve; });
     const pending = new Promise<WaitPaneResultV1>((resolve) => {
       released = () => resolve(SAMPLE_RESULT);
     });
     const capture = await start({
       resolveWait: async (input) => {
         input.signal?.addEventListener('abort', onDisconnect, { once: true });
+        onReached();
         try {
           return await pending;
         } catch {
@@ -169,8 +172,8 @@ describe('POST /api/panes/wait', () => {
       signal: controller.signal,
     });
 
-    // Give the request time to reach the handler and register the waitPane() call.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Wait until the request reaches waitPane(); a fixed sleep lost this race under load.
+    await reached;
     assert.equal(capture.waitCalls.length, 1);
 
     // Disconnect the client before the service call resolves.

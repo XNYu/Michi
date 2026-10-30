@@ -42,7 +42,9 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'private, no-store');
-      res.download(realPath, path.basename(realPath), (error) => {
+      // Containment is checked above. A workspace root may itself sit in a
+      // dot directory (~/.michi/workspaces/<id>), which send() ignores by default.
+      res.download(realPath, path.basename(realPath), { dotfiles: 'allow' }, (error) => {
         if (error && !res.headersSent) res.status(404).end();
       });
     } catch {

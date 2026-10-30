@@ -81,12 +81,8 @@ require_command curl
 require_command tar
 require_command git
 
-node_major() {
-  node -p "Number(process.versions.node.split('.')[0])" 2>/dev/null || printf '0'
-}
-
 ensure_node() {
-  if command -v node >/dev/null 2>&1 && [ "$(node_major)" -ge 22 ]; then
+  if michi_select_node "$NODE_MIN"; then
     log "using Node $(node -v)"
     return
   fi
@@ -108,8 +104,8 @@ ensure_node() {
 
   export PATH="${node_dir}/bin:${PATH}"
 
-  if ! command -v node >/dev/null 2>&1 || [ "$(node_major)" -lt 22 ]; then
-    fail "Node 22+ is still unavailable after installing ${node_dir}"
+  if ! michi_select_node "$NODE_MIN" "${node_dir}/bin/node"; then
+    fail "Node ${NODE_MIN}+ is still unavailable after installing ${node_dir}"
   fi
 
   log "using Node $(node -v) from ${node_dir}"
@@ -135,8 +131,12 @@ prepare_checkout() {
   git clone "$MICHI_REPO_URL" "$MICHI_INSTALL_DIR"
 }
 
-ensure_node
 prepare_checkout
+INSTALL_DIR="$MICHI_INSTALL_DIR"
+source "$INSTALL_DIR/bin/lib/node-select.sh"
+NODE_MIN="$(michi_node_minimum "$INSTALL_DIR")" \
+  || fail "Could not read engines.node from $INSTALL_DIR/package.json"
+ensure_node
 
 cd "$MICHI_INSTALL_DIR"
 

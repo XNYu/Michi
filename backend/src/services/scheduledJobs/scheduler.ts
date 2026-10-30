@@ -18,6 +18,7 @@ import { conversationCompletionCounter, readConversationUpdates } from '../conve
 import { getMaintenanceConfig, listMaintenanceBacklog, createMaintenancePlan, claimMaintenancePlan,
   listQueuedMaintenanceRequests, claimQueuedMaintenanceReconsider, claimQueuedMaintenanceCatchup,
   findTerminalMaintenancePlan, claimTerminalMaintenancePlan, maintenancePlanIsTerminal, skipRemovedMaintenanceSources,
+  maintenancePlanWaitsOnEditLeases,
 } from '../pages/maintenanceRepository';
 import { maintenanceRuntimeAvailability } from '../../agents/maintenancePolicy';
 import { resolveMetaAgentRuntime } from '../metaAgent/settings';
@@ -900,9 +901,14 @@ export class ScheduledJobScheduler {
       let consumed = false;
       if (page && status === 'succeeded') {
         if (active.maintenancePlan && active.maintenanceConfigRevision !== undefined) {
-          consumed = !active.attentionRequested
-            && maintenancePlanIsTerminal(active.maintenancePlan.id, job.ownerUserId ?? LOCAL_AGENT_OWNER_ID);
-          if (!consumed) { status = 'failed'; error = 'Maintenance plan has unfinished source decisions; progress retained'; }
+          const ownerUserId = job.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
+          consumed = !active.attentionRequested && maintenancePlanIsTerminal(active.maintenancePlan.id, ownerUserId);
+          // Pages left for conversations editing them are not a failure: the plan resumes after their turns end.
+          const deferred = !consumed && !active.attentionRequested
+            ? maintenancePlanWaitsOnEditLeases(active.maintenancePlan.id, ownerUserId, this.clock(), active.run.id) : null;
+          if (deferred?.waiting) {
+            summary = `Waiting for a conversation to finish editing ${deferred.pages === 1 ? '1 page' : `${deferred.pages} pages`}; progress retained`;
+          } else if (!consumed) { status = 'failed'; error = 'Maintenance plan has unfinished source decisions; progress retained'; }
         } else {
           const handled = new Set(outcome.conversationHandledTurnIds ?? []);
           consumed = !active.attentionRequested && handled.size === page.turns.length && page.turns.every(turn => handled.has(turn.turnId));

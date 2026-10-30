@@ -67,7 +67,9 @@
           if (parsed && Object.prototype.hasOwnProperty.call(BG, parsed.terminalPalette)) palette = parsed.terminalPalette;
         } catch (e) { /* ignore */ }
         document.documentElement.setAttribute('data-terminal-palette', palette);
-        document.documentElement.style.background = BG[palette];
+        // index.css paints html with var(--term-bg, var(--michi-boot-bg)), so the
+        // palette TerminalShell mirrors onto <html> replaces this once it mounts.
+        document.documentElement.style.setProperty('--michi-boot-bg', BG[palette]);
         document.documentElement.lang = navigator.language || 'en';
       })();
     </script>

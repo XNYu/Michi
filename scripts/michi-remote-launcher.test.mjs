@@ -49,17 +49,19 @@ async function installation() {
   git(root, 'clone', '-q', source, work);
   git(work, 'checkout', '-q', '-b', 'dev');
   mkdirSync(path.join(work, 'scripts'), { recursive: true });
-  mkdirSync(path.join(work, 'bin'));
+  mkdirSync(path.join(work, 'bin/lib'), { recursive: true });
   mkdirSync(path.join(work, 'backend/dist'), { recursive: true });
   copyFileSync(path.join(REPO, 'scripts/remote-control.mjs'), path.join(work, 'scripts/remote-control.mjs'));
   copyFileSync(path.join(REPO, 'bin/michi'), path.join(work, 'bin/michi'));
+  copyFileSync(path.join(REPO, 'bin/lib/node-select.sh'), path.join(work, 'bin/lib/node-select.sh'));
   chmodSync(path.join(work, 'bin/michi'), 0o755);
-  writeFileSync(path.join(work, 'package.json'), JSON.stringify({ name: 'fake-michi', version: '1.0.0', private: true, scripts: { 'remote:setup': 'node -e ""' } }));
+  const { engines } = JSON.parse(readFileSync(path.join(REPO, 'package.json'), 'utf8'));
+  writeFileSync(path.join(work, 'package.json'), JSON.stringify({ name: 'fake-michi', version: '1.0.0', private: true, engines, scripts: { 'remote:setup': 'node -e ""' } }));
   const first = commit(work, SERVER, 'first');
   const old = path.join(home, '.local/share/michi/devdesktop/source');
   git(root, 'clone', '-q', '--branch', 'dev', source, old);
 
-  const env = { ...process.env, HOME: home, MICHI_REMOTE_SOURCE_URL: source };
+  const env = { ...process.env, HOME: home, MICHI_REMOTE_SOURCE_URL: source, MICHI_REMOTE_SOURCE_REF: 'dev' };
   for (const key of ['PORT', 'MICHI_DATA_DIR', 'MICHI_REMOTE_TOKEN', 'MICHI_BIND_HOST']) delete env[key];
   const michi = (...args) => spawnSync(path.join(home, '.local/bin/michi'), args, { env, encoding: 'utf8' });
   const launched = spawnSync(process.execPath, ['scripts/remote-control.mjs', 'launch', '--no-setup', '--port', String(await freePort())], {
@@ -69,7 +71,7 @@ async function installation() {
   return { root, home, work, old, first, michi, cleanup: () => { michi('stop'); rmSync(root, { recursive: true, force: true }); } };
 }
 
-test('michi update builds the new revision beside the running backend and switches to it', async () => {
+test('michi update builds the new revision beside the running backend and switches to it', { skip: process.platform !== 'linux' }, async () => {
   const fixture = await installation();
   try {
     assert.equal(readlinkSync(path.join(fixture.home, '.local/bin/michi')), path.join(fixture.old, 'bin/michi'));
@@ -90,7 +92,7 @@ test('michi update builds the new revision beside the running backend and switch
   }
 });
 
-test('michi update restarts the old build when the new one does not start', { timeout: 60_000 }, async () => {
+test('michi update restarts the old build when the new one does not start', { timeout: 60_000, skip: process.platform !== 'linux' }, async () => {
   const fixture = await installation();
   try {
     commit(fixture.work, 'process.exit(1);\n', 'broken');
