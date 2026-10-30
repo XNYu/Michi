@@ -45,7 +45,7 @@ class FakeResizeObserver {
   disconnect() { this.entry.targets = []; }
 }
 
-const anyFn = () => new Proxy({}, { get: () => vi.fn() });
+const anyFn = () => new Proxy({}, { get: () => vi.fn(async () => {}) });
 
 vi.mock('../../state/chatStore', async () => {
   const actual = await vi.importActual<any>('../../state/chatStore');
@@ -102,7 +102,7 @@ vi.mock('../../services/api', () => ({
   importWorkspaceFileUpload: vi.fn(async () => ({ filePath: '', displayName: '' })),
 }));
 vi.mock('./PaneMessageList', () => ({
-  PaneMessageList: () => (
+  PaneMessageList: ({ onBranchFollowUp }: any) => (
     <div>
       <div data-msg-id="u1">
         user message
@@ -119,6 +119,10 @@ vi.mock('./PaneMessageList', () => ({
         <button type="button">Copy</button>
       </div>
       <div data-msg-id="a1">assistant reply</div>
+      <button type="button" onClick={() => {
+        onBranchFollowUp('Explore this');
+        geom.scrollHeight += 120;
+      }}>Branch follow-up</button>
     </div>
   ),
 }));
@@ -208,6 +212,17 @@ describe('follow mode and user expand clicks', () => {
     geom.scrollHeight += 200;
     resize();
     expect(scroller.scrollTop).toBe(300);
+  });
+
+  it('branch insertion keeps follow-ups at the tail and continues following growth', async () => {
+    const { scroller, resize, getByRole } = await mountFollowingPane();
+    fireEvent.click(getByRole('button', { name: 'Branch follow-up' }));
+    resize();
+    expect(scroller.scrollTop).toBe(420);
+
+    geom.scrollHeight += 200;
+    resize();
+    expect(scroller.scrollTop).toBe(620);
   });
 
   it('a click that changes nothing keeps follow mode', async () => {

@@ -1017,6 +1017,12 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   // threw the viewport to the bottom. The click records the transcript
   // height for two frames; a pin that finds it changed leaves follow mode.
   const userClickLayoutRef = useRef<{ scrollHeight: number } | null>(null);
+  // A new branch is output to tail, even when its insertion follows a click
+  // inside the transcript. Keep the existing follow mode instead of treating
+  // the new anchor row as a reader expanding a message.
+  const prepareBranchScroll = useCallback(() => {
+    userClickLayoutRef.current = null;
+  }, []);
   // Latest pin function — set inside the streaming-follow effect so the
   // ResizeObserver/animation-end pin can run the same anchor-vs-tail
   // logic without recapturing message state in its `[]` deps closure.
@@ -1719,6 +1725,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     lastPlanSig,
     lastBlockSig,
     composerHeight,
+    anchorsByMessage,
   ]);
 
   // When the pane's width changes (e.g. opening a sibling shrinks the grid
@@ -2030,16 +2037,18 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
       void sendMessage(nodeId, question);
       return;
     }
+    prepareBranchScroll();
     void createChildChat(nodeId, question, undefined, {
       anchorMessageId: n?.followUpsSourceMessageId,
       focus: false,
     }).catch(() => {});
-  }, [branchesOff, createChildChat, n?.followUpsSourceMessageId, nodeId, sendMessage]);
+  }, [branchesOff, createChildChat, n?.followUpsSourceMessageId, nodeId, sendMessage, prepareBranchScroll]);
 
   // Not offered at all when branches are off (see onBranchFromMessage below).
   const handleBranchFromMessage = useCallback((messageId: string) => {
+    prepareBranchScroll();
     void createBlankChild(nodeId, { anchorMessageId: messageId }).catch(() => {});
-  }, [createBlankChild, nodeId]);
+  }, [createBlankChild, nodeId, prepareBranchScroll]);
 
   const innerWrap = useMemo<React.CSSProperties>(
     () => (
@@ -2267,6 +2276,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     if (shouldBranch) {
       // Keep the user on the current pane — the branch streams in the
       // background and appears in the sidebar / Map (see createChildChat).
+      prepareBranchScroll();
       await createChildChat(nodeId, finalText, meta, { focus: false });
     } else {
       sendMessage(nodeId, finalText, meta);
@@ -2380,6 +2390,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
               sendBesideComposer(p, q);
               return;
             }
+            prepareBranchScroll();
             void createChildChat(
               nodeId,
               formatQuotedMessage(q, p),

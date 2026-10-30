@@ -8,7 +8,7 @@ const questions = [
   'Do instructions embedded in tool results pose a prompt injection risk?',
 ];
 
-async function boot(page: Page, palette = 'monokai') {
+async function boot(page: Page, palette = 'monokai', longAnswer = false) {
   const sentChats: string[] = [];
   const prefs = { terminalPalette: palette, onboardingCompletedAt: 1, enableFollowUps: true,
     sidebarCollapsed: true, defaultPaneWidth: 880, paneWidthMode: 'fixed', messageFontSize: 16.5 };
@@ -32,7 +32,7 @@ async function boot(page: Page, palette = 'monokai') {
     })),
     messages: ids.flatMap(id => [
       { id: `${id}-question`, node_id: id, role: 'user', seq: 0, content: 'Review the tool result handling.', created_at: createdAt },
-      { id: `${id}-answer`, node_id: id, role: 'assistant', seq: 1, content: 'Keep tool output separate from runtime control messages. Check the tool definition, stream events, and rendered output.', created_at: createdAt + 1 },
+      { id: `${id}-answer`, node_id: id, role: 'assistant', seq: 1, content: 'Keep tool output separate from runtime control messages. Check the tool definition, stream events, and rendered output.'.repeat(id === 'root' && longAnswer ? 40 : 1), created_at: createdAt + 1 },
     ]),
     contexts: [],
   };
@@ -177,3 +177,22 @@ test('continuing sends in the parent without adding a branch', async ({ page }) 
   expect(sentChats).toEqual(['root']);
   await expect(pane.locator('.t-branch-anchor-row')).toHaveCount(2);
 });
+
+for (const width of [1440, 390]) {
+  test(`branch insertion keeps all follow-ups above the composer at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const { pane } = await boot(page, 'monokai', true);
+    const transcript = pane.locator('.terminal-pane__transcript');
+    await transcript.evaluate(el => { el.scrollTop = el.scrollHeight; });
+    await pane.locator('.t-followup-branch').first().click();
+    await expect(pane.locator('.t-branch-anchor-row')).toHaveCount(3);
+    await expect.poll(() => pane.evaluate(root => {
+      const viewport = root.querySelector('.terminal-pane__transcript')!.getBoundingClientRect();
+      const composer = root.querySelector('[contenteditable="true"]')!.getBoundingClientRect();
+      return Array.from(root.querySelectorAll('.t-followup-row')).every(row => {
+        const bounds = row.getBoundingClientRect();
+        return bounds.top >= viewport.top && bounds.bottom <= Math.min(viewport.bottom, composer.top);
+      });
+    })).toBe(true);
+  });
+}
