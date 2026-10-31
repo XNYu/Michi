@@ -14,7 +14,7 @@ import { requestWorkspaceHome } from '../../../../state/pages/workspaceHomeNav';
 import { blockFullText, blockLabel } from '../../content/page/michiPageModel';
 import { toMichiBlock } from '../nativeBlockAdapter';
 import { useMetaChatDocked } from '../metaChat/MetaChatArea';
-import { NativePageDocument, openNewChatSheet, useMetaChatTargeting, useSpacesSourceNav, type MetaChatBlockTarget } from './homeLinks';
+import { blockItemTarget, NativePageDocument, openNewChatSheet, useMetaChatTargeting, useSpacesSourceNav, type MetaChatBlockTarget } from './homeLinks';
 import { homeChangesShown } from './homeFormat';
 import { homeWorkspaceCounts, useSpacesHomeSections } from './homeCounts';
 // The targeted block's outline and the click cursor are the Space page's (`.space-doc`).
@@ -161,7 +161,9 @@ export function useHomeDocument({ backendConnectionId, initial, allowEmptyEditor
     const block = selection ? blocksRef.current.find((candidate) => candidate.id === selection.blockId) : undefined;
     targeting?.setTarget(block ? targetFor(block) : null);
   }, [targetFor, targeting]);
-  const askAssistant = React.useCallback((block: PageBlock) => targeting?.askAbout(targetFor(block)), [targetFor, targeting]);
+  const askAssistant = React.useCallback((block: PageBlock, item?: { index: number; text: string }) => (
+    targeting?.askAbout(item ? blockItemTarget(targetFor(block), item) : targetFor(block))
+  ), [targetFor, targeting]);
   const targetBlockId = targeting?.target?.pageId === pageId ? targeting.target.blockId : null;
   const selectedBlockIds = React.useMemo(() => (targetBlockId ? [targetBlockId] : NO_BLOCK_IDS), [targetBlockId]);
   const canTarget = Boolean(targeting) && !readOnly;

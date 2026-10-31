@@ -5,7 +5,7 @@ import { usePermissionPreferences } from '../../../../hooks/usePermissionPrefere
 import { workspaceBackendApiBase } from '../../../../config/backendConnections';
 import { toast } from 'sonner';
 import { ComposerPermissionControl } from '../../ComposerPermissionControl';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { useChatStore } from '../../../../state/chatStore';
 import { usePrefs } from '../../../../state/prefs';
 import {
@@ -21,7 +21,7 @@ import {
   type VerifyProviderKeyResult,
   type WebSearchProviderInfo,
 } from '../../../../services/api';
-import { BorderBtn, Row as ClickableRow } from '../../primitives';
+import { BorderBtn } from '../../primitives';
 import { Switch } from '../../../ui/controls';
 import { confirmDialog } from '../../../ui/ConfirmDialog';
 import {
@@ -36,6 +36,7 @@ import { filterVisibleRuntimes } from '../../../../lib/runtimeVisibility';
 import { BedrockConfigPanel } from './BedrockConfigPanel';
 import { approveForMeRuntimeIds, supportsChatYolo } from '../../../../lib/chatPermissionModes';
 import { chatPermissionChoiceParts } from 'michi-shared';
+import { SettingsRow, SettingsSection } from './SettingsSection';
 
 export function ModelPane({
   activeProjectId,
@@ -56,7 +57,8 @@ export function ModelPane({
     () => filterVisibleRuntimes(agentStatus?.availableRuntimes ?? []),
     [agentStatus?.availableRuntimes],
   );
-  const showRuntimePicker = visibleRuntimes.length > 1;
+  const showRuntimePicker = visibleRuntimes.length > 1
+    || (visibleRuntimes.length === 1 && visibleRuntimes[0].id !== agentStatus?.runtime);
   const showProviderPicker = (agentStatus?.providers?.length ?? 0) > 0;
   const showProviderModels = !!caps?.models;
   const showReasoning = !!caps?.reasoning;
@@ -65,20 +67,8 @@ export function ModelPane({
     && agentStatus.availableRuntimes.some((runtime) => runtime.id === 'kiro' && runtime.available);
 
   return (
-    <div>
-      <h1
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-2xl)',
-          fontWeight: 700,
-          color: 'var(--term-fg)',
-          margin: 0,
-        }}
-      >
-        Model
-      </h1>
-      <div style={{ marginBottom: 20 }} />
-
+    <div className="model-pane">
+      <SettingsSection title="Model">
       {showRuntimePicker && agentStatus && (
         <RuntimePicker
           status={agentStatus}
@@ -116,7 +106,7 @@ export function ModelPane({
         <NativeSessionToggle key={`${agentStatus.runtime}-fork`} status={agentStatus} preference="nativeForkByRuntime" label="Native Fork" onChanged={refreshAgentStatus} />
       )}
 
-      {agentStatus && (agentStatus.workflowRuntimes ?? []).map((runtimeId) => (
+      {agentStatus && (agentStatus.workflowRuntimes ?? []).filter((runtimeId) => runtimeId === agentStatus.runtime).map((runtimeId) => (
         <WorkflowsToggle key={`${runtimeId}-workflows`} status={agentStatus} runtimeId={runtimeId} onChanged={refreshAgentStatus} />
       ))}
 
@@ -135,6 +125,7 @@ export function ModelPane({
           />
         ) : null;
       })()}
+      </SettingsSection>
 
       {agentStatus && <WebSearchControls status={agentStatus} onChanged={refreshAgentStatus} />}
 
@@ -179,13 +170,10 @@ function NativeSessionToggle({ status, preference, label, onChanged }: {
   };
 
   return (
-    <div style={{ marginBottom: 18, fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`${label} for ${status.label}`} />
-        <span>{label} <span style={{ color: 'var(--term-muted)' }}>({status.label})</span></span>
-      </div>
-      {error && <div role="alert" style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', marginTop: 6 }}>{error}</div>}
-    </div>
+    <SettingsRow label={label} description={status.label}
+      control={<Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`${label} for ${status.label}`} />}>
+      {error && <p role="alert" className="settings-row__note">{error}</p>}
+    </SettingsRow>
   );
 }
 
@@ -215,16 +203,11 @@ function WorkflowsToggle({ status, runtimeId, onChanged }: { status: AgentStatus
   };
 
   return (
-    <div style={{ marginBottom: 18, fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`Workflows for ${label}`} />
-        <span>Workflows <span style={{ color: 'var(--term-muted)' }}>({label})</span></span>
-      </div>
-      <div style={{ color: 'var(--term-muted)', fontSize: 'var(--fs-sm)', marginTop: 4, lineHeight: 1.45 }}>
-        Lets the agent run multi-step workflows in the background. Progress shows under the message that launched it. Applies to new chats.
-      </div>
-      {error && <div role="alert" style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-sm)', marginTop: 6 }}>{error}</div>}
-    </div>
+    <SettingsRow label={`Workflows (${label})`}
+      description="Lets the agent run multi-step workflows in the background. Progress shows under the message that launched it. Applies to new chats."
+      control={<Switch on={enabled} disabled={saving} onChange={(value) => void save(value)} aria-label={`Workflows for ${label}`} />}>
+      {error && <p role="alert" className="settings-row__note">{error}</p>}
+    </SettingsRow>
   );
 }
 
@@ -239,12 +222,16 @@ function RuntimePicker({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectId = useId();
   const selectedRuntime = runtimes.some((runtime) => runtime.id === status.runtime)
     ? status.runtime
     : '';
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
-      <select
+    <SettingsRow label="Runtime" labelFor={selectId}
+      description="Applies to new chats. Existing chats keep the runtime they started with."
+      control={<select
+        id={selectId}
+        className="ui-select settings-row__select"
         aria-label="Runtime"
         value={selectedRuntime}
         disabled={saving}
@@ -257,33 +244,18 @@ function RuntimePicker({
           if (!result.ok) setError(result.error);
           onChanged();
         }}
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-md)',
-          padding: '6px 8px',
-          border: '1px solid var(--term-line)',
-          background: 'var(--term-surface-glass)',
-          color: 'var(--term-fg)',
-          width: 'min(320px, 100%)',
-          minWidth: 0,
-        }}
       >
         {selectedRuntime === '' && (
-          <option value="" disabled>Select an approved runtime</option>
+          <option value="" disabled>Select an available runtime</option>
         )}
         {runtimes.map((r) => (
           <option key={r.id} value={r.id} disabled={!r.available}>
             {r.label}{!r.available ? ' (unavailable)' : ''}
           </option>
         ))}
-      </select>
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
-        Switching runtime applies to new chats only — existing sessions keep their original runtime.
-      </div>
-      {error && (
-        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
-      )}
-    </div>
+      </select>}>
+      {error && <p role="alert" className="settings-row__note">{error}</p>}
+    </SettingsRow>
   );
 }
 
@@ -491,10 +463,13 @@ function ReasoningPicker({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectId = useId();
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>reasoning effort</div>
-      <select
+    <SettingsRow label="Reasoning effort" labelFor={selectId}
+      description="Models that support it receive this preference; some providers ignore it."
+      control={<select
+        id={selectId}
+        className="ui-select settings-row__select"
         value={status.reasoning ?? 'xhigh'}
         disabled={saving}
         onChange={async (e) => {
@@ -505,27 +480,13 @@ function ReasoningPicker({
           if (!result.ok) setError(result.error);
           onChanged();
         }}
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-md)',
-          padding: '6px 8px',
-          border: '1px solid var(--term-line)',
-          background: 'var(--term-surface-glass)',
-          color: 'var(--term-fg)',
-          minWidth: 320,
-        }}
       >
         {(status.capabilities.supportedReasoningLevels ?? []).map((id) => (
           <option key={id} value={id}>{id}</option>
         ))}
-      </select>
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
-        Some providers ignore reasoning effort, but models that support it will receive this preference.
-      </div>
-      {error && (
-        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
-      )}
-    </div>
+      </select>}>
+      {error && <p role="alert" className="settings-row__note">{error}</p>}
+    </SettingsRow>
   );
 }
 
@@ -563,48 +524,27 @@ function WebSearchControls({
   };
 
   return (
-    <div
-      style={{
-        fontFamily: 'var(--ui-font)',
-        fontSize: 'var(--fs-lg)',
-        color: 'var(--term-fg)',
-        marginTop: 18,
-        paddingTop: 18,
-        borderTop: '1px solid var(--term-line)',
-      }}
-    >
-      <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', letterSpacing: 'var(--ls-caps-wide)', marginBottom: 10 }}>
-        ▸ WEB SEARCH
-      </div>
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>search provider</div>
-      <select
-        aria-label="Web search provider"
-        value={selectedId}
-        disabled={savingProvider}
-        onChange={(event) => void updateProvider(event.target.value)}
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-md)',
-          padding: '6px 8px',
-          border: '1px solid var(--term-line)',
-          background: 'var(--term-surface-glass)',
-          color: 'var(--term-fg)',
-          minWidth: 320,
-        }}
-      >
-        <option value="">Disabled</option>
-        {providers.map((provider) => (
-          <option key={provider.id} value={provider.id}>
-            {provider.label}{provider.hasKey ? '' : ' (key required)'}
-          </option>
-        ))}
-      </select>
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6, maxWidth: 500, lineHeight: 1.5 }}>
-        Searches run from the backend. A new chat will expose the selected provider as a source-aware web-search tool.
-      </div>
-      {providerError && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{providerError}</div>}
-      {selected && <WebSearchKeyControls key={selected.id} provider={selected} onChanged={onChanged} />}
-    </div>
+    <SettingsSection title="Web search">
+      <SettingsRow label="Search provider"
+        description="Searches run from the backend. A new chat will expose the selected provider as a source-aware web-search tool."
+        control={<select
+          className="ui-select settings-row__select"
+          aria-label="Web search provider"
+          value={selectedId}
+          disabled={savingProvider}
+          onChange={(event) => void updateProvider(event.target.value)}
+        >
+          <option value="">Disabled</option>
+          {providers.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.label}{provider.hasKey ? '' : ' (key required)'}
+            </option>
+          ))}
+        </select>}>
+        {providerError && <p role="alert" className="settings-row__note">{providerError}</p>}
+        {selected && <WebSearchKeyControls key={selected.id} provider={selected} onChanged={onChanged} />}
+      </SettingsRow>
+    </SettingsSection>
   );
 }
 
@@ -919,65 +859,11 @@ function KiroSidecarTitleToggle() {
   const { prefs, setPref } = usePrefs();
   const enabled = prefs.enableKiroSidecarTitles;
   return (
-    <div
-      style={{
-        paddingTop: 18,
-        paddingBottom: 4,
-        borderTop: '1px solid var(--term-line)',
-        marginTop: 18,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 'var(--fs-xs)',
-          color: 'var(--term-muted)',
-          letterSpacing: 'var(--ls-caps-wide)',
-          marginBottom: 10,
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        ▸ TITLES
-      </div>
-      <ClickableRow
-        onClick={() => setPref('enableKiroSidecarTitles', !enabled)}
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 10,
-          padding: '6px 6px',
-          margin: '0 -6px',
-        }}
-      >
-        <span style={{ marginTop: 1 }}>
-          <Switch
-            on={enabled}
-            onChange={(value) => setPref('enableKiroSidecarTitles', value)}
-            aria-label="Generate Kiro titles in background"
-          />
-        </span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <span
-            style={{
-              fontSize: 'var(--fs-lg)',
-              color: 'var(--term-fg)',
-              fontFamily: 'var(--ui-font)',
-              fontWeight: 600,
-            }}
-          >
-            Generate Kiro titles in background
-          </span>
-          <span
-            style={{
-              fontSize: 'var(--fs-sm)',
-              color: 'var(--term-muted)',
-              fontFamily: 'var(--ui-font)',
-            }}
-          >
-            Runs a separate Kiro request for untitled chats. Disabled by default because it may arrive after the main response.
-          </span>
-        </div>
-      </ClickableRow>
-    </div>
+    <SettingsSection title="Titles">
+      <SettingsRow label="Generate Kiro titles in background"
+        description="Runs a separate Kiro request for untitled chats. Disabled by default because it may arrive after the main response."
+        control={<Switch on={enabled} onChange={(value) => setPref('enableKiroSidecarTitles', value)} aria-label="Generate Kiro titles in background" />} />
+    </SettingsSection>
   );
 }
 
@@ -985,52 +871,10 @@ function FollowUpsToggle() {
   const { prefs, setPref } = usePrefs();
   const enabled = prefs.enableFollowUps;
   return (
-    <div
-      style={{
-        paddingTop: 18,
-        paddingBottom: 4,
-        borderTop: '1px solid var(--term-line)',
-        marginTop: 18,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 'var(--fs-xs)',
-          color: 'var(--term-muted)',
-          letterSpacing: 'var(--ls-caps-wide)',
-          marginBottom: 10,
-          fontFamily: 'var(--ui-font)',
-        }}
-      >
-        ▸ FOLLOW-UPS
-      </div>
-      <ClickableRow
-        onClick={() => setPref('enableFollowUps', !enabled)}
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 10,
-          padding: '6px 6px',
-          margin: '0 -6px',
-        }}
-      >
-        <span style={{ marginTop: 1 }}>
-          <Switch on={enabled} onChange={(v) => setPref('enableFollowUps', v)} aria-label="Generate follow-up questions" />
-        </span>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-          <span
-            style={{
-              fontSize: 'var(--fs-lg)',
-              color: 'var(--term-fg)',
-              fontFamily: 'var(--ui-font)',
-              fontWeight: 600,
-            }}
-          >
-            Generate follow-up questions
-          </span>
-        </div>
-      </ClickableRow>
-    </div>
+    <SettingsSection title="Follow-ups">
+      <SettingsRow label="Generate follow-up questions"
+        control={<Switch on={enabled} onChange={(v) => setPref('enableFollowUps', v)} aria-label="Generate follow-up questions" />} />
+    </SettingsSection>
   );
 }
 
@@ -1053,27 +897,18 @@ function PermissionSettings({ apiBase, runtimeIds, approveRuntimeIds }: { apiBas
     catch (error) { toast.error(error instanceof Error ? error.message : 'Failed to save permission settings'); }
     finally { setSaving(false); }
   };
-  return <div style={{ paddingTop: 18, paddingBottom: 4, borderTop: '1px solid var(--term-line)', marginTop: 18 }}>
-    <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', letterSpacing: 'var(--ls-caps-wide)', marginBottom: 10, fontFamily: 'var(--ui-font)' }}>▸ PERMISSIONS</div>
-    <ClickableRow onClick={() => { if (!saving && !permissions.loading) void save(!permissions.global); }}
-      style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 6px', margin: '0 -6px' }}>
-      <span style={{ marginTop: 1 }}><Switch on={permissions.global} disabled={saving || permissions.loading}
-        onChange={(global) => { if (!saving && !permissions.loading) void save(global); }} aria-label="Use global permissions" /></span>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-        <span style={{ fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', fontWeight: 600 }}>Use global permissions</span>
-        <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', fontFamily: 'var(--ui-font)' }}>
-          {permissions.global ? 'One permission mode for all chats. Permission controls are hidden in the Composer.' : 'Set permissions separately in each chat’s Composer. New chats start in Ask.'}
-        </span>
-      </div>
-    </ClickableRow>
-    {permissions.global && <div style={{ marginTop: 10 }}>
-      <ComposerPermissionControl scope="global" mode={permissions.choice} disabled={saving || permissions.loading}
+  return <SettingsSection title="Permissions">
+    <SettingsRow label="Use global permissions"
+      description={permissions.global ? 'One permission mode for all chats. Permission controls are hidden in the Composer.' : 'Set permissions separately in each chat’s Composer. New chats start in Ask.'}
+      control={<Switch on={permissions.global} disabled={saving || permissions.loading}
+        onChange={(global) => { if (!saving && !permissions.loading) void save(global); }} aria-label="Use global permissions" />}>
+      {permissions.global && <ComposerPermissionControl scope="global" mode={permissions.choice} disabled={saving || permissions.loading}
         runtimeIds={runtimeIds} approveForMeRuntimeIds={approveRuntimeIds}
         yoloRestartHint={claudeAvailable ? CLAUDE_YOLO_RESTART_NOTE : undefined}
-        onChange={(choice) => save(true, choice)} />
-    </div>}
-    {permissions.error && <p role="alert" style={{ color: 'var(--term-muted)' }}>{permissions.error} <button type="button" onClick={() => { void permissions.retry(); }} disabled={permissions.loading}>Retry</button></p>}
-    <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 10 }}>
+        onChange={(choice) => save(true, choice)} />}
+    </SettingsRow>
+    {permissions.error && <p role="alert" className="settings-section__status">{permissions.error} <button type="button" className="settings-row__link" onClick={() => { void permissions.retry(); }} disabled={permissions.loading}>Retry</button></p>}
+    <p className="settings-section__status model-pane__permissions-note">
       {supportsYolo
         ? 'Changes apply to the next turn. Trust keeps native sandbox limits; YOLO uses full access where supported. Kiro, Crew and Pi use Trust for YOLO. Agent Runs use their own permissions.'
         : 'Changes apply to the next turn. Ask requests approval; Trust approves tools automatically. Agent Runs use their own permissions.'}
@@ -1081,5 +916,5 @@ function PermissionSettings({ apiBase, runtimeIds, approveRuntimeIds }: { apiBas
       {/* Turning global permissions on or off can also cross YOLO. */}
       {claudeAvailable && supportsYolo ? ` ${CLAUDE_YOLO_RESTART_NOTE}` : null}
     </p>
-  </div>;
+  </SettingsSection>;
 }

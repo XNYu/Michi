@@ -21,9 +21,12 @@ export function BackupPane() {
   }
 
   return <section className="settings-backup" aria-labelledby="settings-backup-title" aria-busy={!!busy}>
-    <h2 id="settings-backup-title">Backup and restore</h2>
-    <p>Export workspaces, conversations and Agent data from this server as a JSON file.</p>
-    <p>Pages, databases, attachment files, scheduled jobs, credentials and local settings are not included. Connected remote machines are not included.</p>
+    <h2 id="settings-backup-title" className="settings-backup__title">Backup and restore</h2>
+    <div className="settings-backup__intro">
+      <p>Export workspaces, conversations and Agent data from this server as a JSON file.</p>
+      <p>Pages, databases, attachment files, scheduled jobs, credentials and local settings are not included. Connected remote machines are not included.</p>
+    </div>
+    <div className="settings-backup__card">
     <div className="settings-backup__actions">
       <Button disabled={!!busy} onClick={() => void run('Exporting backup…', async () => {
         downloadBackup(await exportBackup());
@@ -62,5 +65,6 @@ export function BackupPane() {
     {busy && <p role="status">{busy}</p>}
     {notice && <p role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
     {restored && <Button onClick={() => window.location.reload()}>Reload Michi</Button>}
+    </div>
   </section>;
 }

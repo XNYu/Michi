@@ -20,13 +20,16 @@ async function finishHover(control: Locator) {
     .filter((animation) => animation.playState === 'running').length)).toBe(0);
 }
 
-// Send keeps its own fill but sits on the toolbar chips' geometry: the same
-// corners (--ui-radius) and a square at the chip height.
+// Send keeps its own fill on a 26px plate inside a hit square at the chip
+// height; the outer corners grow by the 2px inset so the plate keeps the
+// chips' corners (--ui-radius).
 async function assertSendMatchesChips(composer: Locator) {
   const send = composer.getByRole('button', { name: 'Send (Enter)', exact: true });
   await expect(send).toHaveClass('t-action-btn is-primary');
-  await expect(send).toHaveCSS('border-radius', '4px');
+  await expect(send).toHaveCSS('border-radius', '6px');
   await expect(send).toHaveCSS('border-width', '1px');
+  await expect(send).toHaveCSS('padding', '1px');
+  await expect(send).toHaveCSS('background-clip', 'content-box');
   await expect(send).toHaveCSS('width', '30px');
   await expect(send).toHaveCSS('height', '30px');
   await expect(send).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
@@ -141,7 +144,8 @@ test('disabled model settings stay quiet while stop and queued Send keep their s
     const stop = composer.getByRole('button', { name: 'Stop stream', exact: true });
     await expect(stop).toBeVisible();
     await expect(stop).toHaveClass('t-action-btn is-primary');
-    await expect(stop).toHaveCSS('border-radius', '4px');
+    await expect(stop).toHaveCSS('border-radius', '6px');
+    await expect(stop).toHaveCSS('background-clip', 'content-box');
     const model = composer.getByRole('button', { name: /^Model settings:/ });
     await expect(model).toBeDisabled();
     await finishHover(model);
@@ -151,8 +155,12 @@ test('disabled model settings stay quiet while stop and queued Send keep their s
     await editor.fill('Queue the next turn');
     const queue = composer.getByRole('button', { name: /^Send next/ });
     await expect(queue).toHaveClass('t-action-btn is-queue');
-    await expect(queue).toHaveCSS('border-radius', '4px');
+    await expect(queue).toHaveCSS('border-radius', '6px');
     await expect(queue).toHaveCSS('border-width', '1px');
+    // Its accent ring is an inset outline on the 26px plate, not the hit box.
+    await expect(queue).toHaveCSS('outline-style', 'solid');
+    await expect(queue).toHaveCSS('outline-offset', '-3px');
+    await expect(queue).toHaveCSS('background-clip', 'content-box');
     await composer.screenshot({ path: info.outputPath('streaming-controls.png') });
   } finally {
     release();

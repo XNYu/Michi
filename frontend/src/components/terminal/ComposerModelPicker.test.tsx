@@ -75,11 +75,10 @@ describe('ComposerModelPicker', () => {
     trigger.remove();
   });
 
-  it('navigates with arrows and skips unavailable runtimes', () => {
+  it('hides unavailable runtimes and navigates the remaining choices with arrows', () => {
     render(<ComposerModelPicker {...baseProps} />);
     fireEvent.click(screen.getByRole('button', { name: 'Select runtime: Codex' }));
-    const kiro = screen.getByRole('menuitemradio', { name: /Kiro/ });
-    expect((kiro as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('menuitemradio', { name: /Kiro/ })).toBeNull();
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(screen.getByRole('menuitemradio', { name: 'Claude' }));
     fireEvent.keyDown(document.activeElement!, { key: 'End' });

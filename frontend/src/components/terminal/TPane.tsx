@@ -42,6 +42,7 @@ import MergeBanner from './MergeBanner';
 import PaneFind from './PaneFind';
 import { ComposerShell, type ComposerShellHandle } from './ComposerShell';
 import { usePhoneLayout } from '../../hooks/usePhoneLayout';
+import { useHoldScrollOnKeyboard } from '../../hooks/useHoldScrollOnKeyboard';
 import { PaneMessageList } from './PaneMessageList';
 import { PaneComposerPreBlocks, type PanePendingAttachment } from './PaneComposerPreBlocks';
 import { PaneComposerActions, type PaneComposerSendMode } from './PaneComposerActions';
@@ -401,6 +402,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     openPane,
     openPaneInTree,
     activateTree,
+    loadOlderMessages,
   } = useChatActions();
   const {
     availableModes: defaultAvailableModes,
@@ -976,6 +978,58 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   }, [activeProject?.id, activeProject?.backendConnectionId, addPendingPaths, progressForFile, resolveAttachCwd]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const olderAnchorRef = useRef<{ id: string; top: number } | null>(null);
+  const loadOlder = useCallback(async () => {
+    if (loadingOlder) return;
+    cancelScrollRestoreRef.current?.();
+    followRef.current = false;
+    const el = scrollRef.current;
+    const anchor = el?.querySelector<HTMLElement>('[data-msg-id]');
+    if (anchor?.dataset.msgId) olderAnchorRef.current = { id: anchor.dataset.msgId, top: anchor.getBoundingClientRect().top };
+    setLoadingOlder(true);
+    try { await loadOlderMessages(nodeId); }
+    catch (error) { olderAnchorRef.current = null; toast.error((error as Error).message); }
+    finally { setLoadingOlder(false); }
+  }, [loadOlderMessages, loadingOlder, nodeId]);
+  useLayoutEffect(() => {
+    const anchor = olderAnchorRef.current;
+    const el = scrollRef.current;
+    if (!anchor || !el || loadingOlder) return;
+    const target = [...el.querySelectorAll<HTMLElement>('[data-msg-id]')].find(item => item.dataset.msgId === anchor.id);
+    if (!target) { olderAnchorRef.current = null; return; }
+    // Prepending brings content-visibility frames into view. Their estimated
+    // heights settle over several paints, so one scrollTop write would drift.
+    let frame = 0;
+    let done = false;
+    const started = performance.now();
+    let lastMove = started;
+    const finish = () => {
+      done = true;
+      cancelAnimationFrame(frame);
+      if (olderAnchorRef.current === anchor) olderAnchorRef.current = null;
+    };
+    const apply = () => {
+      if (done) return;
+      const now = performance.now();
+      const delta = target.getBoundingClientRect().top - anchor.top;
+      if (Math.abs(delta) > 1) {
+        programmaticScrollUntilRef.current = now + PROGRAMMATIC_SCROLL_WINDOW_MS;
+        el.scrollTop += delta;
+        prevScrollTopRef.current = el.scrollTop;
+        lastMove = now;
+      }
+      if (now - started >= RESTORE_MAX_MS || now - lastMove >= RESTORE_QUIET_MS) finish();
+      else frame = requestAnimationFrame(apply);
+    };
+    apply();
+    const events = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    for (const event of events) el.addEventListener(event, finish, { passive: true });
+    return () => {
+      finish();
+      for (const event of events) el.removeEventListener(event, finish);
+    };
+  }, [loadingOlder, nodeId]);
   // "Follow mode": while true and the agent is streaming, new content
   // pins the viewport to the bottom. Toggles on/off based on the user's
   // scroll direction (see onScroll handler below). Initial value is true
@@ -1208,7 +1262,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   // to true and messages.length > 0), this effect runs the restore that the
   // mount effect couldn't. It only fires once (guarded by didRestoreRef) and
   // applies the same unseen-or-bottom logic.
-  const messagesLoaded = n?.messagesLoaded;
+  const messagesLoaded = n?.messagesLoaded || !!n?.historyBefore;
   const messagesLen = n?.messages.length ?? 0;
   useLayoutEffect(() => {
     if (didRestoreRef.current) return;
@@ -1451,6 +1505,29 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
       animationEndCallbacks.delete(measure);
     };
   }, [n?.pendingPermission]);
+
+  // The floating card covers the transcript's bottom, so when it grows (a
+  // phone composer opening from its one-row rest, a quote bar, more lines)
+  // scroll by the growth to keep the last lines in view. Tail-follow only
+  // pins while a reply is live; an idle transcript would otherwise lose its
+  // last lines under the card. A transcript read above its bottom stays
+  // where it is. Shrinking needs nothing: the browser clamps.
+  // The first measurement replaces the initial 96px guess and is not growth.
+  const prevComposerHeightRef = useRef<number | 'guess'>('guess');
+  useLayoutEffect(() => {
+    const prev = prevComposerHeightRef.current;
+    prevComposerHeightRef.current = composerHeight === 96 && prev === 'guess' ? 'guess' : composerHeight;
+    if (prev === 'guess') return;
+    const grew = composerHeight - prev;
+    const el = scrollRef.current;
+    if (!el || grew <= 0 || n?.pendingPermission) return;
+    // The bottom padding has already grown by `grew`; measure against the old end.
+    const fromOldBottom = el.scrollHeight - grew - el.clientHeight - el.scrollTop;
+    if (fromOldBottom > 24) return;
+    programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
+    el.scrollTop += grew;
+    prevScrollTopRef.current = el.scrollTop;
+  }, [composerHeight, n?.pendingPermission]);
 
   // Width-driven compaction for the composer toolbar. Below ~360px the
   // agent / model chips drop their text labels (glyph-only); below ~260px
@@ -1852,6 +1929,9 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   const wasStreamingRef = useRef(streaming);
   const lastQuoteRef = useRef(quotedText);
   const phone = usePhoneLayout();
+  useHoldScrollOnKeyboard(scrollRef, phone, () => {
+    programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
+  });
   useEffect(() => {
     const becameFocused = !prevFocusedRef.current && isFocused;
     const justFinishedStreaming = wasStreamingRef.current && !streaming;
@@ -2492,6 +2572,8 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
       >
         <PaneMessageList
           node={n}
+          loadingOlder={loadingOlder}
+          onLoadOlder={loadOlder}
           mergeSourceLabels={mergeSourceLabels}
           prefs={prefs}
           contentStyle={innerWrap}
@@ -2690,6 +2772,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
             onRetry={() => retryLastTurn(nodeId, undefined, consumeBindingMeta())}
             inspectOriginal={turnErrorAction(n.errorKind) === 'inspect-existing-turn'}
             checkingOriginal={n.errorRecovery === 'checking'}
+            resumeTurn={turnErrorAction(n.errorKind) === 'resume-turn'}
             contextUsagePercentage={n.contextUsagePercentage}
             usageSummary={n.usageSummary}
             stopHint={claudeWorkflowRunning ? 'Also stops the running workflow.' : undefined}

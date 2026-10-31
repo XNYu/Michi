@@ -5,7 +5,7 @@ import { COMPOSER_EDITOR } from '../fixtures/shell';
 async function bootMenus(page: Page, palette: 'bone' | 'monokai', extraPrefs: Record<string, unknown> = {}) {
   await installMockApi(page, { streamEvents: [
     { event: 'chunk', data: { text: 'Menu checks complete.' } },
-    { event: 'usage_summary', data: { contextUsagePercentage: 47, totalCredits: 0, turnDurationMs: 20,
+    { event: 'usage_summary', data: { contextUsagePercentage: 62, totalCredits: 0, turnDurationMs: 20,
       totalTokens: 79500, inputTokens: 60000, outputTokens: 19500, cachedInputTokens: 12000 } },
     { event: 'done', data: { stopReason: 'end_turn' } },
   ], custom: async (route) => {
@@ -44,7 +44,7 @@ async function bootMenus(page: Page, palette: 'bone' | 'monokai', extraPrefs: Re
       version: 6, activeProjectId: 'menu-ws',
       nodes: { ...Object.fromEntries(ids.map((nodeId) => [nodeId, {
         nodeId, kind: 'chat', chatId: null, projectId: 'menu-ws', title: `${nodeId} conversation`,
-        status: 'idle', followUps: [], contextUsagePercentage: 47,
+        status: 'idle', followUps: [], contextUsagePercentage: 62,
         usageSummary: { totalTokens: 79500, inputTokens: 60000, outputTokens: 19500, cachedInputTokens: 12000 },
         messages: [{ id: `${nodeId}-message`, role: 'user', text: 'Review the menu spacing and interactions.', toolCalls: [], createdAt: 1 }],
       }])), ...Object.fromEntries(extraWorkspaces.map((workspace) => [workspace.chatIds[0], {

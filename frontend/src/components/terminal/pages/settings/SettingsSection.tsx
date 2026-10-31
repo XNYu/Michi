@@ -3,7 +3,8 @@ import React, { useId } from 'react';
 /**
  * One titled group of settings: an h2 with an optional status on the right,
  * an optional intro, then rows. Consecutive sections are separated by a rule
- * (Settings.css), so a page reads as one list of peers under its h1.
+ * (Settings.css), so a page reads as one list of peers under its h1. On a
+ * phone the rows sit in a card under the title.
  */
 export function SettingsSection({ title, aside, intro, className, children }: {
   title: string;
@@ -22,7 +23,7 @@ export function SettingsSection({ title, aside, intro, className, children }: {
         {aside != null && aside !== false && <div className="settings-section__aside">{aside}</div>}
       </div>
       {intro != null && <div className="settings-section__intro">{typeof intro === 'string' ? <p>{intro}</p> : intro}</div>}
-      {children}
+      {React.Children.toArray(children).length > 0 && <div className="settings-section__body">{children}</div>}
     </section>
   );
 }

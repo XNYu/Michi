@@ -9,6 +9,7 @@ import { subagentActivityAction, subagentListAction } from './subagentStreamActi
 import { reportRemoteCredentialError, reportRemoteRuntimeReady } from './remoteAuthentication';
 import { backendConnectionIdForWorkspace } from '../config/backendConnections';
 import { invalidateTurnPageReceipt, parseTurnPageInvalidation } from '../lib/turnPageReceipt';
+import { savedTurnResult } from './turnErrorRecovery';
 
 type Ref<T> = { current: T };
 
@@ -47,7 +48,7 @@ interface RunChatStreamOptions {
     attachments?: Array<{ name: string; absPath: string }>;
     comments?: Array<Record<string, unknown>>;
   };
-  extraHandlers?: Omit<Partial<StreamHandlers>, 'onTurnStart' | 'onDone' | 'onAborted' | 'onError' | 'onErrorPayload'>;
+  extraHandlers?: Omit<Partial<StreamHandlers>, 'onTurnStart' | 'onDone' | 'onAborted' | 'onError' | 'onErrorPayload' | 'onSavedTurn'>;
   /** Fires after finishAsDone completes — safe place for side-effects like notifications. */
   onStreamComplete?: () => void;
   /**
@@ -380,6 +381,23 @@ export function runChatStream({
     onCancelRecovery: (status) => dispatch({
       type: 'cancel-recovery', nodeId, assistantId: currentAssistantId, ...status,
     }),
+    onSavedTurn: (saved) => {
+      const result = savedTurnResult(saved);
+      if (!result) return false;
+      if (saved.assistantId !== currentAssistantId) {
+        // turn_start never reached this window; adopt the identity it carried.
+        dispatch({ type: 'realign-assistant-id', nodeId, fromId: currentAssistantId, toId: saved.assistantId });
+        currentAssistantId = saved.assistantId;
+        dispatch({ type: 'spawn-prompt-started', nodeId });
+      }
+      currentTurnId = saved.turnId;
+      dispatch({
+        type: 'recover-original-result', nodeId, turnId: saved.turnId, assistantId: currentAssistantId,
+        assistant: result.assistant, lastSeq: result.lastSeq, cursor: 'foreground',
+      });
+      handlers.onDone?.(result.stopReason, currentAssistantId, saved.turnId, true, result.completedAt);
+      return true;
+    },
     onErrorPayload: (data) => {
       handleError(data.message, data.turnId, data.code, data.recoverable, data.completedAt);
     },

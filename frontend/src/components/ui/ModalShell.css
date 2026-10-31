@@ -1,0 +1,10 @@
+/* A modal that is a window over the app (Settings) sits below the page's
+   transient layers: menus, popovers, tooltips and context menus it opens
+   (--z-popover and up) appear over it, and a confirm dialog (--z-modal) over
+   those. It stays above drawers (--z-drawer). See the ladder in index.css. */
+:root {
+  --z-window-scrim: 50;
+  --z-window: 51;
+}
+.ui-scrim--modal[data-layer='window'] { z-index: var(--z-window-scrim); }
+.ui-modal-positioner[data-layer='window'] { z-index: var(--z-window); }

@@ -220,7 +220,7 @@ test('a phone Home keeps one toolbar row and moves workspace and permissions to 
       const composer = (await page.locator('.home-compose .terminal-composer').boundingBox())!;
       const box = async (locator: ReturnType<Page['locator']>) => (await locator.boundingBox())!;
       const toolbar = page.locator('.home-compose .terminal-composer__toolbar');
-      const attach = await box(toolbar.getByText('+', { exact: true }));
+      const attach = await box(toolbar.locator('.composer-attach'));
       // Typing @ still mentions; the phone has no @ chip.
       await expect(toolbar.getByTitle('Mention context or node')).toBeHidden();
       const model = await box(toolbar.locator('.composer-model-trigger'));

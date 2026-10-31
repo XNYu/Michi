@@ -42,6 +42,14 @@ describe('buildMetaAgentTurnContext', () => {
     expect(remotePage).not.toHaveProperty('remoteWorkspaces');
   });
 
+  it('names the checklist item a target is narrowed to, clipped to the title bound', () => {
+    resetSpacesPagesForTests({ home: { id: 'pg-home', title: 'Home' }, workspaces: {} });
+    const item = buildMetaAgentTurnContext({ view: { kind: 'home' }, target: { pageId: 'pg-home', blockId: 'focus', item: { index: 5, text: 'x'.repeat(400) } }, workspaces });
+    expect(item).toMatchObject({ pageId: 'pg-home', blockId: 'focus', blockItem: { index: 5, text: 'x'.repeat(300) } });
+    expect(buildMetaAgentTurnContext({ view: { kind: 'home' }, target: { pageId: 'pg-home', blockId: 'focus' }, workspaces })).not.toHaveProperty('blockItem');
+    expect(buildMetaAgentTurnContext({ view: { kind: 'home' }, target: { pageId: 'pg-home', blockId: 'focus', item: { index: -1, text: 'bad' } }, workspaces })).not.toHaveProperty('blockItem');
+  });
+
   it('names the remote workspaces, and the one on screen, so the Meta agent can say Spaces doesn’t support them', () => {
     resetSpacesPagesForTests({ home: { id: 'pg-home', title: 'Home' }, workspaces: {} });
     const remoteWorkspaces = [{ id: 'remote:host:ws', name: 'Far away' }];

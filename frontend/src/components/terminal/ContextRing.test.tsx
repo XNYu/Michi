@@ -26,7 +26,7 @@ describe('ContextRing', () => {
   it('shows token details in tooltip when usageSummary is provided', () => {
     render(
       <ContextRing
-        percentage={50}
+        percentage={79}
         usageSummary={{
           totalTokens: 79500,
           inputTokens: 60000,
@@ -56,14 +56,14 @@ describe('ContextRing', () => {
 
   it('toggles on tap and closes on the next tap outside, on a touch screen', () => {
     vi.stubGlobal('PointerEvent', TestPointerEvent);
-    render(<><ContextRing percentage={42} /><button type="button">elsewhere</button></>);
+    render(<><ContextRing percentage={62} /><button type="button">elsewhere</button></>);
     const meter = screen.getByRole('meter');
     try {
       fireEvent.pointerOver(meter, { pointerType: 'touch' });
       fireEvent.pointerDown(meter, { pointerType: 'touch' });
       fireEvent.mouseEnter(meter);
       fireEvent.click(meter);
-      expect(screen.getByRole('tooltip').textContent).toContain('42.0%');
+      expect(screen.getByRole('tooltip').textContent).toContain('62.0%');
 
       fireEvent.pointerDown(screen.getByRole('button', { name: 'elsewhere' }), { pointerType: 'touch' });
       expect(screen.queryByRole('tooltip')).toBeNull();
@@ -73,9 +73,13 @@ describe('ContextRing', () => {
     }
   });
 
-  it('has reduced opacity for low percentages', () => {
-    render(<ContextRing percentage={5} />);
+  it('stays out of the toolbar until more than half the window is used', () => {
+    const { rerender } = render(<ContextRing percentage={50} />);
+    expect(screen.queryByRole('meter')).toBeNull();
+    rerender(<ContextRing percentage={51} />);
     const meter = screen.getByRole('meter');
-    expect(meter.style.opacity).toBe('0.5');
+    // An icon-only chip: ComposerShell treats a tap on it like its other controls.
+    expect(meter.classList.contains('t-toolbar-chip')).toBe(true);
+    expect(meter.textContent).toBe('');
   });
 });

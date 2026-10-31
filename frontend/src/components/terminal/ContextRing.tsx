@@ -1,6 +1,8 @@
 import React, { useRef, useState, useMemo, useCallback, useEffect } from 'react';
+import { usePhoneLayout } from '../../hooks/usePhoneLayout';
 import { lastInputWasTouch } from '../../lib/inputModality';
 import { PopoverSurface } from '../ui/Popover';
+import { useAnchoredPosition } from '../ui/useAnchoredPosition';
 
 export interface ContextRingProps {
   /** 0–100 percentage of context window consumed. undefined/null = hidden. */
@@ -15,10 +17,12 @@ export interface ContextRingProps {
   };
 }
 
-const SIZE = 20;
-const STROKE = 2.4;
-const RADIUS = (SIZE - STROKE) / 2;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+/** The ring stays out of the toolbar until more than half the window is used. */
+export const CONTEXT_RING_MIN_PERCENT = 50;
+
+/** Toolbar icon sizes (PaneComposerToolbarLeft): 16px on desktop, 18px on a phone. */
+const RING_DESKTOP = { size: 16, stroke: 1.75 };
+const RING_PHONE = { size: 18, stroke: 2 };
 
 /**
  * Color ramp: green → yellow → orange → red as context fills up.
@@ -38,9 +42,11 @@ function formatTokens(n: number): string {
 }
 
 /**
- * Minimal SVG donut ring showing context-window usage.
- * Sits in the composer toolbar, just left of the Send button.
- * Hidden when no context data is available.
+ * Minimal SVG donut ring showing context-window usage, without a number.
+ * Sits in the composer toolbar, just left of Branch/Send, as an icon-only
+ * chip so ComposerShell treats a tap on it like its other controls (the
+ * keyboard stays up and the field is not refocused). Hidden until usage
+ * passes CONTEXT_RING_MIN_PERCENT.
  *
  * On hover, shows a styled tooltip with "Context usage: 75%" prominently
  * and optional token breakdown details below. A touch screen has no hover, so
@@ -52,22 +58,26 @@ export const ContextRing = React.memo(function ContextRing({
 }: ContextRingProps) {
   const rawPct = percentage ?? 0;
   const pct = Number.isFinite(rawPct) ? Math.min(100, Math.max(0, rawPct)) : 0;
-  const visible = percentage != null && pct > 0;
+  const visible = percentage != null && pct > CONTEXT_RING_MIN_PERCENT;
   const anchorRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState(false);
+  const { size, stroke } = usePhoneLayout() ? RING_PHONE : RING_DESKTOP;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
 
   const style = useMemo(() => {
-    const offset = CIRCUMFERENCE - (pct / 100) * CIRCUMFERENCE;
+    const offset = circumference - (pct / 100) * circumference;
     return {
-      strokeDasharray: `${CIRCUMFERENCE} ${CIRCUMFERENCE}`,
+      strokeDasharray: `${circumference} ${circumference}`,
       strokeDashoffset: offset,
       transition: 'stroke-dashoffset var(--t-decay) ease-out, stroke var(--t-decay) ease-out',
     };
-  }, [pct]);
+  }, [pct, circumference]);
 
   const onEnter = useCallback(() => { if (!lastInputWasTouch()) setHovered(true); }, []);
   const onLeave = useCallback(() => { if (!lastInputWasTouch()) setHovered(false); }, []);
   const onTap = useCallback(() => { if (lastInputWasTouch()) setHovered(open => !open); }, []);
+  const close = useCallback(() => setHovered(false), []);
 
   useEffect(() => {
     if (!hovered) return;
@@ -82,12 +92,14 @@ export const ContextRing = React.memo(function ContextRing({
 
   const color = ringColor(pct);
   const summary = usageSummary;
+  const centre = size / 2;
 
   return (
     <>
       <div
         ref={anchorRef}
-        className="composer-context-ring"
+        className="t-toolbar-chip is-icon-only composer-context-ring"
+        data-icononly="true"
         onMouseEnter={onEnter}
         onMouseLeave={onLeave}
         onClick={onTap}
@@ -96,49 +108,38 @@ export const ContextRing = React.memo(function ContextRing({
         aria-valuenow={pct}
         aria-valuemin={0}
         aria-valuemax={100}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: SIZE,
-          height: SIZE,
-          flexShrink: 0,
-          cursor: 'default',
-          opacity: pct < 10 ? 0.5 : 1,
-          transition: 'opacity var(--t-decay) ease-out',
-        }}
       >
         <svg
-          width={SIZE}
-          height={SIZE}
-          viewBox={`0 0 ${SIZE} ${SIZE}`}
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
           aria-hidden="true"
         >
           {/* Track (background ring) */}
           <circle
-            cx={SIZE / 2}
-            cy={SIZE / 2}
-            r={RADIUS}
+            cx={centre}
+            cy={centre}
+            r={radius}
             fill="none"
             stroke="var(--term-line)"
-            strokeWidth={STROKE}
+            strokeWidth={stroke}
           />
           {/* Progress arc */}
           <circle
-            cx={SIZE / 2}
-            cy={SIZE / 2}
-            r={RADIUS}
+            cx={centre}
+            cy={centre}
+            r={radius}
             fill="none"
             stroke={color}
-            strokeWidth={STROKE}
+            strokeWidth={stroke}
             strokeLinecap="round"
-            transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}
+            transform={`rotate(-90 ${centre} ${centre})`}
             style={style}
           />
         </svg>
       </div>
 
-      {hovered && <ContextRingTooltip anchorRef={anchorRef} pct={pct} color={color} summary={summary} />}
+      {hovered && <ContextRingTooltip anchorRef={anchorRef} pct={pct} color={color} summary={summary} onDismiss={close} />}
     </>
   );
 });
@@ -152,26 +153,37 @@ interface TooltipProps {
   pct: number;
   color: string;
   summary?: ContextRingProps['usageSummary'];
+  /** The ring left the layout (the phone composer settled to its one-row rest). */
+  onDismiss: () => void;
 }
 
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 8;
 
-function ContextRingTooltip({ anchorRef, pct, color, summary }: TooltipProps) {
+function ContextRingTooltip({ anchorRef, pct, color, summary, onDismiss }: TooltipProps) {
   const surfaceRef = React.useRef<HTMLDivElement>(null);
   const [pos, setPos] = React.useState<{ left: number; top: number } | null>(null);
 
   // The surface hugs its content, so centre it on the ring using its measured
   // width. The first pass (nothing mounted yet) places it at the ring's centre;
-  // the pass after mount corrects it before paint.
+  // the pass after mount corrects it before paint. useAnchoredPosition measures
+  // again whenever the ring or the viewport moves: a phone keyboard rising or
+  // falling pans the visual viewport, and the card must follow the ring.
   const measure = React.useCallback(() => {
     const el = anchorRef.current;
     if (!el) return;
+    if (el.checkVisibility?.() === false) {
+      onDismiss();
+      return;
+    }
     const r = el.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const viewLeft = viewport?.offsetLeft ?? 0;
+    const viewWidth = viewport?.width ?? window.innerWidth;
     const width = surfaceRef.current?.offsetWidth ?? 0;
     const left = Math.max(
-      VIEWPORT_MARGIN,
-      Math.min(r.left + r.width / 2 - width / 2, window.innerWidth - width - VIEWPORT_MARGIN),
+      viewLeft + VIEWPORT_MARGIN,
+      Math.min(r.left + r.width / 2 - width / 2, viewLeft + viewWidth - width - VIEWPORT_MARGIN),
     );
     const top = r.top - ANCHOR_GAP;
     setPos((prev) => (
@@ -179,13 +191,12 @@ function ContextRingTooltip({ anchorRef, pct, color, summary }: TooltipProps) {
         ? prev
         : { left, top }
     ));
-  }, [anchorRef]);
+  }, [anchorRef, onDismiss]);
 
-  // Re-measure after mount and whenever the text (and so the width) changes.
+  // Re-measure after mount (hasPosition flips once) and whenever the text, and
+  // so the width, changes.
   const hasPosition = pos !== null;
-  React.useLayoutEffect(() => {
-    measure();
-  }, [measure, hasPosition, pct, summary]);
+  useAnchoredPosition({ anchor: anchorRef.current, surfaceRef, measure, dependencies: [hasPosition, pct, summary] });
 
   if (!pos) return null;
 

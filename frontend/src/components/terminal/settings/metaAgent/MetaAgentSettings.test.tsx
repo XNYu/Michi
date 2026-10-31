@@ -125,7 +125,7 @@ describe('Settings › Meta agent runtime', () => {
     expect(within(section).queryByRole('group', { name: 'Meta agent runtime' })).toBeNull();
   });
 
-  it('pins what it runs on now when Custom is chosen, then lists all five runtimes', async () => {
+  it('pins what it runs on now when Custom is chosen, then lists the supported available runtimes', async () => {
     await mount();
     api.updateMetaAgentSettings.mockResolvedValue({
       ...FOLLOW, settings: { runtimeId: 'claude', providerId: null, modelId: 'claude-opus-5.5', reasoning: 'high' },
@@ -135,8 +135,8 @@ describe('Settings › Meta agent runtime', () => {
     await flush();
     expect(lastPatch()).toEqual({ runtimeId: 'claude', providerId: null, modelId: 'claude-opus-5.5', reasoning: 'high' });
     const chips = within(screen.getByRole('group', { name: 'Meta agent runtime' })).getAllByRole('button');
-    expect(chips.map((chip) => chip.textContent)).toEqual(['Claude', 'Pi', 'Codex', 'Kiro', 'CrewNot supported yet']);
-    expect(chips.map((chip) => (chip as HTMLButtonElement).disabled)).toEqual([false, false, false, false, true]);
+    expect(chips.map((chip) => chip.textContent)).toEqual(['Claude', 'Pi', 'Codex', 'Kiro']);
+    expect(chips.map((chip) => (chip as HTMLButtonElement).disabled)).toEqual([false, false, false, false]);
     expect(chips[0].getAttribute('aria-pressed')).toBe('true');
   });
 
@@ -188,31 +188,20 @@ describe('Settings › Meta agent runtime', () => {
     expect(within(runtimeSection()).queryByRole('status')).toBeNull();
   });
 
-  it('says in plain words why a runtime can’t be chosen, with the install command behind “How to install”', async () => {
-    const claudeMissing = 'claude binary not found. Tried: /usr/local/bin/claude, /home/u/.local/bin/claude. '
-      + 'Install with: npm install -g @anthropic-ai/claude-code, irm https://claude.ai/install.ps1 | iex, or set CLAUDE_CLI_BIN.';
+  it('hides unavailable runtime choices while retaining diagnostics for an unavailable saved selection', async () => {
     api.fetchAgentStatus.mockResolvedValue({
       ...AGENT_STATUS,
       availableRuntimes: AGENT_STATUS.availableRuntimes.map((runtime) => runtime.id === 'claude'
-        ? { ...runtime, available: false, unavailableReason: claudeMissing }
-        : runtime.id === 'kiro' ? { ...runtime, available: false, unavailableReason: 'kiro-cli not found (looked for /opt/kiro-cli)' } : runtime),
+        ? { ...runtime, available: false, unavailableReason: 'claude binary not found. Install with: npm install -g @anthropic-ai/claude-code.' }
+        : runtime.id === 'kiro' ? { ...runtime, available: false, unavailableReason: 'kiro-cli not found' } : runtime),
     });
-    await mount(CUSTOM_CODEX);
-    const hints = screen.getByRole('group', { name: 'Meta agent runtime' }).nextElementSibling as HTMLElement;
-    const items = () => within(hints).getAllByRole('listitem').map((item) => item.textContent);
-    expect(items()).toEqual([
-      'Claude isn’t installed on this computer. How to install',
-      'Kiro isn’t installed on this computer. Details',
-      'Pi runs inside Michi and calls an AI provider directly with your own key, so there is nothing to install.',
-    ]);
-    expect(screen.getByRole('button', { name: 'Claude' }).getAttribute('title')).toBe('Claude isn’t installed on this computer.');
-    expect(hints.textContent).not.toContain('/usr/local/bin');
-
-    fireEvent.click(within(hints).getByRole('button', { name: 'How to install' }));
-    expect([...hints.querySelectorAll('code')].map((code) => code.textContent))
-      .toEqual(['npm install -g @anthropic-ai/claude-code', 'irm https://claude.ai/install.ps1 | iex']);
-    fireEvent.click(within(hints).getByRole('button', { name: 'Details' }));
-    expect(hints.textContent).toContain('kiro-cli not found (looked for /opt/kiro-cli)');
+    await mount({ ...CUSTOM_CODEX, settings: { ...CUSTOM_CODEX.settings, runtimeId: 'claude' } });
+    const choices = screen.getByRole('group', { name: 'Meta agent runtime' });
+    expect(within(choices).getAllByRole('button').map((chip) => chip.textContent)).toEqual(['Pi', 'Codex']);
+    expect(screen.getByText('Claude isn’t installed on this computer.')).toBeTruthy();
+    expect(screen.queryByText('Kiro isn’t installed on this computer.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'How to install' }));
+    expect(screen.getByText('npm install -g @anthropic-ai/claude-code', { selector: 'code' })).toBeTruthy();
   });
 
   it('sends nulls for every field when going back to the global settings', async () => {

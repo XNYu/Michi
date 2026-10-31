@@ -65,6 +65,11 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
   // local-control boundary used by the Custom Agents backend toggle.
   router.use('/backend-connections', requireLocalControlRequest);
 
+  router.post('/backend-connections/check', (_req, res) => {
+    tunnelManager.checkNow();
+    res.status(202).json({ ok: true });
+  });
+
   router.get('/backend-connections/:id/version', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const controller = new AbortController();
@@ -291,6 +296,9 @@ export function setupBackendConnectionRoutes(options: { tunnelManager?: SshTunne
         if (!SKIPPED_RESPONSE_HEADERS.has(name.toLowerCase())) res.setHeader(name, value);
       });
       if (!upstream.body) return res.end();
+      // Preserve the remote's header boundary for quiet SSE subscriptions;
+      // waiting for their first event can hit the gateway's stream deadline.
+      res.flushHeaders();
       const upstreamStream = Readable.fromWeb(upstream.body as never);
       // Detaching the local renderer must release the proxy socket. The
       // remote Michi route treats an SSE disconnect as an observer detach,

@@ -80,6 +80,45 @@ function createClientTurnId(): string {
   return `turn-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+/** GET /chats/:chatId/turns/:turnId: one turn's saved receipt, read once its
+ * live replay is gone. `message` is the stored `messages` row; map it as
+ * hydration does (chatHydration.mapMessageRow). */
+export interface SavedTurn {
+  turnId: string;
+  assistantId: string;
+  /** turns.status: active | completed | cancelled | error. */
+  status: string;
+  stopReason: string | null;
+  completedAt: number | null;
+  lastSeq: number;
+  message: Record<string, unknown> | null;
+}
+
+/** The saved turn, or null when it is missing, foreign or unreadable. */
+export async function getSavedTurn(chatId: string, turnId: string, signal?: AbortSignal): Promise<SavedTurn | null> {
+  try {
+    const res = await backendFetch(
+      `${nodeBackendApiBase(chatId)}/chats/${encodeURIComponent(chatId)}/turns/${encodeURIComponent(turnId)}`,
+      { signal },
+    );
+    if (!res.ok) return null;
+    const body = await res.json() as Partial<SavedTurn> | null;
+    if (!body || body.turnId !== turnId || typeof body.assistantId !== 'string' || typeof body.status !== 'string'
+      || typeof body.lastSeq !== 'number') return null;
+    return {
+      turnId,
+      assistantId: body.assistantId,
+      status: body.status,
+      stopReason: typeof body.stopReason === 'string' ? body.stopReason : null,
+      completedAt: typeof body.completedAt === 'number' ? body.completedAt : null,
+      lastSeq: body.lastSeq,
+      message: body.message && typeof body.message === 'object' ? body.message : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Foreground requests own their complete replay lifecycle. Keep their IDs for
 // this window's lifetime so a delayed/reconnected shared feed cannot replay a
 // locally submitted (including cancelled) turn into the transcript a second time.
@@ -146,6 +185,31 @@ export function streamMessage(
     return true;
   };
   const acceptedHandlers = { ...handlers, onEnvelope: undefined };
+  // The live replay is gone. If the turn finished, its saved row is the
+  // result; the handler applies it and ends the turn. Otherwise keep the error.
+  let savedTurnRead: AbortController | null = null;
+  const finishFromSavedTurn = (message: string, code: string) => {
+    if (!handlers.onSavedTurn) {
+      settleError(message, code);
+      return;
+    }
+    const turnId = resumeTurnId;
+    const read = new AbortController();
+    savedTurnRead = read;
+    // Bounded like inspectOriginalTurn: a hung read must not pin the turn streaming.
+    const deadline = setTimeout(() => read.abort(), 10_000);
+    void getSavedTurn(nodeId, turnId, read.signal).then((saved) => {
+      clearTimeout(deadline);
+      savedTurnRead = null;
+      if (terminalSeen || cancelledByUser || settled) return;
+      if (saved && handlers.onSavedTurn?.(saved)) {
+        terminalSeen = true;
+        return;
+      }
+      settleError(message, code);
+    });
+  };
+
   const resumeForeground = (): boolean => {
     if (!resumeTurnId || cancelledByUser || resumeCancel || resumeTimer) return false;
     resumeCancel = subscribeChat(nodeId, {
@@ -160,8 +224,10 @@ export function streamMessage(
         resumeCancel = null;
         if (terminalSeen || cancelledByUser || settled) return;
         if (!result.retryable) {
-          settleError(result.error?.message ?? 'turn replay unavailable',
-            result.error instanceof SseHttpError && result.error.code ? result.error.code : 'turn_outcome_unknown');
+          const message = result.error?.message ?? 'turn replay unavailable';
+          const code = result.error instanceof SseHttpError && result.error.code ? result.error.code : 'turn_outcome_unknown';
+          if (code === 'turn_replay_unavailable' || code === 'backend_restarted') finishFromSavedTurn(message, code);
+          else settleError(message, code);
           return;
         }
         const delay = Math.min(5_000, 250 * (2 ** resumeAttempt++));
@@ -337,6 +403,7 @@ export function streamMessage(
     resumeTimer = null;
     controller.abort();
     resumeCancel?.();
+    savedTurnRead?.abort();
     // Withdrawing a message that was explicitly rejected as busy must leave
     // the previous response running. There is no backend turn to cancel yet.
     if (waitingForTurn) return;

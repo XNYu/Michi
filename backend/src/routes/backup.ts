@@ -329,7 +329,6 @@ export function replaceWorkspaceInTransaction(workspaceId: string, userId?: stri
   const now = Date.now();
   db.prepare('UPDATE workspaces SET purged_at = ? WHERE id = ? AND purged_at IS NULL').run(now, workspaceId);
   db.prepare('UPDATE nodes SET purged_at = ? WHERE workspace_id = ? AND purged_at IS NULL').run(now, workspaceId);
-  db.prepare('DELETE FROM harness_events WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ?)').run(workspaceId);
   db.prepare('DELETE FROM messages WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ?)').run(workspaceId);
   db.prepare('DELETE FROM edges WHERE workspace_id = ?').run(workspaceId);
   db.prepare('DELETE FROM trees WHERE workspace_id = ?').run(workspaceId);

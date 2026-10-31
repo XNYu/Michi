@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, t
 import {
   fetchAllWorkspacesMeta,
   fetchTreeMessages,
+  fetchTreeMessagePage,
   fetchPersistenceCapabilities,
   fetchWorkspace,
   fetchWorkspaces,
@@ -36,7 +37,6 @@ import { backendRequestOptions } from '../services/api/backendRequest';
 import { BACKEND_CONNECTION_UNAVAILABLE, markBackendConnectionReady, markBackendConnectionUnavailable } from '../config/backendConnectionState';
 import {
   LOCAL_BACKEND_CONNECTION_ID,
-  getKnownBackendConnections,
   setKnownBackendConnections,
   workspaceBackendApiBase,
   type BackendConnectionSummary,
@@ -1483,8 +1483,17 @@ export function useWorkspacePersistence({
   useEffect(() => {
     let cancelled = false;
     const activeRemoteIds = new Set<string>();
+    // Keep our own saved revision: settings may publish the new list globally
+    // before its change event arrives. Status updates do not change updatedAt.
+    const connectionRecords = new Map<string, BackendConnectionSummary>();
+    const connectionRevision = (connection: BackendConnectionSummary) => JSON.stringify([
+      connection.transport, connection.apiUrl, connection.sshHost, connection.sshUser,
+      connection.sshPort, connection.remotePort, connection.hasToken, connection.createdAt, connection.updatedAt,
+    ]);
+    const isCurrentConnection = (connection: BackendConnectionSummary) => !cancelled
+      && activeRemoteIds.has(connection.id) && connectionRecords.get(connection.id) === connection;
     const remoteControllers = new Map<string, AbortController>();
-    const retryingRemoteIds = new Set<string>();
+    const retryingRemoteIds = new Map<string, BackendConnectionSummary>();
     const retryWaiters = new Map<string, () => void>();
     const retryRequested = new Set<string>();
     const onRetryRemote = (event: Event) => {
@@ -1553,6 +1562,9 @@ export function useWorkspacePersistence({
       return addedProjects;
     };
     const replaceBackendSnapshot = (state: HydratedState, snapshot: BackendSnapshot): number => {
+      const cachedProjects = new Map(state.projects.filter(project => project.backendConnectionId === snapshot.connectionId)
+        .map(project => [project.id, project]));
+      const cachedNodes = { ...state.nodes };
       const retainedProjects: Project[] = [];
       let removedProjects = 0;
       for (const project of state.projects) {
@@ -1565,12 +1577,29 @@ export function useWorkspacePersistence({
         for (const nodeId of project.chatIds) delete state.nodes[nodeId];
       }
       state.projects = retainedProjects;
-      return removedProjects + appendBackendSnapshot(state, snapshot);
+      const changed = removedProjects + appendBackendSnapshot(state, snapshot);
+      // A metadata refresh cannot replace already-loaded history, unsent work
+      // or replay watermarks. The durable event feeds reconcile missed output;
+      // server removals still win because absent entities are not reintroduced.
+      state.projects = state.projects.map(project => {
+        const cached = cachedProjects.get(project.id);
+        if (!cached) return project;
+        for (const id of project.chatIds) {
+          const node = state.nodes[id], held = cachedNodes[id];
+          if (!node || !held) continue;
+          state.nodes[id] = { ...node, ...held,
+            messageCount: Math.max(node.messageCount ?? 0, held.messageCount ?? held.messages.length),
+          };
+        }
+        return { ...project, activeTreeId: project.trees.some(tree => tree.id === cached.activeTreeId) ? cached.activeTreeId : project.activeTreeId };
+      });
+      return changed;
     };
     const fetchRemoteSnapshot = async (
       connection: BackendConnectionSummary,
       logFailure = true,
     ): Promise<BackendSnapshot | null> => {
+      if (!isCurrentConnection(connection)) return null;
       const controller = new AbortController();
       remoteControllers.set(connection.id, controller);
       let timedOut = false;
@@ -1578,12 +1607,12 @@ export function useWorkspacePersistence({
       markRemoteRecoveryRetrying(connection.id);
       try {
         const workspaces = await fetchAllWorkspacesMeta(connection.id, controller.signal);
-        if (cancelled || !activeRemoteIds.has(connection.id)) return null;
+        if (!isCurrentConnection(connection) || controller.signal.aborted) return null;
         retryRequested.delete(connection.id);
         clearRemoteRecoveryIssue(connection.id);
         return { connectionId: connection.id, workspaces };
       } catch (err) {
-        if (cancelled || !activeRemoteIds.has(connection.id)) return null;
+        if (!isCurrentConnection(connection)) return null;
         const failure = timedOut ? new Error('The remote connection timed out while loading workspaces.') : err;
         reportRemoteRecoveryFailure(connection, failure);
         if (logFailure) console.warn(`remote backend unavailable (${connection.name}):`, failure);
@@ -1600,7 +1629,10 @@ export function useWorkspacePersistence({
       const connections = typeof listBackendConnections === 'function' ? await listBackendConnections().catch(() => []) : [];
       if (cancelled) return { connections: [], remoteFetches: [] };
       setKnownBackendConnections(connections);
-      for (const connection of connections) activeRemoteIds.add(connection.id);
+      for (const connection of connections) {
+        activeRemoteIds.add(connection.id);
+        connectionRecords.set(connection.id, connection);
+      }
       return { connections, remoteFetches: connections.map(async (connection): Promise<RemoteFetchResult> => ({
         connection, snapshot: await fetchRemoteSnapshot(connection),
       })) };
@@ -1670,6 +1702,7 @@ export function useWorkspacePersistence({
     let resolveLocalInstalled: () => void = () => {};
     const localInstalled = new Promise<void>((resolve) => { resolveLocalInstalled = resolve; });
     const applyRemoteSnapshot = (connection: BackendConnectionSummary, snapshot: BackendSnapshot, replace = true): void => {
+      if (!isCurrentConnection(connection)) return;
       markBackendConnectionReady(connection.id);
       const nextState: HydratedState = {
         projects: [...projectsRef.current],
@@ -1705,16 +1738,16 @@ export function useWorkspacePersistence({
       console.info(`remote backend hydrated (${connection.name}); reconciled ${changedProjects} workspace(s)`);
     };
     const retryRemoteHydration = async (connection: BackendConnectionSummary, replace = true): Promise<void> => {
-      if (retryingRemoteIds.has(connection.id)) return;
-      retryingRemoteIds.add(connection.id);
+      if (!isCurrentConnection(connection) || retryingRemoteIds.get(connection.id) === connection) return;
+      retryingRemoteIds.set(connection.id, connection);
       try {
         let retryDelay = REMOTE_HYDRATION_RETRY_INITIAL_MS;
-        while (!cancelled && activeRemoteIds.has(connection.id)) {
+        while (isCurrentConnection(connection)) {
           await waitForRemoteRetry(connection.id, retryDelay);
-          if (cancelled || !activeRemoteIds.has(connection.id)) return;
+          if (!isCurrentConnection(connection)) return;
 
           const snapshot = await fetchRemoteSnapshot(connection, false);
-          if (cancelled || !activeRemoteIds.has(connection.id)) return;
+          if (!isCurrentConnection(connection)) return;
           if (!snapshot) {
             retryDelay = Math.min(retryDelay * 2, REMOTE_HYDRATION_RETRY_MAX_MS);
             continue;
@@ -1722,7 +1755,9 @@ export function useWorkspacePersistence({
           applyRemoteSnapshot(connection, snapshot, replace);
           return;
         }
-      } finally { retryingRemoteIds.delete(connection.id); }
+      } finally {
+        if (retryingRemoteIds.get(connection.id) === connection) retryingRemoteIds.delete(connection.id);
+      }
     };
     const removeRemoteSnapshot = (connectionId: string): void => {
       const removed = projectsRef.current.filter(project => project.backendConnectionId === connectionId
@@ -1757,21 +1792,22 @@ export function useWorkspacePersistence({
     const onRemoteUnavailable = (event: Event) => {
       const connectionId = (event as CustomEvent<{ connectionId: string }>).detail?.connectionId;
       if (!activeRemoteIds.has(connectionId)) return;
-      removeRemoteSnapshot(connectionId);
-      const connection = getKnownBackendConnections().find(item => item.id === connectionId);
+      // Keep the visible snapshot and its pane identity while offline. The
+      // connection-state barrier rejects writes until metadata answers again.
+      // Only explicit connection removal clears these cached entities below.
+      const connection = connectionRecords.get(connectionId);
       if (connection) void retryRemoteHydration(connection);
     };
     window.addEventListener(BACKEND_CONNECTION_UNAVAILABLE, onRemoteUnavailable);
     const mergeRemoteWhenReady = async (fetch: Promise<RemoteFetchResult>, replace = true): Promise<void> => {
       const { connection, snapshot } = await fetch;
       await localInstalled;
-      if (cancelled || !activeRemoteIds.has(connection.id)) return;
+      if (!isCurrentConnection(connection)) return;
       if (snapshot) applyRemoteSnapshot(connection, snapshot, replace);
       else void retryRemoteHydration(connection, replace);
     };
-    // A newly connected machine should appear immediately, without restarting
-    // the renderer. Only import new connection IDs: refreshing an existing
-    // machine here could replace live nodes/drafts with a metadata snapshot.
+    // New or edited connections load immediately. Unchanged saved records keep
+    // their live history; a new target/credential revision gets a fresh cache.
     const knownConnectionIds = new Set<string>();
     let refreshingConnections = false;
     const onConnectionsChanged = async () => {
@@ -1786,9 +1822,14 @@ export function useWorkspacePersistence({
         setKnownBackendConnections(connections);
         const currentIds = new Set(connections.map(connection => connection.id));
         for (const id of activeRemoteIds) {
-          if (currentIds.has(id)) continue;
+          const next = connections.find(connection => connection.id === id);
+          const previous = connectionRecords.get(id);
+          if (currentIds.has(id) && previous && next && connectionRevision(previous) === connectionRevision(next)) continue;
           activeRemoteIds.delete(id); knownConnectionIds.delete(id); retryRequested.delete(id);
-          markBackendConnectionUnavailable(id);
+          connectionRecords.delete(id);
+          // Invalidate even when already offline: an old HTTP response or SSE
+          // frame must not land in the replacement machine's identical IDs.
+          markBackendConnectionUnavailable(id, true);
           remoteControllers.get(id)?.abort(); retryWaiters.get(id)?.(); clearRemoteRecoveryIssue(id);
           removeRemoteSnapshot(id);
         }
@@ -1796,6 +1837,7 @@ export function useWorkspacePersistence({
           activeRemoteIds.add(connection.id);
           if (knownConnectionIds.has(connection.id)) continue;
           knownConnectionIds.add(connection.id);
+          connectionRecords.set(connection.id, connection);
           void mergeRemoteWhenReady((async () => ({ connection, snapshot: await fetchRemoteSnapshot(connection) }))(), false);
         }
       } catch { /* keep current workspaces when a connection refresh fails */ }
@@ -1862,19 +1904,18 @@ export function useWorkspacePersistence({
               let budgetTimer: number | undefined;
               try {
                 const rows = await Promise.race([
-                  fetchTreeMessages(
-                    activeProject.id,
-                    activeProject.activeTreeId,
-                    activeProject.backendConnectionId,
-                  ),
+                  activeProject.backendConnectionId && activeProject.backendConnectionId !== LOCAL_BACKEND_CONNECTION_ID
+                    ? fetchTreeMessagePage(activeProject.id, activeProject.activeTreeId, activeProject.backendConnectionId)
+                    : fetchTreeMessages(activeProject.id, activeProject.activeTreeId, activeProject.backendConnectionId)
+                      .then(messages => ({ messages, pages: undefined })),
                   new Promise<null>((resolve) => {
                     budgetTimer = window.setTimeout(() => resolve(null), ACTIVE_TREE_EAGER_BUDGET_MS);
                   }),
                 ]);
                 if (cancelled) return;
                 if (rows !== null) {
-                  const byNode = buildMessagesByNode(rows);
-                  nodes = applyTreeMessages(nodes, byNode);
+                  const byNode = buildMessagesByNode(rows.messages);
+                  nodes = applyTreeMessages(nodes, byNode, rows.pages);
                 } else {
                   console.info('active tree eager-load exceeded budget; deferring to lazy loader');
                 }

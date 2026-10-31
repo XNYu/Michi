@@ -1,18 +1,24 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Search, X } from 'lucide-react';
 import type { PageId } from '../../../state/commands';
 import type { ChatNodeState } from '../../../state/chatTypes';
 import { useChatProjects, useStructuralSelector } from '../../../state/chatStore';
 import { isArchiveGroupId } from '../../../state/trashActions';
 import { isVisibleConversationNode } from '../../../state/conversationVisibility';
-import { SETTINGS_AREA_SECTIONS, type SettingsAreaSection } from '../../../state/shellArea';
 import { useMetaAgentSettingsAlert } from '../../../state/metaAgent/useMetaAgentOverview';
+import { useBackendConnections } from '../../../state/useBackendConnections';
+import { useAuthSession } from '../../../services/auth';
+import { LOCAL_BACKEND_CONNECTION_ID } from '../../../config/backendConnections';
 import { AppearancePane } from '../pages/settings/AppearancePane';
+import { SettingsLayoutContext, SettingsTargetContext } from '../pages/settings/settingsPhone';
+import { PhoneSettingsMenu } from './PhoneSettingsMenu';
+import { SETTINGS_GROUPS, SETTINGS_PAGES, type SettingsPage } from './settingsPages';
+import { searchSettings, type SettingsSearchResult } from './settingsSearch';
 import '../pages/Settings.css';
 
-// Keep the drawer and local appearance controls ready with the shell. Other
-// categories load only when selected, without suspending the navigation.
-const GeneralPane = React.lazy(() => import('../pages/settings/GeneralPane'));
+// Keep the Settings shell and local appearance controls ready. Other pages
+// load only when opened, without suspending the navigation.
+const GeneralTopicPage = React.lazy(() => import('./GeneralTopicPage'));
 const ModelPane = React.lazy(() => import('../pages/settings/ModelPane').then(module => ({ default: module.ModelPane })));
 const MetaAgentSettings = React.lazy(() => import('../settings/metaAgent/MetaAgentSettings').then(module => ({ default: module.MetaAgentSettings })));
 const BackupPane = React.lazy(() => import('../pages/settings/BackupPane').then(module => ({ default: module.BackupPane })));
@@ -41,33 +47,125 @@ function useHistoryCounts(): { trash: number; archived: number } {
   return { trash: trashGroups + deletedProjects, archived };
 }
 
-/** A Data & backup link; its count is the description, so the name stays the place's own. */
-function HistoryLink({ label, count, onClick }: { label: string; count: number; onClick: () => void }) {
-  const countId = useId();
-  return (
-    <button type="button" className="terminal-settings-history-command" aria-describedby={count > 0 ? countId : undefined} onClick={onClick}>
-      {label}
-      {count > 0 && <span id={countId} className="terminal-settings-count" aria-hidden="true">{count}</span>}
-    </button>
-  );
+/** The element of a page that shows a setting, found by the name a search result carries. */
+const SETTING_NAMES = '.settings-row__label, .settings-field__label, .settings-section__title, .settings-backup__title, .meta-set__row-k, .meta-set__radio-t, .settings-shortcut-row__label';
+const SETTING_BLOCKS = '.settings-row, .settings-field, .meta-set__row, .meta-set__radio, .settings-shortcut-row, .settings-section, .settings-backup';
+function findSetting(root: HTMLElement, label: string): HTMLElement | null {
+  const name = Array.from(root.querySelectorAll<HTMLElement>(SETTING_NAMES)).find((element) => element.textContent?.trim() === label);
+  return name ? name.closest<HTMLElement>(SETTING_BLOCKS) ?? name : null;
 }
 
 export type SettingsLevel = 'menu' | 'section';
 
+/** The desktop window's navigation: search, then every page in its group. */
+function WindowNav({ page, query, onQuery, onOpen, onNav, onSubmit, history, metaAgentAlert, searchRef }: {
+  page: SettingsPage;
+  query: string;
+  onQuery: (query: string) => void;
+  onOpen: (page: SettingsPage) => void;
+  onNav: (page: PageId) => void;
+  onSubmit: () => void;
+  history: { trash: number; archived: number };
+  metaAgentAlert: boolean;
+  searchRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  const signedIn = !!useAuthSession()?.user;
+  const machineIssue = useBackendConnections().some((connection) => connection.id !== LOCAL_BACKEND_CONNECTION_ID && connection.tunnelStatus === 'error');
+  const baseId = useId();
+  const alert: Partial<Record<SettingsPage, string>> = {
+    ...(metaAgentAlert ? { 'meta-agent': 'needs attention' } : {}),
+    ...(machineIssue ? { machines: 'connection issue' } : {}),
+  };
+  return (
+    <nav className="settings-window__nav term-scrollbar" aria-label="Settings sections">
+      <div className="settings-window__search">
+        <Search size={14} strokeWidth={1.75} aria-hidden="true" />
+        <input ref={searchRef} type="search" aria-label="Search settings" placeholder="Search settings" autoFocus
+          value={query} onChange={(event) => onQuery(event.target.value)}
+          onKeyDown={(event) => {
+            // Escape clears a query first; with none, it reaches the window and closes it.
+            if (event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); onQuery(''); }
+            if (event.key === 'Enter' && query) { event.preventDefault(); onSubmit(); }
+          }} />
+        {query && <button type="button" className="settings-window__clear" aria-label="Clear search" onClick={() => { onQuery(''); searchRef.current?.focus(); }}>
+          <X size={13} strokeWidth={1.75} aria-hidden="true" />
+        </button>}
+      </div>
+      {SETTINGS_GROUPS.map((group, index) => {
+        const headingId = `${baseId}-${index}`;
+        return <div key={group.title} className="settings-window__group" role="group" aria-labelledby={headingId}>
+          <h2 id={headingId} className="settings-window__heading">{group.title}</h2>
+          {group.items.map((item) => {
+            if (item.kind === 'place') {
+              const count = history[item.place.id];
+              const countId = `${headingId}-${item.place.id}`;
+              const Icon = item.place.icon;
+              return <button key={item.place.id} type="button" className="settings-window__item" onClick={() => onNav(item.place.page)}
+                aria-describedby={count > 0 ? countId : undefined}>
+                <Icon size={14} strokeWidth={1.75} aria-hidden="true" /><span>{item.place.label}</span>
+                {count > 0 && <em id={countId} aria-hidden="true">{count}</em>}
+              </button>;
+            }
+            if (item.page === 'account' && !signedIn) return null;
+            const info = SETTINGS_PAGES[item.page];
+            const Icon = info.icon;
+            const status = alert[item.page];
+            return <button key={item.page} type="button" className="settings-window__item"
+              aria-current={item.page === page && !query ? 'page' : undefined}
+              aria-label={status ? `${info.label}, ${status}` : undefined}
+              onClick={() => onOpen(item.page)}>
+              <Icon size={14} strokeWidth={1.75} aria-hidden="true" /><span>{info.label}</span>
+              {status && <i className="settings-window__alert" aria-hidden="true" />}
+            </button>;
+          })}
+        </div>;
+      })}
+    </nav>
+  );
+}
+
+/** Matching settings, each with where it is; picking one opens its page there. */
+function SearchResults({ query, results, onPick }: { query: string; results: SettingsSearchResult[]; onPick: (result: SettingsSearchResult) => void }) {
+  return (
+    <section className="terminal-settings-content settings-window__results term-scrollbar" aria-label="Search results">
+      <p className="settings-window__count" role="status">
+        {results.length === 0 ? <>No settings match “{query.trim()}”.</> : <>{results.length} {results.length === 1 ? 'setting matches' : 'settings match'} “{query.trim()}”</>}
+      </p>
+      {results.length > 0 && <ul className="settings-window__hits">
+        {results.map((result) => <li key={`${result.page}:${result.group ?? ''}:${result.label}`}>
+          <button type="button" className="settings-window__hit" onClick={() => onPick(result)}>
+            <span className="settings-window__path">{result.path}</span>
+            <span className="settings-window__name">{result.label}</span>
+            {result.description && <span className="settings-window__desc">{result.description}</span>}
+            <ChevronRight className="settings-window__chevron" size={14} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </li>)}
+      </ul>}
+      {results.length === 0 && <p className="settings-window__tip">Try a setting’s name, like Reduce motion, or a word such as theme or permissions.</p>}
+    </section>
+  );
+}
+
 /**
- * Shared settings panes, with category navigation when hosted in the global drawer.
+ * Settings pages, one topic each (settingsPages.ts), in two layouts.
  *
- * A `stacked` drawer (one that fills a phone screen) shows one level at a
- * time, like a phone's own settings: the section list, then the chosen
- * section alone. The host owns the level (`view`) so its header Back can
- * return from a section to the list; picking a section asks for 'section'.
- * Unstacked drawers keep the list beside the section and ignore the level.
+ * On a phone (`stacked`, a drawer that fills the screen) Settings shows one
+ * level at a time, like a phone's own settings: a grouped list
+ * (PhoneSettingsMenu), then the chosen page alone. The host owns the level
+ * (`view`) so its header Back can return from a page to the list.
+ *
+ * On a desktop the host shows Settings as a window: search and the grouped
+ * pages on the left, the page on the right. A search replaces the page with
+ * matching settings; picking one opens its page and points at the setting.
+ *
+ * The host owns the page, so Settings reopens where it was left and a request
+ * (the Meta agent's alert) can open a page directly.
  */
-export default function SettingsMain({ section, workspaceReady = true, onNav, onSectionChange, view: hostView, onViewChange, stacked = false }: {
-  section: SettingsAreaSection;
+export default function SettingsMain({ page, onPageChange, workspaceReady = true, onNav, view: hostView, onViewChange, stacked = false }: {
+  page: SettingsPage;
+  onPageChange: (page: SettingsPage) => void;
   workspaceReady?: boolean;
   onNav: (page: PageId) => void;
-  onSectionChange?: (section: SettingsAreaSection) => void;
   view?: SettingsLevel;
   onViewChange?: (view: SettingsLevel) => void;
   stacked?: boolean;
@@ -75,34 +173,88 @@ export default function SettingsMain({ section, workspaceReady = true, onNav, on
   const { activeProject } = useChatProjects();
   const history = useHistoryCounts();
   const metaAgentAlert = useMetaAgentSettingsAlert();
-  const label = SETTINGS_AREA_SECTIONS.find((item) => item.id === section)?.label ?? 'Settings';
+  const label = SETTINGS_PAGES[page].label;
   const contentId = useId();
   const [ownView, setOwnView] = useState<SettingsLevel>('menu');
   const view = hostView ?? ownView;
+  const [query, setQuery] = useState('');
+  // The setting a search result points at; a new pick remounts its page.
+  const [target, setTarget] = useState<{ label: string; seq: number } | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
   // Switching level in a stacked drawer hides what has focus (the picked row,
-  // or the section the header Back left), so focus follows: to the section's
-  // heading, or back to the row of the section just left.
+  // or the page the header Back left), so focus follows: to the page's
+  // heading, or back to the row of the page just left.
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const categoryRefs = useRef(new Map<SettingsAreaSection, HTMLButtonElement>());
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const setRowRef = useCallback((id: string, button: HTMLButtonElement | null) => {
+    if (button) rowRefs.current.set(id, button); else rowRefs.current.delete(id);
+  }, []);
   const previousView = useRef(view);
   useEffect(() => {
     const previous = previousView.current;
     previousView.current = view;
     if (!stacked || previous === view) return;
     if (view === 'section') headingRef.current?.focus({ preventScroll: true });
-    else categoryRefs.current.get(section)?.focus({ preventScroll: true });
-  }, [view, stacked, section]);
-  const openSection = (next: SettingsAreaSection) => {
+    else rowRefs.current.get(page)?.focus({ preventScroll: true });
+  }, [view, stacked, page]);
+
+  const openPage = (next: SettingsPage, reveal?: string) => {
     setOwnView('section');
     onViewChange?.('section');
-    onSectionChange?.(next);
+    onPageChange(next);
+    setQuery('');
+    setTarget(reveal ? (current) => ({ label: reveal, seq: (current?.seq ?? 0) + 1 }) : null);
   };
+
+  const results = useMemo(() => stacked ? [] : searchSettings(query,
+    (Object.keys(SETTINGS_PAGES) as SettingsPage[]).filter((id) => SETTINGS_PAGES[id].only !== 'phone'),
+    (id) => SETTINGS_GROUPS.find((group) => group.items.some((item) => item.kind === 'page' && item.page === id))?.title ?? ''),
+  [query, stacked]);
+  const pick = (result: SettingsSearchResult) => {
+    openPage(result.page, result.label);
+    requestAnimationFrame(() => headingRef.current?.focus({ preventScroll: true }));
+  };
+
+  // A picked search result scrolls its setting into view and marks it briefly.
+  useEffect(() => {
+    if (!target) return;
+    let frames = 0;
+    let frame = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const reveal = () => {
+      const root = contentRef.current;
+      const setting = root && findSetting(root, target.label);
+      if (setting) {
+        setting.scrollIntoView?.({ block: 'center' });
+        setting.setAttribute('data-search-hit', '');
+        timer = setTimeout(() => setting.removeAttribute('data-search-hit'), 2400);
+        return;
+      }
+      // Pages load lazily; stop looking after about a second and a half.
+      if (++frames < 90) frame = requestAnimationFrame(reveal);
+    };
+    frame = requestAnimationFrame(reveal);
+    return () => { cancelAnimationFrame(frame); if (timer) clearTimeout(timer); };
+  }, [target]);
+
+  // ⌘F / Ctrl+F searches Settings while the window is open, not the page behind it.
+  useEffect(() => {
+    if (stacked) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'f') return;
+      event.preventDefault();
+      event.stopPropagation();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [stacked]);
+
   const waiting = <div role="status">Loading workspaces…</div>;
   let body: React.ReactNode;
-  switch (section) {
-    case 'general':
-      body = workspaceReady ? <GeneralPane onNav={onNav} /> : waiting;
-      break;
+  switch (page) {
     case 'runtime':
       body = workspaceReady ? <ModelPane activeProjectId={activeProject?.id ?? null} /> : waiting;
       break;
@@ -112,46 +264,43 @@ export default function SettingsMain({ section, workspaceReady = true, onNav, on
     case 'appearance':
       body = <AppearancePane />;
       break;
-    case 'data':
-      body = <>
-        <div className="area-settings__links">
-          <HistoryLink label="Trash" count={workspaceReady ? history.trash : 0} onClick={() => onNav('trash')} />
-          <HistoryLink label="Archived" count={workspaceReady ? history.archived : 0} onClick={() => onNav('archived')} />
-        </div>
-        {workspaceReady ? <SectionContent><BackupPane /></SectionContent> : waiting}
-      </>;
+    case 'backup':
+      body = workspaceReady ? <BackupPane /> : waiting;
       break;
+    default:
+      body = <GeneralTopicPage page={page} workspaceReady={workspaceReady} onNav={onNav} />;
   }
-  if (onSectionChange) return (
-    <div className="terminal-settings terminal-settings--drawer" data-section={section}
-      data-stacked={stacked || undefined} data-view={stacked ? view : undefined}>
-      <div className="terminal-settings-layout">
-        <aside className="terminal-settings-sidebar term-scrollbar">
-          <nav className="terminal-settings-categories" aria-label="Settings sections">
-            {SETTINGS_AREA_SECTIONS.map(item => <button key={item.id} type="button" className="terminal-settings-category"
-              ref={(button) => { if (button) categoryRefs.current.set(item.id, button); else categoryRefs.current.delete(item.id); }}
-              aria-label={item.id === 'meta-agent' && metaAgentAlert ? `${item.label}, needs attention` : undefined}
-              aria-current={section === item.id ? 'page' : undefined} aria-controls={contentId} onClick={() => openSection(item.id)}>
-              {item.label}
-              {item.id === 'meta-agent' && metaAgentAlert && <span className="terminal-settings-alert" aria-hidden="true" />}
-              {stacked && <ChevronRight className="terminal-settings-category__chevron" size={16} strokeWidth={1.75} aria-hidden="true" />}
-            </button>)}
-          </nav>
-        </aside>
-        <section id={contentId} className="terminal-settings-content term-scrollbar" aria-label={label} key={section}>
-          <h1 ref={headingRef} tabIndex={-1} className="terminal-settings-heading">{label}</h1>
-          <SectionContent>{body}</SectionContent>
-        </section>
+  const content = (
+    <section id={contentId} ref={contentRef} className="terminal-settings-content term-scrollbar" aria-label={label}
+      key={`${page}:${target?.seq ?? 0}`}>
+      <h1 ref={headingRef} tabIndex={-1} className="terminal-settings-heading">{label}</h1>
+      <SettingsTargetContext.Provider value={target?.label ?? null}>
+        <SectionContent>{body}</SectionContent>
+      </SettingsTargetContext.Provider>
+    </section>
+  );
+
+  if (stacked) return (
+    <SettingsLayoutContext.Provider value="phone">
+      <div className="terminal-settings terminal-settings--drawer" data-page={page} data-cards="" data-stacked="" data-view={view}>
+        <div className="terminal-settings-layout">
+          <aside className="terminal-settings-sidebar term-scrollbar">
+            <PhoneSettingsMenu onOpen={(next) => openPage(next)} onNav={onNav} metaAgentAlert={metaAgentAlert} rowRef={setRowRef}
+              history={workspaceReady ? history : { trash: 0, archived: 0 }} />
+          </aside>
+          {content}
+        </div>
       </div>
-    </div>
+    </SettingsLayoutContext.Provider>
   );
   return (
-    <div className="terminal-settings area-settings term-scrollbar" data-section={section}>
-      <section className="terminal-settings-content area-settings__doc" aria-label={label} key={section}>
-        <p className="area-settings__kicker">Settings</p>
-        <h1 className="area-settings__title">{label}</h1>
-        <SectionContent>{body}</SectionContent>
-      </section>
-    </div>
+    <SettingsLayoutContext.Provider value="window">
+      <div className="terminal-settings terminal-settings--window" data-page={page} data-cards="">
+        <WindowNav page={page} query={query} onQuery={setQuery} onOpen={(next) => openPage(next)} onNav={onNav}
+          onSubmit={() => { if (results[0]) pick(results[0]); }}
+          history={workspaceReady ? history : { trash: 0, archived: 0 }} metaAgentAlert={metaAgentAlert} searchRef={searchRef} />
+        {query.trim() ? <SearchResults query={query} results={results} onPick={pick} /> : content}
+      </div>
+    </SettingsLayoutContext.Provider>
   );
 }

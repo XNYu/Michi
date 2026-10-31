@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StreamTransport, configureStreamTransport, fetchStream } from './streamTransport';
 import { STREAM_MAX_BODY_BYTES } from 'michi-shared';
+import { backendConnectionUnavailable, markBackendConnectionReady } from '../../config/backendConnectionState';
 
 class FakeSocket {
   static OPEN = 1;
@@ -246,4 +247,37 @@ describe('multiplexed stream transport', () => {
     fresh.receive({ type: 'end', id: '1' });
     await expect((await second).text()).resolves.toBe('');
   });
+
+  for (const failure of ['response', 'socket', 'body']) {
+    it(`keeps a reachable remote loaded after a multiplexed ${failure} failure without replaying the message`, async () => {
+      const connectionId = `reachable-${failure}`;
+      markBackendConnectionReady(connectionId);
+      fetchMock.mockImplementation(async (url: string) => Response.json(url.endsWith('/health')
+        ? { service: 'michi-backend', status: 'healthy' } : { token: 'ticket' }));
+      configureStreamTransport('http://localhost:3000/api', Promise.resolve(true));
+      const pending = fetchStream(`http://localhost:3000/api/backend-connections/${connectionId}/proxy/chats/one/message`, {
+        method: 'POST', body: '{"turnId":"original"}',
+      });
+      const socket = await openSocket();
+      if (failure === 'response') {
+        socket.receive({ type: 'headers', id: '1', status: 502 });
+        socket.receive({ type: 'data', id: '1', text: '{"error":"failed"}' });
+        socket.receive({ type: 'end', id: '1' });
+        const response = await pending;
+        expect(response.status).toBe(502);
+        expect(await response.json()).toEqual({ error: 'failed' });
+      } else if (failure === 'socket') {
+        const rejected = expect(pending).rejects.toThrow('Stream connection closed');
+        socket.close(); await rejected;
+      } else {
+        socket.receive({ type: 'headers', id: '1', status: 200 });
+        const rejected = expect((await pending).text()).rejects.toThrow('stream reset');
+        socket.receive({ type: 'error', id: '1', message: 'stream reset' });
+        await rejected;
+      }
+      expect(backendConnectionUnavailable(connectionId)).toBe(false);
+      expect(socket.sent).toHaveLength(1);
+      expect(fetchMock.mock.calls.map(([url]) => String(url).split('/').at(-1))).toEqual(['stream-transport', 'health']);
+    });
+  }
 });

@@ -110,6 +110,21 @@ export const PALETTES: Record<TerminalPalette, TerminalTokens> = {
  * element between light-mode and dark-mode variants (e.g. Tailwind's
  * `prose-invert` for markdown rendering).
  */
+/** Accent hues offered for every palette, as [color, name]. */
+export const ACCENT_HUES: ReadonlyArray<readonly [string, string]> = [
+  ['#b8451f', 'rust'],
+  ['#1a4d8f', 'ink'],
+  ['#2f6b4e', 'moss'],
+  ['#6d4aa8', 'violet'],
+  ['#c48300', 'amber'],
+  ['#a8261a', 'red'],
+  ['#58c6a5', 'mint'],
+  ['#10a37f', 'green'],
+  ['#c15f3c', 'clay'],
+  ['#00d9ff', 'cyan'],
+  ['#ff2d95', 'pink'],
+];
+
 /** Resolve the active accent for a palette: user override or palette default. */
 export function resolveAccent(
   overrides: Partial<Record<TerminalPalette, string>>,

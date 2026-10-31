@@ -1,6 +1,6 @@
 import { fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useEdgeSwipe } from './useEdgeSwipe';
+import { useEdgeSwipe, useSwipeLeft } from './useEdgeSwipe';
 
 function Harness({ enabled = true, onSwipe }: { enabled?: boolean; onSwipe: () => void }) {
   useEdgeSwipe(enabled, onSwipe);
@@ -86,6 +86,43 @@ describe('useEdgeSwipe', () => {
     const onSwipe = vi.fn();
     const view = render(<Harness enabled={false} onSwipe={onSwipe} />);
     swipe(view.getByTestId('content'), [[8, 300], [80, 300]]);
+    expect(onSwipe).not.toHaveBeenCalled();
+  });
+});
+
+function LeftHarness({ enabled = true, onSwipe }: { enabled?: boolean; onSwipe: () => void }) {
+  useSwipeLeft(enabled, onSwipe);
+  return <div data-testid="content">content</div>;
+}
+
+describe('useSwipeLeft', () => {
+  afterEach(() => { document.body.innerHTML = ''; });
+
+  it('fires once for a leftward swipe that starts anywhere', () => {
+    const onSwipe = vi.fn();
+    const view = render(<LeftHarness onSwipe={onSwipe} />);
+    swipe(view.getByTestId('content'), [[260, 300], [230, 302], [190, 305], [150, 306]]);
+    expect(onSwipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a rightward swipe', () => {
+    const onSwipe = vi.fn();
+    const view = render(<LeftHarness onSwipe={onSwipe} />);
+    swipe(view.getByTestId('content'), [[100, 300], [200, 300]]);
+    expect(onSwipe).not.toHaveBeenCalled();
+  });
+
+  it('leaves a vertical scroll alone', () => {
+    const onSwipe = vi.fn();
+    const view = render(<LeftHarness onSwipe={onSwipe} />);
+    swipe(view.getByTestId('content'), [[200, 300], [196, 330], [140, 340]]);
+    expect(onSwipe).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when disabled', () => {
+    const onSwipe = vi.fn();
+    const view = render(<LeftHarness enabled={false} onSwipe={onSwipe} />);
+    swipe(view.getByTestId('content'), [[200, 300], [120, 300]]);
     expect(onSwipe).not.toHaveBeenCalled();
   });
 });

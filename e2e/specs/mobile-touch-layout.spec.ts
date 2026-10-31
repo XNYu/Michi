@@ -162,17 +162,19 @@ test('Settings on a phone opens on its section list, then a full-width section; 
   const back = drawer.locator('.ui-overlay-header').getByRole('button', { name: 'Back', exact: true });
   const content = drawer.locator('.terminal-settings-content');
 
-  // First level: only the list, one full-width row per section.
+  // First level: only the list, grouped cards with one row per page, each
+  // nearly as wide as the screen.
   await expect(nav).toBeVisible();
   await expect(content).toBeHidden();
-  const rows = await drawer.locator('.terminal-settings-category').all();
-  expect(rows.length).toBeGreaterThanOrEqual(5);
+  const rows = await nav.locator('.settings-phone__row').all();
+  expect(rows.length).toBeGreaterThanOrEqual(11);
   for (const row of rows) {
     const box = (await row.boundingBox())!;
     expect(box.height).toBeGreaterThanOrEqual(48);
-    expect(box.width).toBeGreaterThanOrEqual(380);
-    await expect(row.locator('.terminal-settings-category__chevron')).toBeVisible();
+    expect(box.width).toBeGreaterThanOrEqual(340);
+    await expect(row.locator('.settings-phone__chevron')).toBeVisible();
   }
+  expect(await drawer.locator('.terminal-settings-sidebar').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   await page.screenshot({ path: test.info().outputPath('settings-phone-list.png'), animations: 'disabled' });
 
   // Second level: the section alone at full width.

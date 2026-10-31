@@ -1,5 +1,6 @@
 import React from 'react';
 import { changeRuntimeProfile, resolveProfileReasoning, supportedProfileReasoning } from '../../../lib/runtimeProfile';
+import { filterAvailableRuntimes } from '../../../lib/runtimeVisibility';
 import type {
   ChatPermissionMode,
   ScheduledJobDto,
@@ -223,6 +224,7 @@ function ScheduleFields({ draft, onChange, error }: { draft: ScheduleDraft; onCh
 
 function AgentFields({ value, onChange }: { value: JobFormValue; onChange: (next: JobFormValue) => void }) {
   const catalog = useRuntimeFieldCatalog('local');
+  const runtimes = filterAvailableRuntimes(catalog?.runtimes ?? []);
   const providers = value.runtimeId ? catalog?.providersFor[value.runtimeId] : undefined;
   const models = value.runtimeId ? catalog?.modelsFor[catalogKey(value.runtimeId, value.providerId)] : undefined;
   React.useEffect(() => {
@@ -237,13 +239,13 @@ function AgentFields({ value, onChange }: { value: JobFormValue; onChange: (next
         <select id="sched-runtime" className="ui-select" value={value.runtimeId}
           onChange={(event) => onChange(changeRuntimeProfile(value, 'runtimeId', event.target.value))}>
           <option value="">Default from Settings</option>
-          {(catalog?.runtimes ?? []).map((runtime) => (
-            <option key={runtime.id} value={runtime.id} disabled={!runtime.available && runtime.id !== value.runtimeId}>
-              {runtime.label}{runtime.available ? '' : ' (unavailable)'}
+          {runtimes.map((runtime) => (
+            <option key={runtime.id} value={runtime.id}>
+              {runtime.label}
             </option>
           ))}
-          {value.runtimeId && catalog && !catalog.runtimes.some((runtime) => runtime.id === value.runtimeId) && (
-            <option value={value.runtimeId}>{value.runtimeId}</option>
+          {value.runtimeId && catalog && !runtimes.some((runtime) => runtime.id === value.runtimeId) && (
+            <option value={value.runtimeId} disabled hidden>{value.runtimeId}</option>
           )}
         </select>
       </Field>

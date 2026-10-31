@@ -6,6 +6,7 @@ for (const recovery of ['unavailable', 'saved'] as const) {
   test(`checking an uncertain turn ${recovery === 'saved' ? 'restores its complete result' : 'keeps output until an explicit rerun'}`, async ({ page }) => {
     const posts: Array<{ turnId: string; nodeId: string; text: string }> = [];
     const checks: URL[] = [];
+    const replays: URL[] = [];
     const cancelRequests: string[] = [];
     await installMockApi(page, { custom: async route => {
       const request = route.request();
@@ -24,18 +25,15 @@ for (const recovery of ['unavailable', 'saved'] as const) {
         ]) });
         return true;
       }
-      if (request.method() === 'GET' && /\/chats\/[^/]+\/stream$/.test(url.pathname) && posts[0] && url.searchParams.get('fromTurnId') === posts[0].turnId) {
+      if (request.method() === 'GET' && /\/chats\/[^/]+\/stream$/.test(url.pathname)) replays.push(url);
+      if (request.method() === 'GET' && posts[0] && url.pathname.endsWith(`/turns/${posts[0].turnId}`)) {
         checks.push(url);
-        if (recovery === 'unavailable') {
-          await route.fulfill({ status: 410, json: { error: 'Original replay unavailable', code: 'turn_replay_unavailable' } });
-        } else {
-          const { turnId, nodeId } = posts[0];
-          await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
-            { event: 'turn_start', data: { turnId, nodeId, assistantId: 'answer-1', userText: posts[0].text, seq: 0 } },
-            { event: 'chunk', data: { turnId, seq: 1, text: 'Original partial result. Complete recovered answer.' } },
-            { event: 'done', data: { turnId, seq: 2, persisted: true, stopReason: 'end_turn' } },
-          ]) });
-        }
+        const { turnId, nodeId } = posts[0];
+        await route.fulfill({ json: recovery === 'unavailable'
+          ? { turnId, assistantId: 'answer-1', status: 'active', stopReason: null, completedAt: null, lastSeq: 2, message: null }
+          : { turnId, assistantId: 'answer-1', status: 'completed', stopReason: 'end_turn', completedAt: 123, lastSeq: 2,
+            message: { id: 'answer-1', node_id: nodeId, role: 'assistant', seq: 1, created_at: 2,
+              content: 'Original partial result. Complete recovered answer.' } } });
         return true;
       }
       return false;
@@ -55,7 +53,7 @@ for (const recovery of ['unavailable', 'saved'] as const) {
     }
     expect(posts).toHaveLength(1);
     expect(checks).toHaveLength(1);
-    expect(checks[0].searchParams.get('fromSeq')).toBe('0');
+    expect(replays).toHaveLength(0);
     expect(cancelRequests).toHaveLength(0);
     await mkdir('/tmp/michi-improvements-2026-10-24', { recursive: true });
     await page.screenshot({ path: `/tmp/michi-improvements-2026-10-24/recovery-${recovery}.png` });
@@ -118,7 +116,7 @@ test('a hydrated unclassified error preserves output until an explicitly confirm
         if (/delete|trim|truncate/i.test(command.type ?? '')) destructiveCalls.push(command.type);
       }
     }
-    if (request.method() === 'GET' && /\/chats\/[^/]+\/stream$/.test(url.pathname)) checks.push(url);
+    if (request.method() === 'GET' && /\/chats\/[^/]+\/(?:stream|turns\/[^/]+)$/.test(url.pathname)) checks.push(url);
     if (request.method() === 'POST' && /\/chats\/[^/]+\/message$/.test(url.pathname)) {
       const body = request.postDataJSON();
       posts.push(body);
@@ -204,5 +202,101 @@ for (const missingTail of [false, true]) {
     await expect(page.locator('.terminal-message-assistant')).toHaveCount(1);
     expect(posts).toHaveLength(1);
     expect(cursors).toEqual(['2']);
+  });
+}
+
+const RESTARTED = 'Michi restarted while this task was running. Review the partial output above, then resume.';
+const savedTurnStates = {
+  // Completed before the restart; only the in-memory replay is gone.
+  completed: { replayCode: 'turn_replay_unavailable', replayError: 'The live reply is no longer available.',
+    status: 'completed', stopReason: 'end_turn', completedAt: 123, lastSeq: 3, content: 'Partial live text. Saved complete reply.' },
+  // The restart cut the turn short; startup recovery wrote the restart receipt.
+  interrupted: { replayCode: 'backend_restarted', replayError: RESTARTED,
+    status: 'error', stopReason: null, completedAt: 123, lastSeq: 1, content: 'Partial live text.' },
+  // Still running on another window's backend view, or not readable as finished.
+  running: { replayCode: 'turn_replay_unavailable', replayError: 'The live reply is no longer available.',
+    status: 'active', stopReason: null, completedAt: null, lastSeq: 1, content: 'Partial live text.' },
+} as const;
+
+for (const state of ['completed', 'interrupted', 'running'] as const) {
+  const saved = savedTurnStates[state];
+  test(`a reconnect whose live replay is gone, for a ${state} turn, ${{
+    completed: 'shows the saved reply without an error',
+    interrupted: 'offers Resume, which carries the turn on',
+    running: 'keeps the check-original error',
+  }[state]}`, async ({ page }) => {
+    const posts: Array<{ turnId: string; nodeId: string; text: string; displayText?: string }> = [];
+    const reads: string[] = [];
+    await installMockApi(page, { custom: async route => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (request.method() === 'POST' && /\/chats\/[^/]+\/message$/.test(url.pathname)) {
+        const body = request.postDataJSON();
+        posts.push(body);
+        const assistantId = posts.length === 1 ? 'saved-answer' : 'resumed-answer';
+        const envelope = { turnId: body.turnId, nodeId: body.nodeId, assistantId };
+        await route.fulfill({ contentType: 'text/event-stream', body: sseBody(posts.length === 1
+          // Transport ends before done, and the in-memory replay has expired.
+          ? [
+            { event: 'turn_start', data: { ...envelope, seq: 0, userText: body.text } },
+            { event: 'chunk', data: { ...envelope, seq: 1, text: 'Partial live text.' } },
+          ]
+          : [
+            { event: 'turn_start', data: { ...envelope, seq: 0, userText: body.displayText ?? body.text } },
+            { event: 'chunk', data: { ...envelope, seq: 1, text: 'Carried on after the restart.' } },
+            { event: 'done', data: { ...envelope, seq: 2, persisted: true, stopReason: 'end_turn' } },
+          ]) });
+        return true;
+      }
+      if (request.method() === 'GET' && /\/chats\/[^/]+\/stream$/.test(url.pathname) && posts[0]
+        && url.searchParams.get('fromTurnId') === posts[0].turnId) {
+        reads.push('stream');
+        await route.fulfill({ status: 410, json: { error: saved.replayError, code: saved.replayCode } });
+        return true;
+      }
+      if (request.method() === 'GET' && posts[0] && url.pathname.endsWith(`/turns/${posts[0].turnId}`)) {
+        reads.push('saved-turn');
+        const { turnId, nodeId } = posts[0];
+        await route.fulfill({ json: {
+          turnId, assistantId: 'saved-answer', status: saved.status, stopReason: saved.stopReason,
+          completedAt: saved.completedAt, lastSeq: saved.lastSeq,
+          message: { id: 'saved-answer', node_id: nodeId, role: 'assistant', seq: 1, created_at: 2, content: saved.content },
+        } });
+        return true;
+      }
+      return false;
+    } });
+    await bootWithWorkspace(page);
+    await page.locator('[contenteditable="true"]').first().fill('Recover an expired replay');
+    await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+    if (state === 'completed') {
+      await expect(page.getByText('Partial live text. Saved complete reply.', { exact: true })).toBeVisible();
+      await expect(page.getByTestId('error-tail-retry')).toHaveCount(0);
+    } else if (state === 'interrupted') {
+      await expect(page.getByTestId('error-tail-retry')).toHaveText('▶ Resume');
+      await expect(page.getByText('Turn interrupted')).toBeVisible();
+      await expect(page.getByText('Check original turn')).toHaveCount(0);
+      await expect(page.getByText('Partial live text.', { exact: true })).toBeVisible();
+    } else {
+      await expect(page.getByTestId('error-tail-retry')).toHaveText('Check original turn');
+      await expect(page.getByText('Partial live text.', { exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    await expect(page.locator('.terminal-message-assistant')).toHaveCount(1);
+    expect(reads).toEqual(['stream', 'saved-turn']);
+    expect(posts).toHaveLength(1);
+    if (state !== 'interrupted') return;
+
+    // Resume sends a continuation prompt, never the original request again.
+    await page.getByTestId('error-tail-retry').click();
+    await expect(page.getByText('Carried on after the restart.', { exact: true })).toBeVisible();
+    expect(posts).toHaveLength(2);
+    expect(posts[1].turnId).not.toBe(posts[0].turnId);
+    expect(posts[1].displayText).toBe('Resume the interrupted turn');
+    expect(posts[1].text).toContain('[INTERRUPTED TURN — context restore]');
+    expect(posts[1].text).toContain('Interrupted request:\nRecover an expired replay');
+    expect(posts[1].text).toContain('Partial response before the interruption:\nPartial live text.');
+    await expect(page.getByText('Partial live text.', { exact: true })).toBeVisible();
+    await expect(page.locator('.terminal-message-assistant')).toHaveCount(2);
   });
 }

@@ -2,7 +2,7 @@ import type {
   BackgroundServiceStatus, BrowserSurfaceState, DesktopCommandContract, DesktopEventContract, DesktopInvokeContract,
   DesktopInvokeArgs, DesktopInvokeResult, ScheduledRunTarget, TerminalSurfaceSnapshot,
 } from 'michi-shared';
-import { app, BrowserWindow, Menu, WebContentsView, ipcMain, dialog, shell, nativeTheme, powerSaveBlocker, Notification as ElectronNotification } from 'electron';
+import { app, BrowserWindow, Menu, WebContentsView, ipcMain, dialog, shell, nativeTheme, powerSaveBlocker, powerMonitor, Notification as ElectronNotification } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import * as pty from 'node-pty';
 import * as path from 'path';
@@ -1710,6 +1710,16 @@ app.on('second-instance', (_event, argv) => {
 });
 
 app.whenReady().then(async () => {
+  powerMonitor.on('resume', () => {
+    if (!resolvedBackendPort) return;
+    // Ask the owning backend to check its forwards. A healthy SSH session
+    // survives; repeated end-to-end failure triggers its bounded supervisor.
+    const request = http.request({ hostname: '127.0.0.1', port: resolvedBackendPort,
+      path: '/api/backend-connections/check', method: 'POST', timeout: 5_000 }, response => response.resume());
+    request.on('timeout', () => request.destroy());
+    request.on('error', () => {});
+    request.end();
+  });
   elog('INFO', 'boot', 'app ready', { isDev, isPackaged: app.isPackaged, logDir: LOG_DIR, launchCwd: LAUNCH_CWD });
   startupMark('electron_app_ready', { isDev, isPackaged: app.isPackaged, logDir: LOG_DIR });
   applyPowerSaveBlocker();

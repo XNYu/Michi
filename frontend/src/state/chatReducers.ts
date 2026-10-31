@@ -756,7 +756,14 @@ export function reduceNodes(
     }
     case 'recover-original-result': {
       const n = nodes[action.nodeId];
-      if (!n || n.status !== 'error' || n.errorTurnId !== action.turnId) return nodes;
+      // The failed turn being checked, or the foreground runner's own turn
+      // whose live replay is gone. Never a newer or older execution.
+      const owned = n?.status === 'error'
+        ? n.errorTurnId === action.turnId
+        : n?.status === 'streaming'
+          && (n.activeTurnId === undefined || n.activeTurnId === action.turnId)
+          && n.messages.findLast((message) => message.role === 'assistant')?.id === action.assistantId;
+      if (!n || !owned) return nodes;
       return { ...nodes, [action.nodeId]: {
         ...n,
         ...(action.cursor === 'background'
@@ -862,7 +869,19 @@ export function reduceNodes(
       // two converge. NOT in NODE_ACTIVITY_ACTIONS → does not bump tree
       // lastActiveAt, and the persistence layer treats messagesLoaded/messages
       // as memory-only (never written back — messages are backend-authored).
-      return applyTreeMessages(nodes, action.messagesByNode);
+      return applyTreeMessages(nodes, action.messagesByNode, action.pages);
+    }
+    case 'history-page-loaded': {
+      const node = nodes[action.nodeId];
+      if (!node || node.historyBefore?.id !== action.expectedBefore.id
+        || node.historyBefore.seq !== action.expectedBefore.seq) return nodes;
+      // Older history is prepended; the live tail and its replay watermark
+      // always win over any overlapping checkpoint in a late response.
+      const known = new Set(node.messages.map(message => message.id));
+      const messages = [...action.messages.filter(message => !known.has(message.id)), ...node.messages];
+      return { ...nodes, [action.nodeId]: { ...node, messages,
+        historyBefore: action.before ?? undefined, messagesLoaded: !action.before,
+        messageCount: Math.max(action.total, messages.length) } };
     }
     case 'retry-trim': {
       const n = nodes[action.nodeId];

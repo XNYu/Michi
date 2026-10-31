@@ -6,6 +6,8 @@ export interface VersionInfo {
   remoteHash: string | null;
   remoteName: string | null;
   updateAvailable: boolean;
+  /** Whether POST /version/update would accept this caller (admin only). */
+  updateAllowed?: boolean;
 }
 
 export interface UpdateResult {

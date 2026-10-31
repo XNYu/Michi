@@ -4,7 +4,7 @@ import { SettingsSection } from './SettingsSection';
 type Binding = { keys: string; label: string };
 type Group = { title: string; bindings: Binding[] };
 
-const SHORTCUT_GROUPS: Group[] = [
+export const SHORTCUT_GROUPS: Group[] = [
   {
     title: 'Navigation (terminal)',
     bindings: [
@@ -13,7 +13,7 @@ const SHORTCUT_GROUPS: Group[] = [
       { keys: kbd('mod', 'M'), label: 'Map page' },
       { keys: kbd('mod', 'D'), label: 'Digest page' },
       { keys: kbd('mod', 'O'), label: 'Workspaces page' },
-      { keys: kbd('mod', ','), label: 'Settings drawer' },
+      { keys: kbd('mod', ','), label: 'Settings' },
     ],
   },
   {

@@ -552,6 +552,11 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
     if (method === 'GET' && path === '/ready') {
       return json({ status: 'ready', error: null });
     }
+    // Phone access is off and unavailable unless a spec routes it; Settings
+    // reads it when its machines or phone access page opens.
+    if (method === 'GET' && path === '/mobile-access') {
+      return json({ state: 'stopped', url: '', error: '', available: false });
+    }
     if (method === 'GET' && path === '/auth-config') {
       return json({ requireAuth: false });
     }

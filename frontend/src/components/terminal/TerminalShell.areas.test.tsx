@@ -83,7 +83,7 @@ describe('TerminalShell areas', () => {
     expect(rail('conversations').getAttribute('aria-current')).toBe('page');
     expect(rail('settings').getAttribute('aria-expanded')).toBe('true');
     expect(document.documentElement.dataset.nativeSurfacesVisible).toBe('false');
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Settings' })).getByRole('button', { name: 'Runtime (global)' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Settings' })).getByRole('button', { name: 'Runtime & model' }));
     expect(await screen.findByText('Model pane')).toBeTruthy();
 
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Settings' })).getByRole('button', { name: 'Close' }));

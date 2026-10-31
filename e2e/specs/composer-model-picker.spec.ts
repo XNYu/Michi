@@ -63,10 +63,10 @@ test('shows the Claude catalog label before opening the picker in Home and a new
   }
   await page.route('**/api/chats/*/message', async (route) => {
     await route.fulfill({ contentType: 'text/event-stream', body: sseBody([
-      { event: 'context_usage', data: { contextUsagePercentage: 45 } },
+      { event: 'context_usage', data: { contextUsagePercentage: 85 } },
       { event: 'chunk', data: { text: 'Claude reply.' } },
-      { event: 'context_usage', data: { contextUsagePercentage: 8 } },
-      { event: 'usage_summary', data: { contextUsagePercentage: 8 } },
+      { event: 'context_usage', data: { contextUsagePercentage: 62 } },
+      { event: 'usage_summary', data: { contextUsagePercentage: 62 } },
       { event: 'done', data: { stopReason: 'end_turn' } },
     ]) });
   });
@@ -79,7 +79,7 @@ test('shows the Claude catalog label before opening the picker in Home and a new
   await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
   await expect(page.getByText('Claude reply.').first()).toBeVisible();
   await expect(trigger).toContainText('Opus (1M context)');
-  await expect(page.getByRole('meter')).toHaveAttribute('aria-valuenow', '8');
+  await expect(page.getByRole('meter')).toHaveAttribute('aria-valuenow', '62');
   await trigger.click();
   await expect(page.getByRole('dialog', { name: 'Model settings' })).toBeVisible();
   await page.keyboard.press('Escape');

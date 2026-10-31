@@ -15,7 +15,7 @@ import {
 import { ChatManager, ExtraContext, PrimaryAgentBindingError, primaryAgentSessionOptions } from "../services/chatManager";
 import { assistantPurposeOf, isAssistantNode } from "../assistant/identity";
 import { finalTerminalEvent } from "./chatStreamEvents";
-import { chatReplayUnavailable, persistedChatReplay } from './chatReplay';
+import { chatReplayUnavailable } from './chatReplay';
 import { getRuntime } from "../agents/registry";
 import { descriptorOf } from "michi-runtime/internal/core/descriptors";
 import { getModelReasoningOptions } from '../agents/modelReasoning';
@@ -43,6 +43,7 @@ import {
     getNode,
     getNodeSessionBinding,
     getNodeWorkspaceId,
+    getSavedTurn,
     getWorkspace,
     listGrants,
     listMessages,
@@ -220,6 +221,10 @@ function sendAgentRouteError(res: express.Response, err: unknown): void {
         res.status(409).json({ code: err.code, error: err.message });
         return;
     }
+    if (err instanceof TurnBusyError) {
+        res.status(409).json({ code: 'turn_active', error: err.message });
+        return;
+    }
     if (err instanceof NativeResumeFailedError) {
         res.status(503).json({ code: 'NATIVE_RESUME_FAILED', error: err.message });
         return;
@@ -239,6 +244,15 @@ function sendAgentRouteError(res: express.Response, err: unknown): void {
     }
     res.status(500).json({ error: (err as Error).message });
 }
+
+/** A turn holds its session until runtime cleanup ends, after the visible reply. */
+function turnBusy(nodeId: string): boolean {
+    return chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId);
+}
+
+/** The session is still held by a turn: a 409 `turn_active` the client may
+ * silently retry with the same request, not a restore failure. */
+class TurnBusyError extends Error {}
 
 async function retireLiveSession(session: AgentSession | undefined): Promise<void> {
     if (!session) return;
@@ -1056,8 +1070,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 && (!requestedModel || live.currentModelId === requestedModel)
                 && (live.nativeSessionId ?? live.id) === nativeResumeIdFor(runtime, row)
                 && (live.runtimeProfileHash ?? null) === (primaryAgent?.profileHash ?? null);
-            if (!canReuse && chatHub.isActive(resolvedNodeId)) {
-                throw new NativeResumeFailedError(new Error('Cannot reload an active turn'));
+            if (!canReuse && turnBusy(resolvedNodeId)) {
+                throw new TurnBusyError('Cannot reload an active turn');
             }
             if (live && !canReuse) await retireLiveSession(live);
             const loadOptions = {
@@ -1406,18 +1420,20 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             });
 
             let session: AgentSession | undefined;
+            let liveSessionRetired = false;
             let resumeStrategy: ResumeStrategy = decision.strategy;
             let resumeReason = decision.reason;
 
             if (decision.strategy === "live" && liveSession) {
                 session = liveSession;
                 if (targetSignature.modelId && session.currentModelId !== targetSignature.modelId && session.setModel) {
-                    if (chatHub.isActive(nodeId)) throw new NativeResumeFailedError(new Error('Cannot change settings during an active turn'));
+                    if (turnBusy(nodeId)) throw new TurnBusyError('Cannot change settings during an active turn');
                     await session.setModel(targetSignature.modelId);
                 }
             } else if (decision.strategy === "exact" && runtime.loadSession) {
-                if (chatHub.isActive(nodeId)) throw new NativeResumeFailedError(new Error('Cannot reload an active turn'));
+                if (turnBusy(nodeId)) throw new TurnBusyError('Cannot reload an active turn');
                 if (liveSession) await retireLiveSession(liveSession);
+                liveSessionRetired = true;
                 session = await loadNativeSession(runtime, {
                     sessionId: nodeId,
                     nodeId,
@@ -1457,6 +1473,15 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 }
                 branchContext = branchBoundary ? toBranchContext(branchBoundary) : undefined;
                 effectiveParentChatId = parentChatId ?? branchBoundary?.parentNodeId;
+                // A fork replaces the node's session like the fallback below:
+                // wait for the turn to release it, and never orphan a live one.
+                // A branch-boundary conflict above is reported first: it does
+                // not clear when the turn ends, so retrying it cannot help.
+                if (turnBusy(nodeId)) throw new TurnBusyError('Cannot replace an active turn');
+                if (liveSession && !liveSessionRetired) {
+                    await retireLiveSession(liveSession);
+                    liveSessionRetired = true;
+                }
                 session = await tryForkChatSession(runtime, {
                     cwd, parentChatId: effectiveParentChatId, branchContext,
                     mergeContexts, extraContexts, contextManifest, enableFollowUps,
@@ -1471,8 +1496,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             }
 
             if (!session) {
-                if (chatHub.isActive(nodeId)) throw new NativeResumeFailedError(new Error('Cannot replace an active turn'));
-                if (liveSession && decision.strategy !== 'exact') {
+                if (turnBusy(nodeId)) throw new TurnBusyError('Cannot replace an active turn');
+                if (liveSession && !liveSessionRetired) {
                     await retireLiveSession(liveSession);
                 }
                 const resumeContext = buildCompatibleResumeContext(transcript, {
@@ -1980,23 +2005,14 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         // Validate the replay cursor before committing HTTP/SSE headers so a
         // gap remains an actionable 410 response rather than a hung stream.
         const probe = chatHub.subscribeTurn(nodeId, fromTurnId, { send: () => {}, close: () => {} }, Number.isFinite(fromSeq) ? fromSeq : 0);
-        const persistedReplay = probe ? null : persistedChatReplay(nodeId, fromTurnId, Number.isFinite(fromSeq) ? fromSeq : 0);
-        if (!probe && !persistedReplay) return res.status(410).json(chatReplayUnavailable(nodeId, fromTurnId));
-        probe?.();
+        if (!probe) return res.status(410).json(chatReplayUnavailable(nodeId, fromTurnId));
+        probe();
 
         res.setHeader("Content-Type", "text/event-stream");
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Connection", "keep-alive");
         res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders?.();
-
-        if (persistedReplay) {
-            for (const event of persistedReplay) {
-                if (!writeSseFrame(res, encodeChatStreamEvent(event))) break;
-            }
-            res.end();
-            return;
-        }
 
         let detached = false;
         let detach = () => {};
@@ -2036,6 +2052,28 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         res.on("close", () => {
             clearInterval(keepalive);
             detachSubscriber();
+        });
+    });
+
+    // The saved outcome of one turn once its live replay (above) is gone. The
+    // message is the stored row, so the renderer maps it as hydration does.
+    router.get("/chats/:chatId/turns/:turnId", requireChatOwner, (req, res) => {
+        const requestedIdentifier = req.params.chatId;
+        if (!canAccessRuntimeChat(requestedIdentifier, req.user?.id)) {
+            return res.status(404).json({ error: 'not_found' });
+        }
+        const nodeId = resolvePublicNodeId(requestedIdentifier, req.user?.id ?? null) ?? requestedIdentifier;
+        const saved = getSavedTurn(nodeId, req.params.turnId, req.user?.id);
+        if (!saved) return res.status(404).json({ error: 'not_found' });
+        const { turn, message } = saved;
+        res.json({
+            turnId: turn.turn_id,
+            assistantId: turn.assistant_message_id,
+            status: turn.status,
+            stopReason: turn.stop_reason,
+            completedAt: turn.completed_at,
+            lastSeq: turn.last_seq,
+            message,
         });
     });
 
@@ -2224,8 +2262,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
             if (!session?.setModel) {
                 return res.status(400).json({ error: "Active session does not support runtime model switching" });
             }
-            if (chatHub.isActive(nodeId)) {
-                return res.status(409).json({ error: 'Cannot change model during an active turn' });
+            if (turnBusy(nodeId)) {
+                return res.status(409).json({ code: 'turn_active', error: 'Cannot change model during an active turn' });
             }
             await session.setModel(modelId);
             const row = getNode(nodeId);

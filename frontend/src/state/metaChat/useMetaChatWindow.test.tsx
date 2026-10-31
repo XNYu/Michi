@@ -93,6 +93,20 @@ describe('useMetaChatWindow', () => {
     expect(result.current.focusToken).toBe(token + 1);
   });
 
+  it('opens without taking focus on a touch screen; focusInput still asks for it', () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches: query === '(hover: none) and (pointer: coarse)', media: query }) as MediaQueryList);
+    const { result } = renderHook(() => useMetaChatWindow());
+    act(() => result.current.minimize());
+    const token = result.current.focusToken;
+    act(() => result.current.toggleMinimized());
+    expect(result.current.state.minimized).toBe(false);
+    act(() => result.current.dock());
+    act(() => result.current.toggleFullscreen());
+    expect(result.current.focusToken).toBe(token);
+    act(() => result.current.focusInput());
+    expect(result.current.focusToken).toBe(token + 1);
+  });
+
   it('shows the window floating without taking focus', () => {
     const { result } = renderHook(() => useMetaChatWindow());
     act(() => result.current.dock());

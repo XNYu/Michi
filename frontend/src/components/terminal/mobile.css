@@ -127,6 +127,8 @@
 @media (max-width: 700px) and (pointer: coarse) {
   .terminal-composer .t-toolbar-chip, .terminal-composer .t-action-btn { min-height: 40px; }
   .terminal-composer .t-action-btn, .terminal-composer .t-toolbar-chip.is-icon-only { min-width: 40px; }
+  /* Send/Stop paint a 32px plate in their 40px hit square (index.css). */
+  .terminal-composer .t-action-btn { --composer-send-inset: 4px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .workspace-toolbar[data-open] .workspace-toolbar__actions, .michi-home__hero { animation: none; }
@@ -142,7 +144,9 @@ html[data-reduce-motion='on'] .terminal-composer .t-action-btn:active:not(:disab
     left: 12px !important; right: 12px !important;
     --composer-toolbar-padding: 4px 8px 10px;
   }
-  .terminal-dashboard .terminal-composer__toolbar { gap: 4px !important; }
+  /* Every control is its own 40px box (18px icons), so the boxes set the
+     rhythm: 22px between icons, 19px before the send plate. */
+  .terminal-dashboard .terminal-composer__toolbar { gap: 0 !important; }
   .terminal-dashboard .composer-model-trigger.t-toolbar-chip { min-width: 40px; max-width: 100px; flex: 1 1 52px; padding-inline: 4px; }
   /* TPane sets the sides inline per density; phones use one inset just
      inside the composer's, and user cards take up to 80% of the text. */
@@ -235,7 +239,7 @@ html[data-reduce-motion='on'] .terminal-composer .t-action-btn:active:not(:disab
     --composer-input-padding: 14px 16px 4px;
     --composer-toolbar-padding: 4px 6px 6px;
   }
-  .terminal-dashboard .terminal-composer__toolbar { gap: 4px !important; }
+  .terminal-dashboard .terminal-composer__toolbar { gap: 0 !important; }
   .terminal-dashboard .terminal-composer[data-collapsed] {
     gap: 4px;
     padding: 6px;
@@ -243,12 +247,7 @@ html[data-reduce-motion='on'] .terminal-composer .t-action-btn:active:not(:disab
     --composer-input-padding: 8px 6px;
   }
   .terminal-dashboard .terminal-composer .composer-mention { display: none !important; }
-  .terminal-dashboard .terminal-composer .composer-attach {
-    min-width: 40px;
-    font-size: 24px;
-    font-weight: 300;
-    color: var(--term-fg);
-  }
+  .terminal-dashboard .terminal-composer .composer-attach { min-width: 40px; }
   /* Nothing to send at rest; Stop and Retry stay. */
   .terminal-dashboard .terminal-composer[data-collapsed] .t-action-btn:disabled { display: none; }
   /* Home's composer stays open but, like the pane, has no @ chip (typing @

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { FileText } from 'lucide-react';
 import { openSpacesPage } from '../../../../state/metaChat/spacesPages';
+import { useMetaChatRevealPage } from './MetaChatArea';
 
 function textOf(children: React.ReactNode): string {
   if (typeof children === 'string' || typeof children === 'number') return String(children);
@@ -13,6 +14,7 @@ function textOf(children: React.ReactNode): string {
 export function PageLinkChip({ id, blockId, children }: { id: string; blockId?: string; children: React.ReactNode }) {
   const label = textOf(children).trim() || 'Page';
   const [gone, setGone] = useState(false);
+  const revealPage = useMetaChatRevealPage();
   return (
     <button
       type="button"
@@ -21,6 +23,7 @@ export function PageLinkChip({ id, blockId, children }: { id: string; blockId?: 
       aria-disabled={gone || undefined}
       title={gone ? `${label} — deleted` : label}
       onClick={() => {
+        if (!gone) revealPage?.();
         void openSpacesPage({ pageId: id, ...(blockId ? { blockId } : {}) }).then((result) => { if (result === 'deleted') setGone(true); });
       }}
     >

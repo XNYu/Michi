@@ -18,7 +18,8 @@ export async function resetKiroContext(original: AgentSession, ownerUserId: stri
     bootstrap: Pick<NewAgentSessionOptions, "bootstrapInstructions" | "toolProfile" | "profileHash"> = {}): Promise<AgentSession> {
     const unlock = await acquireSessionRestoreLock(original.id);
     try {
-        if (getSessionForUser(original.id, ownerUserId) !== original || chatHub.isActive(original.id)) {
+        if (getSessionForUser(original.id, ownerUserId) !== original
+            || chatHub.isActive(original.id) || chatHub.isOwnerTurnActive(original.id)) {
             throw new Error('The session changed or is still running. Retry /clear when it is idle.');
         }
         const node = getNode(original.id);

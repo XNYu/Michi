@@ -27,7 +27,7 @@ import './home/home.css';
 import { publishSpaceTopbar } from '../../../state/pages/spaceTopbar';
 import { PageChanges } from './PageChanges';
 import { PageChangeTargets } from './PageChangeTargets';
-import { useMetaChatTargeting } from './metaChat/SpacesMetaChat';
+import { blockItemTarget, useMetaChatTargeting } from './metaChat/SpacesMetaChat';
 import { useMetaChatDocked } from './metaChat/MetaChatArea';
 import { MaintenanceStatus } from './MaintenanceStatus';
 import { readPageComponent } from '../../../services/api/pageComponents';
@@ -271,7 +271,7 @@ export function SpaceView({ route, onBack, onOpenPage, onOpenSource, changesPane
     const content = block.type === 'heading' || block.type === 'markdown' || block.type === 'callout' ? block.text : block.type === 'checklist' ? block.items.map((item) => `${item.done ? '[x]' : '[ ]'} ${item.text}`).join('\n') : '';
     return { ...identity, pageId: route.pageId, blockId: block.id, title, content };
   };
-  const askAssistant = (block: PageBlock) => targeting?.askAbout(blockTarget(block));
+  const askAssistant = (block: PageBlock, item?: { index: number; text: string }) => targeting?.askAbout(item ? blockItemTarget(blockTarget(block), item) : blockTarget(block));
   const selectBlock = (selection: { blockId: string } | null) => {
     const block = selection ? page?.blocks.find((candidate) => candidate.id === selection.blockId) : undefined;
     targeting?.setTarget(block ? blockTarget(block) : null);

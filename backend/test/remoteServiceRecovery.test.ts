@@ -123,6 +123,99 @@ test('changed remote credentials prevent startup instead of silently rebinding t
   assert.equal(calls, 1);
 });
 
+test('a failed request on a healthy remote preserves its tunnel and active subscribers without replaying the write', async (t) => {
+  let writes = 0, sshCalls = 0, stops = 0;
+  let stream!: http.ServerResponse;
+  const upstream = http.createServer((req, res) => {
+    assert.equal(req.headers.authorization, 'Bearer private-saved-token');
+    if (req.url === '/api/health') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ service: 'michi-backend', status: 'healthy' }));
+    } else if (req.url === '/api/stream') {
+      stream = res;
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.flushHeaders(); // No event until after the unrelated failure recovers.
+    } else { writes++; req.socket.destroy(); }
+  });
+  await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const address = upstream.address(); assert.ok(address && typeof address !== 'string');
+  class Tunnel extends SshTunnelManager {
+    override status() { return { phase: 'connected' as const }; }
+    override async apiUrl() { return `http://127.0.0.1:${(address as { port: number }).port}/api`; }
+    override stop() { stops++; stream?.destroy(); }
+  }
+  const tunnels = new Tunnel();
+  const setup = new RemoteDesktopSetup({ tunnelManager: tunnels, runSsh: async () => { sshCalls++; throw new Error('SSH inspection should not run'); } });
+  const app = express(); app.use(express.json()); app.use('/api', setupBackendConnectionRoutes({ remoteSetup: setup, tunnelManager: tunnels }));
+  const gateway = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => gateway.once('listening', resolve));
+  const gatewayAddress = gateway.address(); assert.ok(gatewayAddress && typeof gatewayAddress !== 'string');
+  const controller = new AbortController();
+  t.after(async () => {
+    controller.abort();
+    for (const server of [gateway, upstream]) {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+  const base = `http://127.0.0.1:${gatewayAddress.port}/api/backend-connections`;
+  const id = saved().id;
+  const subscription = await fetch(`${base}/${id}/proxy/stream`, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+  const failure = await fetch(`${base}/${id}/proxy/write`, { method: 'POST', body: '{}' });
+  assert.equal(failure.status, 502);
+  await failure.text();
+  let recovered = false;
+  for (let i = 0; i < 100; i++) {
+    const body = await fetch(base + '/recovery').then(r => r.json()) as { recoveries: RemoteServiceRecoveryStatus[] };
+    if (body.recoveries[0]?.phase === 'ready') { recovered = true; break; }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(recovered, true);
+  assert.equal(writes, 1);
+  assert.equal(sshCalls, 0);
+  assert.equal(stops, 0);
+  stream.end('event: chunk\ndata: {"text":"still connected"}\n\n');
+  assert.match(await subscription.text(), /still connected/);
+});
+
+test('service HTTP failures do not tear down a working forward and explicit recovery still checks credentials', async (t) => {
+  const connection = saved();
+  const credentialWarning = remoteCredentialExpiredWarning();
+  let healthy = false, stops = 0, inspections = 0;
+  const server = http.createServer((_req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.statusCode = healthy ? 200 : 503;
+    res.end(JSON.stringify({ service: 'michi-backend', status: healthy ? 'healthy' : 'unavailable' }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const apiUrl = `http://127.0.0.1:${address.port}/api`;
+  class Tunnel extends SshTunnelManager {
+    override status() { return { phase: 'connected' as const }; }
+    override async apiUrl() { return apiUrl; }
+    override stop(id: string, expected?: string) {
+      assert.equal(id, connection.id); assert.equal(expected, apiUrl);
+      stops++; healthy = true;
+    }
+  }
+  const setup = new RemoteDesktopSetup({ tunnelManager: new Tunnel(), runSsh: async () => {
+    inspections++;
+    return json({ healthy: true, port: 4444, token: 'private-saved-token', runtimeWarnings: inspections > 1 && credentialWarning ? [credentialWarning] : [] });
+  } });
+  await assert.rejects(setup.recover(connection.id, undefined, undefined, true), /Backend returned 503/);
+  assert.equal(stops, 0); assert.equal(inspections, 1);
+  healthy = true;
+  if (credentialWarning) {
+    await assert.rejects(setup.recover(connection.id), (error: unknown) => error instanceof RemoteDesktopError && error.code === 'remote_credentials');
+  } else {
+    // A provider without remote credentials still inspects and preserves the healthy forward.
+    await setup.recover(connection.id);
+  }
+  assert.equal(inspections, 2);
+  assert.equal(stops, 0, 'explicit inspection must also retain a healthy tunnel');
+});
+
 test('startup is single-flight, bounded by cooldown and exposes the correct local authentication target', async () => {
   let calls = 0, reject!: (error: Error) => void;
   class Setup extends RemoteDesktopSetup { override async recover() { calls++; await new Promise<void>((_resolve, fail) => { reject = fail; }); } }
@@ -146,6 +239,26 @@ test('remote credential failure directs authentication to the remote host', asyn
   // A reachable service does not prove that remote sign-in was refreshed.
   recovery.markReachable(id, recovery.currentFailure(id));
   assert.equal(recovery.statuses()[0].phase, 'error');
+});
+
+test('automatic health checks cannot clear a previously confirmed remote credential failure', async (t) => {
+  const checks: boolean[] = [];
+  class Setup extends RemoteDesktopSetup {
+    override async recover(_id: string, _signal?: AbortSignal, _diagnostic?: RemoteDiagnosticLog, checkExisting = false): Promise<void> {
+      checks.push(checkExisting);
+      throw new RemoteDesktopError('remote_credentials', 'Remote sign-in expired');
+    }
+  }
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  const recovery = new RemoteServiceRecovery(new Setup());
+  const id = saved().id;
+  recovery.start(id);
+  await waitUntil(() => recovery.statuses()[0].phase === 'error');
+  t.mock.timers.setTime(31_000);
+  recovery.start(id);
+  await waitUntil(() => recovery.statuses()[0].phase === 'error');
+  assert.deepEqual(checks, [true, false]);
+  assert.equal(recovery.statuses()[0].authentication?.scope, 'remote');
 });
 
 test('only a request that began after a settled failure can clear it', async () => {

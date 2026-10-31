@@ -220,6 +220,24 @@ export function allocateNodeIdsLocal(count = 1): string[] {
   return Array.from({ length: count }, () => `n-${crypto.randomUUID()}`);
 }
 
+const TURN_ACTIVE_RETRY_START_MS = 150;
+const TURN_ACTIVE_RETRY_BUDGET_MS = 10_000;
+
+function waitBeforeRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    // A later abort after the wait ended is a no-op here.
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
+}
+
 export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureSessionResult> {
   const startedAt = Date.now();
   startupMark('ensure_session_start', { nodeId: opts.nodeId, chatId: opts.chatId, cwd: opts.cwd, workspaceId: opts.workspaceId });
@@ -257,22 +275,35 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
   }
 
   const base = opts.workspaceId ? workspaceBackendApiBase(opts.workspaceId) : nodeBackendApiBase(opts.nodeId);
-  const res = await backendFetch(`${base}/nodes/${encodeURIComponent(opts.nodeId)}/ensure-session`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: opts.signal
-      ? AbortSignal.any([opts.signal, AbortSignal.timeout(60_000)])
-      : AbortSignal.timeout(60_000),
-  });
-  if (!res.ok) {
-    const raw = await res.text().catch(() => '');
-    let payload: { code?: string; error?: string; runtimeId?: string } | null = null;
+  const url = `${base}/nodes/${encodeURIComponent(opts.nodeId)}/ensure-session`;
+  const requestBody = JSON.stringify(body);
+  let res: Response;
+  let raw = '';
+  let payload: { code?: string; error?: string; runtimeId?: string } | null = null;
+  // A just-finished turn can hold the session while its runtime cleans up.
+  // That 409 turn_active is a normal handoff: repeat this same request,
+  // silently, until the session is free or the bound is spent.
+  for (let retryDelay = TURN_ACTIVE_RETRY_START_MS; ; retryDelay *= 2) {
+    res = await backendFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: requestBody,
+      signal: opts.signal
+        ? AbortSignal.any([opts.signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000),
+    });
+    if (res.ok) break;
+    raw = await res.text().catch(() => '');
     try {
       payload = raw ? JSON.parse(raw) : null;
     } catch {
       payload = null;
     }
+    if (res.status !== 409 || payload?.code !== 'turn_active'
+      || Date.now() - startedAt + retryDelay > TURN_ACTIVE_RETRY_BUDGET_MS) break;
+    await waitBeforeRetry(retryDelay, opts.signal);
+  }
+  if (!res.ok) {
     if (payload?.code === 'RUNTIME_SESSIONS_BUSY' || payload?.code === 'CLAUDE_SESSIONS_BUSY') {
       startupMark('ensure_session_failed', { nodeId: opts.nodeId, status: res.status, code: payload.code, durMs: Date.now() - startedAt });
       // Older gateways use CLAUDE_SESSIONS_BUSY for every runtime.

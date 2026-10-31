@@ -1,41 +1,89 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reduceNodes } from './chatReducers';
 import type { ChatNodeState } from './chatTypes';
-import type { StreamHandlers } from '../services/chatStreamEvents';
-import { subscribeChat } from '../services/api';
+import { getSavedTurn, subscribeChat, type SavedTurn } from '../services/api';
 import { assistantAnswerVisibleText } from './assistantBlocks';
-import { inspectOriginalTurn, turnErrorAction } from './turnErrorRecovery';
+import { inspectOriginalTurn, savedTurnResult, turnErrorAction } from './turnErrorRecovery';
 
-vi.mock('../services/api', () => ({ subscribeChat: vi.fn(() => vi.fn()) }));
+vi.mock('../services/api', () => ({ getSavedTurn: vi.fn(), subscribeChat: vi.fn(() => vi.fn()) }));
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
+
+function savedTurn(overrides: Partial<SavedTurn> = {}): SavedTurn {
+  return {
+    turnId: 'original', assistantId: 'assistant', status: 'completed', stopReason: 'end_turn', completedAt: 100, lastSeq: 8,
+    message: { id: 'assistant', node_id: 'node', role: 'assistant', content: 'Recovered result', seq: 1, created_at: 5 },
+    ...overrides,
+  };
+}
 
 describe('turn error action policy', () => {
   it('requires inspection for uncertain durability, without broadening ordinary retries', () => {
     expect(turnErrorAction('turn_persistence_failed')).toBe('inspect-existing-turn');
     expect(turnErrorAction('turn_outcome_unknown')).toBe('inspect-existing-turn');
-    expect(turnErrorAction('backend_restarted')).toBe('inspect-existing-turn');
     expect(turnErrorAction('turn_replay_unavailable')).toBe('inspect-existing-turn');
-    for (const kind of [undefined, 'connection', 'auth', 'turn_active', 'invalid_request']) {
+    for (const kind of [undefined, 'connection', 'auth', 'turn_active', 'invalid_request', 'something_new']) {
       expect(turnErrorAction(kind)).toBe('rerun-prompt');
     }
   });
 
-  it('checks exactly the original identity with a read-only replay and accepts only a durable receipt', () => {
+  it('resumes a turn a restart cut short instead of checking or re-sending it', () => {
+    // The backend wrote the receipt itself and the partial output is checkpointed,
+    // so the known outcome is carried on, never re-executed from the original prompt.
+    expect(turnErrorAction('backend_restarted')).toBe('resume-turn');
+  });
+
+  it('maps only a completed or cancelled saved turn with a completion time, as hydration maps the row', () => {
+    const completed = savedTurnResult(savedTurn())!;
+    expect(assistantAnswerVisibleText(completed.assistant)).toBe('Recovered result');
+    expect(completed).toMatchObject({ completedAt: 100, lastSeq: 8, stopReason: 'end_turn' });
+    expect(completed.assistant).toMatchObject({ id: 'assistant', role: 'assistant', streaming: false, createdAt: 5 });
+    expect(savedTurnResult(savedTurn({ status: 'cancelled', stopReason: null }))?.stopReason).toBe('cancelled');
+    for (const unfinished of [
+      { status: 'active', completedAt: null }, { status: 'error' }, { completedAt: null }, { stopReason: 'error' },
+      { message: null }, { message: { ...savedTurn().message!, id: 'other' } }, { message: { ...savedTurn().message!, role: 'user' } },
+    ] as Array<Partial<SavedTurn>>) {
+      expect(savedTurnResult(savedTurn(unfinished))).toBeNull();
+    }
+  });
+
+  it('checks exactly the original identity with a read of the saved turn, not a replay', async () => {
+    vi.mocked(getSavedTurn).mockResolvedValueOnce(savedTurn());
     const onResult = vi.fn();
-    inspectOriginalTurn({ chatId: 'owner-chat', turnId: 'original', assistant: { id: 'assistant', role: 'assistant', text: '', toolCalls: [] }, workspaceId: 'workspace', onResult });
-    const [chatId, handlers, cursor] = vi.mocked(subscribeChat).mock.calls[0];
-    expect(chatId).toBe('owner-chat');
-    expect(cursor).toEqual({ turnId: 'original', seq: 0 });
-    expect(handlers.onEnvelope?.({ turnId: 'newer', seq: 0 })).toBe(false);
-    expect(handlers.onEnvelope?.({ turnId: 'original', seq: 9 })).toBe(true);
-    const observe = vi.mocked(subscribeChat).mock.calls[0][3]!.onEvent!;
-    observe({ event: 'turn_start', data: { turnId: 'original', assistantId: 'assistant', nodeId: 'node', userText: 'original request', seq: 0 } });
-    observe({ event: 'chunk', data: { turnId: 'original', seq: 1, text: 'Recovered result' } });
-    observe({ event: 'done', data: { turnId: 'original', seq: 2, persisted: true, stopReason: 'end_turn' } });
-    handlers.onDone?.('end_turn', 'assistant', 'original', true, 100);
-    expect(onResult).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ persisted: true, completedAt: 100 }));
+    inspectOriginalTurn({ chatId: 'owner-chat', turnId: 'original', onResult });
+    await vi.waitFor(() => expect(onResult).toHaveBeenCalledOnce());
+    expect(vi.mocked(getSavedTurn).mock.calls[0].slice(0, 2)).toEqual(['owner-chat', 'original']);
+    expect(subscribeChat).not.toHaveBeenCalled();
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({ persisted: true, completedAt: 100, lastSeq: 8 }));
     expect(assistantAnswerVisibleText(onResult.mock.calls[0][0].assistant)).toBe('Recovered result');
-    expect(vi.mocked(subscribeChat).mock.results[0].value).toHaveBeenCalledOnce();
+  });
+
+  it.each(['still running', 'failed', 'missing', 'deadline'])('leaves a %s turn unknown and reports once', async (failure) => {
+    if (failure === 'deadline') vi.useFakeTimers();
+    let abortSignal: AbortSignal | undefined;
+    vi.mocked(getSavedTurn).mockImplementationOnce(async (_chatId, _turnId, signal) => {
+      abortSignal = signal;
+      if (failure === 'still running') return savedTurn({ status: 'active', completedAt: null });
+      if (failure === 'failed') return savedTurn({ status: 'error' });
+      if (failure === 'missing') return null;
+      return new Promise<never>(() => {});
+    });
+    const onResult = vi.fn();
+    inspectOriginalTurn({ chatId: 'owner-chat', turnId: 'original', onResult });
+    if (failure === 'deadline') await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => expect(onResult).toHaveBeenCalledOnce());
+    expect(onResult).toHaveBeenCalledWith({ persisted: false });
+    expect(abortSignal?.aborted).toBe(true);
+  });
+
+  it('a detached check never reports', async () => {
+    let resolve!: (saved: SavedTurn) => void;
+    vi.mocked(getSavedTurn).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const onResult = vi.fn();
+    const detach = inspectOriginalTurn({ chatId: 'owner-chat', turnId: 'original', onResult });
+    detach();
+    resolve(savedTurn());
+    await new Promise((done) => setTimeout(done, 0));
+    expect(onResult).not.toHaveBeenCalled();
   });
 
   it.each(['foreground', 'background'] as const)('commits recovered output and only its %s replay watermark together', (cursor) => {
@@ -62,35 +110,27 @@ describe('turn error action policy', () => {
       expect(recovered.lastAppliedSeq).toBe(1);
     }
     expect(recovered.messages[0].text).toBe('Recovered');
-    const newer = { ...node, status: 'streaming' as const, errorTurnId: undefined };
+    const newer = { ...node, status: 'streaming' as const, errorTurnId: undefined, activeTurnId: 'newer' };
     expect(reduceNodes({ n1: newer }, {
       type: 'recover-original-result', nodeId: 'n1', turnId: 'original', assistantId: 'a1',
       assistant: { ...assistant, text: 'Recovered' }, lastSeq: 8, cursor,
     }).n1).toBe(newer);
   });
 
-  it('does not promote a durable receipt when the result replay is incomplete', () => {
-    const onResult = vi.fn();
-    inspectOriginalTurn({ chatId: 'owner-chat', turnId: 'original', assistant: { id: 'assistant', role: 'assistant', text: '', toolCalls: [] }, workspaceId: 'workspace', onResult });
-    const [, handlers, , opts] = vi.mocked(subscribeChat).mock.calls[0];
-    opts?.onEvent?.({ event: 'turn_start', data: { turnId: 'original', assistantId: 'assistant', nodeId: 'node', userText: 'request', seq: 0 } });
-    opts?.onEvent?.({ event: 'done', data: { turnId: 'original', seq: 2, persisted: true } });
-    handlers.onDone?.('end_turn', 'assistant', 'original', true);
-    expect(onResult).toHaveBeenCalledExactlyOnceWith({ persisted: false, completedAt: undefined });
-  });
-
-  it.each(['persistence failure', 'missing receipt', 'replay unavailable', 'deadline'])('leaves %s unknown and finishes its subscription', (failure) => {
-    vi.useFakeTimers();
-    const onResult = vi.fn();
-    inspectOriginalTurn({ chatId: 'owner-chat', turnId: 'original', assistant: { id: 'assistant', role: 'assistant', text: '', toolCalls: [] }, workspaceId: 'workspace', onResult });
-    const handlers = vi.mocked(subscribeChat).mock.calls[0][1] as StreamHandlers;
-    if (failure === 'persistence failure') handlers.onErrorPayload?.({ message: 'commit failed', code: 'turn_persistence_failed' });
-    if (failure === 'missing receipt') handlers.onDone?.('end_turn', 'assistant', 'original');
-    if (failure === 'replay unavailable') vi.mocked(subscribeChat).mock.calls[0][3]?.onDisconnect?.({ retryable: false, error: new Error('410') });
-    if (failure === 'deadline') vi.advanceTimersByTime(10_000);
-    expect(onResult).toHaveBeenCalledExactlyOnceWith({ persisted: false, completedAt: undefined });
-    expect(vi.mocked(subscribeChat).mock.results[0].value).toHaveBeenCalledOnce();
-    vi.advanceTimersByTime(20_000);
-    expect(onResult).toHaveBeenCalledOnce();
+  it('lets the streaming foreground turn apply its own saved result, never an older assistant', () => {
+    const older = { id: 'a0', role: 'assistant' as const, text: 'old', toolCalls: [] };
+    const live = { id: 'a1', role: 'assistant' as const, text: 'partial', toolCalls: [], streaming: true };
+    const node: ChatNodeState = {
+      nodeId: 'n1', projectId: 'w1', kind: 'chat', chatId: 'n1', messages: [older, live], followUps: [],
+      status: 'streaming', activeTurnId: 'original',
+    };
+    const apply = (assistantId: string, turnId = 'original') => reduceNodes({ n1: node }, {
+      type: 'recover-original-result', nodeId: 'n1', turnId, assistantId,
+      assistant: { id: assistantId, role: 'assistant', text: 'Saved', toolCalls: [] }, lastSeq: 8, cursor: 'foreground',
+    }).n1;
+    expect(apply('a1').messages.map((message) => message.text)).toEqual(['old', 'Saved']);
+    expect(apply('a1').lastAppliedSeq).toBe(8);
+    expect(apply('a0')).toBe(node);
+    expect(apply('a1', 'other-turn')).toBe(node);
   });
 });

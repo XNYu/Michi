@@ -117,7 +117,7 @@ for (const palette of ['bone', 'gruvbox']) {
     await expect(settings.getByText('SSH launch:', { exact: false })).toHaveCount(0);
     await expect.poll(() => settings.locator('.terminal-settings-content').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     // Controls use the shared UI font, including the host input in the expanded form.
-    const font = await settings.getByRole('heading', { level: 1, name: 'General', exact: true }).evaluate(el => getComputedStyle(el).fontFamily);
+    const font = await settings.getByRole('heading', { level: 1, name: 'Machines', exact: true }).evaluate(el => getComputedStyle(el).fontFamily);
     expect(await add.evaluate(el => getComputedStyle(el).fontFamily)).toBe(font);
     await page.screenshot({ path: testInfo.outputPath(`settings-${palette}.png`) });
     await add.click();

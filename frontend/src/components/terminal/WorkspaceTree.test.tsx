@@ -172,6 +172,40 @@ describe('WorkspaceTree', () => {
     expect(screen.getByText('P2 thread')).toBeTruthy();
   });
 
+  it('switching threads from a thread row keeps every thread expanded as it was', async () => {
+    const { nodes, projects } = fixture();
+    const extra = (nodeId: string, projectId: string, title: string): ChatNodeState => ({
+      nodeId, chatId: null, projectId, kind: 'chat',
+      title, messages: [], followUps: [], status: 'idle',
+    });
+    nodes.childB = extra('childB', 'p1', 'Child of B');
+    nodes.childP2 = extra('childP2', 'p2', 'Child of P2');
+    projects[0].chatIds.push('childB');
+    projects[0].edges.push({ source: 'rootB', target: 'childB', kind: 'branch' });
+    projects[1].chatIds.push('childP2');
+    projects[1].edges.push({ source: 'rootP2', target: 'childP2', kind: 'branch' });
+    renderTreeWith({ nodes, projects });
+    await screen.findByText('Child of A');
+
+    // Same workspace: thread B opens, thread A stays open.
+    fireEvent.click(screen.getByText('Other thread'));
+    expect(await screen.findByText('Child of B')).toBeTruthy();
+    expect(screen.getByText('Child of A')).toBeTruthy();
+
+    // Expand the other workspace while keeping p1 active; its active thread
+    // shows expanded by default.
+    fireEvent.click(screen.getByText('Other workspace'));
+    fireEvent.click(screen.getByText('Active workspace'));
+    expect(await screen.findByText('Child of P2')).toBeTruthy();
+
+    // Cross workspace: switching to that thread must not collapse it.
+    fireEvent.click(screen.getByText('P2 thread'));
+    await act(async () => {});
+    expect(screen.getByText('Child of P2')).toBeTruthy();
+    expect(screen.getByText('Child of A')).toBeTruthy();
+    expect(screen.getByText('Child of B')).toBeTruthy();
+  });
+
   it('shows only the five most recent live threads until expanded', async () => {
     const nodes: Record<string, ChatNodeState> = {};
     const trees = Array.from({ length: 6 }, (_, index) => {

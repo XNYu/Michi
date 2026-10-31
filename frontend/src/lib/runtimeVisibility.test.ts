@@ -4,6 +4,7 @@ import { filterVisibleRuntimes } from './runtimeVisibility';
 
 const runtimes: AgentRuntimeOption[] = [
   { id: 'kiro', label: 'Kiro', available: true },
+  { id: 'crew', label: 'Kiro Crew', available: false },
   { id: 'claude', label: 'Claude', available: true },
   { id: 'codex', label: 'Codex', available: true },
   { id: 'pi', label: 'Pi', available: true },
@@ -13,9 +14,14 @@ const runtimes: AgentRuntimeOption[] = [
 ];
 
 describe('filterVisibleRuntimes', () => {
-  it('leaves public builds unfiltered', () => {
+  it('offers available runtimes in public builds', () => {
     expect(filterVisibleRuntimes(runtimes, false).map((runtime) => runtime.id)).toEqual(
-      runtimes.map((runtime) => runtime.id),
+      ['kiro', 'claude', 'codex', 'pi', 'cursor', 'grok'],
     );
+  });
+
+  it('applies availability and the internal allowlist together', () => {
+    expect(filterVisibleRuntimes(runtimes, true).map((runtime) => runtime.id)).toEqual(['kiro', 'claude', 'codex', 'pi']);
+    expect(runtimes.find((runtime) => runtime.id === 'crew')?.available).toBe(false);
   });
 });

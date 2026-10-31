@@ -5,6 +5,7 @@ import { Button } from './ui/controls';
 
 export type ExportPanelState =
   | { kind: 'idle' }
+  | { kind: 'loading'; projectName: string; exportTitle: string }
   | { kind: 'done'; projectName: string; exportTitle: string; markdown: string; suggestedFilename: string }
   | { kind: 'error'; projectName: string; exportTitle: string; error: string };
 
@@ -74,6 +75,10 @@ export default function ExportPanel({ open, state, onClose, onSave }: ExportPane
               {state.error}
             </div>
           </div>
+        )}
+
+        {state.kind === 'loading' && (
+          <div role="status" className="p-5 text-muted">Loading conversation history…</div>
         )}
 
         {state.kind === 'done' && (

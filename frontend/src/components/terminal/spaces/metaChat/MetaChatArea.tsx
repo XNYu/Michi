@@ -84,6 +84,13 @@ export function useMetaChatDocked(): boolean {
   return useContext(MetaChatDockedContext);
 }
 
+const MetaChatRevealPageContext = createContext<(() => void) | null>(null);
+
+/** Inside the window: gets it out of the way of a page something in it opens (View, a page link). Null elsewhere. */
+export function useMetaChatRevealPage(): (() => void) | null {
+  return useContext(MetaChatRevealPageContext);
+}
+
 /** The minimized pill's dot: the window's answer is streaming, or the Meta agent's first run is reading in the background. */
 function PillWorkingDot({ busy, firstRun: withFirstRun = true }: { busy: boolean; firstRun?: boolean }) {
   const firstRun = useSpacesFirstRun('local');
@@ -266,6 +273,10 @@ export function MetaChatArea({
       : { visibility: 'hidden' as const }
     : undefined;
   const pageShare = Math.round(100 - ratio);
+  // The window covers the page on a phone (full screen or the floating box) and in full screen: opening the page minimizes it.
+  const coversPage = phone || fullscreen;
+  const { minimize } = controller;
+  const revealPage = useCallback(() => { if (coversPage) minimize(); }, [coversPage, minimize]);
 
   return (
     <div
@@ -299,19 +310,21 @@ export function MetaChatArea({
           Release to dock as half screen
         </div>
       ) : null}
-      <MetaChatPanel
-        {...content}
-        form={fullscreen ? 'full' : form}
-        hidden={!visible || minimized}
-        style={panelStyle}
-        focusToken={focusToken}
-        sizeLabel={live?.kind === 'resize' && rect ? `${rect.w} × ${rect.h}` : null}
-        onTitlePointerDown={onTitlePointerDown}
-        onResizePointerDown={onResizePointerDown}
-        onToggleDock={phone ? undefined : floating ? controller.dock : controller.float}
-        onMinimize={controller.minimize}
-        onToggleFullscreen={phone ? () => setPhoneWindowed((value) => !value) : controller.toggleFullscreen}
-      />
+      <MetaChatRevealPageContext.Provider value={revealPage}>
+        <MetaChatPanel
+          {...content}
+          form={fullscreen ? 'full' : form}
+          hidden={!visible || minimized}
+          style={panelStyle}
+          focusToken={focusToken}
+          sizeLabel={live?.kind === 'resize' && rect ? `${rect.w} × ${rect.h}` : null}
+          onTitlePointerDown={onTitlePointerDown}
+          onResizePointerDown={onResizePointerDown}
+          onToggleDock={phone ? undefined : floating ? controller.dock : controller.float}
+          onMinimize={controller.minimize}
+          onToggleFullscreen={phone ? () => setPhoneWindowed((value) => !value) : controller.toggleFullscreen}
+        />
+      </MetaChatRevealPageContext.Provider>
       {visible && minimized ? (
         <button
           type="button"

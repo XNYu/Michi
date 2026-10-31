@@ -62,7 +62,7 @@ import { ChatProvider, useChatStore, useChatNode, useChatNodesSnapshot } from '.
 import { PrefsProvider } from './prefs';
 import type { ChatNodeState } from './chatTypes';
 import { dispatchChatStreamEvent } from '../services/chatStreamEvents';
-import { executeChatCommand } from '../services/api/sessions';
+import { ensureSession as ensureSessionRequest, executeChatCommand } from '../services/api/sessions';
 
 function useStoreAndNodes() {
   const store = useChatStore();
@@ -1196,5 +1196,97 @@ describe('auto-branch behavior (real provider)', () => {
     expect(result.current.store.activeProject?.folders?.map((folder) => folder.path)).toEqual(['/tmp/reference', '/tmp/relinked']);
     expect(result.current.store.activeProject?.folders?.[0].label).toBe('Reference');
     expect(result.current.nodes[nodeId].chatId).toBe(boundChatId);
+  });
+
+  // The previous reply is visibly finished but its runtime cleanup still holds
+  // the session, so ensure-session answers 409 turn_active for a short while.
+  describe('sending right after a reply while its cleanup holds the session', () => {
+    let ensureResponses: Array<() => Response>;
+    let fetchMock: ReturnType<typeof vi.fn>;
+    const busy = () => new Response(JSON.stringify({ code: 'turn_active', error: 'Cannot replace an active turn' }), {
+      status: 409, headers: { 'Content-Type': 'application/json' },
+    });
+    const ensureCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/ensure-session'));
+
+    async function finishedFirstTurn() {
+      const rendered = renderHook(() => useStoreAndNodes(), { wrapper });
+      const { result } = rendered;
+      await act(async () => { await result.current.store.createProject('test', undefined); });
+      let nodeId = '';
+      await act(async () => { nodeId = result.current.store.createThread()!; });
+      await act(async () => { result.current.store.sendMessage(nodeId, 'first'); });
+      await waitFor(() => expect(mockStreamMessage).toHaveBeenCalledTimes(1));
+      act(() => {
+        const handlers = mockStreamMessage.mock.calls[0][2] as api.StreamHandlers;
+        handlers.onChunk?.('first answer');
+        handlers.onDone?.();
+      });
+      expect(result.current.nodes[nodeId].status).toBe('idle');
+      const firstAssistant = result.current.nodes[nodeId].messages.at(-1)!;
+      // From here on ensure-session goes through the real request code.
+      ensureResponses = [];
+      fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+        if (!String(url).includes('/ensure-session')) return new Response(null, { status: 404 });
+        return (ensureResponses.shift() ?? busy)();
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      mockEnsureSession.mockImplementation(ensureSessionRequest);
+      vi.useFakeTimers();
+      return { ...rendered, nodeId, firstAssistant };
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
+
+    it('waits silently and sends the message once the session is free', async () => {
+      const { result, nodeId } = await finishedFirstTurn();
+      ensureResponses.push(busy, () => new Response(JSON.stringify({ chatId: nodeId, currentModeId: null, resumeStrategy: 'live' }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      }));
+      act(() => { result.current.store.sendMessage(nodeId, 'second'); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(ensureCalls()).toHaveLength(1);
+      expect(result.current.nodes[nodeId].status).toBe('streaming');
+      expect(result.current.nodes[nodeId].error).toBeUndefined();
+      expect(result.current.nodes[nodeId].runtimeActivity).toBeUndefined();
+      expect(result.current.nodes[nodeId].messages.at(-1)).toMatchObject({ role: 'assistant', text: '', streaming: true });
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+      expect(ensureCalls()).toHaveLength(2);
+      expect(ensureCalls()[1][1].body).toBe(ensureCalls()[0][1].body);
+      expect(mockStreamMessage).toHaveBeenCalledTimes(2);
+      expect(mockStreamMessage.mock.calls[1][1]).toBe('second');
+      expect(result.current.nodes[nodeId].status).toBe('streaming');
+      expect(result.current.nodes[nodeId].error).toBeUndefined();
+      expect(mockNotify).not.toHaveBeenCalled();
+    });
+
+    it('shows the existing setup error when the session stays busy', async () => {
+      const { result, nodeId } = await finishedFirstTurn();
+      act(() => { result.current.store.sendMessage(nodeId, 'second'); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+      expect(result.current.nodes[nodeId].error).toBeUndefined();
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(ensureCalls()).toHaveLength(7);
+      expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+      expect(result.current.nodes[nodeId]).toMatchObject({ status: 'error', error: 'Cannot replace an active turn' });
+    });
+
+    it('stops retrying on cancel and leaves the previous turn alone', async () => {
+      const { result, nodeId, firstAssistant } = await finishedFirstTurn();
+      act(() => { result.current.store.sendMessage(nodeId, 'second'); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      expect(ensureCalls()).toHaveLength(1);
+      act(() => { result.current.store.cancelStream(nodeId); });
+      expect(result.current.nodes[nodeId].status).toBe('idle');
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(ensureCalls()).toHaveLength(1);
+      expect(mockStreamMessage).toHaveBeenCalledTimes(1);
+      expect(api.cancelChatAndObserve).not.toHaveBeenCalled();
+      expect(result.current.nodes[nodeId].error).toBeUndefined();
+      expect(result.current.nodes[nodeId].messages.find((message) => message.id === firstAssistant.id)).toEqual(firstAssistant);
+    });
   });
 });

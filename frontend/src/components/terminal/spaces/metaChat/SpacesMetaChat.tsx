@@ -56,6 +56,15 @@ export interface MetaChatBlockTarget {
   blockId: string;
   title: string;
   content: string;
+  /** Set: the message is about this one checklist item of the block (0-based index and its text). */
+  item?: { index: number; text: string };
+}
+
+/** A block target narrowed to one of its checklist items: the chip names the item, the agent is told which one. */
+export function blockItemTarget(target: MetaChatBlockTarget, item: { index: number; text: string }): MetaChatBlockTarget {
+  const flat = item.text.replace(/\s+/g, ' ').trim();
+  const chars = Array.from(flat);
+  return { ...target, title: chars.length > 60 ? `${chars.slice(0, 59).join('')}…` : flat || `Item ${item.index + 1}`, item };
 }
 
 /** What the Spaces main area shows. */
@@ -160,7 +169,7 @@ export function SpacesMetaChat({ controller, active, view, onOpenSource = openWi
       seen = next.focusSeq;
       if (!next.open) return;
       closeAssistantPanel();
-      controllerRef.current.focusInput();
+      controllerRef.current.restore();
     });
   }, [active]);
 
@@ -419,9 +428,14 @@ export function SpacesMetaChat({ controller, active, view, onOpenSource = openWi
     // Turn context is read synchronously when a send starts, before React commits the target chip.
     contextRef.current = { ...contextRef.current, target: next };
     setTargetState({ key, target: next });
-    controllerRef.current.focusInput();
-    if (sendNow) send(prompt);
-    else setDraftRequest({ id: --blockDraftSequence.current, text: prompt });
+    // A choice that sends only opens the window; a prompt left for review puts the cursor on it.
+    if (sendNow) {
+      controllerRef.current.restore();
+      send(prompt);
+    } else {
+      controllerRef.current.focusInput();
+      setDraftRequest({ id: --blockDraftSequence.current, text: prompt });
+    }
     return true;
   }, [active, nodeId, snap.status, busy, key, send]);
   const blockAssistantAvailable = active && !!nodeId && snap.status !== 'unsupported' && !starting;

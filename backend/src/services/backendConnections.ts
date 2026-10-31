@@ -250,8 +250,9 @@ export async function probeBackendConnection(input: {
   apiUrl: string;
   token?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
   onDiagnostic?: (message: string) => void;
-}): Promise<{ ok: true; apiUrl: string; serverId?: string } | { ok: false; apiUrl?: string; error: string }> {
+}): Promise<{ ok: true; apiUrl: string; serverId?: string } | { ok: false; apiUrl?: string; error: string; reachable?: boolean; httpStatus?: number }> {
   let apiUrl: string;
   try {
     apiUrl = normalizeBackendApiUrl(input.apiUrl);
@@ -264,15 +265,16 @@ export async function probeBackendConnection(input: {
     const headers: Record<string, string> = { Accept: 'application/json' };
     const token = input.token?.trim();
     if (token) headers.Authorization = `Bearer ${token}`;
-    const response = await fetch(`${apiUrl}/health`, { headers, signal: controller.signal });
+    const response = await fetch(`${apiUrl}/health`, { headers,
+      signal: input.signal ? AbortSignal.any([controller.signal, input.signal]) : controller.signal });
     input.onDiagnostic?.('GET ' + apiUrl + '/health → HTTP ' + response.status);
     const body = await response.json().catch(() => null) as Record<string, unknown> | null;
     if (!response.ok) {
       const detail = body && typeof body.error === 'string' ? `: ${body.error}` : '';
-      return { ok: false, apiUrl, error: `Backend returned ${response.status}${detail}` };
+      return { ok: false, apiUrl, reachable: true, httpStatus: response.status, error: `Backend returned ${response.status}${detail}` };
     }
     if (body?.service !== 'michi-backend' || body?.status !== 'healthy') {
-      return { ok: false, apiUrl, error: 'The server did not identify itself as a Michi backend' };
+      return { ok: false, apiUrl, reachable: true, httpStatus: response.status, error: 'The server did not identify itself as a Michi backend' };
     }
     return {
       ok: true,

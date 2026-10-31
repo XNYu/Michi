@@ -1,63 +1,68 @@
-import { projectAssistantStreamEvent } from './assistantBlocks';
+import { mapMessageRow } from './chatHydration';
 import type { ChatMessage } from './chatTypes';
-import { subscribeChat } from '../services/api';
+import { BACKEND_RESTARTED_KIND } from './turnInterruption';
+import { getSavedTurn, type SavedTurn } from '../services/api';
 
-/** Missing replay, unknown execution and persistence failure never authorize execution again. */
-export function turnErrorAction(errorKind?: string): 'inspect-existing-turn' | 'rerun-prompt' {
-  return errorKind === 'turn_persistence_failed' || errorKind === 'turn_outcome_unknown' || errorKind === 'backend_restarted' || errorKind === 'turn_replay_unavailable'
+type TurnErrorAction = 'inspect-existing-turn' | 'rerun-prompt' | 'resume-turn';
+
+/**
+ * Missing replay, unknown execution and persistence failure never authorize
+ * execution again. A restart interruption is a known outcome: the backend
+ * wrote the receipt itself, the partial output is checkpointed, and the turn
+ * is carried on with a continuation prompt (turnInterruption.buildResumePrompt)
+ * rather than re-sent.
+ */
+export function turnErrorAction(errorKind?: string): TurnErrorAction {
+  if (errorKind === BACKEND_RESTARTED_KIND) return 'resume-turn';
+  return errorKind === 'turn_persistence_failed' || errorKind === 'turn_outcome_unknown' || errorKind === 'turn_replay_unavailable'
     ? 'inspect-existing-turn'
     : 'rerun-prompt';
 }
 
-/** A bounded, read-only check. Missing replay is not evidence that the prompt never ran. */
+/** The result of a saved turn that finished: completed (not by error) or
+ * cancelled, with its completion time and stored assistant row. Null otherwise. */
+export function savedTurnResult(saved: SavedTurn): {
+  assistant: ChatMessage;
+  lastSeq: number;
+  completedAt: number;
+  stopReason: string;
+} | null {
+  const finished = saved.status === 'cancelled' || (saved.status === 'completed' && saved.stopReason !== 'error');
+  if (!finished || saved.completedAt === null || saved.message?.role !== 'assistant'
+    || saved.message.id !== saved.assistantId) return null;
+  return {
+    assistant: mapMessageRow(saved.message),
+    lastSeq: saved.lastSeq,
+    completedAt: saved.completedAt,
+    stopReason: saved.status === 'cancelled' ? 'cancelled' : saved.stopReason ?? 'end_turn',
+  };
+}
+
+/** A bounded, read-only check of the saved turn. A turn that has not finished
+ * (or cannot be read) is not evidence that the prompt never ran. */
 export function inspectOriginalTurn(options: {
   chatId: string;
   turnId: string;
-  assistant: ChatMessage;
-  workspaceId: string;
   onResult: (result: { persisted: boolean; completedAt?: number; assistant?: ChatMessage; lastSeq?: number }) => void;
 }): () => void {
-  let reconstructed: ChatMessage = { id: options.assistant.id, role: 'assistant', text: '', toolCalls: [], blocks: [], createdAt: options.assistant.createdAt };
-  let nextSeq = 0;
-  let completeReplay = true;
-  let started = false;
+  const controller = new AbortController();
   let finished = false;
-  // eslint-disable-next-line prefer-const -- finish() reads detach and may run inside subscribeChat() before it returns; const would throw there.
-  let detach: (() => void) | undefined;
-  const finish = (persisted: boolean, completedAt?: number) => {
+  const stop = () => {
+    finished = true;
+    clearTimeout(deadline);
+    controller.abort();
+  };
+  const finish = (result: Parameters<typeof options.onResult>[0]) => {
     if (finished) return;
-    finished = true;
-    clearTimeout(deadline);
-    detach?.();
-    const confirmed = persisted && started && completeReplay;
-    options.onResult({ persisted: confirmed, completedAt, ...(confirmed ? { assistant: reconstructed, lastSeq: nextSeq - 1 } : {}) });
+    stop();
+    options.onResult(result);
   };
-  const deadline = setTimeout(() => finish(false), 10_000);
-  detach = subscribeChat(options.chatId, {
-    // A feed may continue into newer turns. Never accept another execution's result.
-    onEnvelope: (envelope) => !finished && envelope.turnId === options.turnId,
-    onDone: (reason, _assistantId, _turnId, persisted, completedAt) => {
-      finish(persisted === true && reason !== 'error', completedAt);
-    },
-    onErrorPayload: () => finish(false),
-    onError: () => finish(false),
-  }, { turnId: options.turnId, seq: 0 }, {
-    onEvent: (event) => {
-      if (finished || event.data.turnId !== options.turnId) return;
-      if (typeof event.data.seq !== 'number' || event.data.seq !== nextSeq) completeReplay = false;
-      nextSeq = (event.data.seq ?? nextSeq) + 1;
-      if (event.event === 'turn_start') {
-        started = true;
-        if (event.data.assistantId) reconstructed = { ...reconstructed, id: event.data.assistantId };
-      }
-      reconstructed = projectAssistantStreamEvent(reconstructed, options.workspaceId, event);
-    },
-    onDisconnect: () => finish(false),
+  const deadline = setTimeout(() => finish({ persisted: false }), 10_000);
+  void getSavedTurn(options.chatId, options.turnId, controller.signal).then((saved) => {
+    const result = saved && savedTurnResult(saved);
+    finish(result
+      ? { persisted: true, completedAt: result.completedAt, assistant: result.assistant, lastSeq: result.lastSeq }
+      : { persisted: false });
   });
-  if (finished) detach();
-  return () => {
-    finished = true;
-    clearTimeout(deadline);
-    detach?.();
-  };
+  return stop;
 }

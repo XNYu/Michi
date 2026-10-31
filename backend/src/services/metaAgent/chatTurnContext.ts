@@ -4,6 +4,8 @@ import { firstRunTurnNote } from './firstRunHold';
 /** Upper bound of the prefix a turn context adds to the message the runtime gets. */
 export const META_AGENT_CONTEXT_PREFIX_MAX_CHARS = 4_000;
 const TITLE_CHARS = 80;
+/** A checklist item the user asked about; longer than a title, since the item is the subject. */
+const ITEM_CHARS = 300;
 /** Remote workspaces named in the context; the rest are counted. */
 const REMOTE_NAMES = 20;
 
@@ -11,6 +13,12 @@ function title(value: string): string {
   const flat = Array.from(value.replace(/[\p{Cc}\s]+/gu, ' ').trim());
   if (flat.length === 0) return 'Untitled';
   return flat.length > TITLE_CHARS ? `${flat.slice(0, TITLE_CHARS - 1).join('')}…` : flat.join('');
+}
+
+/** A checklist item's text on one line, at most ITEM_CHARS characters. */
+function itemText(value: string): string {
+  const flat = Array.from(value.replace(/[\p{Cc}\s]+/gu, ' ').trim());
+  return flat.length > ITEM_CHARS ? `${flat.slice(0, ITEM_CHARS - 1).join('')}…` : flat.join('');
 }
 
 /**
@@ -37,6 +45,10 @@ export function metaAgentContextPrefix(context: MetaAgentChatTurnContext): strin
   }
   if (context.blockId) {
     head.push(`Selected block: ${context.blockId}. A change the user asks for applies to this block only, unless they say otherwise.`);
+    const item = context.blockItem;
+    if (item) {
+      head.push(`Selected item: item ${item.index + 1} of that block's checklist, “${itemText(item.text)}”. The user's message is about this item; read the block for the items around it. If the block no longer has this item, say so.`);
+    }
   }
   if (remote.length > 0 || remoteOnScreen) {
     const names = remote.slice(0, REMOTE_NAMES).map((name) => `“${title(name)}”`).join(', ');

@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { MichiPageBlock } from 'michi-shared';
 import { MichiBlock } from './MichiBlock';
 import type { MichiBlockCtx } from './blockTypes';
@@ -106,6 +106,11 @@ describe('success criteria', () => {
 });
 
 describe('chart', () => {
+  // Load the real chart module before timing DOM assertions against its lazy wrapper.
+  beforeAll(async () => {
+    await import('./vendor-blocks/src/desk/blocks/catalog/chart/kinds');
+  });
+
   it('draws stored native chart values with Mantine and keeps units and zeroes accessible', async () => {
     const { container } = draw({ type: 'chart', title: 'Turns per day', kind: 'bar', stacked: true, labels: ['14', '15'], unit: 'turns', series: [
       { label: 'KiroCrew', values: [38, 0] }, { label: 'Claude Code', values: [10, 8] },
@@ -120,8 +125,8 @@ describe('chart', () => {
     const { container } = draw({ type: 'chart', title: 'Tasks', kind: 'line', series: [
       { label: 'Done', points: [{ x: 'Mon', y: 2 }, { x: 'Tue', y: 5 }] }, { label: 'Open', points: [{ x: 'Tue', y: 1 }] },
     ] });
-    await waitFor(() => expect(container.querySelector('.desk-chart-box')?.getAttribute('data-kind')).toBe('line'));
-    const table = screen.getByRole('table', { name: 'Tasks' });
+    const table = await screen.findByRole('table', { name: 'Tasks' });
+    expect(container.querySelector('.desk-chart-box')?.getAttribute('data-kind')).toBe('line');
     expect(within(table).getAllByRole('row').map((row) => row.textContent)).toEqual(['DoneOpen', 'Mon2', 'Tue51']);
     expect(within(table).getAllByRole('row')[1].lastElementChild?.textContent).toBe('');
   });

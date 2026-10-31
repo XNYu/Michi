@@ -4,7 +4,6 @@ import type { ChatStreamEvent, DurableTurnSnapshot } from 'michi-shared';
 import { ChatHub } from '../src/agents/chatHub';
 import type { AgentSession, CompactResult, SteerResult } from '../src/agents/types';
 import type { NormalizedEvent } from '../src/services/chatEvents';
-import { MemoryHarnessJournal } from '../src/services/harnessJournal';
 import { CANCEL_TIMEOUT_MS } from '../src/config/constants';
 
 function iterator(events: NormalizedEvent[]): AsyncIterableIterator<NormalizedEvent> {
@@ -35,13 +34,12 @@ function delayedIterator(events: NormalizedEvent[], gate: { release: () => void 
   };
 }
 
-function hub(journal?: MemoryHarnessJournal): ChatHub {
+function hub(): ChatHub {
   const noop = (_snapshot: DurableTurnSnapshot) => {};
   return new ChatHub({
     retentionMs: 5_000,
     workspaceIdForNode: () => 'workspace-a',
     persistence: { begin: noop, checkpoint: noop, finalize: noop },
-    journal,
   });
 }
 
@@ -71,9 +69,8 @@ function mockSession(opts: {
 }
 
 describe('ChatHub provenance', () => {
-  it('stamps source/confidence and dual-writes the journal', async () => {
-    const journal = new MemoryHarnessJournal();
-    const chatHub = hub(journal);
+  it('stamps source and confidence on every event', async () => {
+    const chatHub = hub();
     const events: ChatStreamEvent[] = [];
     chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
     const started = await chatHub.startTurn({
@@ -88,29 +85,8 @@ describe('ChatHub provenance', () => {
       }),
     });
     await started.done;
-    assert.ok(events.every((ev) => ev.data.source && ev.data.confidence));
-    assert.ok(journal.entries.length >= 2);
-    assert.equal(journal.entries[0].nodeId, 'node-a');
-    assert.equal(journal.entries[0].turnId, started.turnId);
-    assert.equal(journal.entries[0].seq, 0);
-  });
-
-  it('continues the turn when the journal write throws', async () => {
-    const journal = {
-      append() { throw new Error('disk full'); },
-    };
-    const chatHub = hub(journal as any);
-    const events: ChatStreamEvent[] = [];
-    chatHub.subscribe('node-a', { send: (ev) => events.push(ev), close: () => {} });
-    const started = await chatHub.startTurn({
-      chatId: 'node-a',
-      nodeId: 'node-a',
-      text: 'hello',
-      session: mockSession({ events: [{ kind: 'chunk', text: 'hi' }, { kind: 'turn_end' }] }),
-    });
-    await started.done;
-    assert.ok(events.some((ev) => ev.event === 'chunk'));
     assert.ok(events.some((ev) => ev.event === 'done'));
+    assert.ok(events.every((ev) => ev.data.source && ev.data.confidence));
   });
 });
 

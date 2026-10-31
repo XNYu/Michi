@@ -16,6 +16,7 @@ import type {
 } from './chatTypes';
 import type { DigestState } from './digest';
 import { isSystemWorkspace, parseSystemWorkspace } from './assistant/systemWorkspace';
+import { BACKEND_RESTARTED_KIND, BACKEND_RESTARTED_MESSAGE } from './turnInterruption';
 import { parseBranchOverviewEntries, parseSteeringReports, parseSubagentRoster, parseThreadMessageSource, threadMessageBody } from 'michi-shared';
 
 export const STATE_SCHEMA_VERSION = 6;
@@ -368,14 +369,15 @@ export function buildMessagesByNode(rawRows: unknown[]): Record<string, ChatMess
 /**
  * Install fetched message bodies onto placeholder nodes. Pure: returns a new
  * nodes map (only touched nodes get new object identities). Each node in
- * `messagesByNode` gets its messages replaced and `messagesLoaded` flipped to
- * true; `messageCount` is synced to the loaded length. Nodes absent from the
+ * `messagesByNode` gets its messages replaced. Page metadata keeps partial
+ * history marked incomplete and retains its total count. Nodes absent from the
  * map are returned by reference (untouched). Shared by the hydration
  * eager-load and the `messages-loaded` reducer action so both converge.
  */
 export function applyTreeMessages(
   nodes: Record<string, ChatNodeState>,
   messagesByNode: Record<string, ChatMessage[]>,
+  pages?: Array<{ nodeId: string; total: number; before: { seq: number; id: string } | null }>,
 ): Record<string, ChatNodeState> {
   const ids = Object.keys(messagesByNode);
   if (ids.length === 0) return nodes;
@@ -384,11 +386,13 @@ export function applyTreeMessages(
     const prev = next[nodeId];
     if (!prev) continue; // node not present locally (e.g. trimmed) — skip
     const messages = messagesByNode[nodeId];
+    const page = pages?.find(item => item.nodeId === nodeId);
     next[nodeId] = recoverRunningTurn({
       ...prev,
       messages,
-      messagesLoaded: true,
-      messageCount: messages.length,
+      messagesLoaded: !page?.before,
+      historyBefore: page?.before ?? undefined,
+      messageCount: page?.total ?? messages.length,
     });
   }
   return next;
@@ -491,6 +495,31 @@ export function mapMessageRow(row: Record<string, unknown>, fallbackSeq = 0): Ch
 }
 
 /**
+ * Classify a persisted error node from its latest turn receipt.
+ *
+ * The node row alone does not retain a trusted failure classification: its
+ * `last_applied_turn_id` is a replay watermark a client may sync back, so it
+ * must never authorize execution. The hydration payload therefore carries the
+ * node's latest `turns` row (`last_turn_*`), written only by the backend's
+ * finalization or startup recovery. A restart marker becomes the resumable
+ * kind; any other finalized failure keeps its own message with an ordinary
+ * retry, the same offer the live stream made. Without a receipt the outcome
+ * stays unknown and only a read-only check is offered.
+ */
+function persistedErrorState(row: Record<string, unknown>): Partial<ChatNodeState> {
+  const turnId = asString(row.last_turn_id);
+  if (turnId && row.last_turn_status === 'error') {
+    const reason = asString(row.last_turn_error);
+    const completedAt = asOptionalNumber(row.last_turn_completed_at);
+    if (reason === BACKEND_RESTARTED_KIND) {
+      return { errorKind: BACKEND_RESTARTED_KIND, errorTurnId: turnId, error: BACKEND_RESTARTED_MESSAGE, errorCompletedAt: completedAt };
+    }
+    if (reason) return { errorTurnId: turnId, error: reason, errorCompletedAt: completedAt };
+  }
+  return { errorKind: 'turn_outcome_unknown', error: 'The previous turn outcome could not be confirmed.' };
+}
+
+/**
  * Map the row-owned scalar fields of one `nodes` row → a partial ChatNodeState.
  * Excludes cross-row derived fields (`messages`, `mergeSources`, `digest`)
  * which depend on the message/edge rows; callers merge those separately.
@@ -534,9 +563,7 @@ export function mapNodeRowScalars(row: Record<string, unknown>): Partial<ChatNod
       return entries.length > 0 ? entries[entries.length - 1].text : undefined;
     })(),
     status: row.status === 'streaming' ? 'streaming' : row.status === 'error' ? 'error' : 'idle',
-    // Persisted error rows do not retain a trusted failure classification or
-    // failed-turn identity. An old watermark must not authorize execution.
-    ...(row.status === 'error' ? { errorKind: 'turn_outcome_unknown', error: 'The previous turn outcome could not be confirmed.' } : {}),
+    ...(row.status === 'error' ? persistedErrorState(row) : {}),
     activeTurnId: row.status === 'streaming' ? asString(row.last_applied_turn_id) : undefined,
     lastAppliedTurnId: asString(row.last_applied_turn_id),
     lastAppliedSeq: asOptionalNumber(row.last_applied_seq),

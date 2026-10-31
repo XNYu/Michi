@@ -62,4 +62,24 @@ describe('uncertain turn recovery actions', () => {
     expect(screen.queryByRole('button', { name: 'Check original turn' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Run again$/ })).toBeNull();
   });
+
+  it('offers one Resume for a turn a restart cut short, with the partial output kept', () => {
+    const resume = vi.fn();
+    const rerun = vi.fn();
+    render(list({
+      ...node, errorKind: 'backend_restarted', errorTurnId: 'cut-short',
+      error: 'Michi restarted while this task was running. Review the partial output above, then resume.',
+    }, resume, rerun));
+    expect(screen.getByText('Turn interrupted')).not.toBeNull();
+    expect(screen.getByText('The file was updated.')).not.toBeNull();
+    expect(screen.getByRole('status').textContent).toMatch(/Michi restarted while this task was running/);
+    expect(screen.queryByRole('button', { name: 'Check original turn' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Run again$/ })).toBeNull();
+    expect(screen.queryByText(/could not be confirmed/)).toBeNull();
+    // The sentence is said once: the raw error line is not repeated below the status.
+    expect(screen.getAllByText(/Michi restarted while this task was running/)).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '▶ Resume' }));
+    expect(resume).toHaveBeenCalledExactlyOnceWith(0);
+    expect(rerun).not.toHaveBeenCalled();
+  });
 });

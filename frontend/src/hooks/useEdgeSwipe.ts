@@ -2,9 +2,9 @@ import { useEffect, useRef } from 'react';
 
 /** How far from the left screen edge, in CSS px, a swipe may start. */
 export const EDGE_SWIPE_ZONE = 24;
-/** Rightward travel, in CSS px, that completes the swipe. */
+/** Horizontal travel, in CSS px, that completes the swipe. */
 export const EDGE_SWIPE_DISTANCE = 48;
-/** Travel before the direction counts: vertical or leftward first is a scroll. */
+/** Travel before the direction counts: vertical or backward first is a scroll. */
 const DIRECTION_SLOP = 10;
 
 /** Content that takes every touch for itself (a map, a drag handle) keeps
@@ -20,13 +20,19 @@ function edgeSwipeAllowed(target: EventTarget | null): boolean {
 }
 
 /**
- * Calls onSwipe when one finger starts at the left screen edge and moves
- * right. Touch events, not pointer events: the browser cancels a pointer as
- * soon as it starts scrolling something under the finger, and touch events
- * keep arriving. Listeners are passive, so scrolling is never held up, and a
- * mouse never produces a touch event.
+ * Calls onSwipe when one finger moves horizontally in `direction` (1 right,
+ * -1 left) from a start point `startAllowed` accepts. Touch events, not
+ * pointer events: the browser cancels a pointer as soon as it starts
+ * scrolling something under the finger, and touch events keep arriving.
+ * Listeners are passive, so scrolling is never held up, and a mouse never
+ * produces a touch event.
  */
-export function useEdgeSwipe(enabled: boolean, onSwipe: () => void): void {
+function useHorizontalSwipe(
+  enabled: boolean,
+  onSwipe: () => void,
+  direction: 1 | -1,
+  startAllowed: (x: number) => boolean,
+): void {
   const onSwipeRef = useRef(onSwipe);
   useEffect(() => { onSwipeRef.current = onSwipe; }, [onSwipe]);
 
@@ -37,7 +43,7 @@ export function useEdgeSwipe(enabled: boolean, onSwipe: () => void): void {
       start = null;
       if (e.touches.length !== 1) return;
       const touch = e.touches[0];
-      if (touch.clientX > EDGE_SWIPE_ZONE || !edgeSwipeAllowed(e.target)) return;
+      if (!startAllowed(touch.clientX) || !edgeSwipeAllowed(e.target)) return;
       start = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
     };
     const onMove = (e: TouchEvent) => {
@@ -45,7 +51,7 @@ export function useEdgeSwipe(enabled: boolean, onSwipe: () => void): void {
       const id = start.id;
       const touch = e.touches.length === 1 ? Array.from(e.touches).find(t => t.identifier === id) : undefined;
       if (!touch) { start = null; return; }
-      const dx = touch.clientX - start.x;
+      const dx = (touch.clientX - start.x) * direction;
       const dy = Math.abs(touch.clientY - start.y);
       if (dx < -DIRECTION_SLOP || (dy > DIRECTION_SLOP && dy >= dx)) { start = null; return; }
       if (dx >= EDGE_SWIPE_DISTANCE && dx > dy * 2) {
@@ -65,5 +71,18 @@ export function useEdgeSwipe(enabled: boolean, onSwipe: () => void): void {
       window.removeEventListener('touchend', onEnd, options);
       window.removeEventListener('touchcancel', onEnd, options);
     };
-  }, [enabled]);
+  }, [enabled, direction, startAllowed]);
+}
+
+const fromLeftEdge = (x: number) => x <= EDGE_SWIPE_ZONE;
+const anywhere = () => true;
+
+/** Calls onSwipe when one finger starts at the left screen edge and moves right. */
+export function useEdgeSwipe(enabled: boolean, onSwipe: () => void): void {
+  useHorizontalSwipe(enabled, onSwipe, 1, fromLeftEdge);
+}
+
+/** Calls onSwipe when one finger starts anywhere and moves left. */
+export function useSwipeLeft(enabled: boolean, onSwipe: () => void): void {
+  useHorizontalSwipe(enabled, onSwipe, -1, anywhere);
 }

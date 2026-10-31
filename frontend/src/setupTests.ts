@@ -35,6 +35,20 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   };
 }
 
+// jsdom does not implement IntersectionObserver. Rich preview carousels need
+// its lifecycle methods even when a test does not exercise viewport visibility.
+if (typeof globalThis.IntersectionObserver === 'undefined') {
+  globalThis.IntersectionObserver = class IntersectionObserver {
+    readonly root = null;
+    readonly rootMargin = '0px';
+    readonly thresholds = [0];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] { return []; }
+  };
+}
+
 // jsdom does not implement matchMedia. Mantine's provider (the Desk page's
 // blocks) reads it on mount; a query that never matches is what a test
 // without its own stub expects anyway. Tests that stub it still replace this.

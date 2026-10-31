@@ -765,3 +765,59 @@ it('retains the complete typed persistence error without resending a recoverable
   expect(nodes.n1.errorCompletedAt).toBe(12345);
   expect(mockStream).toHaveBeenCalledTimes(1);
 });
+
+describe('chatStreamRunner — saved turn after the live replay is gone', () => {
+  const saved = (overrides: Partial<api.SavedTurn> = {}): api.SavedTurn => ({
+    turnId: 'turn-1', assistantId: 'server-a1', status: 'completed', stopReason: 'end_turn', completedAt: 20, lastSeq: 4,
+    message: { id: 'server-a1', node_id: 'n1', role: 'assistant', content: 'Saved reply', seq: 1, created_at: 3 },
+    ...overrides,
+  });
+  const start = () => {
+    mockStream.mockClear();
+    const actions: ChatAction[] = [];
+    const onTurnEnd = vi.fn();
+    const onStreamComplete = vi.fn();
+    runChatStream({ prompt: 'hi', nodeId: 'n1', assistantId: 'a1', dispatch: (action) => actions.push(action),
+      assistantTextBufs: { current: {} }, cancelFns: { current: {} }, onTurnEnd, onStreamComplete });
+    return { handlers: mockStream.mock.calls[0][2] as api.StreamHandlers, actions, onTurnEnd, onStreamComplete };
+  };
+  const reduceAll = (actions: ChatAction[]) => actions.reduce((nodes, action) => reduceNodes(nodes, action), {
+    n1: { ...makeNode(), messages: [{ id: 'u-a1', role: 'user' as const, text: 'hi', toolCalls: [] }, ...makeNode().messages] },
+  } as Record<string, ChatNodeState>).n1;
+
+  it.each([false, true])('shows the saved reply and finishes normally (turn_start seen: %s)', (sawTurnStart) => {
+    const { handlers, actions, onTurnEnd, onStreamComplete } = start();
+    if (sawTurnStart) {
+      handlers.onEnvelope?.({ turnId: 'turn-1', seq: 0 });
+      handlers.onTurnStart?.({ turnId: 'turn-1', assistantId: 'server-a1', nodeId: 'n1', userText: 'hi' });
+    }
+    handlers.onChunk?.('partial');
+    expect(handlers.onSavedTurn?.(saved())).toBe(true);
+    const node = reduceAll(actions);
+    expect(node.status).toBe('idle');
+    expect(node.error).toBeUndefined();
+    expect(node.errorKind).toBeUndefined();
+    expect(node.messages.map((message) => message.id)).toEqual(['u-server-a1', 'server-a1']);
+    expect(node.messages[1].streaming).toBe(false);
+    expect(assistantAnswerRawText(node.messages[1])).toBe('Saved reply');
+    expect(node.lastAppliedTurnId).toBe('turn-1');
+    expect(node.lastAppliedSeq).toBe(4);
+    expect(actions.some((action) => action.type === 'error')).toBe(false);
+    expect(onTurnEnd).toHaveBeenCalledExactlyOnceWith('done', 'n1');
+    expect(onStreamComplete).toHaveBeenCalledOnce();
+  });
+
+  it('finishes a saved cancelled turn as cancelled', () => {
+    const { handlers, actions, onTurnEnd } = start();
+    expect(handlers.onSavedTurn?.(saved({ status: 'cancelled', stopReason: null }))).toBe(true);
+    expect(actions.find((action) => action.type === 'done')).toMatchObject({ aborted: true, completedAt: 20 });
+    expect(onTurnEnd).toHaveBeenCalledExactlyOnceWith('done', 'n1');
+  });
+
+  it('refuses an unfinished saved turn so the replay error stands', () => {
+    const { handlers, actions, onTurnEnd } = start();
+    expect(handlers.onSavedTurn?.(saved({ status: 'active', completedAt: null }))).toBe(false);
+    expect(actions).toEqual([]);
+    expect(onTurnEnd).not.toHaveBeenCalled();
+  });
+});

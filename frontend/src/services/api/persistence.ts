@@ -121,6 +121,37 @@ export async function fetchTreeMessages(workspaceId: string, treeId: string, con
   return body.messages ?? [];
 }
 
+export interface MessagePageCursor { seq: number; id: string }
+export interface TreeMessagePage {
+  messages: unknown[];
+  // Missing on older gateways, which answer this endpoint with full history.
+  pages?: Array<{ nodeId: string; total: number; before: MessagePageCursor | null }>;
+}
+
+export async function fetchTreeMessagePage(workspaceId: string, treeId: string, connectionId?: string,
+  signal?: AbortSignal, page?: { nodeId: string; before: MessagePageCursor },
+): Promise<TreeMessagePage> {
+  const query = new URLSearchParams({ limit: '50' });
+  if (page) {
+    query.set('nodeId', serverEntityId(page.nodeId, connectionId));
+    query.set('beforeSeq', String(page.before.seq));
+    query.set('beforeId', page.before.id);
+  }
+  const res = await backendFetch(
+    `${connectionId ? backendApiBase(connectionId) : workspaceBackendApiBase(workspaceId)}/workspaces/${encodeURIComponent(serverEntityId(workspaceId, connectionId))}/trees/${encodeURIComponent(treeId)}/messages?${query}`,
+    { signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]) },
+  );
+  if (!res.ok) throw new Error(`fetchTreeMessagePage failed: ${res.status}`);
+  const body = await res.json() as TreeMessagePage;
+  if (!Array.isArray(body.messages) || (body.pages !== undefined && (!Array.isArray(body.pages)
+    || body.pages.some(item => !item || typeof item.nodeId !== 'string' || !Number.isSafeInteger(item.total) || item.total < 0
+      || (item.before !== null && (!item.before || !Number.isSafeInteger(item.before.seq) || item.before.seq < 0
+        || typeof item.before.id !== 'string' || !item.before.id)))))) {
+    throw new Error('Invalid message page');
+  }
+  return body;
+}
+
 /**
  * Which workspace and thread of this machine's backend hold a live node.
  * Null when there is none (deleted, in a deleted workspace, unknown);

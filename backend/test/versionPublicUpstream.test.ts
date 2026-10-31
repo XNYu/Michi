@@ -44,7 +44,7 @@ test('public source update discovery uses origin/main and tolerates missing trac
 
   assert.deepEqual(await read(), {
     localHash: '1234567', localDate: '2026-10-28 00:00:00 +0000',
-    remoteHash: '7654321', remoteName: 'origin', updateAvailable: true,
+    remoteHash: '7654321', remoteName: 'origin', updateAvailable: true, updateAllowed: false,
   });
   assert.ok(calls.some((args) => args.join(' ') === 'rev-list --count HEAD..origin/main'));
   calls.length = 0;

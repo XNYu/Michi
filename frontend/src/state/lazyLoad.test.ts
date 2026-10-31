@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildMessagesByNode } from './chatHydration';
 import { reduceNodes } from './chatReducers';
+import { visibleMessageText } from './assistantBlocks';
 import { staleSources } from './digest';
 import type { ChatNodeState } from './chatTypes';
 function placeholderNode(overrides: Partial<ChatNodeState> = {}): ChatNodeState {
@@ -18,6 +19,27 @@ function placeholderNode(overrides: Partial<ChatNodeState> = {}): ChatNodeState 
 }
 
 describe('messages-loaded install', () => {
+  it('tracks partial history and prepends old pages without changing the live tail or replay cursor', () => {
+    const newest = buildMessagesByNode([{ id: 'm50', node_id: 'n1', role: 'assistant', content: 'live tail', seq: 50, created_at: 1 }]);
+    const before = { id: 'm50', seq: 50 };
+    const initial = reduceNodes({ n1: placeholderNode({ lastAppliedSeq: 23 }) }, {
+      type: 'messages-loaded', nodeIds: ['n1'], messagesByNode: newest,
+      pages: [{ nodeId: 'n1', total: 51, before }],
+    });
+    expect(initial.n1.messagesLoaded).toBe(false);
+    expect(initial.n1.messageCount).toBe(51);
+    const older = buildMessagesByNode([
+      { id: 'm49', node_id: 'n1', role: 'user', content: 'older', seq: 49, created_at: 1 },
+      { id: 'm50', node_id: 'n1', role: 'assistant', content: 'stale overlap', seq: 50, created_at: 1 },
+    ]);
+    const complete = reduceNodes(initial, { type: 'history-page-loaded', nodeId: 'n1', expectedBefore: before,
+      before: null, total: 51, messages: older.n1 });
+    expect(complete.n1.messages.map(visibleMessageText)).toEqual(['older', 'live tail']);
+    expect(complete.n1.messagesLoaded).toBe(true);
+    expect(complete.n1.lastAppliedSeq).toBe(23);
+    expect(reduceNodes(complete, { type: 'history-page-loaded', nodeId: 'n1', expectedBefore: before,
+      before: null, total: 51, messages: older.n1 })).toBe(complete);
+  });
   it('flips placeholders to loaded and installs bodies via the reducer', () => {
     const nodes = { n1: placeholderNode() };
     const byNode = buildMessagesByNode([

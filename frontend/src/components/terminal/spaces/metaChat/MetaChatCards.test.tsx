@@ -22,6 +22,8 @@ const toast = vi.hoisted(() => Object.assign(vi.fn(), { error: vi.fn() }));
 vi.mock('sonner', () => ({ toast }));
 const openSpacesPage = vi.hoisted(() => vi.fn());
 vi.mock('../../../../state/metaChat/spacesPages', () => ({ openSpacesPage }));
+const revealPage = vi.hoisted(() => vi.fn());
+vi.mock('./MetaChatArea', () => ({ useMetaChatRevealPage: () => revealPage }));
 const rulesApi = vi.hoisted(() => ({ fetchLayoutRules: vi.fn(), deleteLayoutRule: vi.fn(), addLayoutRule: vi.fn() }));
 vi.mock('../../../../services/api/spacesHome', () => rulesApi);
 vi.mock('../../assistant/AssistantLinks', () => ({
@@ -68,6 +70,7 @@ function tasksTool(id: string, applied: unknown[], tasks: { added: number; updat
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
   openSpacesPage.mockReset();
+  revealPage.mockReset();
   toast.mockReset();
   api.listPageChanges.mockResolvedValue({ changes: [], nextAfter: 0, nextBefore: null, hasMore: false });
 });
@@ -109,10 +112,12 @@ describe('MetaChatCards', () => {
     expect(api.listPageChanges).toHaveBeenCalledWith('pg-r', expect.objectContaining({ workspaceId: 'ws-r', afterSeq: 6 }));
   });
 
-  it('opens the written page at its block with View', () => {
+  it('opens the written page at its block with View, getting the window out of its way first', () => {
     render(<MetaChatCards tools={[editTool('t3', { applied: [block('c1', 7, '进展')] })]} context={context} />);
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
     expect(openSpacesPage).toHaveBeenCalledWith({ pageId: 'pg-r', workspaceId: 'ws-r', backendConnectionId: 'local', blockId: 'b-progress', currentPageId: 'pg-home' });
+    expect(revealPage).toHaveBeenCalledTimes(1);
+    expect(revealPage.mock.invocationCallOrder[0]).toBeLessThan(openSpacesPage.mock.invocationCallOrder[0]!);
   });
 
   it('shows a proposal-only write as a Suggestion card with no Undo', () => {

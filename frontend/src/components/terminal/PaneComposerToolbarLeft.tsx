@@ -1,5 +1,12 @@
 import React from 'react';
+import { AtSign, Plus } from 'lucide-react';
+import { usePhoneLayout } from '../../hooks/usePhoneLayout';
 import type { AgentStatus, SessionMode } from '../../services/api';
+import { AgentIcon, ChevronRightIcon } from './icons';
+
+/** Icon-only toolbar buttons: 16px on desktop, 18px on a phone, one 1.6px stroke. */
+export const COMPOSER_ICON_STROKE = 1.6;
+export const composerIconSize = (phone: boolean) => (phone ? 18 : 16);
 
 export const REASONING_LABELS: Record<string, string> = {
   minimal: 'Minimal',
@@ -62,6 +69,7 @@ export function PaneComposerToolbarLeft({
       availableModesCount > 0 ||
       agentStatus?.capabilities.modes === true
     );
+  const iconSize = composerIconSize(usePhoneLayout());
 
   return (
     <>
@@ -77,7 +85,7 @@ export function PaneComposerToolbarLeft({
             }}
             style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}
           >
-            +
+            <Plus size={iconSize} strokeWidth={COMPOSER_ICON_STROKE} absoluteStrokeWidth aria-hidden="true" />
           </span>
 
           <span
@@ -86,7 +94,7 @@ export function PaneComposerToolbarLeft({
             onClick={onInsertMentionTrigger}
             style={{ flexShrink: 0, padding: 0, width: 'var(--composer-chip-height, 30px)', justifyContent: 'center', lineHeight: 1 }}
           >
-            @
+            <AtSign size={iconSize} strokeWidth={COMPOSER_ICON_STROKE} absoluteStrokeWidth aria-hidden="true" />
           </span>
         </>
       )}
@@ -105,8 +113,10 @@ export function PaneComposerToolbarLeft({
             onOpenAgentMenu({ x: r.left, y: r.bottom + 6, anchorBottom: r.top - 6, trigger: e.currentTarget });
           }}
         >
-          <span style={{ flexShrink: 0 }}>⎇</span>
+          {/* Chip icons follow the 11px label (14px); ⌄ marks it as a picker, like the model chip. */}
+          <AgentIcon size={14} />
           <span className="t-chip-label">{currentMode?.name ?? currentModeId ?? 'agent'}</span>
+          <ChevronRightIcon size={12} className="composer-agent-chevron" />
         </button>
       )}
     </>

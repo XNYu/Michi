@@ -4,8 +4,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { METACHAT_STORAGE_KEY } from '../../../../state/metaChat/metaChatWindowModel';
 import { useMetaChatWindow, type UseMetaChatWindowOptions } from '../../../../state/metaChat/useMetaChatWindow';
 import { MetaChatArea, useMetaChatDocked, type MetaChatAreaProps } from './MetaChatArea';
+import { PageLinkChip } from './PageLinkChip';
 
 vi.mock('../../../MentionEditor', () => import('../../../../test/mentionEditorStub'));
+const openSpacesPage = vi.hoisted(() => vi.fn());
+vi.mock('../../../../state/metaChat/spacesPages', () => ({ openSpacesPage }));
 const firstRun = vi.hoisted(() => ({ data: null as unknown }));
 vi.mock('../../../../state/metaAgent/spacesFirstRun', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../state/metaAgent/spacesFirstRun')>()),
@@ -64,6 +67,18 @@ const drag = (from: Element, start: [number, number], ...moves: [number, number]
   for (const [x, y] of moves) fireEvent.pointerMove(window, { clientX: x, clientY: y });
 };
 const release = () => fireEvent.pointerUp(window);
+
+/** Runs `run` in a phone-sized window where touch is the main input. */
+async function onTouchPhone(run: () => void | Promise<void>) {
+  const width = window.innerWidth;
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 480 });
+  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches: query === '(hover: none) and (pointer: coarse)', media: query }) as MediaQueryList);
+  try {
+    await run();
+  } finally {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  }
+}
 
 describe('MetaChatArea', () => {
   it('floats bottom-right at 384×520 with the title bar labels', () => {
@@ -376,5 +391,35 @@ describe('MetaChatArea', () => {
     localStorage.setItem(METACHAT_STORAGE_KEY, JSON.stringify({ form: 'float', rect: { x: 5000, y: 5000, w: 600, h: 2000 }, dockRatio: 40 }));
     render(<Host options={{}} />);
     expect(box()).toEqual({ left: '382px', top: '18px', width: '600px', height: '764px' });
+  });
+
+  it('opens full screen on a touch phone without putting the cursor in the composer', async () => {
+    await onTouchPhone(async () => {
+      render(<Host />);
+      const input = await screen.findByLabelText('Message the assistant');
+      fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Ask assistant' }));
+      expect(area().dataset.form).toBe('full');
+      expect(document.activeElement).not.toBe(input);
+    });
+  });
+
+  it('minimizes when a page link in it opens the page it covers: on a phone, and in full screen', async () => {
+    openSpacesPage.mockResolvedValue('opened');
+    const conversation = <PageLinkChip id="pg-l">L</PageLinkChip>;
+    const view = render(<Host conversation={conversation} />);
+    fireEvent.click(screen.getByRole('button', { name: 'L' }));
+    expect(openSpacesPage).toHaveBeenCalledWith({ pageId: 'pg-l' });
+    expect(area().dataset.form).toBe('float');
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+    fireEvent.click(screen.getByRole('button', { name: 'L' }));
+    expect(area().dataset.form).toBe('min');
+    view.unmount();
+    await onTouchPhone(() => {
+      render(<Host conversation={conversation} />);
+      expect(area().dataset.form).toBe('full');
+      fireEvent.click(screen.getByRole('button', { name: 'L' }));
+      expect(area().dataset.form).toBe('min');
+    });
   });
 });

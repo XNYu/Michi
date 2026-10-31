@@ -94,6 +94,19 @@ test('failed /clear preserves old durable identity for recovery and refuses acti
     assert.equal(getNode('node')?.acp_session_id, 'old-native'); assert.equal(getSession('node'), undefined);
 });
 
+test('/clear waits for a finished turn to finish its runtime cleanup', async (t) => {
+    const active = session(); registerSession(active, 'alice'); let created = 0; let released = 0;
+    registerRuntime({ id: 'kiro', descriptor: CLEAR_REPLACES_SESSION, releaseSession: async () => { released++; },
+        newSession: async () => { created++; throw new Error('startup failed'); } } as unknown as AgentRuntime);
+    assert.equal(chatHub.isActive('node'), false);
+    const cleaningUp = t.mock.method(chatHub, 'isOwnerTurnActive', (chatId: string) => chatId === 'node');
+    await assert.rejects(resetKiroContext(active, 'alice'), /still running/);
+    assert.equal(created, 0); assert.equal(released, 0); assert.equal(getSession('node'), active);
+    cleaningUp.mock.restore();
+    await assert.rejects(resetKiroContext(active, 'alice'), /startup failed/);
+    assert.equal(created, 1); assert.equal(released, 1);
+});
+
 test('/clear preserves the immutable Agent profile and rejects a changed binding before release', async () => {
     const active = Object.assign(session(), { runtimeProfileHash: 'profile-1', parentChatId: 'parent', getEnableFollowUps: () => false });
     registerSession(active, 'alice');

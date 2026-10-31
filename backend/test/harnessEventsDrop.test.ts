@@ -1,7 +1,7 @@
 /**
- * harness_events payloads carry conversation text, keyed by node_id with no
- * foreign key. Every path that deletes or purges a workspace or node must
- * remove that node's harness_events rows in the same transaction.
+ * harness_events was a write-only event journal. Migration 0058 drops it on
+ * fresh and existing databases, and every path that deletes or purges a
+ * workspace or node must still work once the table is gone.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,8 +19,8 @@ import {
   deleteTree, deleteWorkspace, emptyWorkspaceTrash, purgeWorkspaceNodes, runTombstoneGc,
   saveNode, saveTree, saveWorkspace, TOMBSTONE_TTL_MS,
 } from '../src/services/dbRepository';
-import { createSqliteHarnessJournal } from '../src/services/harnessJournal';
 
+const DROP_MIGRATION = '0058_drop_harness_events';
 let dataDir: string;
 
 function seedWorkspace(id: string, owner: string | null = null): void {
@@ -35,15 +35,20 @@ function seedNode(workspaceId: string, id: string, opts: { tree?: boolean; delet
     id, workspace_id: workspaceId, tree_id: opts.tree ? `t-${id}` : null, kind: 'chat', title: id,
     status: 'idle', minimized: 0, spawned_by_agent: 0, deleted_at: opts.deletedAt ?? null, created_at: 1,
   });
-  const journal = createSqliteHarnessJournal();
-  for (let seq = 0; seq < 2; seq++) {
-    journal.append({ nodeId: id, turnId: 'turn-1', seq, event: 'chunk', payload: JSON.stringify({ text: `secret of ${id}` }), createdAt: 1 });
-  }
 }
 
-function harnessNodes(): string[] {
-  return (getDb().prepare('SELECT DISTINCT node_id FROM harness_events ORDER BY node_id').all() as Array<{ node_id: string }>)
-    .map((row) => row.node_id);
+function nodeIds(): string[] {
+  return (getDb().prepare('SELECT id FROM nodes WHERE purged_at IS NULL ORDER BY id').all() as Array<{ id: string }>)
+    .map((row) => row.id);
+}
+
+function schemaObjects(db: DatabaseSync): string[] {
+  return (db.prepare(`SELECT name FROM sqlite_master WHERE name LIKE '%harness_events%' ORDER BY name`).all() as Array<{ name: string }>)
+    .map((row) => row.name);
+}
+
+function ledgerHasDrop(db: DatabaseSync): boolean {
+  return Boolean(db.prepare('SELECT 1 FROM schema_migrations WHERE version = ?').get(DROP_MIGRATION));
 }
 
 function createAuthUser(id: string): void {
@@ -57,77 +62,111 @@ function createAuthUser(id: string): void {
   db.close();
 }
 
-describe('harness_events follow workspace and node deletion', () => {
+beforeEach(() => {
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-harness-drop-'));
+  process.env.MICHI_DATA_DIR = dataDir;
+  delete process.env.MICHI_CLOUD;
+  closeDb(); closeAuditDb(); initDb();
+});
+
+afterEach(() => {
+  closeDb(); closeAuditDb();
+  delete process.env.MICHI_DATA_DIR;
+  delete process.env.MICHI_CLOUD;
+  delete process.env.MICHI_REQUIRE_AUTH;
+  delete process.env.MICHI_ADMIN_EMAILS;
+  fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+describe('migration 0058 drops harness_events', () => {
+  test('a fresh database has neither the table nor its index', () => {
+    assert.deepEqual(schemaObjects(getDb()), []);
+    assert.equal(ledgerHasDrop(getDb()), true);
+  });
+
+  test('an existing database loses the journal and keeps its other data', () => {
+    seedWorkspace('ws-keep');
+    seedNode('ws-keep', 'n-keep', { tree: true });
+    const db = getDb();
+    // The state of an install that last ran before 0058: table, index and rows present.
+    db.exec(fs.readFileSync(path.join(__dirname, '../src/db/migrations/0017_harness_events.sql'), 'utf8'));
+    db.prepare(`INSERT INTO harness_events (node_id, turn_id, seq, event, payload, created_at)
+      VALUES ('n-keep', 'turn-1', 0, 'chunk', '{"text":"secret"}', 1)`).run();
+    db.prepare('DELETE FROM schema_migrations WHERE version = ?').run(DROP_MIGRATION);
+    assert.deepEqual(schemaObjects(db), ['harness_events', 'idx_harness_events_node_turn', 'sqlite_autoindex_harness_events_1']);
+    closeDb();
+
+    const upgraded = initDb();
+    assert.deepEqual(schemaObjects(upgraded), []);
+    assert.equal(ledgerHasDrop(upgraded), true);
+    assert.deepEqual(nodeIds(), ['n-keep']);
+  });
+
+  test('an existing database without the table upgrades cleanly', () => {
+    getDb().prepare('DELETE FROM schema_migrations WHERE version = ?').run(DROP_MIGRATION);
+    closeDb();
+    const upgraded = initDb();
+    assert.deepEqual(schemaObjects(upgraded), []);
+    assert.equal(ledgerHasDrop(upgraded), true);
+  });
+});
+
+describe('deletion paths work without harness_events', () => {
   beforeEach(() => {
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'michi-harness-deletion-'));
-    process.env.MICHI_DATA_DIR = dataDir;
-    delete process.env.MICHI_CLOUD;
-    closeDb(); closeAuditDb(); initDb();
     seedWorkspace('ws-keep');
     seedNode('ws-keep', 'n-keep', { tree: true });
   });
 
-  afterEach(() => {
-    closeDb(); closeAuditDb();
-    delete process.env.MICHI_DATA_DIR;
-    delete process.env.MICHI_CLOUD;
-    delete process.env.MICHI_REQUIRE_AUTH;
-    delete process.env.MICHI_ADMIN_EMAILS;
-    fs.rmSync(dataDir, { recursive: true, force: true });
-  });
-
-  test('deleteWorkspace removes events of every node, in or out of a Tree', () => {
+  test('deleteWorkspace removes every node, in or out of a Tree', () => {
     seedWorkspace('ws-gone');
     seedNode('ws-gone', 'n-tree', { tree: true });
     seedNode('ws-gone', 'n-loose');
     deleteWorkspace('ws-gone');
-    assert.deepEqual(harnessNodes(), ['n-keep']);
+    assert.deepEqual(nodeIds(), ['n-keep']);
   });
 
-  test('purgeWorkspaceNodes removes events of the purged nodes only', () => {
+  test('purgeWorkspaceNodes purges only the named nodes', () => {
     seedNode('ws-keep', 'n-purge', { deletedAt: 5 });
     seedNode('ws-keep', 'n-trash', { deletedAt: 5 });
     purgeWorkspaceNodes('ws-keep', ['n-purge']);
-    assert.deepEqual(harnessNodes(), ['n-keep', 'n-trash']);
+    assert.deepEqual(nodeIds(), ['n-keep', 'n-trash']);
   });
 
-  test('emptyWorkspaceTrash removes events of the purged trash', () => {
+  test('emptyWorkspaceTrash purges the trash', () => {
     seedNode('ws-keep', 'n-trash', { tree: true, deletedAt: 5 });
     emptyWorkspaceTrash('ws-keep');
-    assert.deepEqual(harnessNodes(), ['n-keep']);
+    assert.deepEqual(nodeIds(), ['n-keep']);
   });
 
-  test('runTombstoneGc removes events of expired tombstones', () => {
+  test('runTombstoneGc removes expired tombstones', () => {
     seedNode('ws-keep', 'n-old');
     getDb().prepare('UPDATE nodes SET purged_at = ? WHERE id = ?').run(Date.now() - TOMBSTONE_TTL_MS - 1, 'n-old');
     runTombstoneGc();
     assert.equal((getDb().prepare('SELECT COUNT(*) AS count FROM nodes WHERE id = ?').get('n-old') as { count: number }).count, 0);
-    assert.deepEqual(harnessNodes(), ['n-keep']);
   });
 
-  test('deleteTree removes events of the nodes its cascade deletes, scoped to the owner', () => {
+  test('deleteTree removes the nodes its cascade deletes, scoped to the owner', () => {
     seedNode('ws-keep', 'n-tree', { tree: true });
     process.env.MICHI_CLOUD = '1';
     getDb().prepare('UPDATE workspaces SET owner_user_id = ? WHERE id = ?').run('owner-a', 'ws-keep');
     deleteTree('t-n-tree', 'owner-b');
-    assert.deepEqual(harnessNodes(), ['n-keep', 'n-tree']);
+    assert.deepEqual(nodeIds(), ['n-keep', 'n-tree']);
     deleteTree('t-n-tree', 'owner-a');
-    assert.equal((getDb().prepare('SELECT COUNT(*) AS count FROM nodes WHERE id = ?').get('n-tree') as { count: number }).count, 0);
-    assert.deepEqual(harnessNodes(), ['n-keep']);
+    assert.deepEqual(nodeIds(), ['n-keep']);
     delete process.env.MICHI_CLOUD;
     seedNode('ws-keep', 'n-local', { tree: true });
     deleteTree('t-n-local');
-    assert.deepEqual(harnessNodes(), ['n-keep']);
+    assert.deepEqual(nodeIds(), ['n-keep']);
   });
 
-  test('backup replace removes events of the replaced workspace', () => {
+  test('backup replace removes the replaced workspace', () => {
     seedWorkspace('ws-replaced');
     seedNode('ws-replaced', 'n-replaced', { tree: true });
     runInTransaction(() => replaceWorkspaceInTransaction('ws-replaced'));
-    assert.deepEqual(harnessNodes(), ['n-keep']);
+    assert.deepEqual(nodeIds(), ['n-keep']);
   });
 
-  test('admin user deletion removes events of the user\'s nodes', async () => {
+  test('admin user deletion removes the user\'s nodes', async () => {
     process.env.MICHI_CLOUD = '1';
     process.env.MICHI_REQUIRE_AUTH = 'true';
     process.env.MICHI_ADMIN_EMAILS = 'admin@example.com';
@@ -145,6 +184,6 @@ describe('harness_events follow workspace and node deletion', () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    assert.deepEqual(harnessNodes(), ['n-keep']);
+    assert.deepEqual(nodeIds(), ['n-keep']);
   });
 });

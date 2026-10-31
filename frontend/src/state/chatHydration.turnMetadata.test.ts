@@ -35,6 +35,40 @@ describe('hydrated errors retain unknown execution semantics', () => {
     expect(node.errorTurnId).toBeUndefined();
   });
 
+  it('classifies a restart interruption from the backend-written turn receipt', () => {
+    const node = mapNodeRowScalars({
+      id: 'n1', status: 'error', last_applied_turn_id: 'older-success',
+      last_turn_id: 'cut-short', last_turn_status: 'error', last_turn_error: 'backend_restarted', last_turn_completed_at: 600,
+    });
+    expect(node).toMatchObject({
+      status: 'error', errorKind: 'backend_restarted', errorTurnId: 'cut-short', errorCompletedAt: 600,
+      error: 'Michi restarted while this task was running. Review the partial output above, then resume.',
+      lastAppliedTurnId: 'older-success',
+    });
+  });
+
+  it('keeps an ordinary finalized failure as a plain error with its own message', () => {
+    const node = mapNodeRowScalars({
+      id: 'n1', status: 'error', last_turn_id: 'failed', last_turn_status: 'error', last_turn_error: 'unexpected status 403 Forbidden', last_turn_completed_at: 7,
+    });
+    expect(node).toMatchObject({ status: 'error', errorTurnId: 'failed', error: 'unexpected status 403 Forbidden', errorCompletedAt: 7 });
+    expect(node.errorKind).toBeUndefined();
+  });
+
+  it('stays unknown when the receipt does not prove a failure', () => {
+    for (const receipt of [
+      { last_turn_id: 'done', last_turn_status: 'completed', last_turn_error: null },
+      { last_turn_id: 'live', last_turn_status: 'active', last_turn_error: null },
+      { last_turn_id: 'blank', last_turn_status: 'error', last_turn_error: '' },
+      { last_turn_status: 'error', last_turn_error: 'backend_restarted' },
+    ]) {
+      const node = mapNodeRowScalars({ id: 'n1', status: 'error', ...receipt });
+      expect(node.errorKind).toBe('turn_outcome_unknown');
+      expect(node.errorTurnId).toBeUndefined();
+    }
+    expect(mapNodeRowScalars({ id: 'n1', status: 'idle', last_turn_id: 'x', last_turn_status: 'error', last_turn_error: 'backend_restarted' }).errorKind).toBeUndefined();
+  });
+
   it('treats legacy errors as unknown and does not trust their old error kind or watermark', () => {
     const { nodes } = hydrateSavedState({ version: 6, projects: [], nodes: { n1: {
       nodeId: 'n1', projectId: 'p1', status: 'error', errorKind: 'generic', lastAppliedTurnId: 'older-success',

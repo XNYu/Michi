@@ -2,7 +2,7 @@ import { usePrefs } from '../../../../state/prefs';
 import { Radio } from './controls';
 import { SettingsSection } from './SettingsSection';
 
-const NOTIFICATION_OPTIONS: Array<{ value: 'all' | 'approval-only' | 'off'; label: string; description: string }> = [
+export const NOTIFICATION_OPTIONS: Array<{ value: 'all' | 'approval-only' | 'off'; label: string; description: string }> = [
   { value: 'all', label: 'All', description: 'Notify when streaming finishes and on approval requests.' },
   { value: 'approval-only', label: 'Approval only', description: 'Only notify on permission / approval requests.' },
   { value: 'off', label: 'Off', description: 'No notifications.' },

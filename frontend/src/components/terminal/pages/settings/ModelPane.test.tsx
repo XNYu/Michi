@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_PREFS } from '../../../../state/prefs';
 import { ModelPane } from './ModelPane';
@@ -50,6 +50,34 @@ describe('ModelPane Kiro sidecar title setting', () => {
 
   // Model, provider and effort ids belong to the runtime Settings shows; the
   // backend rejects a save if its active runtime has changed since.
+  it('shows Workflows only for the selected runtime and preserves its saved preference', async () => {
+    agentStatus = { runtime: 'claude', label: 'Claude', capabilities: {}, hasRequiredKey: true,
+      availableRuntimes: [{ id: 'kiro', label: 'Kiro', available: true }, { id: 'claude', label: 'Claude', available: true }],
+      workflowRuntimes: ['kiro'], workflowsByRuntime: { kiro: true } };
+    const view = render(<ModelPane activeProjectId={null} />);
+    expect(screen.queryByRole('switch', { name: /Workflows/ })).toBeNull();
+    agentStatus = { ...agentStatus, runtime: 'kiro', label: 'Kiro' };
+    view.rerender(<ModelPane activeProjectId={null} />);
+    const workflows = screen.getByRole('switch', { name: 'Workflows for Kiro' });
+    expect(workflows.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(workflows);
+    await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ workflowsByRuntime: { kiro: false } }));
+    agentStatus = { ...agentStatus, runtime: 'codex', label: 'Codex' };
+    view.rerender(<ModelPane activeProjectId={null} />);
+    expect(screen.queryByRole('switch', { name: /Workflows/ })).toBeNull();
+  });
+
+  it('hides unavailable choices and allows recovery when only one other runtime is available', async () => {
+    agentStatus = { runtime: 'claude', label: 'Claude', capabilities: {}, hasRequiredKey: true,
+      availableRuntimes: [{ id: 'crew', label: 'Kiro Crew', available: false }, { id: 'kiro', label: 'Kiro', available: true }] };
+    render(<ModelPane activeProjectId={null} />);
+    const picker = screen.getByRole('combobox', { name: 'Runtime' });
+    expect(within(picker).queryByRole('option', { name: /Kiro Crew/ })).toBeNull();
+    expect((picker as HTMLSelectElement).value).toBe('');
+    fireEvent.change(picker, { target: { value: 'kiro' } });
+    await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ runtime: 'kiro' }));
+  });
+
   it('saves model and effort for the runtime Settings shows', async () => {
     agentStatus = { runtime: 'kiro', label: 'Kiro', model: 'opus-5.5', reasoning: 'low', hasRequiredKey: true,
       availableRuntimes: [], capabilities: { models: true, reasoning: true, supportedReasoningLevels: ['low', 'high'] } };

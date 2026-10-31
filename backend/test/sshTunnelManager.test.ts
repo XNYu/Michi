@@ -57,6 +57,9 @@ describe('SSH tunnel arguments', () => {
     assert.equal(args.includes('-p'), false);
     assert.ok(args.includes('127.0.0.1:32123:127.0.0.1:3000'));
     assert.ok(args.includes('ConnectTimeout=30'), 'allow a cold SSH proxy to finish its handshake');
+    assert.ok(args.includes('-C'), 'compress repetitive chat and workspace JSON over SSH');
+    assert.ok(args.includes('ControlPath=none'));
+    assert.ok(args.includes('ControlMaster=no'));
   });
 });
 
@@ -140,7 +143,8 @@ describe('SshTunnelManager', () => {
     manager.shutdown();
   });
 
-  test('starts a fresh process on the request after SSH exits', async () => {
+  test('reconnects after SSH exits without a renderer request, sharing the pending attempt', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
     const children: FakeChild[] = [];
     let nextPort = 32000;
     const manager = new SshTunnelManager({
@@ -156,6 +160,8 @@ describe('SshTunnelManager', () => {
     assert.equal(await manager.apiUrl(sshConnection()), 'http://127.0.0.1:32001/api');
     emitExit(children[0], 255);
     assert.equal(manager.status('remote-1').phase, 'error');
+    await assert.rejects(manager.apiUrl(sshConnection()), /SSH exited/);
+    t.mock.timers.tick(1000);
     assert.equal(await manager.apiUrl(sshConnection()), 'http://127.0.0.1:32002/api');
     assert.equal(children.length, 2);
     manager.shutdown();
@@ -181,6 +187,29 @@ describe('SshTunnelManager', () => {
     assert.deepEqual(manager.status('remote-1'), { phase: 'disconnected' });
   });
 
+  test('a failed probe cannot stop the replacement tunnel', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    const children: FakeChild[] = [];
+    let port = 32000;
+    const manager = new SshTunnelManager({
+      allocatePort: async () => ++port,
+      spawnSsh: () => { const child = createFakeChild(); children.push(child); return child; },
+      waitUntilReady: async () => undefined,
+    });
+    try {
+      const previous = await manager.apiUrl(sshConnection());
+      emitExit(children[0], 255);
+      t.mock.timers.tick(1000);
+      const current = await manager.apiUrl(sshConnection());
+      manager.stop('remote-1', previous);
+      assert.equal(manager.status('remote-1').phase, 'connected');
+      assert.equal(children[1].killedWith, undefined);
+      assert.equal(await manager.apiUrl(sshConnection()), current);
+      manager.stop('remote-1', current);
+      assert.equal(children[1].killedWith, 'SIGTERM');
+    } finally { manager.shutdown(); }
+  });
+
   test('reports SSH stderr when readiness fails', async () => {
     const child = createFakeChild();
     const manager = new SshTunnelManager({
@@ -195,5 +224,76 @@ describe('SshTunnelManager', () => {
     await assert.rejects(manager.apiUrl(sshConnection()), /Permission denied/);
     assert.equal(child.killedWith, 'SIGTERM');
     assert.match(manager.status('remote-1').error ?? '', /Permission denied/);
+    manager.shutdown();
+  });
+
+  test('coalesces probes, tolerates transient failures and replaces only a persistently stalled forward', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    const children: FakeChild[] = [];
+    let port = 32000, alive = false, probes = 0;
+    const manager = new SshTunnelManager({ allocatePort: async () => ++port,
+      spawnSsh: () => { const child = createFakeChild(); children.push(child); return child; },
+      waitUntilReady: async () => {}, probeTransport: async () => { probes++; return alive; },
+      probeIntervalMs: 100, recoveryDelayMs: 10 });
+    const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+    try {
+      await manager.apiUrl(sshConnection());
+      manager.checkNow(); manager.checkNow(); await flush();
+      assert.equal(probes, 1);
+      t.mock.timers.tick(100); await flush();
+      assert.equal(children[0].killedWith, undefined);
+      alive = true;
+      t.mock.timers.tick(100); await flush();
+      alive = false;
+      for (let i = 0; i < 2; i++) { t.mock.timers.tick(100); await flush(); }
+      assert.equal(children[0].killedWith, undefined, 'success reset consecutive failures');
+      t.mock.timers.tick(100); await flush();
+      assert.equal(children[0].killedWith, 'SIGTERM');
+      t.mock.timers.tick(10); await flush();
+      assert.equal(children.length, 2);
+    } finally { manager.shutdown(); }
+  });
+
+  test('local rebinds do not reset the bounded recovery budget and stop cancels scheduled work', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    let starts = 0;
+    const manager = new SshTunnelManager({ allocatePort: async () => 32123,
+      spawnSsh: () => { starts++; return createFakeChild(); }, waitUntilReady: async () => {},
+      probeTransport: async () => false, probeIntervalMs: 10, probeFailureThreshold: 1,
+      maxRecoveryAttempts: 2, recoveryDelayMs: 10 });
+    const tick = async (ms: number) => { t.mock.timers.tick(ms); for (let i = 0; i < 12; i++) await Promise.resolve(); };
+    try {
+      await manager.apiUrl(sshConnection());
+      await tick(10); await tick(10); await tick(10); await tick(20); await tick(10);
+      assert.equal(starts, 3);
+      assert.equal(manager.isSupervising('remote-1'), false);
+      await assert.rejects(manager.apiUrl(sshConnection()), /stopped responding/);
+      await tick(60_000);
+      assert.equal(starts, 3);
+      manager.stop('remote-1');
+      await manager.apiUrl(sshConnection());
+      await tick(10);
+      manager.stop('remote-1');
+      await tick(60_000);
+      assert.equal(starts, 4);
+    } finally { manager.shutdown(); }
+  });
+
+  test('a late failed health check cannot kill a new connection or reconnect after shutdown', async () => {
+    let finish!: (alive: boolean) => void;
+    const children: FakeChild[] = [];
+    const manager = new SshTunnelManager({ allocatePort: async () => 32123,
+      spawnSsh: () => { const child = createFakeChild(); children.push(child); return child; }, waitUntilReady: async () => {},
+      probeTransport: () => new Promise(resolve => { finish = resolve; }), probeFailureThreshold: 1 });
+    await manager.apiUrl(sshConnection());
+    manager.checkNow();
+    manager.stop('remote-1');
+    await manager.apiUrl(sshConnection());
+    finish(false);
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(children[1].killedWith, undefined);
+    assert.equal(manager.status('remote-1').phase, 'connected');
+    manager.shutdown();
+    assert.equal(manager.isSupervising('remote-1'), false);
   });
 });

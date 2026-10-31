@@ -1,5 +1,6 @@
 import React from 'react';
 import { changeRuntimeProfile, resolveProfileReasoning, supportedProfileReasoning } from '../../../lib/runtimeProfile';
+import { filterAvailableRuntimes } from '../../../lib/runtimeVisibility';
 import type { RuntimeReasoning } from 'michi-shared';
 import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentRuntimeOption } from '../../../services/api/agentRuntime';
 
@@ -45,7 +46,7 @@ interface Props {
 
 export default function AgentRuntimeProfileFields({ value, onChange, prefix = 'runtime', errors = {}, compact = false, catalog = null }: Props) {
   const set = <K extends keyof RuntimeProfileDraft>(key: K, next: RuntimeProfileDraft[K]) => onChange({ ...value, [key]: next });
-  const runtimes = catalog?.runtimes ?? [];
+  const runtimes = filterAvailableRuntimes(catalog?.runtimes ?? []);
   const providers = catalog?.providersFor[value.runtimeId];
   const models = catalog?.modelsFor[catalogKey(value.runtimeId, value.providerId)];
   const { levels: reasoningLevels } = resolveProfileReasoning(catalog?.capabilitiesFor?.[value.runtimeId], models, value.modelId, providers?.find((provider) => provider.id === value.providerId));
@@ -56,15 +57,15 @@ export default function AgentRuntimeProfileFields({ value, onChange, prefix = 'r
     <div style={{ display: 'grid', gridTemplateColumns: compact ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
       {catalog?.errorsFor?.[catalogKey(value.runtimeId, value.providerId)] && <p role="alert">Unable to load runtime options. <button type="button" onClick={() => catalog.retry?.(value.runtimeId, value.providerId)}>Retry</button></p>}
       <Field label="Runtime" error={errors.runtimeId}>
-        {runtimes.length > 0 ? (
+        {catalog ? (
           <select className="ui-select" aria-label={`${prefix} runtime`} value={value.runtimeId}
             onChange={(event) => onChange(changeRuntimeProfile(value, 'runtimeId', event.target.value))}>
             <option value="">choose runtime…</option>
             {runtimes.map((runtime) => (
-              <option key={runtime.id} value={runtime.id}>{runtime.label}{runtime.available ? '' : ' (unavailable)'}</option>
+              <option key={runtime.id} value={runtime.id}>{runtime.label}</option>
             ))}
             {value.runtimeId && !runtimes.some((runtime) => runtime.id === value.runtimeId) && (
-              <option value={value.runtimeId}>{value.runtimeId} (not on this backend)</option>
+              <option value={value.runtimeId} disabled hidden>{value.runtimeId}</option>
             )}
           </select>
         ) : (

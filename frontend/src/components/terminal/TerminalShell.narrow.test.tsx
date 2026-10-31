@@ -77,7 +77,7 @@ describe('TerminalShell in a narrow window', () => {
     expect(await screen.findByText('Appearance pane')).toBeTruthy();
     expect(areas()).toBeNull();
     const sections = screen.getByRole('navigation', { name: 'Settings sections' });
-    fireEvent.click(screen.getByRole('button', { name: 'Runtime (global)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Runtime & model' }));
     expect(await screen.findByText('Model pane')).toBeTruthy();
     expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBe(sections);
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
@@ -105,7 +105,7 @@ describe('TerminalShell in a narrow window', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Settings' });
     const level = () => dialog.querySelector('.terminal-settings--drawer')?.getAttribute('data-view');
     await waitFor(() => expect(level()).toBe('menu'));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Runtime (global)' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Runtime & model' }));
     expect(await screen.findByText('Model pane')).toBeTruthy();
     expect(level()).toBe('section');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Back' }));
@@ -136,7 +136,7 @@ describe('TerminalShell in a narrow window', () => {
     fireEvent.click(rail('settings'));
     expect(await screen.findByText('Appearance pane')).toBeTruthy();
     expect(toggle().getAttribute('data-sidebar-rail')).toBe('false');
-    fireEvent.click(screen.getByRole('button', { name: 'Runtime (global)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Runtime & model' }));
     expect(await screen.findByText('Model pane')).toBeTruthy();
     expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeTruthy();
     const dialog = screen.getByRole('dialog', { name: 'Settings' });

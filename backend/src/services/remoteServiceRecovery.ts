@@ -45,7 +45,8 @@ export class RemoteServiceRecovery {
         // Some SSH proxies keep their pipes open after the SSH child exits.
         // Enforce the deadline even if an underlying operation ignores abort.
         await Promise.race([
-          this.setup.recover(id, controller.signal, diagnostic),
+          this.setup.recover(id, controller.signal, diagnostic,
+            !force && previous?.status.diagnostic?.code !== 'remote_credentials'),
           new Promise<never>((_resolve, reject) => {
             onAbort = () => reject(controller.signal.reason);
             controller.signal.addEventListener('abort', onAbort, { once: true });

@@ -30,33 +30,59 @@ export async function openArea(page: Page, area: ShellArea): Promise<void> {
   await button.click();
 }
 
-export type SettingsSection = 'General' | 'Runtime (global)' | 'Meta agent' | 'Components' | 'Appearance' | 'Data & backup';
+/** A Settings page, or one of the older sections whose names specs still use. */
+export type SettingsSection = 'General' | 'Runtime (global)' | 'Meta agent' | 'Components' | 'Appearance' | 'Data & backup'
+  | 'Runtime & model' | 'Machines' | 'Notifications' | 'Links' | 'Backup & restore'
+  | 'Scheduled jobs' | 'Keyboard shortcuts' | 'Account';
 
-/** The global Settings drawer's content, separate from a Space's own settings. */
+/** The global Settings (a window, or a drawer on a phone), separate from a Space's own settings. */
 export function settingsMain(page: Page): Locator {
-  return page.getByRole('dialog', { name: 'Settings', exact: true }).locator('.terminal-settings--drawer');
+  return page.getByRole('dialog', { name: 'Settings', exact: true }).locator('.terminal-settings');
 }
 
-/** The Settings drawer's header control: × on a wide window, Back on a phone. */
+/** The Settings header control: × for the window, Back on a phone. */
 function settingsHeaderButton(page: Page, name: 'Close' | 'Back'): Locator {
   return page.getByRole('dialog', { name: 'Settings', exact: true }).locator('.ui-overlay-header').getByRole('button', { name, exact: true });
 }
 
 /**
- * Selects a section from the drawer's categories. A phone shows one level at
- * a time, so from a section its header Back returns to the list first.
+ * The page that holds what an older section is opened for: General's
+ * machines, the global runtime, and backup. Pages named like their section
+ * need no entry.
+ */
+const PAGE_FOR_SECTION: Partial<Record<SettingsSection, SettingsSection>> = {
+  General: 'Machines',
+  'Runtime (global)': 'Runtime & model',
+  'Data & backup': 'Backup & restore',
+};
+
+/** True when Settings fills a phone screen and shows its list and a page one at a time. */
+async function settingsIsStacked(page: Page): Promise<boolean> {
+  return (await settingsMain(page).getAttribute('data-stacked')) !== null;
+}
+
+/**
+ * Opens a Settings page from its navigation. A phone shows one level at a
+ * time, so from a page its header Back returns to the list first; there Data
+ * & backup stays on the list, whose Data group holds Trash, Archived and backup.
  */
 export async function selectSettingsSection(page: Page, section: SettingsSection): Promise<void> {
   const nav = settingsMain(page).getByRole('navigation', { name: 'Settings sections' });
   const heading = settingsMain(page).getByRole('heading', { level: 1 });
   await nav.or(heading).filter({ visible: true }).first().waitFor();
-  if (!(await nav.isVisible())) await settingsHeaderButton(page, 'Back').click();
-  await nav.getByRole('button', { name: section, exact: true }).click();
-  await settingsMain(page).getByRole('heading', { level: 1, name: section, exact: true }).waitFor();
+  const stacked = await settingsIsStacked(page);
+  if (stacked && !(await nav.isVisible())) await settingsHeaderButton(page, 'Back').click();
+  if (stacked && section === 'Data & backup') {
+    await nav.getByRole('group', { name: 'Data' }).waitFor();
+    return;
+  }
+  const target = PAGE_FOR_SECTION[section] ?? section;
+  await nav.getByRole('button', { name: target, exact: true }).click();
+  await settingsMain(page).getByRole('heading', { level: 1, name: target, exact: true }).waitFor();
 }
 
 /**
- * Opens the global Settings drawer, then the given section from its categories.
+ * Opens the global Settings, then the given page from its navigation.
  */
 export async function openSettings(page: Page, section?: SettingsSection): Promise<Locator> {
   const main = settingsMain(page);

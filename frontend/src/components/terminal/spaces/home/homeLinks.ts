@@ -6,7 +6,7 @@ const SOURCE_NAV = { openExactSourcePopover, openSourcePopover, openConversation
 export function useSpacesSourceNav() { return SOURCE_NAV; }
 
 export { default as NativePageDocument } from '../NativePageDocument';
-export { useMetaChatTargeting, type MetaChatBlockTarget } from '../metaChat/SpacesMetaChat';
+export { blockItemTarget, useMetaChatTargeting, type MetaChatBlockTarget } from '../metaChat/SpacesMetaChat';
 export { openNewChatSheet, type SpaceConversationScope } from '../../../../state/spaceConversations/store';
 export { useSpaceConversationBadges } from '../../../../state/spaceConversations/watcher';
 export { NewChatSheetSlot, PageProgressCards, SpaceProgressCardList } from '../conversation/SpaceConversationSlot';

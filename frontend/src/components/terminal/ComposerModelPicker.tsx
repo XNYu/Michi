@@ -8,6 +8,7 @@ import { REASONING_LABELS, type PaneMenuAnchor } from './PaneComposerToolbarLeft
 import './ComposerModelPicker.css';
 import { resolveComposerReasoning } from './composerReasoning';
 import { composerModelLabel } from './composerModelLabel';
+import { filterAvailableRuntimes } from '../../lib/runtimeVisibility';
 
 type PickerPage = 'overview' | 'model' | 'runtime' | 'provider';
 type SelectionHandler<T> = (value: T) => void | Promise<void>;
@@ -311,8 +312,8 @@ export function ComposerModelPicker({
             </>
           ) : page === 'runtime' ? (
             <div role="menu" aria-label="Runtimes" className="composer-picker-options">
-              {(agentStatus?.availableRuntimes?.length ? agentStatus.availableRuntimes : [{ id: resolvedBinding.runtime, label: runtimeLabel, available: true }]).map((runtime) =>
-                option(runtime.id, runtime.label || runtime.id, runtime.id === resolvedBinding.runtime, () => onSwitchRuntime(runtime.id), runtime.available ? undefined : 'Unavailable', !runtime.available))}
+              {filterAvailableRuntimes(agentStatus?.availableRuntimes ?? []).map((runtime) =>
+                option(runtime.id, runtime.label || runtime.id, runtime.id === resolvedBinding.runtime, () => onSwitchRuntime(runtime.id)))}
             </div>
           ) : (
             <div role="menu" aria-label="Providers" className="composer-picker-options">

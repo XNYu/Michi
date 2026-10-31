@@ -21,6 +21,7 @@ import {
 } from '../../../../state/metaAgent/useMetaAgent';
 import type { ResolvedNodeBinding } from '../../../../state/nodeBindingResolution';
 import { useRuntimeCatalog } from '../../../../hooks/useRuntimeCatalog';
+import { filterAvailableRuntimes } from '../../../../lib/runtimeVisibility';
 import { useBackendScope } from '../../../../hooks/useBackendScope';
 import { resolveComposerReasoning } from '../../composerReasoning';
 import { composerModelLabel } from '../../composerModelLabel';
@@ -164,6 +165,7 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
 
       <section className="meta-set__sec" ref={runtimeRef} aria-labelledby={headingId}>
         <SectionHead id={headingId} title="Runtime" saved={saved === 'runtime'} />
+        <div className="meta-set__body">
         {!info.availability.available && (
           <div className="meta-set__notice" role="status">
             <TriangleAlert size={15} strokeWidth={1.75} aria-hidden="true" />
@@ -205,10 +207,12 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
           )}
         </div>
         <SectionError error={error} section="runtime" />
+        </div>
       </section>
 
       <section className="meta-set__sec">
         <SectionHead title="Reading" saved={saved === 'reading'} />
+        <div className="meta-set__body">
         <BackgroundUpdatesRow onSaved={() => noteSaved('reading')} onError={(message) => setError(message ? { section: 'reading', message } : null)} />
         <SettingRow label="First run" control={(
           <select
@@ -228,10 +232,12 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
           Scheduled-job output, the Meta agent’s own chat, and archived or deleted conversations
         </SettingRow>
         <SectionError error={error} section="reading" />
+        </div>
       </section>
 
       <section className="meta-set__sec">
         <SectionHead title="Writing" saved={saved === 'writing'} />
+        <div className="meta-set__body">
         <SettingRow label="Workspace homes" control={(
           <>
             <span className="meta-set__state">{settings.writeWorkspaceHomes !== false ? 'On' : 'Off'}</span>
@@ -259,11 +265,12 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
           Never overwritten: the Meta agent suggests a change and you accept it
         </SettingRow>
         <SectionError error={error} section="writing" />
+        </div>
       </section>
 
       <section className="meta-set__sec">
         <h2>Usage</h2>
-        <p className="meta-set__usage">{usageText(info.usageToday ?? null)}</p>
+        <div className="meta-set__body"><p className="meta-set__usage">{usageText(info.usageToday ?? null)}</p></div>
       </section>
     </>
   );
@@ -393,6 +400,7 @@ function CustomRuntime({ settings, resolved, agentStatus, saving, onSave }: {
   const modelMissing = !!settings.modelId && !catalog.models.some((model) => model.id === settings.modelId);
   const providerMissing = !!settings.providerId && !catalog.providers.some((provider) => provider.id === settings.providerId);
   const runtimeOption = (id: string) => agentStatus?.availableRuntimes.find((runtime) => runtime.id === id);
+  const visibleRuntimeIds = new Set(filterAvailableRuntimes(agentStatus?.availableRuntimes ?? []).map((runtime) => runtime.id));
   // "Default" names what it stands for, read from the resolved runtime of the same runtime only.
   const sameRuntime = resolved.runtimeId === runtimeId;
   const defaultOf = (value: string | null | undefined) => (sameRuntime && value ? `Default (${value})` : 'Default');
@@ -413,29 +421,21 @@ function CustomRuntime({ settings, resolved, agentStatus, saving, onSave }: {
   return (
     <div className="meta-set__custom">
       <div className="meta-set__chips" role="group" aria-label="Meta agent runtime">
-        {META_AGENT_RUNTIMES.map((id) => {
-          const supported = isMetaAgentRuntimeSupported(id);
-          const option = runtimeOption(id);
-          const unavailable = !supported || (option?.available === false && id !== runtimeId);
-          const note = !supported ? 'Not supported yet' : unavailable ? runtimeUnavailableText(id, option?.unavailableReason).text : undefined;
-          return (
+        {META_AGENT_RUNTIMES.filter((id) => visibleRuntimeIds.has(id) && isMetaAgentRuntimeSupported(id)).map((id) => (
             <Button
               key={id}
               className="meta-set__chip"
               aria-pressed={id === runtimeId}
-              disabled={saving || unavailable}
-              title={note}
+              disabled={saving}
               // A model belongs to one runtime: switching starts from the new runtime's defaults.
               onClick={() => { if (id !== runtimeId) onSave({ runtimeId: id, providerId: null, modelId: null, reasoning: null }); }}
             >
               {metaAgentRuntimeLabel(id)}
-              {!supported && <span className="meta-set__chip-note">{note}</span>}
             </Button>
-          );
-        })}
+        ))}
       </div>
       <ul className="meta-set__hints">
-        {META_AGENT_RUNTIMES.filter((id) => isMetaAgentRuntimeSupported(id) && id !== runtimeId && runtimeOption(id)?.available === false)
+        {META_AGENT_RUNTIMES.filter((id) => id === runtimeId && runtimeOption(id)?.available === false)
           .map((id) => <UnavailableHint key={id} id={id} reason={runtimeOption(id)?.unavailableReason} />)}
         <li>{PI_EXPLAINED}</li>
       </ul>

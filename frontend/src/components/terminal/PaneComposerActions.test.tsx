@@ -37,6 +37,15 @@ describe('PaneComposerActions', () => {
     expect(props.onRetry).not.toHaveBeenCalled();
   });
 
+  it('labels the retry action Resume after a restart cut the turn short', () => {
+    const props = renderActions({ sendMode: 'retry', resumeTurn: true });
+    const button = screen.getByRole('button', { name: 'Resume the interrupted turn' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toContain('Resume');
+    fireEvent.click(button);
+    expect(props.onRetry).toHaveBeenCalledOnce();
+  });
+
   it('says what else Stop ends, in its label and tooltip', () => {
     const { onStop } = renderActions({ sendMode: 'stop', streaming: true, stopHint: 'Also stops the running workflow.' });
     const button = screen.getByRole('button', { name: 'Stop stream. Also stops the running workflow.' });

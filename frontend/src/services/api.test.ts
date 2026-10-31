@@ -35,6 +35,68 @@ describe('ensureSession', () => {
     );
   });
 
+  describe('while the previous turn still holds the session', () => {
+    const busy = () => new Response(JSON.stringify({ code: 'turn_active', error: 'Cannot replace an active turn' }), {
+      status: 409, headers: { 'Content-Type': 'application/json' },
+    });
+    const ensured = () => new Response(JSON.stringify({ chatId: 'n1', currentModeId: null, resumeStrategy: 'live' }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('silently retries the same request until the session is free', async () => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn().mockResolvedValueOnce(busy()).mockResolvedValueOnce(busy()).mockResolvedValueOnce(ensured());
+      vi.stubGlobal('fetch', fetchMock);
+      const result = ensureSession({ nodeId: 'n1', workspaceId: 'ws-1', modelId: 'model-a' });
+      await vi.advanceTimersByTimeAsync(149);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(300);
+      await expect(result).resolves.toMatchObject({ chatId: 'n1', resumeStrategy: 'live' });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const [first, ...retries] = fetchMock.mock.calls;
+      for (const retry of retries) {
+        expect(retry[0]).toBe(first[0]);
+        expect(retry[1].body).toBe(first[1].body);
+      }
+    });
+
+    it('gives up after about ten seconds with the server error', async () => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn().mockImplementation(async () => busy());
+      vi.stubGlobal('fetch', fetchMock);
+      const result = ensureSession({ nodeId: 'n1' });
+      const settled = expect(result).rejects.toMatchObject({ message: 'Cannot replace an active turn', code: 'turn_active' });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await settled;
+      // 150, 300, 600, 1200, 2400 and 4800 ms waits; a further 9600 ms wait would pass the bound.
+      expect(fetchMock).toHaveBeenCalledTimes(7);
+    });
+
+    it('stops retrying when the caller aborts', async () => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn().mockImplementation(async () => busy());
+      vi.stubGlobal('fetch', fetchMock);
+      const controller = new AbortController();
+      const result = ensureSession({ nodeId: 'n1', signal: controller.signal });
+      const settled = expect(result).rejects.toMatchObject({ name: 'AbortError' });
+      await vi.advanceTimersByTimeAsync(100);
+      controller.abort();
+      await settled;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry other conflicts', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 'BRANCH_ANCHOR_UNAVAILABLE', error: 'anchor gone' }), { status: 409 }));
+      vi.stubGlobal('fetch', fetchMock);
+      await expect(ensureSession({ nodeId: 'n1' })).rejects.toMatchObject({ message: 'anchor gone', code: 'BRANCH_ANCHOR_UNAVAILABLE' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('carries the durable graph prerequisite in the same request as session creation', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       chatId: 'chat-1', currentModeId: null, resumeStrategy: 'fresh',
@@ -171,4 +233,82 @@ it('keeps an externally aborted POST outcome unknown while an explicit user canc
     await vi.waitFor(() => expect(userAborted).toHaveBeenCalledOnce());
     expect(userError).not.toHaveBeenCalled();
   } finally { vi.unstubAllGlobals(); }
+});
+
+describe('foreground resume after the live replay is gone', () => {
+  const enc = new TextEncoder();
+  const partial = () => new Response(new ReadableStream<Uint8Array>({ start(controller) {
+    controller.enqueue(enc.encode(encodeChatStreamEvent({ event: 'turn_start', data: { turnId: 'gone-turn', assistantId: 'saved-answer', nodeId: 'gone-node', userText: 'hi', seq: 0 } })));
+    controller.enqueue(enc.encode(encodeChatStreamEvent({ event: 'chunk', data: { text: 'partial', turnId: 'gone-turn', assistantId: 'saved-answer', seq: 1 } })));
+    controller.close();
+  } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  const gone = (code: string) => new Response(JSON.stringify({ error: 'The live reply is no longer available.', code }), { status: 410, headers: { 'Content-Type': 'application/json' } });
+  const saved = (status: string, completedAt: number | null = 20) => new Response(JSON.stringify({
+    turnId: 'gone-turn', assistantId: 'saved-answer', status, stopReason: 'end_turn', completedAt, lastSeq: 4,
+    message: { id: 'saved-answer', node_id: 'gone-node', role: 'assistant', content: 'Saved reply', seq: 1, created_at: 3 },
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('hands a 410 turn_replay_unavailable to the saved-turn read and shows no error when the handler finishes it', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(partial()).mockResolvedValueOnce(gone('turn_replay_unavailable')).mockResolvedValueOnce(saved('completed'));
+    vi.stubGlobal('fetch', fetchMock);
+    const onSavedTurn = vi.fn(() => true);
+    const onErrorPayload = vi.fn();
+    const stop = streamMessage('gone-node', 'hi', { onSavedTurn, onErrorPayload }, { turnId: 'gone-turn' });
+    try {
+      await vi.waitFor(() => expect(onSavedTurn).toHaveBeenCalledOnce());
+      expect(onSavedTurn).toHaveBeenCalledWith(expect.objectContaining({ turnId: 'gone-turn', status: 'completed', completedAt: 20, lastSeq: 4 }));
+      expect(String(fetchMock.mock.calls[1][0])).toContain('/chats/gone-node/stream?fromSeq=2&fromTurnId=gone-turn');
+      expect(String(fetchMock.mock.calls[2][0])).toContain('/chats/gone-node/turns/gone-turn');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(onErrorPayload).not.toHaveBeenCalled();
+    } finally { stop(); }
+  });
+
+  it.each([
+    ['turn_replay_unavailable', () => saved('active', null), true],
+    ['backend_restarted', () => saved('error'), true],
+    ['turn_replay_unavailable', () => new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }), false],
+  ])('keeps the %s error when the saved turn is not finished', async (code, savedResponse, readable) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(partial()).mockResolvedValueOnce(gone(code)).mockResolvedValueOnce(savedResponse()));
+    const onSavedTurn = vi.fn(() => false);
+    const onErrorPayload = vi.fn();
+    const stop = streamMessage('gone-node', 'hi', { onSavedTurn, onErrorPayload }, { turnId: 'gone-turn' });
+    try {
+      await vi.waitFor(() => expect(onErrorPayload).toHaveBeenCalledOnce());
+      expect(onErrorPayload).toHaveBeenCalledWith(expect.objectContaining({ code, turnId: 'gone-turn' }));
+      expect(onSavedTurn).toHaveBeenCalledTimes(readable ? 1 : 0);
+    } finally { stop(); }
+  });
+
+  it('gives up on a saved-turn read that does not answer and keeps the error', async () => {
+    vi.useFakeTimers();
+    const hung = (_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(partial()).mockResolvedValueOnce(gone('turn_replay_unavailable')).mockImplementationOnce(hung));
+    const onSavedTurn = vi.fn(() => true);
+    const onErrorPayload = vi.fn();
+    const stop = streamMessage('gone-node', 'hi', { onSavedTurn, onErrorPayload }, { turnId: 'gone-turn' });
+    try {
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(onErrorPayload).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(onErrorPayload).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ code: 'turn_replay_unavailable' }));
+      expect(onSavedTurn).not.toHaveBeenCalled();
+    } finally { stop(); vi.useRealTimers(); }
+  });
+
+  it('does not read the saved turn for other replay failures', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(partial()).mockResolvedValueOnce(gone('turn_outcome_unknown'));
+    vi.stubGlobal('fetch', fetchMock);
+    const onSavedTurn = vi.fn(() => true);
+    const onErrorPayload = vi.fn();
+    const stop = streamMessage('gone-node', 'hi', { onSavedTurn, onErrorPayload }, { turnId: 'gone-turn' });
+    try {
+      await vi.waitFor(() => expect(onErrorPayload).toHaveBeenCalledOnce());
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(onSavedTurn).not.toHaveBeenCalled();
+    } finally { stop(); }
+  });
 });

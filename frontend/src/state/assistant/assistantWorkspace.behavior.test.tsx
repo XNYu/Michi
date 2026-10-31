@@ -24,6 +24,7 @@ vi.mock('../../services/api', async (importOriginal) => ({
   listBackendConnections: async () => [],
   ensureSession: vi.fn(() => Promise.resolve({ chatId: 'fake-chat', currentModeId: null, resumeStrategy: 'fresh' })),
   streamMessage: vi.fn(() => () => {}),
+  getSavedTurn: vi.fn(async () => null),
 }));
 vi.mock('../../services/notifications', () => ({ notify: vi.fn() }));
 
@@ -257,15 +258,20 @@ describe('the assistant workspace in the chat store', () => {
       const streamCalls = fetchMock.mock.calls.filter(([url]) => url.includes('/message') || url.includes('/stream?'));
       expect(streamCalls).toHaveLength(2);
       expect(streamCalls[1][0]).toContain('fromTurnId=original-410');
+      // The 410 fallback read the saved turn; this fixture has none to show.
+      expect(fetchMock.mock.calls.filter(([url]) => url.includes('/turns/original-410'))).toHaveLength(1);
       const original = result.current.nodes['n-sys'].messages;
+      const replays = vi.mocked(api.subscribeChat).mock.calls.length;
+      vi.mocked(api.getSavedTurn).mockClear();
       act(() => { result.current.store.retryLastTurn('n-sys'); });
       expect(result.current.nodes['n-sys'].errorRecovery).toBe('checking');
       expect(result.current.nodes['n-sys'].messages).toEqual(original);
       expect(mockStream).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls.filter(([url]) => url.includes('/message'))).toHaveLength(1);
-      expect(vi.mocked(api.subscribeChat)).toHaveBeenLastCalledWith(
-        'n-sys', expect.any(Object), { turnId: 'original-410', seq: 0 }, expect.any(Object),
-      );
+      // Checking reads the saved turn of exactly this identity; nothing is replayed.
+      expect(vi.mocked(api.getSavedTurn)).toHaveBeenCalledExactlyOnceWith('n-sys', 'original-410', expect.any(AbortSignal));
+      expect(vi.mocked(api.subscribeChat).mock.calls.length).toBe(replays);
+      await waitFor(() => expect(result.current.nodes['n-sys'].errorRecovery).toBe('unavailable'));
     } finally { vi.unstubAllGlobals(); }
   });
 
@@ -295,6 +301,43 @@ describe('the assistant workspace in the chat store', () => {
     expect(result.current.nodes['n-hydrated'].messages.slice(0, original.length)).toEqual(original);
   });
 
+  it('resumes a hydrated restart interruption with a continuation prompt, keeping the partial output', async () => {
+    const { result } = await mountWithAssistant();
+    act(() => { result.current.actions.installWorkspaceSnapshot({
+      ...SYSTEM,
+      workspace: { ...SYSTEM.workspace, id: 'sys-restarted' },
+      trees: [{ id: 'tree-restarted', root_node_id: 'n-restarted', last_active_at: 1 }],
+      nodes: [{
+        id: 'n-restarted', created_at: 1, status: 'error', last_applied_turn_id: 'cut-short',
+        last_turn_id: 'cut-short', last_turn_status: 'error', last_turn_error: 'backend_restarted', last_turn_completed_at: 600,
+      }],
+      messages: [
+        { id: 'original-user', node_id: 'n-restarted', role: 'user', content: 'perform side effect', seq: 0 },
+        { id: 'original-assistant', node_id: 'n-restarted', role: 'assistant', content: 'Half done', seq: 1,
+          tool_calls: JSON.stringify([{ id: 't1', title: 'Run command', status: 'in_progress', inputJson: '{"command":"git stash push"}' }]) },
+      ],
+    }); });
+    expect(result.current.nodes['n-restarted']).toMatchObject({ errorKind: 'backend_restarted', errorTurnId: 'cut-short' });
+    const original = result.current.nodes['n-restarted'].messages;
+    const reads = vi.mocked(api.subscribeChat).mock.calls.length;
+    // The default retry entry point (composer button, message action) resumes.
+    act(() => { result.current.store.retryLastTurn('n-restarted'); });
+    await waitFor(() => expect(mockStream).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.subscribeChat).mock.calls.length).toBe(reads);
+    const wire = mockStream.mock.calls[0][1] as string;
+    expect(wire).toContain('[INTERRUPTED TURN — context restore]');
+    expect(wire).toContain('Interrupted request:\nperform side effect');
+    expect(wire).toContain('Partial response before the interruption:\nHalf done');
+    expect(wire).toContain('- Run command [in_progress]: {"command":"git stash push"}');
+    expect(wire).toContain('The user pressed Resume');
+    // Nothing is trimmed: the interrupted turn stays, a Resume row and a new reply follow it.
+    const messages = result.current.nodes['n-restarted'].messages;
+    expect(messages.slice(0, original.length)).toEqual(original);
+    expect(messages[original.length]).toMatchObject({ role: 'user', text: 'Resume the interrupted turn' });
+    expect(messages).toHaveLength(original.length + 2);
+    expect(result.current.nodes['n-restarted'].status).toBe('streaming');
+  });
+
   it('does not guess an original identity or resend when it is unavailable', async () => {
     const { result } = await mountWithAssistant();
     act(() => { result.current.actions.dispatch({ type: 'apply-seq', nodeId: 'n-sys', turnId: 'older-success', seq: 8 }); });
@@ -316,21 +359,20 @@ describe('the assistant workspace in the chat store', () => {
     act(() => { result.current.store.sendMessage('n-sys', 'perform side effect'); });
     await waitFor(() => expect(mockStream).toHaveBeenCalledTimes(1));
     const handlers = mockStream.mock.calls[0][2] as import('../../services/api').StreamHandlers;
+    // The saved row of the original turn, under the server's assistant id.
+    vi.mocked(api.getSavedTurn).mockResolvedValueOnce({
+      turnId: 'original', assistantId: 'canonical', status: 'completed', stopReason: 'end_turn', completedAt: 100, lastSeq: 2,
+      message: { id: 'canonical', node_id: 'n-sys', role: 'assistant', content: 'Partial and complete result', seq: 1, created_at: 5 },
+    });
     act(() => {
       if (partial) handlers.onChunk?.(partial);
       handlers.onErrorPayload?.({ message: 'lost response', code: 'turn_outcome_unknown', turnId: 'original' });
       result.current.store.retryLastTurn('n-sys');
     });
-    const calls = vi.mocked(api.subscribeChat).mock.calls;
-    const [, replayHandlers, , opts] = calls[calls.length - 1];
-    act(() => {
-      opts?.onEvent?.({ event: 'turn_start', data: { turnId: 'original', nodeId: 'n-sys', assistantId: 'canonical', userText: 'perform side effect', seq: 0 } });
-      opts?.onEvent?.({ event: 'chunk', data: { turnId: 'original', text: 'Partial and complete result', seq: 1 } });
-      opts?.onEvent?.({ event: 'done', data: { turnId: 'original', stopReason: 'end_turn', persisted: true, seq: 2 } });
-      replayHandlers.onDone?.('end_turn', 'canonical', 'original', true);
-    });
+    await waitFor(() => expect(result.current.nodes['n-sys'].status).toBe('idle'));
+    expect(vi.mocked(api.getSavedTurn)).toHaveBeenLastCalledWith('n-sys', 'original', expect.any(AbortSignal));
     expect(mockStream).toHaveBeenCalledTimes(1);
-    expect(result.current.nodes['n-sys'].status).toBe('idle');
+    expect(result.current.nodes['n-sys'].error).toBeUndefined();
     const answer = result.current.nodes['n-sys'].messages.find((m) => m.id === 'canonical')!;
     expect(answer.blocks?.filter((b) => b.kind === 'answer').map((b) => b.kind === 'answer' ? b.rawText : '').join('')).toBe('Partial and complete result');
     expect(result.current.nodes['n-sys'].lastAppliedTurnId).toBe('original');

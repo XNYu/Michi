@@ -118,6 +118,8 @@ function Slot({ blocks, ctx, owner, replace, name }: { blocks: MichiPageBlock[];
     updateBlock: ctx.updateBlock ? (block, next) => ctx.updateBlock!(owner, replace(blocks.map((item) => (block.id ? item.id === block.id : item === block) ? next : item))) : undefined,
     toggleItem: ctx.updateBlock ? (block, index) => { const next = toggledChecklist(block, index); if (next) ctx.updateBlock!(owner, replace(blocks.map((item) => (block.id ? item.id === block.id : item === block) ? next : item))); } : undefined,
     requestAssistant: ctx.requestAssistant ? (_block, prompt, title, send) => ctx.requestAssistant!(owner, prompt, title, send) : undefined,
+    // The assistant targets top-level blocks only; an item inside a section has no block of its own to name.
+    askItem: undefined,
   };
   const { frame } = child;
   const adds = ctx.updateBlock && ctx.slotAddEntries && child.depth <= MAX_DEPTH && blocks.length < SLOT_MAX

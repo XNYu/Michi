@@ -1,5 +1,6 @@
 import { backendEntityId } from '../config/backendIdentity';
-import { markBackendConnectionUnavailable, markBackendConnectionReady } from '../config/backendConnectionState';
+import { backendConnectionGeneration, markBackendConnectionUnavailable, markBackendConnectionReady } from '../config/backendConnectionState';
+import { setKnownBackendConnections } from '../config/backendConnections';
 /**
  * Cold-start hydration barrier.
  *
@@ -26,6 +27,7 @@ const apiMocks = vi.hoisted(() => ({
   fetchPersistenceCapabilities: vi.fn(),
   fetchAllWorkspacesMeta: vi.fn(),
   fetchTreeMessages: vi.fn(async () => []),
+  fetchTreeMessagePage: vi.fn(async () => ({ messages: [] })),
   fetchWorkspaces: vi.fn(),
   fetchWorkspace: vi.fn(),
   applyWorkspaceCommands: vi.fn(async () => {}),
@@ -36,6 +38,7 @@ vi.mock('../services/api', () => ({
   fetchPersistenceCapabilities: apiMocks.fetchPersistenceCapabilities,
   fetchAllWorkspacesMeta: apiMocks.fetchAllWorkspacesMeta,
   fetchTreeMessages: apiMocks.fetchTreeMessages,
+  fetchTreeMessagePage: apiMocks.fetchTreeMessagePage,
   fetchWorkspaces: apiMocks.fetchWorkspaces,
   fetchWorkspace: apiMocks.fetchWorkspace,
   applyWorkspaceCommands: apiMocks.applyWorkspaceCommands,
@@ -98,6 +101,7 @@ describe('cold-start hydration barrier', () => {
     apiMocks.fetchPersistenceCapabilities.mockResolvedValue(V2_CAPABILITIES);
     apiMocks.fetchAllWorkspacesMeta.mockReset();
     apiMocks.fetchTreeMessages.mockResolvedValue([]);
+    apiMocks.fetchTreeMessagePage.mockResolvedValue({ messages: [] });
     apiMocks.fetchWorkspaces.mockResolvedValue([]);
     apiMocks.listBackendConnections.mockReset().mockResolvedValue([]);
     Object.defineProperty(window, 'requestIdleCallback', { configurable: true, value: undefined });
@@ -105,7 +109,46 @@ describe('cold-start hydration barrier', () => {
 
   afterEach(() => vi.useRealTimers());
 
-  it('loads same-ID workspaces and nodes independently and drops remote memory until reconnect succeeds', async () => {
+  it('invalidates a saved connection revision even while offline and ignores its late metadata', async () => {
+    const connection: BackendConnectionSummary = { id: 'remote-edited', name: 'Remote', transport: 'direct', apiUrl: 'https://first/api', hasToken: true, createdAt: 1, updatedAt: 1 };
+    markBackendConnectionReady(connection.id);
+    apiMocks.listBackendConnections.mockResolvedValue([connection]);
+    apiMocks.fetchAllWorkspacesMeta.mockResolvedValue([backendWorkspaceRow]);
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    const remoteId = backendEntityId(connection.id, 'ws-1');
+    const nodeId = backendEntityId(connection.id, 'n1');
+    await act(async () => result.current.setNodes(nodes => ({ ...nodes, [nodeId]: { ...nodes[nodeId],
+      composerDraft: { value: 'Old machine draft', mentions: [] }, lastAppliedBackgroundSeq: 42,
+    } })));
+    // A status-only refresh is not a saved configuration change.
+    apiMocks.listBackendConnections.mockResolvedValue([{ ...connection, tunnelStatus: 'connected' }]);
+    await act(async () => { window.dispatchEvent(new Event('michi:backend-connections-changed')); });
+    expect(result.current.nodes[nodeId].composerDraft?.value).toBe('Old machine draft');
+    const oldRead = deferred<unknown[]>();
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(() => oldRead.promise);
+    await act(async () => { markBackendConnectionUnavailable(connection.id); await vi.advanceTimersByTimeAsync(1001); });
+    const oldGeneration = backendConnectionGeneration(connection.id);
+    const newRead = deferred<unknown[]>();
+    apiMocks.fetchAllWorkspacesMeta.mockImplementation(() => newRead.promise);
+    // Credentials are deliberately not exposed in a summary; updatedAt also
+    // invalidates token-only edits on an otherwise identical target.
+    const edited = { ...connection, updatedAt: 2 };
+    apiMocks.listBackendConnections.mockResolvedValue([edited]);
+    setKnownBackendConnections([edited]);
+    await act(async () => { window.dispatchEvent(new Event('michi:backend-connections-changed')); });
+    expect(backendConnectionGeneration(connection.id)).toBe(oldGeneration + 1);
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-1']);
+    expect(result.current.nodes[nodeId]).toBeUndefined();
+    await act(async () => { newRead.resolve([{ ...backendWorkspaceRow, workspace: { ...backendWorkspaceRow.workspace, name: 'Replacement' } }]); });
+    expect(result.current.projects.find(project => project.id === remoteId)?.name).toBe('Replacement');
+    expect(result.current.nodes[nodeId].composerDraft?.value).not.toBe('Old machine draft');
+    expect(result.current.nodes[nodeId].lastAppliedBackgroundSeq).not.toBe(42);
+    await act(async () => { oldRead.resolve([backendWorkspaceRow]); });
+    expect(result.current.projects.find(project => project.id === remoteId)?.name).toBe('Replacement');
+  });
+
+  it('keeps same-ID remote history and drafts isolated through an outage and metadata recovery', async () => {
     const connection = { id: 'remote-boundary', name: 'Remote', transport: 'direct' as const, hasToken: true, createdAt: 1, updatedAt: 1 };
     markBackendConnectionReady(connection.id);
     let online = true;
@@ -119,19 +162,28 @@ describe('cold-start hydration barrier', () => {
     const remoteId = backendEntityId(connection.id, 'ws-1');
     expect(result.current.projects.map(project => project.id)).toEqual(['ws-1', remoteId]);
     expect(Object.keys(result.current.nodes)).toEqual(['n1', backendEntityId(connection.id, 'n1')]);
+    const remoteNodeId = backendEntityId(connection.id, 'n1');
+    await act(async () => result.current.setNodes(nodes => ({ ...nodes, [remoteNodeId]: {
+      ...nodes[remoteNodeId], composerDraft: { value: 'Unsent work', mentions: [] },
+      messages: [{ id: 'retained', role: 'assistant', text: 'Visible history', toolCalls: [], createdAt: 1 }],
+      lastAppliedBackgroundTurnId: 'turn-1', lastAppliedBackgroundSeq: 42,
+    } })));
     online = false;
     await act(async () => { markBackendConnectionUnavailable(connection.id); });
-    expect(result.current.projects.map(project => project.id)).toEqual(['ws-1']);
-    expect(Object.keys(result.current.nodes)).toEqual(['n1']);
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-1', remoteId]);
+    expect(result.current.nodes[remoteNodeId].messages[0].text).toBe('Visible history');
     await act(async () => { await vi.advanceTimersByTimeAsync(1001); });
-    expect(result.current.projects.map(project => project.id)).toEqual(['ws-1']);
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-1', remoteId]);
     online = true;
     await act(async () => { retryRemoteWorkspace(connection.id); await vi.advanceTimersByTimeAsync(10); });
     expect(result.current.projects.find(project => project.id === remoteId)?.name).toBe('Remote original');
     expect(result.current.projects.find(project => project.id === 'ws-1')?.name).toBe('Local copy');
+    expect(result.current.nodes[remoteNodeId].composerDraft?.value).toBe('Unsent work');
+    expect(result.current.nodes[remoteNodeId].messages[0].text).toBe('Visible history');
+    expect(result.current.nodes[remoteNodeId].lastAppliedBackgroundSeq).toBe(42);
   });
 
-  it('moves off a dropped remote workspace to a user one, never the assistant system workspace', async () => {
+  it('keeps the selected remote workspace during a temporary outage', async () => {
     const connection = { id: 'remote-sys', name: 'Remote', transport: 'direct' as const, hasToken: true, createdAt: 1, updatedAt: 1 };
     markBackendConnectionReady(connection.id);
     let online = true;
@@ -153,8 +205,8 @@ describe('cold-start hydration barrier', () => {
     expect(result.current.activeProjectId).toBe(remoteId);
     online = false;
     await act(async () => { markBackendConnectionUnavailable(connection.id); });
-    expect(result.current.projects.map(project => project.id)).toEqual(['ws-sys', 'ws-1']);
-    expect(result.current.activeProjectId).toBe('ws-1');
+    expect(result.current.projects.map(project => project.id)).toEqual(['ws-sys', 'ws-1', remoteId]);
+    expect(result.current.activeProjectId).toBe(remoteId);
   });
 
   it('lets a landing remote snapshot pick the active workspace, never the assistant system workspace', async () => {

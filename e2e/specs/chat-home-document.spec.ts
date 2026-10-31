@@ -79,7 +79,7 @@ test('Chat Home renders and edits a native Page below its working composer, surv
   await expect(body.getByRole('heading', { name: 'My weekly focus' })).toBeVisible();
   await expect(body.getByRole('checkbox', { name: 'Review the plan' })).toBeChecked();
   await openArea(page, 'settings');
-  const settings = page.locator('.terminal-settings--drawer');
+  const settings = page.locator('.terminal-settings');
   await settings.getByRole('button', { name: 'Appearance', exact: true }).click();
   const recommendations = settings.getByRole('switch', { name: 'Pages recommendations on Home' });
   await expect(recommendations).toBeChecked();

@@ -56,10 +56,10 @@ test('the assistant follows the global settings: no Assistant settings, and ⌘J
   await page.goto('/');
   await expect(page.locator('.home-page')).toBeVisible();
 
-  // Runtime (global) is where the assistant's runtime comes from; it has no section of its own.
+  // Runtime & model is where the assistant's runtime comes from; it has no page of its own.
   const settings = await openSettings(page);
   const sections = settings.getByRole('navigation', { name: 'Settings sections' });
-  await expect(sections.getByRole('button', { name: 'Runtime (global)', exact: true })).toBeVisible();
+  await expect(sections.getByRole('button', { name: 'Runtime & model', exact: true })).toBeVisible();
   await expect(sections.getByRole('button', { name: 'Assistant', exact: true })).toHaveCount(0);
   await leaveSettings(page);
 

@@ -18,6 +18,18 @@
 
 import { knownSubagentEnd, type DurableMessage, type DurableTurnSnapshot, type SubagentEnd } from 'michi-shared';
 
+// ── Restart interruption ───────────────────────────────────────────────────
+// A turn the process died under ends with this durable marker, whether the
+// shutdown path finalized it or the next boot recovered it. The replay route
+// and the hydration payload read the marker; the message is what a reader sees.
+
+/** `turns.error` and the stream error `code` of a turn a restart cut short. */
+export const BACKEND_RESTARTED_ERROR = 'backend_restarted';
+
+/** The one sentence shown for such a turn, live or after a reload. */
+export const BACKEND_RESTARTED_MESSAGE =
+  'Michi restarted while this task was running. Review the partial output above, then resume.';
+
 // ── SQL Templates ──────────────────────────────────────────────────────────
 // Named so grep turns them up: search `TURN_SQL.` or `MESSAGE_SQL.`.
 

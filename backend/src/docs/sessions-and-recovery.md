@@ -51,7 +51,7 @@ Cancellation may take time while output drains. Stop is not proof of external ro
 3. Determine whether the original turn is active, completed, cancelled or failed.
 4. Continue once its state is known; check effects before repeating an action.
 
-A stream HTTP 410 means that stream cannot be used. It does not prove provider failure or lost history. A `409` with code `turn_active` identifies a busy durable turn; Michi handles its supported retry internally. Other conflicts and ambiguous failures do not justify blind resending.
+A stream HTTP 410 means the live reply is no longer held: Michi keeps it in memory only briefly after a turn ends, and not across a backend restart. Michi then reads the turn's saved record. A turn that finished shows its saved reply with no error. A turn a restart cut short shows **Turn interrupted** with **Resume**, which asks the agent to carry on from the kept partial output instead of sending the request again; its tool calls may already have taken effect. Otherwise the error stays, and **Check original turn** reads the saved record again. A 410 does not prove provider failure or lost history. A `409` with code `turn_active` identifies a busy durable turn; Michi handles its supported retry internally. Other conflicts and ambiguous failures do not justify blind resending.
 
 If unclear, collect timestamp, runtime, visible status and a small adjacent log excerpt. Preserve the chat rather than deleting it to force a binding.
 

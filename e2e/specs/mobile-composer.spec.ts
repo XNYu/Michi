@@ -9,7 +9,7 @@ async function bootPhone(browser: Browser, baseURL: string | undefined, reduceMo
   const page = await context.newPage();
   await installMockApi(page, { streamEvents: [
     { event: 'chunk', data: { text: 'Hello from mock kiro.' } },
-    { event: 'context_usage', data: { contextUsagePercentage: 30 } },
+    { event: 'context_usage', data: { contextUsagePercentage: 62 } },
     { event: 'done', data: { stopReason: 'end_turn' } },
   ], custom: async (route) => {
     if (!new URL(route.request().url()).pathname.endsWith('/agent/status')) return false;

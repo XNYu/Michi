@@ -64,7 +64,7 @@ export function ScheduledAgentChat({ enabled, defaultWorkspaceId, children }: {
 
   // A notification or the "agent is asking" bar for this conversation opens the window.
   useEffect(() => {
-    const consume = () => { if (takeScheduleAssistantOpenRequest()) controllerRef.current.focusInput(); };
+    const consume = () => { if (takeScheduleAssistantOpenRequest()) controllerRef.current.restore(); };
     consume();
     return subscribeScheduleAssistantOpen(consume);
   }, []);

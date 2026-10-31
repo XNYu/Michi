@@ -915,9 +915,12 @@ mirror after a successful backend hydration. Preferences are also persisted
 through backend config storage.
 
 Each remote connection owns its workspace and chat data. The renderer loads
-that content from the connection, keeps it in memory while available, and
-removes it when the connection becomes unavailable. Reconnecting fetches it
-again from the remote backend. Remote content is excluded from localStorage
+that content from the connection and retains loaded history, drafts and replay
+cursors in memory through temporary outages. Reconnecting reconciles metadata
+and resumes the durable event feed. Removing or editing the saved connection
+invalidates its cached data. Remote conversations initially load the newest 50
+messages per node, with older pages available on demand; actions that need full
+history load it before assembling their context or export. Remote content is excluded from localStorage
 workspace caches and is never mirrored into the bundled Local database.
 Connection settings and small UI references can still be saved locally.
 Workspace, tree and node identities include their connection in the renderer, so

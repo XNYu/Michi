@@ -2,9 +2,10 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { MobileAccessPanel } from './MobileAccessPanel';
 import type { MobileAccessStatus } from 'michi-shared';
-const mocks = vi.hoisted(() => ({ request: vi.fn(), link: vi.fn(), open: vi.fn() }));
+const mocks = vi.hoisted(() => ({ request: vi.fn(), link: vi.fn(), open: vi.fn(), confirm: vi.fn() }));
 vi.mock('../../../../services/api/mobileAccess', () => ({ mobileAccessRequest: mocks.request, createMobileAccessLink: mocks.link }));
 vi.mock('../../../../services/openUrl', () => ({ openExternalUrl: mocks.open }));
+vi.mock('../../../ui/ConfirmDialog', () => ({ confirmDialog: mocks.confirm }));
 const off: MobileAccessStatus = { state: 'stopped', url: '', error: '', available: true };
 const connected: MobileAccessStatus = { ...off, state: 'connected', url: 'https://michi.tail123.ts.net' };
 const connections = [{ id: 'box', name: 'Remote workstation', transport: 'ssh' as const, hasToken: true, createdAt: 1, updatedAt: 1 }];
@@ -12,7 +13,7 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   return { promise: new Promise<T>(done => { resolve = done; }), resolve: (value: T) => resolve(value) };
 }
-beforeEach(() => { mocks.request.mockReset().mockResolvedValue(off); mocks.link.mockReset(); mocks.open.mockReset(); });
+beforeEach(() => { mocks.request.mockReset().mockResolvedValue(off); mocks.link.mockReset(); mocks.open.mockReset(); mocks.confirm.mockReset(); });
 afterEach(() => { vi.useRealTimers(); });
 
 it('enables the selected machine, renders a local QR and removes an expired sign-in link', async () => {
@@ -131,4 +132,26 @@ it('a machine switch discards a pending QR from the old machine', async () => {
   await act(async () => pending.resolve({ url: 'https://old.tail123.ts.net/', reusable: true, expiresAt: 1 }));
   expect(screen.queryByRole('img')).toBeNull();
   expect(screen.getByText('Off')).toBeTruthy();
+});
+
+it('asks before turning off the phone access this page was opened through, and stays on when declined', async () => {
+  const here: MobileAccessStatus = { ...connected, url: window.location.origin };
+  mocks.request.mockImplementation(async (_id, action) => action === 'stop' ? off : here);
+  mocks.confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  render(<MobileAccessPanel connections={connections} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Turn off' })); await act(async () => {});
+  expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: 'Turn off phone access?', confirmLabel: 'Turn off' }));
+  expect(mocks.request).not.toHaveBeenCalledWith('local', 'stop');
+  expect(screen.getByText('Connected')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Turn off' })); await act(async () => {});
+  expect(mocks.request).toHaveBeenCalledWith('local', 'stop');
+  expect(screen.getByText('Off')).toBeTruthy();
+});
+
+it('turns off phone access opened elsewhere without asking', async () => {
+  mocks.request.mockImplementation(async (_id, action) => action === 'stop' ? off : connected);
+  render(<MobileAccessPanel connections={connections} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Turn off' })); await act(async () => {});
+  expect(mocks.confirm).not.toHaveBeenCalled();
+  expect(mocks.request).toHaveBeenCalledWith('local', 'stop');
 });

@@ -1277,6 +1277,7 @@ function BlockAssistantBody({
   subagents,
   runtimeId,
   onSmoothingChange,
+  hidePendingIndicator,
 }: {
   m: ChatMessage;
   isDark: boolean;
@@ -1284,6 +1285,7 @@ function BlockAssistantBody({
   subagents?: readonly SubagentInfo[];
   runtimeId?: string | null;
   onSmoothingChange?: (isSmoothing: boolean) => void;
+  hidePendingIndicator?: boolean;
 }) {
   const runs = useMemo(() => splitAssistantRuns(m.blocks), [m.blocks]);
   const byId = useMemo(() => toolMap(m.toolCalls), [m.toolCalls]);
@@ -1416,7 +1418,7 @@ function BlockAssistantBody({
           />
         );
       })}
-      {m.streaming && runs.length === 0 && <ThinkingIndicator />}
+      {m.streaming && runs.length === 0 && !hidePendingIndicator && <ThinkingIndicator />}
     </>
   );
 }
@@ -1536,6 +1538,8 @@ function CollapsibleUserText({
 /**
  * Terminal error tail below a failed assistant turn. Variants keyed by
  * `errorKind` distinguish unknown outcomes from ordinary execution failures:
+ *   - restart interruption: one line and one action, Resume, which carries the
+ *     turn on from its kept partial output. Typing a message works as well.
  *   - unknown outcome: check the existing turn; an explicit rerun preserves output.
  *   - connection: the backend already auto-retried once and still failed →
  *     friendly banner + Retry + Test Connection (force-respawn probe).
@@ -1590,11 +1594,15 @@ function ErrorTail({
 
   const isConnection = errorKind === 'connection';
   const isAuth = errorKind === 'auth';
-  const inspectOriginal = turnErrorAction(errorKind) === 'inspect-existing-turn';
+  const action = turnErrorAction(errorKind);
+  const inspectOriginal = action === 'inspect-existing-turn';
+  const resumable = action === 'resume-turn';
   const checking = errorRecovery === 'checking';
 
   // Headline scaled to the class. Connection: we already retried once, so say so.
-  const headline = inspectOriginal
+  const headline = resumable
+    ? 'Turn interrupted'
+    : inspectOriginal
     ? errorKind === 'turn_persistence_failed' ? 'Result could not be saved' : 'Original result is not confirmed'
     : isConnection
     ? 'Cannot reach Kiro · auto-retry failed'
@@ -1626,7 +1634,7 @@ function ErrorTail({
             onMouseEnter={onHoverIn}
             onMouseLeave={onHoverOut}
           >
-            {inspectOriginal ? checking ? 'Checking original turn…' : 'Check original turn' : '↻ retry'}
+            {resumable ? '▶ Resume' : inspectOriginal ? checking ? 'Checking original turn…' : 'Check original turn' : '↻ retry'}
           </button>
         )}
         {inspectOriginal && onRunAgain && (
@@ -1649,6 +1657,11 @@ function ErrorTail({
           </button>
         )}
       </div>
+      {resumable && (
+        <div role="status" style={{ marginTop: 6, maxWidth: 720, color: 'var(--term-muted)', font: 'var(--fs-sm) var(--ui-font)', lineHeight: 1.45 }}>
+          Michi restarted while this task was running. The output above is kept and its tool calls may already have taken effect. Resume carries on from here; typing a new message works too.
+        </div>
+      )}
       {inspectOriginal && (
         <div role="status" style={{ marginTop: 6, maxWidth: 720, color: 'var(--term-muted)', font: 'var(--fs-sm) var(--ui-font)', lineHeight: 1.45 }}>
           {checking
@@ -1676,7 +1689,7 @@ function ErrorTail({
           Kiro is still unreachable{testDetail ? `: ${testDetail}` : '. Check your network or re-authenticate, then retry.'}
         </div>
       )}
-      {errorMessage && testState !== 'ok' && (
+      {errorMessage && !resumable && testState !== 'ok' && (
         <div
           style={{
             marginTop: 6,
@@ -1752,6 +1765,9 @@ interface MessageBlockProps {
    *  UI when the node is still streaming after hydration (m.streaming is
    *  false but the turn has not finished). */
   hideActions?: boolean;
+  /** Hide the in-bubble pending dots because the pane's activity row already
+   *  shows a labelled status (e.g. "Restoring original Claude session"). */
+  hidePendingIndicator?: boolean;
   /** Frames the message, with this mark above it; the hover actions stay
    *  below the frame. Pass a stable element: it takes part in memoization. */
   highlight?: React.ReactNode;
@@ -1795,6 +1811,7 @@ function MessageBlockInner({
   onEditSave,
   onEditCancel,
   hideActions,
+  hidePendingIndicator,
   highlight,
 }: MessageBlockProps) {
   const [hover, setHover] = useState(false);
@@ -1996,7 +2013,7 @@ function MessageBlockInner({
           {!hasAssistantBlocks(m) && showThoughts && m.thought && (
             <TermThoughtBlock text={m.thought} streaming={m.streaming} runtimeId={runtimeId} />
           )}
-          {m.streaming && !hasAssistantBlocks(m) && !m.text && !m.thought && m.toolCalls.length === 0 && (
+          {m.streaming && !hidePendingIndicator && !hasAssistantBlocks(m) && !m.text && !m.thought && m.toolCalls.length === 0 && (
             <ThinkingIndicator />
           )}
           {hasAssistantBlocks(m) ? (
@@ -2007,6 +2024,7 @@ function MessageBlockInner({
               subagents={subagents}
               runtimeId={runtimeId}
               onSmoothingChange={onVisibleSmoothingChange}
+              hidePendingIndicator={hidePendingIndicator}
             />
           ) : (
             <LegacyAssistantBody
@@ -2148,6 +2166,7 @@ const MessageBlock = React.memo(MessageBlockInner, (prev, next) =>
   prev.contextNames === next.contextNames &&
   prev.onMentionClick === next.onMentionClick &&
   prev.onVisibleSmoothingChange === next.onVisibleSmoothingChange &&
+  !!prev.hidePendingIndicator === !!next.hidePendingIndicator &&
   prev.highlight === next.highlight,
 );
 

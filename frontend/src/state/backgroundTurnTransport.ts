@@ -2,6 +2,7 @@ import { subscribeBackground } from '../services/api';
 import type { BackgroundDisconnect } from '../services/api';
 import type { StreamHandlers } from '../services/chatStreamEvents';
 import type { ScheduledJobRunEvent, ScheduledJobsChangedEvent } from 'michi-shared';
+import { BACKEND_CONNECTION_READY } from '../config/backendConnectionState';
 
 /**
  * One reconnecting SSE feed per ChatProvider. Unlike the retired pane
@@ -35,6 +36,7 @@ export function createBackgroundTurnTransport(opts: {
 
   const connect = () => {
     if (stopped) return;
+    timer = null;
     cancel = subscribeBackground(opts.handlersForChat, {
       cursors: opts.cursorSnapshot?.() ?? {},
       onReplayGap: opts.onReplayGap,
@@ -58,12 +60,26 @@ export function createBackgroundTurnTransport(opts: {
     }, opts.connectionId);
   };
 
+  const wake = (event: Event) => {
+    if (stopped) return;
+    if (event.type === BACKEND_CONNECTION_READY
+      && (event as CustomEvent<{ connectionId: string }>).detail?.connectionId !== opts.connectionId) return;
+    if (cancel) return; // A live subscription owns its cursor; do not overlap it.
+    if (timer) clearTimeout(timer);
+    timer = null;
+    connect();
+  };
+
   return {
     start() {
       // Focused ChatProvider tests intentionally mock only foreground APIs.
       // Treat an omitted background transport mock as disabled rather than
       // coupling unrelated reducer tests to this connection lifecycle.
       if (typeof subscribeBackground !== 'function') return;
+      if (typeof window !== 'undefined') {
+        window.addEventListener('online', wake);
+        window.addEventListener(BACKEND_CONNECTION_READY, wake);
+      }
       if (!stopped && !cancel && !timer) connect();
     },
     stop() {
@@ -74,6 +90,10 @@ export function createBackgroundTurnTransport(opts: {
       healthyTimer = null;
       cancel?.();
       cancel = null;
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', wake);
+        window.removeEventListener(BACKEND_CONNECTION_READY, wake);
+      }
     },
   };
 }

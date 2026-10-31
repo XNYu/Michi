@@ -85,6 +85,7 @@ describe('remote connection data isolation', () => {
   });
 
   it('marks a broken stream unavailable but preserves intentional observer cancellation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')));
     const brokenStream = () => new Response(new ReadableStream({ pull() { throw new TypeError('socket closed'); } }));
     await expect(backendStreamResponse(brokenStream(), connectionId).text()).rejects.toThrow('socket closed');
     expect(backendConnectionUnavailable(connectionId)).toBe(true);
@@ -93,6 +94,84 @@ describe('remote connection data isolation', () => {
     controller.abort();
     await expect(backendStreamResponse(brokenStream(), connectionId, backendConnectionGeneration(connectionId), controller.signal).text()).rejects.toThrow();
     expect(backendConnectionUnavailable(connectionId)).toBe(false);
+  });
+
+  it('keeps loaded remote data valid after an isolated failed write and never replays it', async () => {
+    const generation = backendConnectionGeneration(connectionId);
+    const fetch = vi.fn(async (url: string) => url.endsWith('/health')
+      ? Response.json({ service: 'michi-backend', status: 'healthy' })
+      : Response.json({ error: 'socket closed' }, { status: 502 }));
+    vi.stubGlobal('fetch', fetch);
+    const response = await backendFetch(`${base}/workspaces/ws/commands`, { method: 'POST', body: '{}' });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: 'socket closed' });
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([`${base}/workspaces/ws/commands`, `${base}/health`]);
+    expect(backendConnectionUnavailable(connectionId)).toBe(false);
+    expect(backendConnectionGeneration(connectionId)).toBe(generation);
+  });
+
+  it('shares an outage check across failed requests and blocks writes when health also fails', async () => {
+    let resolve!: (response: Response) => void;
+    const fetch = vi.fn(async (url: string) => url.endsWith('/health')
+      ? new Promise<Response>(done => { resolve = done; })
+      : Response.json({ error: 'connection failed' }, { status: 502 }));
+    vi.stubGlobal('fetch', fetch);
+    const first = backendFetch(`${base}/workspaces/ws`);
+    const second = backendFetch(`${base}/agent/status`);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/health'))).toHaveLength(1);
+    resolve(Response.json({ error: 'offline' }, { status: 502 }));
+    await Promise.all([first, second]);
+    expect(backendConnectionUnavailable(connectionId)).toBe(true);
+    await expect(backendFetch(`${base}/workspaces/ws/commands`, { method: 'POST', body: '{}' })).rejects.toThrow('unavailable');
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not invalidate a recovered generation after an old health check fails', async () => {
+    let resolve!: (response: Response) => void;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('/health')
+      ? new Promise<Response>(done => { resolve = done; })
+      : Response.json({}, { status: 502 })));
+    const request = backendFetch(`${base}/agent/status`);
+    await vi.waitFor(() => expect(resolve).toBeDefined());
+    markBackendConnectionUnavailable(connectionId);
+    markBackendConnectionReady(connectionId);
+    resolve(Response.json({}, { status: 503 }));
+    await request;
+    expect(backendConnectionUnavailable(connectionId)).toBe(false);
+  });
+
+  it('ignores a late failed request from an older connection generation', async () => {
+    let resolve!: (response: Response) => void;
+    const fetch = vi.fn(() => new Promise<Response>(done => { resolve = done; }));
+    vi.stubGlobal('fetch', fetch);
+    const request = backendFetch(`${base}/agent/status`);
+    markBackendConnectionUnavailable(connectionId);
+    markBackendConnectionReady(connectionId);
+    resolve(Response.json({}, { status: 502 }));
+    await request;
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(backendConnectionUnavailable(connectionId)).toBe(false);
+  });
+
+  it('preserves a healthy remote when an SSE body fails and exposes the original stream error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ service: 'michi-backend', status: 'healthy' })));
+    const broken = new Response(new ReadableStream({ pull() { throw new TypeError('stream reset'); } }));
+    await expect(backendStreamResponse(broken, connectionId).text()).rejects.toThrow('stream reset');
+    expect(backendConnectionUnavailable(connectionId)).toBe(false);
+  });
+
+  it('does not start recovery for an aborted request or treat an arbitrary HTTP 200 as healthy', async () => {
+    const controller = new AbortController(); controller.abort();
+    const fetch = vi.fn().mockRejectedValue(new TypeError('request aborted'));
+    vi.stubGlobal('fetch', fetch);
+    await expect(backendFetch(`${base}/agent/status`, { signal: controller.signal })).rejects.toThrow('request aborted');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(backendConnectionUnavailable(connectionId)).toBe(false);
+    fetch.mockImplementation(async () => Response.json({ ok: true }));
+    fetch.mockRejectedValueOnce(new TypeError('socket closed'));
+    await expect(backendFetch(`${base}/agent/status`)).rejects.toThrow('socket closed');
+    expect(backendConnectionUnavailable(connectionId)).toBe(true);
   });
 
   it('scopes trees, trim restoration and per-window draft references alongside workspace and node identities', () => {

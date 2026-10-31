@@ -74,6 +74,7 @@ function DigestPromptListener() {
 
 function ExportPanelManager() {
   const { activeProject, projects, selection } = useChatStore();
+  const { ensureCompleteHistory } = useChatActions();
   const nodesSnapshot = useChatNodesSnapshot();
   const [exportState, setExportState] = useState<ExportPanelState>({ kind: 'idle' });
   const [open, setOpen] = useState(false);
@@ -81,13 +82,14 @@ function ExportPanelManager() {
   const projectsRef = React.useRef(projects);
   const nodesRef = React.useRef(nodesSnapshot);
   const selectionRef = React.useRef(selection);
+  const exportRequestRef = React.useRef(0);
 
   activeProjectRef.current = activeProject;
   projectsRef.current = projects;
   nodesRef.current = nodesSnapshot;
   selectionRef.current = selection;
 
-  const close = React.useCallback(() => setOpen(false), []);
+  const close = React.useCallback(() => { exportRequestRef.current += 1; setOpen(false); }, []);
 
   const save = React.useCallback(() => {
     if (exportState.kind !== 'done') return;
@@ -95,8 +97,10 @@ function ExportPanelManager() {
   }, [exportState]);
 
   useEffect(() => {
-    const onExport = (event: Event) => {
+    const onExport = async (event: Event) => {
+      const request = ++exportRequestRef.current;
       setOpen(true);
+      setExportState({ kind: 'idle' });
 
       const detail = (event as CustomEvent<ExportEventDetail | undefined>).detail;
       const projectId =
@@ -153,9 +157,12 @@ function ExportPanelManager() {
       const exportTitle = exportTitleForThread(project, nodesRef.current, detail?.treeId);
 
       try {
+        setExportState({ kind: 'loading', projectName: project.name, exportTitle });
+        const completeNodes = await ensureCompleteHistory(selectedIds ?? project.chatIds);
+        if (request !== exportRequestRef.current) return;
         const { markdown, suggestedFilename } = selectedIds && selectedIds.length > 0
-          ? runSelectionTranscript(project, rootId, nodesRef.current, selectedIds)
-          : runTranscript(project, rootId, nodesRef.current);
+          ? runSelectionTranscript(project, rootId, completeNodes, selectedIds)
+          : runTranscript(project, rootId, completeNodes);
         setExportState({
           kind: 'done',
           projectName: project.name,
@@ -164,6 +171,7 @@ function ExportPanelManager() {
           suggestedFilename,
         });
       } catch (err) {
+        if (request !== exportRequestRef.current) return;
         setExportState({
           kind: 'error',
           projectName: project.name,
@@ -174,8 +182,11 @@ function ExportPanelManager() {
     };
 
     window.addEventListener('michi:toggle-export-panel', onExport);
-    return () => window.removeEventListener('michi:toggle-export-panel', onExport);
-  }, []);
+    return () => {
+      exportRequestRef.current += 1;
+      window.removeEventListener('michi:toggle-export-panel', onExport);
+    };
+  }, [ensureCompleteHistory]);
 
   return (
     <React.Suspense fallback={null}>

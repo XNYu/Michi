@@ -28,7 +28,7 @@ Native means Michi connects to a runtime facility. Michi-managed means the appli
 
 ## Shared Michi features
 
-Workspace history, panes, branches, Artifacts, source references, search, digests, ordinary queues and durable turn replay belong to Michi. They do not imply identical native runtime state or filesystem isolation. A native subagent roster, a Michi conversation branch and an Agent Run are different objects.
+Workspace history, panes, branches, Artifacts, source references, search, digests, ordinary queues and durable turn recovery belong to Michi. They do not imply identical native runtime state or filesystem isolation. A native subagent roster, a Michi conversation branch and an Agent Run are different objects.
 
 Tool availability also depends on configuration and capability allowlists. A selected template may omit tools. Trust cannot expose a missing tool; native provider authentication is independent of Michi permission mode.
 

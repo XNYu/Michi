@@ -19,13 +19,12 @@ import type { NormalizedEvent } from "../services/chatEvents";
 import { chatStreamErrorCode, createChatStreamError, toChatStreamEvent, withStreamErrorCode } from "../routes/chatStreamEvents";
 import { decodeMichiHostEvent } from "./hostEvents";
 import { beginTurn, checkpointTurn, finalizeTurn, getNode } from "../services/dbRepository";
+import { BACKEND_RESTARTED_ERROR, BACKEND_RESTARTED_MESSAGE } from "../services/turnPersistence.recipes";
 import { getDb } from "../services/db";
 import { extractBranchOverview } from "../services/messageSerialization";
 import { log as appLog } from "../services/logger";
 import { ACPError } from "michi-runtime/internal/adapters/kiro/acpClient";
 import { CANCEL_TIMEOUT_MS } from "../config/constants";
-import type { HarnessJournal } from "../services/harnessJournal";
-import { createSqliteHarnessJournal } from "../services/harnessJournal";
 import { dbWorker, isDbWorkerReady } from "../services/dbWorkerClient";
 import { RuntimeRecoveryRequiredError } from './runtimeLifecycle';
 import { buildPageManifest } from '../services/pages/pageManifest';
@@ -354,7 +353,6 @@ export class ChatHub {
   private readonly persistence: TurnPersistence;
   private readonly checkpointIntervalMs: number;
   private readonly workspaceIdForNode: (nodeId: string) => string | null;
-  private readonly journal: HarnessJournal | null;
   private readonly lookupDurableTurn: (turnId: string) => DurableTurnIdentity | null;
   private readonly titleGenerator: SidecarTitleGenerator | null;
   private readonly nodeTitle: (nodeId: string) => string | null;
@@ -365,7 +363,6 @@ export class ChatHub {
     persistence?: TurnPersistence;
     checkpointIntervalMs?: number;
     workspaceIdForNode?: (nodeId: string) => string | null;
-    journal?: HarnessJournal | null;
     lookupDurableTurn?: (turnId: string) => DurableTurnIdentity | null;
     /** `null` disables sidecar title generation (tests, agent-run-only hubs). */
     titleGenerator?: SidecarTitleGenerator | null;
@@ -385,9 +382,6 @@ export class ChatHub {
       ? (opts.persistence ? null : runtimeSidecarTitleGenerator)
       : opts.titleGenerator;
     this.nodeTitle = opts.nodeTitle ?? ((nodeId) => getNode(nodeId)?.title ?? null);
-    this.journal = opts.journal === undefined
-      ? (opts.persistence ? null : createSqliteHarnessJournal())
-      : opts.journal;
     this.lookupDurableTurn = opts.lookupDurableTurn ?? ((turnId) => {
       const row = getDb().prepare(`SELECT turn_id, node_id, assistant_message_id, status
         FROM turns WHERE turn_id = ?`).get(turnId) as {
@@ -1423,30 +1417,6 @@ export class ChatHub {
     };
   }
 
-  private journalStamped(log: TurnLog, stamped: { seq: number; ev: ChatStreamEvent }): void {
-    if (!this.journal) return;
-    try {
-      this.journal.append({
-        nodeId: log.nodeId,
-        turnId: log.turnId,
-        seq: stamped.seq,
-        event: stamped.ev.event,
-        source: stamped.ev.data.source,
-        confidence: stamped.ev.data.confidence,
-        nativeMethod: stamped.ev.data.nativeMethod,
-        payload: JSON.stringify(stamped.ev.data),
-        createdAt: stamped.ev.data.observedAt ?? 0,
-      });
-    } catch (err) {
-      appLog.warn("chat", "harness journal write failed; snapshot projection continues", {
-        turnId: log.turnId,
-        nodeId: log.nodeId,
-        event: stamped.ev.event,
-        errorClass: err instanceof Error ? err.name : "Error",
-      });
-    }
-  }
-
   private append(
     chatId: string,
     log: TurnLog,
@@ -1456,7 +1426,6 @@ export class ChatHub {
     const stamped = this.stamp(log, ev);
     log.snapshot = applyTurnEvent(log.snapshot, stamped.ev);
     log.events.push(stamped);
-    this.journalStamped(log, stamped);
     this.trackPendingInteraction(log, stamped.ev);
     this.broadcast(chatId, log, stamped.ev);
     if (checkpoint) this.maybeCheckpoint(log, stamped.ev);
@@ -1597,7 +1566,6 @@ export class ChatHub {
     }
     log.snapshot = terminalSnapshot;
     log.events.push(stamped);
-    this.journalStamped(log, stamped);
     this.trackPendingInteraction(log, stamped.ev);
     log.status = "ended";
     logInfo('turn finalized', log, {
@@ -1639,9 +1607,9 @@ export class ChatHub {
     const reportedKind = err instanceof ReportedRuntimeError && err.code !== undefined && RUNTIME_ERROR_KINDS.has(err.code)
       ? err.code
       : undefined;
-    const code = interruptedByShutdown ? 'backend_restarted' : chatStreamErrorCode(err) ?? acpErrorKind ?? reportedKind;
+    const code = interruptedByShutdown ? BACKEND_RESTARTED_ERROR : chatStreamErrorCode(err) ?? acpErrorKind ?? reportedKind;
     if (interruptedByShutdown) {
-      message = 'Michi restarted while this task was running. Check the conversation before retrying.';
+      message = BACKEND_RESTARTED_MESSAGE;
     }
     try {
       this.emitCancelSettled(chatId, log);
@@ -1652,11 +1620,10 @@ export class ChatHub {
       const terminalSnapshot = applyTurnEvent(log.snapshot, stamped.ev);
       // Keep the durable restart marker used by startup recovery and replay;
       // the live event above carries the human-readable explanation.
-      if (interruptedByShutdown) terminalSnapshot.error = 'backend_restarted';
+      if (interruptedByShutdown) terminalSnapshot.error = BACKEND_RESTARTED_ERROR;
       await this.persistence.finalize(terminalSnapshot);
       log.snapshot = terminalSnapshot;
       log.events.push(stamped);
-      this.journalStamped(log, stamped);
       this.trackPendingInteraction(log, stamped.ev);
       log.status = "error";
       this.broadcast(chatId, log, stamped.ev);

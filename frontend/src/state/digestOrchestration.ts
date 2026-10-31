@@ -12,6 +12,7 @@ interface UseDigestOrchestrationArgs {
   setNodes: Dispatch<SetStateAction<Record<string, ChatNodeState>>>;
   sameTree: (a: string, b: string) => boolean;
   newNodeId: (projectId?: string) => string;
+  ensureCompleteHistory?: (nodeIds: readonly string[]) => Promise<Record<string, ChatNodeState>>;
 }
 
 export function useDigestOrchestration({
@@ -22,6 +23,7 @@ export function useDigestOrchestration({
   setNodes,
   sameTree,
   newNodeId,
+  ensureCompleteHistory,
 }: UseDigestOrchestrationArgs) {
   const digestAbortRef = useRef<Record<string, AbortController>>({});
 
@@ -39,6 +41,10 @@ export function useDigestOrchestration({
       try {
         const { streamDigest } = await import('../services/digestApi');
         const { buildDigestPayload } = await import('../lib/digestPayload');
+        if (sources.some(id => nodesRef.current[id]?.messagesLoaded === false)) {
+          if (!ensureCompleteHistory) throw new Error('Conversation history is not loaded');
+          await ensureCompleteHistory(sources);
+        }
         if (ctl.signal.aborted) return;
         // Capture content and its freshness watermark together. A source may
         // continue streaming while the digest is generated.
@@ -92,7 +98,7 @@ export function useDigestOrchestration({
         }
       }
     },
-    [dispatch, nodesRef, projects],
+    [dispatch, nodesRef, projects, ensureCompleteHistory],
   );
 
   const createDigest = useCallback(

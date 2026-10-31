@@ -2,11 +2,18 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import qrcode from 'qrcode-generator';
 import type { MobileAccessLink, MobileAccessStatus } from 'michi-shared';
 import { Button } from '../../../ui/controls';
+import { confirmDialog } from '../../../ui/ConfirmDialog';
 import { createMobileAccessLink, mobileAccessRequest, type MobileAccessAction } from '../../../../services/api/mobileAccess';
 import { openExternalUrl } from '../../../../services/openUrl';
-import type { BackendConnectionSummary } from '../../../../config/backendConnections';
+import { LOCAL_BACKEND_CONNECTION_ID, type BackendConnectionSummary } from '../../../../config/backendConnections';
 import { SettingsRow, SettingsSection } from './SettingsSection';
 import './mobileAccess.css';
+
+/** True when this page itself was opened through the phone access address. */
+function servedThrough(url: string | undefined): boolean {
+  if (!url) return false;
+  try { return new URL(url).origin === window.location.origin; } catch { return false; }
+}
 
 export function MobileAccessPanel({ connections }: { connections: BackendConnectionSummary[] }) {
   const machineId = useId();
@@ -65,6 +72,13 @@ export function MobileAccessPanel({ connections }: { connections: BackendConnect
     return code;
   }, [activeLink]);
   const act = async (action: MobileAccessAction) => {
+    if (acting.current) return;
+    // Turning it off from a device connected through it ends that device's session.
+    if (action === 'stop' && machine === LOCAL_BACKEND_CONNECTION_ID && servedThrough(status?.url) && !(await confirmDialog({
+      title: 'Turn off phone access?',
+      message: 'This page is open through phone access, so turning it off ends this session. Turn it on again from Michi on this machine.',
+      confirmLabel: 'Turn off',
+    }))) return;
     if (acting.current) return;
     const revision = generation.current;
     ++mutation.current; acting.current = true;

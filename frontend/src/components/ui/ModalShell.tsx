@@ -1,6 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useOverlayFocus } from './useOverlayFocus';
+import './ModalShell.css';
 
 /**
  * Shared centered modal shell. Every dialog (New Workspace, Move Thread, Create
@@ -37,6 +38,9 @@ export interface ModalShellProps {
   anchor?: 'center' | 'top';
   /** Click-scrim / Escape dismiss. Default true. */
   dismissible?: boolean;
+  /** 'window' for a modal that hosts menus and popovers of its own (Settings):
+   *  it sits below them instead of above. Default 'modal'. */
+  layer?: 'modal' | 'window';
   /** Extra header content on the trailing side (e.g. a subtitle chip). */
   headerTrailing?: React.ReactNode;
   'aria-label'?: string;
@@ -56,6 +60,7 @@ export function ModalShell({
   captureEscape = false,
   anchor = 'center',
   dismissible = true,
+  layer = 'modal',
   headerTrailing,
   children,
   ...rest
@@ -104,6 +109,7 @@ export function ModalShell({
           frost through to the page exactly like the drawer does. */}
       <div
         className="ui-scrim ui-scrim--modal"
+        data-layer={layer === 'window' ? 'window' : undefined}
         onMouseDown={dismissible ? onClose : undefined}
       />
       {/* Transparent, un-animated centering layer (no bg/opacity/transform, so it
@@ -111,6 +117,7 @@ export function ModalShell({
       <div
         className="ui-modal-positioner"
         data-anchor={anchor}
+        data-layer={layer === 'window' ? 'window' : undefined}
         onMouseDown={dismissible ? onClose : undefined}
       >
         <div

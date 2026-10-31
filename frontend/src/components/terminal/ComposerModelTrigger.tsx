@@ -4,7 +4,7 @@ import { usePhoneLayout } from '../../hooks/usePhoneLayout';
 import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentStatus } from '../../services/api';
 import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
 import { ChevronRightIcon } from './icons';
-import { REASONING_LABELS, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
+import { COMPOSER_ICON_STROKE, REASONING_LABELS, composerIconSize, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
 import './ComposerModelPicker.css';
 import { resolveComposerReasoning } from './composerReasoning';
 import { composerModelLabel } from './composerModelLabel';
@@ -55,7 +55,7 @@ export function ComposerModelTrigger({ toolbarTier, agentStatus, resolvedBinding
         if (!modelMenuOpen) event.currentTarget.click();
       }}>
       {phone ? <>
-        <Cpu size={16} strokeWidth={1.6} aria-hidden="true" />
+        <Cpu size={composerIconSize(true)} strokeWidth={COMPOSER_ICON_STROKE} absoluteStrokeWidth aria-hidden="true" />
         {effortLabel && <span className="composer-model-trigger-effort" aria-hidden="true">{EFFORT_INITIALS[effort.value ?? ''] ?? effortLabel.charAt(0)}</span>}
       </> : <>
         <span className="t-chip-label">{hasModel ? modelLabel : runtimeLabel}</span>

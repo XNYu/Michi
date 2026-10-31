@@ -69,6 +69,7 @@ function draftInput(draft: ConnectionDraft) {
   };
 }
 
+/** Machines this Michi can create workspaces on, and phone access to one of them. */
 export function ConnectionsPane({ projects, onOpenWorkspace }: { projects: Project[]; onOpenWorkspace?: (projectId: string) => void }) {
   const [connections, setConnections] = useState<BackendConnectionSummary[]>([]);
   const [draft, setDraft] = useState<ConnectionDraft | null>(null);

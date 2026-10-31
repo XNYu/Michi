@@ -64,8 +64,6 @@
     "exports\tbackend/src/services/dbRepository.ts\tloadWorkspaceMeta",
     "exports\tbackend/src/services/dbRepository.ts\tsetWorkspaceBackend",
     "exports\tbackend/src/services/dbRepository.ts\tupdateNodeBranchOverview",
-    "exports\tbackend/src/services/harnessJournal.ts\tMemoryHarnessJournal",
-    "exports\tbackend/src/services/harnessJournal.ts\tlistHarnessEvents",
     "exports\tbackend/src/services/jsonConfigStore.ts\twriteJsonConfig",
     "exports\tbackend/src/services/mcpServer.ts\tbuildMcpServerForSlot",
     "exports\tbackend/src/services/mcpServer.ts\tvalidateCodexStopHookForSlot",

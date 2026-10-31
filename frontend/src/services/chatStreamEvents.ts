@@ -13,6 +13,7 @@ import {
   type UserInputRequestPayload,
 } from 'michi-shared';
 import { recordBackendObservation } from './backendClock';
+import type { SavedTurn } from './api/stream';
 
 export { CHAT_STREAM_EVENTS, parseChatStreamEvent };
 export type {
@@ -78,6 +79,10 @@ export interface StreamHandlers {
   onAborted?: () => void;
   /** Local post-cancel observation, independent of the aborted output stream. */
   onCancelRecovery?: (status: CancelRecoveryStatus) => void;
+  /** Foreground only: the turn's live replay is gone (410) and this is its
+   * saved receipt. Return true after finishing the turn from it; false keeps
+   * the replay error. */
+  onSavedTurn?: (saved: SavedTurn) => boolean;
   onError?: (msg: string, assistantId?: string, turnId?: string, code?: string) => void;
 }
 

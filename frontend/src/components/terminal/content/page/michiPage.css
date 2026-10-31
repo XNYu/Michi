@@ -518,6 +518,31 @@ a.michi-doc-link-card:hover { background: var(--term-alt); }
 .michi-doc-checklist { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: var(--fs-lg); }
 .michi-doc-checklist li { display: flex; align-items: center; gap: 10px; padding: 5px 4px; border-radius: var(--ui-radius); }
 .michi-doc-checklist li[data-done='true'] { color: var(--term-muted); text-decoration: line-through; }
+.michi-doc-checklist__text { flex: 1; min-width: 0; }
+/* Ask about one item: shown on the row's hover or focus; touch screens have no hover, so it stays visible there, faint. */
+.michi-doc-checklist__ask {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius);
+  background: transparent;
+  color: var(--term-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+.michi-doc-checklist li:hover > .michi-doc-checklist__ask,
+.michi-doc-checklist li:focus-within > .michi-doc-checklist__ask { opacity: 1; }
+.michi-doc-checklist__ask:hover { color: var(--term-accent); background: var(--term-alt); }
+.michi-doc-checklist__ask:focus-visible { opacity: 1; outline: 1px solid var(--term-accent); outline-offset: 1px; }
+@media (hover: none) {
+  .michi-doc-checklist__ask { opacity: 0.6; width: 32px; height: 32px; margin: -8px -4px -8px 0; }
+}
 .michi-doc-check {
   display: inline-flex;
   flex-shrink: 0;

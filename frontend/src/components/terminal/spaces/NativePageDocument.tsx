@@ -33,8 +33,11 @@ export interface NativePageDocumentProps {
   onOpenPage(pageId: string): void;
   onOpenSource?(source: BlockSource): void | boolean | Promise<void | boolean>;
   onAsk?(block: PageBlock, question: string): void;
-  /** Set: Ask hands the block to the assistant window instead of asking for a question. */
-  onAskAssistant?(block: PageBlock): void;
+  /**
+   * Set: Ask hands the block to the assistant window instead of asking for a
+   * question, and each checklist item offers its own Ask (`item` is then set).
+   */
+  onAskAssistant?(block: PageBlock, item?: { index: number; text: string }): void;
   /** A plain click on a block toggles its selection. */
   selectOnClick?: boolean;
   renderDatabaseRef(block: Extract<PageBlock, { type: 'database-ref' }>, compact?: boolean, readOnly?: boolean): React.ReactNode;
@@ -249,9 +252,14 @@ function NativePageDocumentContent({
     loadImages: true,
     ...(onOpenConversation ? { openConversation: onOpenConversation } : {}),
     ...(readOnly ? {} : { updateBlock, toggleItem }),
+    ...(onAskAssistant && !readOnly ? { askItem: (display: MichiPageBlock, index: number) => {
+      const native = nativeById.get(display.id ?? '');
+      const item = native?.type === 'checklist' ? native.items[index] : undefined;
+      if (native && item) onAskAssistant(native, { index, text: item.text });
+    } } : {}),
     ...(readOnly || !slotAddEntries ? {} : { slotAddEntries }),
     ...(onStartConversation && !readOnly ? { startConversation: (text: string) => onStartConversation(text, page.workspaceId) } : {}),
-  }), [compact, onOpenConversation, onOpenPage, onStartConversation, page, readOnly, renderDatabaseRef, renderThreads, renderTaskView, slotAddEntries, toggleItem, updateBlock, nativeById, targeting]);
+  }), [compact, onAskAssistant, onOpenConversation, onOpenPage, onStartConversation, page, readOnly, renderDatabaseRef, renderThreads, renderTaskView, slotAddEntries, toggleItem, updateBlock, nativeById, targeting]);
 
   const renderBlock = useCallback((displayBlock: MichiPageBlock, blockCtx: MichiBlockCtx) => {
     const native = displayBlock.id ? nativeById.get(displayBlock.id) : undefined;

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { requireAdmin } from './middleware/admin';
+import { isAdminRequest, requireAdmin } from './middleware/admin';
 import { recordAudit } from '../services/audit';
 
 const execFileAsync = promisify(execFile);
@@ -33,7 +33,10 @@ async function pickUpstream(): Promise<{ remote: string; branch: string } | null
 export function setupVersionRoutes(): Router {
   const router = Router();
 
-  router.get('/version', async (_req, res) => {
+  router.get('/version', async (req, res) => {
+    // POST /version/update is admin-only; the client hides Update & Restart
+    // when this caller's request would be refused.
+    const updateAllowed = isAdminRequest(req);
     try {
       const localHash = await git('rev-parse', '--short', 'HEAD');
       const localDate = await git('log', '-1', '--format=%ci');
@@ -76,7 +79,7 @@ export function setupVersionRoutes(): Router {
         // offline or no remote — skip
       }
 
-      res.json({ localHash, localDate, remoteHash, remoteName, updateAvailable });
+      res.json({ localHash, localDate, remoteHash, remoteName, updateAvailable, updateAllowed });
     } catch {
       res.status(500).json({ error: 'Not a git repository' });
     }

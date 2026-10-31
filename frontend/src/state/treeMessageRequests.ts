@@ -1,4 +1,4 @@
-import { fetchTreeMessages } from '../services/api';
+import { fetchTreeMessages, fetchTreeMessagePage, type TreeMessagePage } from '../services/api';
 import type { ChatNodeState, Project } from './chatTypes';
 import { findTreeIdForNode } from './tree';
 
@@ -8,7 +8,7 @@ export const TREE_PREFETCH_TTL_MS = 15_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 
 interface TreeRequest {
-  promise: Promise<unknown[]>;
+  promise: Promise<TreeMessagePage>;
   nodes: Map<string, ChatNodeState>;
   controller: AbortController;
   expiresAt: number;
@@ -28,7 +28,7 @@ export function sameTreeMessageNode(before: ChatNodeState | undefined, after: Ch
 function unloadedNodes(project: Project, treeId: string, nodes: Record<string, ChatNodeState>) {
   return new Map(project.chatIds.flatMap((id) => {
     const node = nodes[id];
-    return node && node.messagesLoaded === false && !node.deletedAt
+    return node && node.messagesLoaded === false && !node.historyBefore && !node.deletedAt
       && !(node.status === 'streaming' && node.messages.length > 0)
       && findTreeIdForNode(id, project) === treeId ? [[id, node] as const] : [];
   }));
@@ -76,13 +76,15 @@ export class TreeMessageRequests {
     const controller = new AbortController();
     const entry: TreeRequest = {
       controller, nodes: snapshot, expiresAt: Date.now() + TREE_PREFETCH_TTL_MS,
-      pending: true, foreground, promise: Promise.resolve([]),
+      pending: true, foreground, promise: Promise.resolve({ messages: [] }),
     };
     if (!foreground) entry.timeout = setTimeout(() => this.drop(key, entry), REQUEST_TIMEOUT_MS);
     this.entries.set(key, entry);
     entry.promise = (async () => {
       try {
-        const rows = await fetchTreeMessages(project.id, treeId, project.backendConnectionId, controller.signal);
+        const rows = project.backendConnectionId && project.backendConnectionId !== 'local'
+          ? await fetchTreeMessagePage(project.id, treeId, project.backendConnectionId, controller.signal)
+          : { messages: await fetchTreeMessages(project.id, treeId, project.backendConnectionId, controller.signal) };
         if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
         return rows;
       } catch (error) {

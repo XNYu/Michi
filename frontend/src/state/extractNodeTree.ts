@@ -59,7 +59,7 @@ export function useExtractNodeTree({
         const messages = buildMessagesByNode(result.messages)[nodeId] ?? [];
         const current = nodesRef.current[nodeId];
         const next = { ...nodesRef.current, [nodeId]: {
-          ...current, parentNodeId: undefined, messages, messagesLoaded: true,
+          ...current, parentNodeId: undefined, messages, messagesLoaded: true, historyBefore: undefined,
           messageCount: messages.length, chatId: null, sessionState: undefined,
           resumeFingerprint: null,
           forkedFromNodeId: result.forkedFromNodeId ?? undefined,

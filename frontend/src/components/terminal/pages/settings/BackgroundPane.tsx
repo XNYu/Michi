@@ -6,10 +6,13 @@ import { useBackgroundService } from '../../scheduled/useBackgroundService';
 import { Switch } from '../../../ui/controls';
 import { Radio } from './controls';
 import { SettingsRow, SettingsSection } from './SettingsSection';
+import { useSettingsPhone } from './settingsPhone';
 
 /** Settings → Background: the always-on backend that keeps scheduled jobs running. */
 export function BackgroundPane({ onOpenScheduled }: { onOpenScheduled?: () => void }) {
   const service = useBackgroundService();
+  // The background service belongs to the desktop app; a phone only links to the jobs.
+  const phone = useSettingsPhone();
   const status = service.status;
   const enabled = !!status?.enabled;
 
@@ -45,7 +48,10 @@ export function BackgroundPane({ onOpenScheduled }: { onOpenScheduled?: () => vo
   return (
     <SettingsSection title="Background">
       <ScheduledJobDefaults />
-      <SettingsRow label="Keep Michi running in the background" description={description} control={control}>
+      {phone && !service.available ? onOpenScheduled && (
+        <SettingsRow label="Manage scheduled jobs"
+          control={<button type="button" className="settings-row__link" onClick={onOpenScheduled}>Open</button>} />
+      ) : <SettingsRow label="Keep Michi running in the background" description={description} control={control}>
         {service.error && <p role="alert" className="settings-row__note">{service.error}</p>}
         <p className="settings-row__note">
           Your Mac still pauses Michi while it sleeps. A job that was due during sleep runs once when the Mac wakes.
@@ -56,7 +62,7 @@ export function BackgroundPane({ onOpenScheduled }: { onOpenScheduled?: () => vo
             </>
           )}
         </p>
-      </SettingsRow>
+      </SettingsRow>}
     </SettingsSection>
   );
 }

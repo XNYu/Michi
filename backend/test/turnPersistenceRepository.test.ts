@@ -10,6 +10,10 @@ import {
   beginTurn,
   checkpointTurn,
   finalizeTurn,
+  getSavedTurn,
+  loadAllWorkspacesMeta,
+  loadFullWorkspace,
+  loadWorkspaceMeta,
   recoverInterruptedTurns,
   listMessages,
   saveNode,
@@ -238,12 +242,59 @@ describe('turn persistence repository', () => {
 
     assert.equal(recoverInterruptedTurns(600), 1);
     assert.equal(recoverInterruptedTurns(700), 0);
-    const turn = getDb().prepare('SELECT status, error, completed_at FROM turns WHERE turn_id = ?')
+    const turn = getDb().prepare('SELECT status, error, completed_at, last_seq FROM turns WHERE turn_id = ?')
       .get('turn-interrupted') as Record<string, unknown>;
-    assert.deepEqual({ status: turn.status, error: turn.error, completed_at: turn.completed_at }, {
-      status: 'error', error: 'backend_restarted', completed_at: 600,
+    // last_seq stays at the checkpoint: no stream frame of the turn outlives the restart.
+    assert.deepEqual({ status: turn.status, error: turn.error, completed_at: turn.completed_at, last_seq: turn.last_seq }, {
+      status: 'error', error: 'backend_restarted', completed_at: 600, last_seq: 1,
     });
     assert.equal(listMessages('node-1').find((message) => message.id === 'a-interrupted')?.content, 'checkpointed partial');
     assert.equal(getDb().prepare('SELECT status FROM nodes WHERE id = ?').get('node-1')?.status, 'error');
+
+    // The saved-turn read reports it unfinished, with the checkpointed partial output.
+    const saved = getSavedTurn('node-1', 'turn-interrupted')!;
+    assert.deepEqual({ status: saved.turn.status, error: saved.turn.error }, { status: 'error', error: 'backend_restarted' });
+    assert.equal(saved.message?.content, 'checkpointed partial');
+
+    // Hydration payloads carry the receipt so a reload can classify the error.
+    for (const nodes of [loadFullWorkspace('ws-1')!.nodes, loadWorkspaceMeta('ws-1')!.nodes, loadAllWorkspacesMeta()[0].nodes]) {
+      assert.deepEqual(
+        (({ last_turn_id, last_turn_status, last_turn_error, last_turn_completed_at }) =>
+          ({ last_turn_id, last_turn_status, last_turn_error, last_turn_completed_at }))(nodes.find((node) => node.id === 'node-1')!),
+        { last_turn_id: 'turn-interrupted', last_turn_status: 'error', last_turn_error: 'backend_restarted', last_turn_completed_at: 600 },
+      );
+    }
+  });
+
+  test('a turn the shutdown path already finalized keeps its receipt at the next boot', () => {
+    let snapshot = createDurableTurn({
+      turnId: 'turn-finalized', assistantId: 'a-finalized', nodeId: 'node-1', workspaceId: 'ws-1',
+      displayUserText: 'hello', startedAt: 500,
+    });
+    beginTurn(snapshot);
+    snapshot = applyTurnEvent(snapshot, event('error', { seq: 1, message: 'boom', code: 'backend_restarted' }));
+    snapshot = { ...snapshot, error: 'backend_restarted' };
+    finalizeTurn(snapshot);
+    const receipt = () => getDb().prepare('SELECT status, error, last_seq, completed_at, updated_at FROM turns WHERE turn_id = ?')
+      .get('turn-finalized') as Record<string, unknown>;
+    const before = { ...receipt() };
+    assert.equal(recoverInterruptedTurns(600), 0, 'finalized turns are not active');
+    assert.deepEqual({ ...receipt() }, before);
+    assert.deepEqual({ status: before.status, error: before.error }, { status: 'error', error: 'backend_restarted' });
+    // Hydration classifies it exactly like a turn the next boot recovered.
+    const node = loadFullWorkspace('ws-1')!.nodes.find((candidate) => candidate.id === 'node-1')!;
+    assert.deepEqual({ id: node.last_turn_id, status: node.last_turn_status, error: node.last_turn_error }, {
+      id: 'turn-finalized', status: 'error', error: 'backend_restarted',
+    });
+  });
+
+  test('hydration payloads leave idle nodes and nodes without a receipt alone', () => {
+    const idle = loadFullWorkspace('ws-1')!.nodes.find((node) => node.id === 'node-1')!;
+    assert.equal(idle.status, 'idle');
+    assert.equal('last_turn_id' in idle, false);
+    getDb().prepare("UPDATE nodes SET status = 'error' WHERE id = 'node-1'").run();
+    const orphan = loadFullWorkspace('ws-1')!.nodes.find((node) => node.id === 'node-1')!;
+    assert.equal(orphan.status, 'error');
+    assert.equal('last_turn_id' in orphan, false, 'no turn row means no receipt to trust');
   });
 });

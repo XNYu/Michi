@@ -37,7 +37,7 @@ test('links and agent requests follow the saved Browser preference', async ({ pa
   await clickLink('https://example.com/internal');
   await expect(page.getByRole('textbox', { name: 'Browser address' })).toHaveValue('https://example.com/internal');
   await expect.poll(() => page.evaluate(() => (window as any).externalUrls)).toEqual([]);
-  const settings = await openSettings(page, 'General');
+  const settings = await openSettings(page, 'Links');
   await expect(settings.getByRole('combobox', { name: 'Open links in' })).toHaveValue('internal');
   await settings.getByRole('combobox', { name: 'Open links in' }).selectOption('external');
   await leaveSettings(page);

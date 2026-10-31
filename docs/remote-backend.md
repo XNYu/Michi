@@ -310,9 +310,12 @@ from the sign-in notice.
 Browsers and older desktop builds show a selectable/copyable command and a
 reconnect button. The desired agent runtime must still be installed and signed in.
 
-If a request through a saved SSH connection fails because the remote service is
-unavailable, the local gateway checks the installation over SSH and starts its
-existing build when needed. Concurrent requests share one recovery attempt,
+If a request through a saved SSH connection fails, the local gateway first
+checks the existing connection. A healthy forward stays open; transport failures
+are handled by its SSH supervisor. When service recovery is needed, the gateway
+checks the installation over SSH and starts its existing build. A rejected saved
+credential requires sign-in or connection correction, not repeated tunnel
+restarts. Concurrent requests share one recovery attempt,
 with a 45-second timeout and a 30-second automatic retry cooldown. Recovery
 reuses the saved data directory, port and token; it does not download source,
 install dependencies, upgrade, or silently adopt changed credentials. A missing
@@ -374,10 +377,17 @@ These settings are gateway environment variables, not renderer inputs.
 6. Create a workspace, select the remote backend, and enter an absolute path
    that exists on the remote server.
 
-The bundled local Backend starts an `ssh -N -T -L` process on demand. Arguments
+The bundled local Backend starts an `ssh -N -T -C -L` process on demand. Arguments
 are passed directly without a shell. Michi relies on `~/.ssh/config`, known
 hosts, and ssh-agent; it never stores an SSH password or private key. Concurrent
-requests reuse one tunnel. If SSH exits, the next request starts it again.
+requests reuse one compressed, persistent tunnel. A supervisor checks end-to-end
+transport reachability every 15 seconds, and after desktop wake. Three failed
+probes replace an unresponsive forward; process exit also triggers recovery
+without waiting for another renderer request. Retries use exponential backoff
+with a six-attempt budget. Only a successful end-to-end probe resets that budget.
+HTTP authentication or service errors do not by themselves tear down a working
+SSH transport. The child owns its forwarding socket without sharing a user SSH
+ControlMaster, while still using the user's SSH routing and identities.
 
 Closing Michi stops the local SSH process. It does not stop the remote Backend
 or cancel remote turns. Reopening Michi recreates the tunnel on the next remote
@@ -416,6 +426,22 @@ proxy, which adds the token server-side.
   workspace, use agent shell tools and chat artifacts to work with server files.
 
 ### Background workspace recovery
+
+A temporary outage keeps already-loaded conversations, unsent drafts and replay
+cursors in memory. After metadata becomes available, the event feed resumes
+from those cursors; a replay gap uses an authoritative server snapshot. A single
+failed request is confirmed with a bounded health check before the connection
+is marked unavailable. Saved connection edits invalidate the old cache and
+pending responses, including token-only edits. A renderer reload still needs
+the remote to answer: remote conversation bodies are not stored in localStorage
+or copied into the Local database.
+
+Remote trees initially fetch the newest 50 messages per node. **Load older
+messages** reads the preceding page and keeps the reader's position. Sending,
+retrying, editing, digest generation and export fetch any required missing
+history before using it as full context. Older servers that do not support
+pagination continue to return complete history. Deploy the updated remote
+backend as well as the desktop client to get the smaller initial payload.
 
 If a saved remote machine cannot load its workspaces at startup, or a newly
 connected machine cannot import its workspaces, a persistent notice identifies

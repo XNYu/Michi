@@ -4,8 +4,9 @@ import { isRemoteCredentialWarning, REMOTE_CREDENTIALS, remoteCredentialCheckPyt
 import type { RemoteDiagnosticLog } from './remoteDiagnostics';
 import {
   getBackendConnection, listBackendConnections, normalizeBackendConnection,
-  probeBackendConnection, saveBackendConnection, type BackendConnectionSummary,
+  probeBackendConnection, saveBackendConnection, type BackendConnectionRecord, type BackendConnectionSummary,
 } from './backendConnections';
+import { HOST_DIRECTORIES_PATH, validHostDirectoryRequest, type HostDirectory } from './hostDirectories';
 import { SSH_CONNECT_TIMEOUT_SECONDS, sshTunnelManager, type SshTunnelManager } from './sshTunnelManager';
 import type { MichiBuildInfo, RemoteUpdateStatus } from 'michi-shared';
 import { compareRemoteBuild, runningBuild, type BuildInfo } from './buildInfo';
@@ -451,7 +452,7 @@ export class RemoteDesktopSetup {
     return updated;
   }
 
-  async recover(connectionId: string, signal?: AbortSignal, diagnostics?: RemoteDiagnosticLog): Promise<void> {
+  async recover(connectionId: string, signal?: AbortSignal, diagnostics?: RemoteDiagnosticLog, checkExistingTunnel = false): Promise<void> {
     const connection = getBackendConnection(connectionId);
     if (!connection || connection.transport !== 'ssh' || !connection.sshHost) {
       throw new RemoteDesktopError('missing_connection', 'Select a saved SSH connection before recovering Michi.');
@@ -460,6 +461,35 @@ export class RemoteDesktopSetup {
     const run = this.deps.runSsh ?? runRemoteSsh;
     const tunnels = this.deps.tunnelManager ?? sshTunnelManager;
     diagnostics?.protect(connection.token);
+    const probeExisting = async (): Promise<{ apiUrl: string; ok: boolean; reachable: boolean; httpStatus?: number } | undefined> => {
+      signal?.throwIfAborted();
+      if (tunnels.status(connectionId).phase !== 'connected') return;
+      diagnostics?.stage('verify', 'Checking the existing remote connection…');
+      let apiUrl: string;
+      try { apiUrl = await tunnels.apiUrl(connection); }
+      catch { signal?.throwIfAborted(); return; }
+      const probe = await probeBackendConnection({ apiUrl, token: connection.token, signal,
+        timeoutMs: 5_000, onDiagnostic: message => diagnostics?.append('existing connection', message) });
+      signal?.throwIfAborted();
+      return { apiUrl, ok: probe.ok, reachable: probe.ok || probe.reachable === true,
+        httpStatus: probe.ok ? 200 : probe.httpStatus };
+    };
+    // One failed HTTP request is not evidence that the SSH transport or remote
+    // service died. Automatic recovery first checks the tunnel already in use.
+    // Explicit recovery still inspects remote runtime credentials below.
+    if (checkExistingTunnel) {
+      const existing = await probeExisting();
+      if (existing?.ok) return;
+      if (existing?.httpStatus === 401 || existing?.httpStatus === 403) {
+        throw new RemoteDesktopError('connection_credentials', 'The remote rejected this connection’s saved credential. Reconnect to verify its identity.');
+      }
+      // Transport recovery is owned by the bounded SSH supervisor. Do not run
+      // a second SSH inspection/service restart for every failed HTTP request.
+      if (!existing?.reachable && tunnels.isSupervising(connectionId)) {
+        tunnels.checkNow(connectionId);
+        throw new RemoteDesktopError('tunnel_reconnecting', 'Reconnecting to remote Michi…');
+      }
+    }
     diagnostics?.stage('ssh', 'Checking the saved remote Michi installation…');
     let info = readRemoteJson<RemoteInfo>(await run(target,
       `set -e\nexport PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:$PATH"\n${inspectRemoteScript({ port: connection.remotePort, token: connection.token })}`, signal, undefined, diagnostics));
@@ -479,14 +509,20 @@ export class RemoteDesktopSetup {
       throw new RemoteDesktopError('start', 'The saved remote Michi service did not become healthy. Check its remote-recovery.log and remote.log.');
     }
     if (signal?.aborted) throw new RemoteDesktopError('cancelled', 'Recovery cancelled.');
-    tunnels.stop(connectionId);
-    diagnostics?.stage('tunnel', 'Opening SSH forwarding…');
-    const apiUrl = await tunnels.apiUrl(connection, (source, message) => diagnostics?.append(source, message));
-    signal?.throwIfAborted();
-    diagnostics?.stage('verify', 'Verifying the recovered SSH connection…');
-    const probe = await probeBackendConnection({ apiUrl, token: connection.token, onDiagnostic: message => diagnostics?.append('health probe', message) });
-    signal?.throwIfAborted();
-    if (!probe.ok) throw new RemoteDesktopError('verify', probe.error);
+    // Inspection/startup may have taken seconds. Keep any tunnel that recovered
+    // meanwhile, including its active chat subscribers and in-flight reads.
+    const existing = await probeExisting();
+    if (!existing?.ok) {
+      if (existing && !existing.reachable) tunnels.stop(connectionId, existing.apiUrl);
+      else if (!existing && !tunnels.isSupervising(connectionId)) tunnels.stop(connectionId);
+      diagnostics?.stage('tunnel', 'Opening SSH forwarding…');
+      const apiUrl = await tunnels.apiUrl(connection, (source, message) => diagnostics?.append(source, message));
+      signal?.throwIfAborted();
+      diagnostics?.stage('verify', 'Verifying the recovered SSH connection…');
+      const probe = await probeBackendConnection({ apiUrl, token: connection.token, signal, onDiagnostic: message => diagnostics?.append('health probe', message) });
+      signal?.throwIfAborted();
+      if (!probe.ok) throw new RemoteDesktopError('verify', probe.error);
+    }
     if (info.runtimeWarnings?.some(warning => isRemoteCredentialWarning(warning))) {
       throw new RemoteDesktopError('remote_credentials', `${REMOTE_CREDENTIALS.name} credentials on the remote machine have expired. Refresh sign-in before chatting.`);
     }
@@ -628,7 +664,9 @@ if shutil.which('journalctl'):
   async browse(connectionId: string, requestedPath = '~', signal?: AbortSignal): Promise<RemoteDirectory> {
     const connection = getBackendConnection(connectionId);
     if (!connection || connection.transport !== 'ssh' || !connection.sshHost) throw new RemoteDesktopError('connection', 'Select an SSH remote machine first.');
-    if (requestedPath.length > 4096 || /[\r\n\0]/.test(requestedPath)) throw new RemoteDesktopError('path', 'Invalid folder path.');
+    if (!validHostDirectoryRequest(requestedPath)) throw new RemoteDesktopError('path', 'Invalid folder path.');
+    const listed = await this.browseThroughTunnel(connection, requestedPath, signal);
+    if (listed) return listed;
     const source = `
 import pathlib, os, json
 requested = json.loads(${JSON.stringify(JSON.stringify(requestedPath))})
@@ -651,6 +689,46 @@ print('MICHI_SETUP_JSON:' + json.dumps(dict(path=str(folder), parent=str(folder.
     return readRemoteJson<RemoteDirectory>(await (this.deps.runSsh ?? runRemoteSsh)(
       { sshHost: connection.sshHost, sshUser: connection.sshUser, sshPort: connection.sshPort }, pythonScript(source), signal));
   }
+
+  /**
+   * Lists the folder through the remote Michi's HTTP API over the saved
+   * connection's tunnel, which stays open between clicks. Returns null when
+   * that path cannot answer (an older remote without the route, a stopped
+   * service, a tunnel failure or a timeout), so browse() falls back to a
+   * one-off SSH listing. A folder the remote reports as unreadable is final.
+   */
+  private async browseThroughTunnel(connection: BackendConnectionRecord, requestedPath: string, signal?: AbortSignal): Promise<RemoteDirectory | null> {
+    if (!connection.token) return null;
+    try {
+      const apiUrl = await (this.deps.tunnelManager ?? sshTunnelManager).apiUrl(connection);
+      signal?.throwIfAborted();
+      const response = await fetch(`${apiUrl}${HOST_DIRECTORIES_PATH}?path=${encodeURIComponent(requestedPath)}`, {
+        headers: { Authorization: `Bearer ${connection.token}` },
+        redirect: 'manual',
+        signal: AbortSignal.any([AbortSignal.timeout(TUNNEL_BROWSE_TIMEOUT_MS), ...(signal ? [signal] : [])]),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (response.status === 400 && (body as { code?: unknown } | null)?.code === 'path') {
+        throw new RemoteDesktopError('path', 'The remote folder does not exist or cannot be read.');
+      }
+      return response.ok && isRemoteDirectory(body) ? body : null;
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof RemoteDesktopError) throw error;
+      return null;
+    }
+  }
 }
 
-export interface RemoteDirectory { path: string; parent: string | null; entries: { name: string; path: string }[] }
+// A healthy tunnel answers in milliseconds. A hung one falls back to SSH.
+const TUNNEL_BROWSE_TIMEOUT_MS = 5000;
+
+export type RemoteDirectory = HostDirectory;
+
+function isRemoteDirectory(value: unknown): value is RemoteDirectory {
+  const directory = value as Partial<RemoteDirectory> | null;
+  return typeof directory?.path === 'string'
+    && (directory.parent === null || typeof directory.parent === 'string')
+    && Array.isArray(directory.entries)
+    && directory.entries.every(entry => typeof entry?.name === 'string' && typeof entry?.path === 'string');
+}

@@ -366,16 +366,18 @@ export interface ChatNodeState {
   messages: ChatMessage[];
   /**
    * Lazy-load marker (in-memory only, NEVER persisted or sent in any write-back
-   * command payload). `false`/`undefined` = placeholder: this node's `messages`
-   * are NOT the authoritative set — the bodies live in the DB and have not been
-   * fetched yet (the tree hasn't been opened). `true` = bodies are loaded and
-   * `messages` is authoritative.
+   * command payload). `false` = incomplete: either a placeholder or a recent
+   * page with `historyBefore`. `true` = the full history is loaded. Undefined
+   * is used by legacy/newly-created nodes and is treated as already loaded.
    *
    * The distinction between "placeholder" (messagesLoaded:false, messages:[])
    * and "genuinely empty" (messagesLoaded:true, messages:[]) is what keeps a
    * placeholder node from ever being treated as if it truly has no messages.
    */
   messagesLoaded?: boolean;
+  /** Older server-authored history still exists before this keyset cursor.
+   * A partial display page keeps messagesLoaded=false; never use it as full context. */
+  historyBefore?: { seq: number; id: string };
   /**
    * Message count from the meta hydration payload, shown by Map/Digest/Branches
    * while bodies are unloaded. In-memory only; never persisted / written back.
@@ -810,8 +812,8 @@ export type ChatAction =
   | {
       /**
        * Lazy-load: install fetched message bodies for the nodes of one tree.
-       * `messagesByNode` maps nodeId → its full ordered message list. Every
-       * listed node flips to `messagesLoaded: true`. Nodes not in the map are
+       * `messagesByNode` maps nodeId → its ordered messages. Optional page
+       * metadata marks incomplete history. Nodes not in the map are
        * untouched. This action MUST NOT dirty the node for write-back — the
        * bodies just came FROM the backend and re-sending them is a no-op the
        * write-back layer isn't even capable of (messages are backend-authored).
@@ -819,7 +821,10 @@ export type ChatAction =
       type: 'messages-loaded';
       nodeIds: string[];
       messagesByNode: Record<string, ChatMessage[]>;
+      pages?: Array<{ nodeId: string; total: number; before: { seq: number; id: string } | null }>;
     }
+  | { type: 'history-page-loaded'; nodeId: string; expectedBefore: { seq: number; id: string };
+      before: { seq: number; id: string } | null; messages: ChatMessage[]; total: number }
   | { type: 'retry-trim'; nodeId: string; fromIndex?: number }
   | { type: 'heartbeat'; nodeId: string; idleMs: number }
   | { type: 'set-minimized'; nodeId: string; minimized: boolean }
@@ -1013,6 +1018,8 @@ export interface ChatContextValue {
   retryLastTurn: (nodeId: string, fromIndex?: number, binding?: SendBindingMeta) => void;
   /** Explicitly execute again; an uncertain original attempt keeps its existing output and anchors. */
   rerunLastTurn: (nodeId: string, fromIndex?: number, binding?: SendBindingMeta) => void;
+  /** Carry on a turn a restart cut short with a continuation prompt; the original request is not re-sent. */
+  resumeLastTurn: (nodeId: string, binding?: SendBindingMeta) => void;
   /** Trim from a given user message index and resend with new (edited) text. */
   editAndResend: (nodeId: string, fromIndex: number, newText: string) => void;
   createChildChat: (
@@ -1348,6 +1355,7 @@ export type ChatActionsValue = Pick<
   | 'sendMessage'
   | 'retryLastTurn'
   | 'rerunLastTurn'
+  | 'resumeLastTurn'
   | 'editAndResend'
   | 'createChildChat'
   | 'createBlankChild'

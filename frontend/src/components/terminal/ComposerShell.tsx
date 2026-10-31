@@ -361,7 +361,7 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
             // At rest its kept controls join the input row.
             display: collapsed ? 'contents' : 'flex',
             alignItems: 'center',
-            gap: 6,
+            gap: 4,
             minHeight: 34,
             // Deliberately NOT overflow:hidden — chip hover tooltips would clip.
             // Each chip owns its own ellipsis, action buttons are flex-shrink:0.

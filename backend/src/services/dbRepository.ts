@@ -12,6 +12,7 @@ import {
   type DurableTurnSnapshot,
 } from 'michi-shared';
 import {
+  BACKEND_RESTARTED_ERROR,
   MESSAGE_SQL,
 } from './turnPersistence.recipes';
 
@@ -247,10 +248,26 @@ export interface ContextRow {
   rev?: number | null;
 }
 
+/**
+ * The receipt of a node's latest turn, attached to hydration payloads for nodes
+ * whose row says `error`. The frontend reads the classification from here
+ * instead of guessing it from the node row: `turns.error` is written only by
+ * finalization or startup recovery, never by a client snapshot, while
+ * `nodes.last_applied_turn_id` is a replay watermark a client may sync back.
+ * Read-only: `saveNode` never accepts these fields, and backup import rebuilds
+ * node rows from an explicit column list.
+ */
+interface NodeTurnSummary {
+  last_turn_id?: string | null;
+  last_turn_status?: string | null;
+  last_turn_error?: string | null;
+  last_turn_completed_at?: number | null;
+}
+
 export interface FullWorkspaceData {
   workspace: WorkspaceRow;
   trees: TreeRow[];
-  nodes: NodeRow[];
+  nodes: Array<NodeRow & NodeTurnSummary>;
   edges: EdgeRow[];
   messages: MessageRow[];
   contexts: ContextRow[];
@@ -391,10 +408,6 @@ export function deleteWorkspace(id: string, userId?: string): void {
       .run(now, id);
     db.prepare('UPDATE nodes SET purged_at = ? WHERE workspace_id = ? AND purged_at IS NULL')
       .run(now, id);
-    // harness_events has no FK to nodes; drop it before the trees cascade removes node rows.
-    db.prepare(
-      'DELETE FROM harness_events WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ?)',
-    ).run(id);
     db.prepare(
       'DELETE FROM messages WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ?)',
     ).run(id);
@@ -415,10 +428,6 @@ export function deleteWorkspace(id: string, userId?: string): void {
 export function runTombstoneGc(): { workspaces: number; nodes: number } {
   const cutoff = Date.now() - TOMBSTONE_TTL_MS;
   const db = getDb();
-  // Tombstones from before purges cleared harness_events may still own rows.
-  db.prepare(
-    'DELETE FROM harness_events WHERE node_id IN (SELECT id FROM nodes WHERE purged_at IS NOT NULL AND purged_at < ?)',
-  ).run(cutoff);
   const nodes = db.prepare(
     'DELETE FROM nodes WHERE purged_at IS NOT NULL AND purged_at < ?',
   ).run(cutoff).changes as number;
@@ -477,19 +486,13 @@ export function saveTree(tree: TreeRow, userId?: string): void {
 }
 
 export function deleteTree(id: string, userId?: string): void {
-  // nodes.tree_id cascades, so the Tree's nodes go too; harness_events has no FK.
+  // nodes.tree_id cascades, so the Tree's nodes go too.
   if (process.env.MICHI_CLOUD === '1' && userId !== undefined) {
-    getDb().prepare(
-      `DELETE FROM harness_events WHERE node_id IN (SELECT n.id FROM nodes n
-         JOIN trees t ON t.id = n.tree_id JOIN workspaces w ON w.id = t.workspace_id
-        WHERE t.id = ? AND w.owner_user_id = ?)`
-    ).run(id, userId);
     getDb().prepare(
       'DELETE FROM trees WHERE id = ? AND EXISTS (SELECT 1 FROM workspaces WHERE id = (SELECT workspace_id FROM trees WHERE id = ?) AND owner_user_id = ?)'
     ).run(id, id, userId);
     return;
   }
-  getDb().prepare('DELETE FROM harness_events WHERE node_id IN (SELECT id FROM nodes WHERE tree_id = ?)').run(id);
   getDb().prepare('DELETE FROM trees WHERE id = ?').run(id);
 }
 
@@ -798,10 +801,6 @@ export function emptyWorkspaceTrash(workspaceId: string): number {
     // deleted because a tombstoned node can never come back, so its messages /
     // edges have nowhere to attach.
     db.prepare(
-      `DELETE FROM harness_events
-       WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND purged_at IS NOT NULL)`,
-    ).run(workspaceId);
-    db.prepare(
       `DELETE FROM messages
        WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND purged_at IS NOT NULL)`,
     ).run(workspaceId);
@@ -839,11 +838,6 @@ export function purgeWorkspaceNodes(workspaceId: string, nodeIds: readonly strin
       `UPDATE nodes SET purged_at = ?
        WHERE workspace_id = ? AND id IN (${placeholders}) AND purged_at IS NULL`,
     ).run(now, workspaceId, ...nodeIds);
-    db.prepare(
-      `DELETE FROM harness_events
-       WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND purged_at IS NOT NULL
-                           AND id IN (${placeholders}))`,
-    ).run(workspaceId, ...nodeIds);
     db.prepare(
       `DELETE FROM messages
        WHERE node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND purged_at IS NOT NULL
@@ -1528,7 +1522,32 @@ export function finalizeTurn(snapshot: DurableTurnSnapshot): TurnRow {
   return coreFinalizeTurn(mainThreadDb, snapshot) as unknown as TurnRow;
 }
 
-/** Mark checkpointed turns left active by a previous process as interrupted. */
+/** One turn receipt of this node and its stored assistant row, owner-scoped
+ *  like listMessages. Read when the turn's live replay is gone. */
+export function getSavedTurn(
+  nodeId: string,
+  turnId: string,
+  userId?: string,
+): { turn: TurnRow; message: MessageRow | null } | null {
+  const turn = (process.env.MICHI_CLOUD === '1' && userId !== undefined
+    ? prepareCached(`SELECT t.* FROM turns t JOIN nodes n ON t.node_id = n.id JOIN workspaces w ON n.workspace_id = w.id
+        WHERE t.node_id = ? AND t.turn_id = ? AND w.owner_user_id = ?`).get(nodeId, turnId, userId)
+    : prepareCached('SELECT * FROM turns WHERE node_id = ? AND turn_id = ?').get(nodeId, turnId)) as TurnRow | undefined;
+  if (!turn) return null;
+  const message = prepareCached('SELECT * FROM messages WHERE id = ? AND node_id = ?')
+    .get(turn.assistant_message_id, nodeId) as MessageRow | undefined;
+  return { turn, message: message ?? null };
+}
+
+/**
+ * Mark checkpointed turns left active by a previous process as interrupted.
+ *
+ * The receipt gets the same restart marker `chatHub.persistError` writes when
+ * the shutdown path finalizes before the database closes. `last_seq` stays at
+ * the last checkpoint: after a restart no stream frame of the turn exists to
+ * name, and readers of an error receipt (the hydration summary, the saved-turn
+ * read) do not use it.
+ */
 export function recoverInterruptedTurns(now = Date.now(), preserveTurnIds: ReadonlySet<string> = new Set()): number {
   return runInTransaction(() => {
     const active = prepareCached("SELECT turn_id, node_id FROM turns WHERE status = 'active'")
@@ -1536,16 +1555,50 @@ export function recoverInterruptedTurns(now = Date.now(), preserveTurnIds: Reado
     const interrupted = active.filter((turn) => !preserveTurnIds.has(turn.turn_id));
     if (interrupted.length === 0) return 0;
     const updateTurn = prepareCached(`UPDATE turns
-      SET status = 'error', error = 'backend_restarted', completed_at = ?, updated_at = ?
+      SET status = 'error', error = ?, completed_at = ?, updated_at = ?
       WHERE turn_id = ? AND status = 'active'`);
     const updateNode = prepareCached(`
       UPDATE nodes SET status = 'error' WHERE id = ? AND status = 'streaming'
     `);
     for (const turn of interrupted) {
-      updateTurn.run(now, now, turn.turn_id);
+      updateTurn.run(BACKEND_RESTARTED_ERROR, now, now, turn.turn_id);
       updateNode.run(turn.node_id);
     }
     return interrupted.length;
+  });
+}
+
+/**
+ * Attach each error node's latest turn receipt (see NodeTurnSummary). Other
+ * nodes are returned as they are; the lookup is one query per call.
+ */
+function withLastTurnSummaries<T extends NodeRow>(nodes: T[]): Array<T & NodeTurnSummary> {
+  const errorNodeIds = nodes.filter((node) => node.status === 'error').map((node) => node.id);
+  if (errorNodeIds.length === 0) return nodes;
+  const latest = new Map<string, NodeTurnSummary>();
+  const CHUNK = 900;
+  for (let i = 0; i < errorNodeIds.length; i += CHUNK) {
+    const chunk = errorNodeIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = getDb().prepare(
+      `SELECT node_id, turn_id, status, error, completed_at FROM turns
+       WHERE node_id IN (${placeholders}) ORDER BY started_at DESC, updated_at DESC`,
+    ).all(...chunk) as unknown as Array<{
+      node_id: string; turn_id: string; status: string; error: string | null; completed_at: number | null;
+    }>;
+    for (const row of rows) {
+      if (latest.has(row.node_id)) continue;
+      latest.set(row.node_id, {
+        last_turn_id: row.turn_id,
+        last_turn_status: row.status,
+        last_turn_error: row.error,
+        last_turn_completed_at: row.completed_at,
+      });
+    }
+  }
+  return nodes.map((node) => {
+    const summary = latest.get(node.id);
+    return summary ? { ...node, ...summary } : node;
   });
 }
 
@@ -1657,7 +1710,7 @@ export function loadFullWorkspace(id: string, userId?: string): FullWorkspaceDat
     ).all(...nodeIds) as unknown as MessageRow[];
   }
   const contexts = listContexts(id, userId);
-  return { workspace, trees, nodes, edges, messages, contexts };
+  return { workspace, trees, nodes: withLastTurnSummaries(nodes), edges, messages, contexts };
 }
 
 export function loadAllWorkspaces(userId?: string): FullWorkspaceData[] {
@@ -1674,7 +1727,7 @@ export function loadAllWorkspaces(userId?: string): FullWorkspaceData[] {
  * `messages` is intentionally always `[]` here so the shape stays assignable to
  * FullWorkspaceData — the count rides on each NodeRow as `message_count`.
  */
-export interface NodeRowWithCount extends NodeRow {
+export interface NodeRowWithCount extends NodeRow, NodeTurnSummary {
   message_count: number;
 }
 export interface MetaWorkspaceData extends Omit<FullWorkspaceData, 'nodes' | 'messages'> {
@@ -1701,7 +1754,7 @@ export function loadWorkspaceMeta(id: string, userId?: string): MetaWorkspaceDat
     for (const r of rows) countByNode.set(r.node_id, r.cnt);
   }
 
-  const nodesWithCount: NodeRowWithCount[] = nodes.map(n => ({
+  const nodesWithCount: NodeRowWithCount[] = withLastTurnSummaries(nodes).map(n => ({
     ...n,
     message_count: countByNode.get(n.id) ?? 0,
   }));
@@ -1753,12 +1806,7 @@ export function loadAllWorkspacesMeta(userId?: string): MetaWorkspaceData[] {
     const arr = treesByWs.get(t.workspace_id);
     if (arr) arr.push(t); else treesByWs.set(t.workspace_id, [t]);
   }
-  const nodesByWs = new Map<string, NodeRow[]>();
-  for (const n of allNodes) {
-    if (!wsIds.has(n.workspace_id)) continue;
-    const arr = nodesByWs.get(n.workspace_id);
-    if (arr) arr.push(n); else nodesByWs.set(n.workspace_id, [n]);
-  }
+  // Nodes are grouped below, after the error nodes receive their turn receipts.
   const edgesByWs = new Map<string, EdgeRow[]>();
   for (const e of allEdges) {
     if (!wsIds.has(e.workspace_id)) continue;
@@ -1786,6 +1834,13 @@ export function loadAllWorkspacesMeta(userId?: string): MetaWorkspaceData[] {
       ).all(...chunk) as unknown as Array<{ node_id: string; cnt: number }>;
       for (const r of rows) countByNode.set(r.node_id, r.cnt);
     }
+  }
+
+  // One receipt lookup for every error node across all workspaces.
+  const nodesByWs = new Map<string, Array<NodeRow & NodeTurnSummary>>();
+  for (const n of withLastTurnSummaries(allNodes.filter(n => wsIds.has(n.workspace_id)))) {
+    const arr = nodesByWs.get(n.workspace_id);
+    if (arr) arr.push(n); else nodesByWs.set(n.workspace_id, [n]);
   }
 
   return workspaces.map(ws => {
@@ -1825,6 +1880,35 @@ export function loadTreeMessages(workspaceId: string, treeId: string, userId?: s
   return getDb().prepare(
     `SELECT * FROM messages WHERE node_id IN (${placeholders}) ORDER BY node_id ASC, seq ASC`
   ).all(...nodeIds) as unknown as MessageRow[];
+}
+
+export interface MessagePageCursor { seq: number; id: string }
+
+/** Keyset pages of display history; never used as the runtime's full context. */
+export function loadTreeMessagePage(workspaceId: string, treeId: string,
+  options: { limit: number; nodeId?: string; before?: MessagePageCursor }, userId?: string,
+): { messages: MessageRow[]; pages: Array<{ nodeId: string; total: number; before: MessagePageCursor | null }> } {
+  const nodeIds = listNodes(workspaceId, userId)
+    .filter(n => n.tree_id === treeId && (!options.nodeId || n.id === options.nodeId))
+    .map(n => n.id);
+  const db = getDb();
+  const messages: MessageRow[] = [];
+  const pages: Array<{ nodeId: string; total: number; before: MessagePageCursor | null }> = [];
+  const count = db.prepare('SELECT COUNT(*) AS total FROM messages WHERE node_id = ?');
+  const recent = db.prepare('SELECT * FROM messages WHERE node_id = ? ORDER BY seq DESC, id DESC LIMIT ?');
+  const older = db.prepare('SELECT * FROM messages WHERE node_id = ? AND (seq < ? OR (seq = ? AND id < ?)) ORDER BY seq DESC, id DESC LIMIT ?');
+  for (const nodeId of nodeIds) {
+    const cursor = options.before;
+    const rows = (cursor
+      ? older.all(nodeId, cursor.seq, cursor.seq, cursor.id, options.limit + 1)
+      : recent.all(nodeId, options.limit + 1)) as unknown as MessageRow[];
+    const hasMore = rows.length > options.limit;
+    const page = rows.slice(0, options.limit).reverse();
+    messages.push(...page);
+    pages.push({ nodeId, total: (count.get(nodeId) as { total: number }).total,
+      before: hasMore ? { seq: page[0].seq, id: page[0].id } : null });
+  }
+  return { messages, pages };
 }
 
 // --- aiGlobalContext toggle (stored inside workspaces.settings JSON) ---

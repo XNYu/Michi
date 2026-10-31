@@ -382,7 +382,6 @@ router.delete('/users/:id', async (req, res) => {
 
         if (nodeIds.length > 0) {
           const nph = nodeIds.map(() => '?').join(',');
-          dataDb.prepare(`DELETE FROM harness_events WHERE node_id IN (${nph})`).run(...nodeIds);
           dataDb.prepare(`DELETE FROM messages WHERE node_id IN (${nph})`).run(...nodeIds);
         }
 

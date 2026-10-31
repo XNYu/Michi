@@ -180,11 +180,13 @@ export function EditIcon({ size = 14, className }: IconProps) {
   );
 }
 
-export function BranchIcon({ size = 14, className }: IconProps) {
+/** `strokePx` fixes the drawn stroke in CSS px (the composer toolbar's 1.6 at any size). */
+export function BranchIcon({ size = 14, className, strokePx }: IconProps & { strokePx?: number }) {
   return (
     <Split
       size={size}
-      strokeWidth={2.4}
+      strokeWidth={strokePx ?? 2.4}
+      absoluteStrokeWidth={strokePx !== undefined}
       className={className ? `rotate-90 ${className}` : 'rotate-90'}
       aria-hidden="true"
     />

@@ -1,6 +1,6 @@
 // Must precede application imports: config and credential paths are captured at load time.
 import { isolatedIntegrationDataDir, resetIntegrationConfig } from './isolatedIntegrationEnvironment';
-import { afterEach, beforeEach, test } from 'node:test';
+import { afterEach, beforeEach, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -157,6 +157,38 @@ async function cancelFirstTurn() {
   const body = await (await response).text();
   assert.match(body, /"stopReason":"cancelled"/);
   assert.doesNotMatch(body, /event: error/);
+}
+
+/** Finish a turn's visible reply but hold its runtime cleanup, so the chat is
+ * not streaming (isActive) while the owner turn still holds it. */
+async function holdTurnCleanup(t: TestContext): Promise<() => Promise<void>> {
+  let releaseCleanup!: () => void;
+  const cleanup = new Promise<void>((resolve) => { releaseCleanup = resolve; });
+  let enteredCleanup!: () => void;
+  const cleaningUp = new Promise<void>((resolve) => { enteredCleanup = resolve; });
+  t.mock.method(getSession('cancel-node')!, 'send', async function* () {
+    try {
+      yield { kind: 'chunk' as const, text: 'Finished answer' };
+      yield { kind: 'turn_end' as const, stopReason: 'end_turn' };
+    } finally {
+      enteredCleanup();
+      await cleanup;
+    }
+  });
+  const response = post('/chats/cancel-node/message', { text: 'first', turnId: 'held-cleanup' });
+  await cleaningUp;
+  assert.equal(chatHub.isActive('cancel-node'), false);
+  assert.equal(chatHub.isOwnerTurnActive('cancel-node'), true);
+  return async () => {
+    releaseCleanup();
+    await (await response).text();
+  };
+}
+
+/** A busy owner turn is a normal handoff: the client may silently retry the same request. */
+async function refusedBusy(response: Response, error: string) {
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { code: 'turn_active', error });
 }
 
 test('legacy create shares the durable ensure path and cold native resume', async () => {
@@ -508,4 +540,86 @@ test('explicit load retains support for runtimes whose load restores transcript 
   assert.equal(response.status, 200, await response.text());
   assert.equal(loaded.length, 1);
   assert.equal(created.length, 1);
+});
+
+test('explicit load cannot retire the live session while a finished turn is still cleaning up', async (t) => {
+  await ensure();
+  const release = await holdTurnCleanup(t);
+  try {
+    await refusedBusy(await post('/chats/cancel-node/load', { cwd: directory, model: 'other-model' }), 'Cannot reload an active turn');
+    assert.deepEqual(releases, []);
+    assert.equal(loaded.length, 0);
+  } finally {
+    await release();
+  }
+  const response = await post('/chats/cancel-node/load', { cwd: directory, model: 'other-model' });
+  assert.equal(response.status, 200, await response.text());
+  assert.deepEqual(releases, ['cancel-node']);
+  assert.equal(loaded.length, 1);
+});
+
+test('ensure-session cannot change live settings while a finished turn is still cleaning up', async (t) => {
+  runtime.capabilities.nativeResumeSettings = ['model'];
+  await ensure();
+  const release = await holdTurnCleanup(t);
+  try {
+    await refusedBusy(await post('/nodes/cancel-node/ensure-session', { workspaceId: 'ws', cwd: directory, modelId: 'new-model' }),
+      'Cannot change settings during an active turn');
+    assert.equal(currentModel, 'original-model');
+  } finally {
+    await release();
+  }
+  assert.equal((await ensure({ modelId: 'new-model' })).resumeStrategy, 'live');
+  assert.equal(currentModel, 'new-model');
+});
+
+test('ensure-session cannot reload the native session while a finished turn is still cleaning up', async (t) => {
+  runtime.capabilities.nativeResumeSettings = ['model'];
+  await ensure();
+  getSession('cancel-node')!.setModel = undefined;
+  const release = await holdTurnCleanup(t);
+  try {
+    await refusedBusy(await post('/nodes/cancel-node/ensure-session', { workspaceId: 'ws', cwd: directory, modelId: 'new-model' }),
+      'Cannot reload an active turn');
+    assert.deepEqual(releases, []);
+    assert.equal(loaded.length, 0);
+  } finally {
+    await release();
+  }
+  assert.equal((await ensure({ modelId: 'new-model' })).resumeStrategy, 'exact');
+  assert.deepEqual(releases, ['cancel-node']);
+  assert.equal(loaded.length, 1);
+});
+
+test('ensure-session cannot replace the session while a finished turn is still cleaning up', async (t) => {
+  await ensure();
+  const release = await holdTurnCleanup(t);
+  try {
+    await refusedBusy(await post('/nodes/cancel-node/ensure-session', { workspaceId: 'ws', cwd: directory, modelId: 'explicit-new-model' }),
+      'Cannot replace an active turn');
+    assert.deepEqual(releases, []);
+    assert.equal(created.length, 1);
+  } finally {
+    await release();
+  }
+  assert.equal((await ensure({ modelId: 'explicit-new-model' })).resumeStrategy, 'compatible');
+  assert.deepEqual(releases, ['cancel-node']);
+  assert.equal(created.length, 2);
+});
+
+test('set-model waits for a finished turn to finish its runtime cleanup', async (t) => {
+  await ensure();
+  const release = await holdTurnCleanup(t);
+  try {
+    const refused = await post('/chats/cancel-node/set-model', { modelId: 'new-model' });
+    assert.equal(refused.status, 409);
+    assert.deepEqual(await refused.json(), { code: 'turn_active', error: 'Cannot change model during an active turn' });
+    assert.equal(currentModel, 'original-model');
+    assert.equal(getNode('cancel-node')?.model_id, 'original-model');
+  } finally {
+    await release();
+  }
+  assert.equal((await post('/chats/cancel-node/set-model', { modelId: 'new-model' })).status, 200);
+  assert.equal(currentModel, 'new-model');
+  assert.equal(getNode('cancel-node')?.model_id, 'new-model');
 });

@@ -72,7 +72,7 @@ beforeEach(() => {
   };
   registerRuntime(runtime);
   manager = new ChatManager(undefined, directory);
-  hub = new ChatHub({ retentionMs: 10, titleGenerator: null, journal: null });
+  hub = new ChatHub({ retentionMs: 10, titleGenerator: null });
   let turn = 0;
   deps = {
     ensureSession: (input) => manager.ensureParentSession(input),

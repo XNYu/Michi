@@ -7,7 +7,7 @@ import path from 'node:path';
 import type { ChatStreamEvent } from 'michi-shared';
 import { ChatHub } from '../src/agents/chatHub';
 import type { AgentSession } from '../src/agents/types';
-import { chatReplayUnavailable, persistedChatReplay } from '../src/routes/chatReplay';
+import { chatReplayUnavailable } from '../src/routes/chatReplay';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import { closeDb, getDb, initDb } from '../src/services/db';
 import { getNode, listMessages, saveNode, saveTree, saveWorkspace } from '../src/services/dbRepository';
@@ -98,15 +98,10 @@ describe('ChatHub authoritative persistence integration', () => {
     hub.subscribe('chat-1', { send: (event) => replay.push(event), close: () => {} });
     const terminal = replay.find((event) => event.event === 'done');
     assert.equal(terminal?.data.persisted, true);
-    // Let the memory ring expire, then recover from SQLite, including metadata.
+    // Once the memory ring expires the live replay is gone; the saved turn
+    // stays in SQLite (asserted above).
     await new Promise(resolve => setTimeout(resolve, 150));
     assert.equal(hub.subscribeTurn('chat-1', 'turn-1', { send() {}, close() {} }), null);
-    const saved = persistedChatReplay('node-1', 'turn-1', 0)!;
-    assert.ok(saved);
-    assert.deepEqual(saved.map(event => event.event), replay.map(event => event.event));
-    assert.equal(saved.find(event => event.event === 'chunk')?.data.text, 'answer');
-    assert.equal(saved.find(event => event.event === 'done')?.data.persisted, true);
-
   });
 
   test('finalizes ten branches concurrently without cross-node metadata loss', async () => {

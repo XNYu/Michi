@@ -52,6 +52,8 @@
   color: var(--term-fg);
 }
 .meta-set__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+/* A section's content under its heading; a phone draws it as a card (Settings.css). */
+.meta-set__body { display: contents; }
 .meta-set__saved { display: inline-flex; align-items: center; gap: 4px; color: var(--term-muted); font-size: var(--fs-sm); }
 .meta-set__saved > svg { align-self: center; color: var(--term-digest); }
 

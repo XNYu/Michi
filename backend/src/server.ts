@@ -56,6 +56,7 @@ import { setupArtifactRoutes } from './routes/artifacts';
 import { closeAllArtifactWatchers } from './services/artifactWatcher';
 import { setupDiffRoutes } from './routes/diff';
 import { setupBackendConnectionRoutes } from './routes/backendConnections';
+import { setupHostDirectoryRoutes } from './routes/hostDirectories';
 import { publicBuildInfo, runningBuild } from './services/buildInfo';
 import { ChatManager } from './services/chatManager';
 import { getAuthForHost, runAuthMigrations } from './services/auth';
@@ -813,6 +814,10 @@ app.use('/api', setupMobileAccessRoutes(mobileAccess, {
 // Saved credentials belong to the desktop gateway, not execution backends.
 if (!remoteAccessEnabled()) {
   app.use('/api', setupBackendConnectionRoutes());
+} else if (process.env.MICHI_CLOUD !== '1') {
+  // The desktop that connects to this remote browses its folders through the
+  // tunnel. Requests reaching it already passed the bearer-token middleware.
+  app.use('/api', setupHostDirectoryRoutes());
 }
 if (REQUIRE_AUTH) {
   // Admin routes — gated by MICHI_ADMIN_EMAILS env var (requireAdmin).

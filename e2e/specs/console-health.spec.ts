@@ -30,9 +30,9 @@ test('local boot, fonts, drawers and optional pages do not produce console error
 
   const settings = await openSettings(page);
   await expect(settings).toBeVisible();
-  for (const name of ['Appearance', 'Runtime (global)', 'General', 'Meta agent', 'Components', 'Data & backup'] as const) {
+  for (const name of ['Appearance', 'Runtime & model', 'Machines', 'Meta agent', 'Notifications', 'Backup & restore', 'Keyboard shortcuts'] as const) {
     await openSettings(page, name);
-    await expect(settings.getByRole('region', { name, exact: true })).toBeVisible();
+    await expect(settings.getByRole('heading', { level: 1, name, exact: true })).toBeVisible();
   }
   await page.screenshot({ path: info.outputPath('settings-desktop.png') });
   await leaveSettings(page);
@@ -68,8 +68,10 @@ test('local boot, fonts, drawers and optional pages do not produce console error
   await expect(settings).toBeVisible();
   await expect(settings).toBeInViewport();
   // Measure at rest: while anything slides in, translated edges are
-  // rounded separately (float32), so the width can read 390.00003.
-  await expect.poll(() => settings.evaluate(el => el.getAnimations({ subtree: true }).length)).toBe(0);
+  // rounded separately (float32), so the width can read 390.00003. The slide
+  // is the drawer panel's own transition, around Settings, so wait on it.
+  const panel = page.getByRole('dialog', { name: 'Settings', exact: true });
+  await expect.poll(() => panel.evaluate(el => el.getAnimations({ subtree: true }).length)).toBe(0);
   const bounds = await settings.boundingBox();
   expect(bounds!.width).toBeLessThanOrEqual(390);
   await page.screenshot({ path: info.outputPath('settings-narrow.png') });

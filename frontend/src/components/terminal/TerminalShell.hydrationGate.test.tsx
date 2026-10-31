@@ -85,7 +85,7 @@ describe('TerminalShell hydration gate', () => {
     expect(screen.getByText('Appearance pane')).toBeTruthy();
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy();
     expect(screen.getByRole('status', { name: 'Loading workspaces' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Runtime (global)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Runtime & model' }));
     expect(await screen.findByText('Loading workspaces…')).toBeTruthy();
   });
 

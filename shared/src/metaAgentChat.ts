@@ -1,7 +1,8 @@
 /**
  * What the Spaces chat window tells the Meta agent with each message: the
  * page on screen, the selected block and the pages the user can see, by id
- * and title only (never page text). Sent as `metaAgentContext` on
+ * and title only (never page text beyond one bounded checklist item the user
+ * asked about). Sent as `metaAgentContext` on
  * POST /api/chats/:chatId/message, accepted only for the Michi assistant's
  * conversation; the backend turns it into a bounded prefix of that turn.
  * The Scheduled window sends `schedule` instead, for its own conversation.
@@ -18,6 +19,11 @@ export interface MetaAgentChatTurnContext {
   pageId?: string | null;
   /** The block the user selected on that page ("针对：…"); needs pageId. */
   blockId?: string | null;
+  /**
+   * One item of a checklist in that block the user asked about: its 0-based
+   * position in its checklist and its text, bounded by titleChars. Needs blockId.
+   */
+  blockItem?: MetaAgentChatBlockItem | null;
   /** The pages the user can see (sidebar order). */
   pages?: MetaAgentChatPageRef[];
   /** Workspaces on remote connections, by name: Spaces doesn't support them yet, so the Meta agent cannot read them. */
@@ -30,6 +36,11 @@ export interface MetaAgentChatTurnContext {
    * job would preselect). Accepted only for that window's conversation.
    */
   schedule?: MetaAgentScheduleContext;
+}
+
+export interface MetaAgentChatBlockItem {
+  index: number;
+  text: string;
 }
 
 export interface MetaAgentScheduleContext {
@@ -47,6 +58,7 @@ export const META_AGENT_CHAT_CONTEXT_LIMITS = Object.freeze({
   idChars: 200,
   titleChars: 300,
   remoteWorkspaces: 100,
+  blockItemIndex: 1_000,
 });
 
 export class MetaAgentChatContextError extends Error {
@@ -72,7 +84,7 @@ function id(value: unknown, field: string, nullable: boolean): string | null | u
 /** Validates the field; throws MetaAgentChatContextError with a message for the client. */
 export function parseMetaAgentChatTurnContext(value: unknown): MetaAgentChatTurnContext {
   if (!isRecord(value)) throw new MetaAgentChatContextError('metaAgentContext must be an object');
-  const unknown = Object.keys(value).filter((key) => !['pageId', 'blockId', 'pages', 'remoteWorkspaces', 'remoteOnScreen', 'schedule'].includes(key));
+  const unknown = Object.keys(value).filter((key) => !['pageId', 'blockId', 'blockItem', 'pages', 'remoteWorkspaces', 'remoteOnScreen', 'schedule'].includes(key));
   if (unknown.length) throw new MetaAgentChatContextError(`metaAgentContext has an unknown field: ${unknown[0]}`);
   let schedule: MetaAgentScheduleContext | undefined;
   if (value.schedule !== undefined) {
@@ -84,6 +96,18 @@ export function parseMetaAgentChatTurnContext(value: unknown): MetaAgentChatTurn
   const pageId = id(value.pageId, 'pageId', true);
   const blockId = id(value.blockId, 'blockId', true);
   if (blockId && !pageId) throw new MetaAgentChatContextError('blockId needs pageId');
+  let blockItem: MetaAgentChatBlockItem | null | undefined;
+  if (value.blockItem === null) blockItem = null;
+  else if (value.blockItem !== undefined) {
+    const item = value.blockItem;
+    if (!isRecord(item) || Object.keys(item).some((key) => key !== 'index' && key !== 'text')
+      || !Number.isInteger(item.index) || (item.index as number) < 0 || (item.index as number) >= META_AGENT_CHAT_CONTEXT_LIMITS.blockItemIndex
+      || typeof item.text !== 'string' || item.text.length > META_AGENT_CHAT_CONTEXT_LIMITS.titleChars) {
+      throw new MetaAgentChatContextError(`blockItem must be {index, text} with an index below ${META_AGENT_CHAT_CONTEXT_LIMITS.blockItemIndex} and text of at most ${META_AGENT_CHAT_CONTEXT_LIMITS.titleChars} characters`);
+    }
+    if (!blockId) throw new MetaAgentChatContextError('blockItem needs blockId');
+    blockItem = { index: item.index as number, text: item.text };
+  }
   let pages: MetaAgentChatPageRef[] | undefined;
   if (value.pages !== undefined) {
     if (!Array.isArray(value.pages) || value.pages.length > META_AGENT_CHAT_CONTEXT_LIMITS.pages) {
@@ -117,6 +141,7 @@ export function parseMetaAgentChatTurnContext(value: unknown): MetaAgentChatTurn
   return {
     ...(pageId !== undefined ? { pageId } : {}),
     ...(blockId !== undefined ? { blockId } : {}),
+    ...(blockItem !== undefined ? { blockItem } : {}),
     ...(pages ? { pages } : {}),
     ...(remoteWorkspaces ? { remoteWorkspaces } : {}),
     ...(remoteOnScreen !== undefined ? { remoteOnScreen } : {}),
@@ -126,6 +151,6 @@ export function parseMetaAgentChatTurnContext(value: unknown): MetaAgentChatTurn
 
 /** True when the context carries any of the Spaces window's fields. */
 export function hasSpacesTurnContext(context: MetaAgentChatTurnContext): boolean {
-  return context.pageId !== undefined || context.blockId !== undefined || context.pages !== undefined
+  return context.pageId !== undefined || context.blockId !== undefined || context.blockItem !== undefined || context.pages !== undefined
     || context.remoteWorkspaces !== undefined || context.remoteOnScreen !== undefined;
 }

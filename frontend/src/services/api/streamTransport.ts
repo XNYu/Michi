@@ -7,7 +7,8 @@ import {
 } from 'michi-shared';
 import { backendRequestUrl, connectionIdFromApiUrl } from '../../config/backendIdentity';
 import { backendFetch, backendRequestOptions, backendStreamResponse } from './backendRequest';
-import { backendConnectionGeneration, backendConnectionUnavailable, markBackendConnectionUnavailable } from '../../config/backendConnectionState';
+import { backendConnectionGeneration, backendConnectionUnavailable } from '../../config/backendConnectionState';
+import { confirmBackendConnectionUnavailable } from './backendReachability';
 
 const HEADER_TIMEOUT_MS = 30_000;
 const MAX_BUFFER_BYTES = 8 * 1024 * 1024;
@@ -235,10 +236,10 @@ export async function fetchStream(url: string, options: RequestInit = {}): Promi
     let response: Response;
     try { response = await current.transport.fetch(url, options); }
     catch (error) {
-      if (!options.signal?.aborted) markBackendConnectionUnavailable(connectionId);
+      await confirmBackendConnectionUnavailable(connectionId, options.signal, generation);
       throw error;
     }
-    if ([502, 503, 504].includes(response.status)) markBackendConnectionUnavailable(connectionId);
+    if ([502, 503, 504].includes(response.status)) await confirmBackendConnectionUnavailable(connectionId, options.signal, generation);
     return backendStreamResponse(response, connectionId, generation, options.signal);
   }
   // Older gateways and isolated SSE mocks retain the original HTTP transport.

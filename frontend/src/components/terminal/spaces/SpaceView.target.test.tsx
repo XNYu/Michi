@@ -96,6 +96,27 @@ describe('Block targeting in Spaces', () => {
     expect(metaAgentTurnContextFor('assistant-node')).toMatchObject({ pageId: 'page-1', blockId: 'next' });
   });
 
+  it('Ask on one checklist item targets that item, without toggling the block; a send names the item', async () => {
+    render(<Harness />);
+    await screen.findByLabelText('Message the assistant');
+    fireEvent.click(screen.getByRole('button', { name: 'Ask assistant about “Ship it”' }));
+    expect(chip()?.textContent).toContain('Targeting: Ship it');
+    expect(block('next').dataset.selected).toBe('true');
+    const input = screen.getByLabelText('Message the assistant') as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByRole('checkbox', { name: 'Ship it' }).getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.change(input, { target: { value: 'What is left before shipping?' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(metaAgentTurnContextFor('assistant-node')).toMatchObject({ pageId: 'page-1', blockId: 'next', blockItem: { index: 0, text: 'Ship it' } });
+
+    // Clicking the block afterwards targets the whole block again.
+    fireEvent.click(chip()!.querySelector('button')!);
+    fireEvent.click(screen.getByText('Ship it'));
+    expect(chip()?.textContent).toContain('Targeting: Next steps');
+    expect(metaAgentTurnContextFor('assistant-node')).not.toHaveProperty('blockItem');
+  });
+
   it('lays a database out narrow while the window is docked, and keeps blocks selectable', () => {
     render(<Harness />);
     const database = () => screen.getByRole('button', { name: 'Ask database' });

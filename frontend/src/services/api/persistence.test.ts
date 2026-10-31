@@ -1,7 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchAllWorkspacesMeta, fetchPersistenceCapabilities, fetchTreeMessages, supportsPaneInspection } from './persistence';
+import { fetchAllWorkspacesMeta, fetchPersistenceCapabilities, fetchTreeMessages, fetchTreeMessagePage, supportsPaneInspection } from './persistence';
 import { RemoteServiceRecoveryError } from './remoteRecovery';
 import { fetchStream } from './streamTransport';
+import { backendEntityId } from '../../config/backendIdentity';
+
+describe('remote history pages', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('scopes node references and forwards opaque message cursors', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      messages: [{ id: 'm1', node_id: 'n1' }], pages: [{ nodeId: 'n1', total: 70, before: { seq: 20, id: 'm1' } }],
+    })));
+    vi.stubGlobal('fetch', fetch);
+    const result = await fetchTreeMessagePage(backendEntityId('r', 'ws'), backendEntityId('r', 'tree'), 'r', undefined,
+      { nodeId: backendEntityId('r', 'n1'), before: { seq: 30, id: 'm&30' } });
+    const url = new URL(fetch.mock.calls[0][0], 'http://localhost');
+    expect(url.pathname).toContain('/workspaces/ws/trees/tree/messages');
+    expect(url.searchParams.get('nodeId')).toBe('n1');
+    expect(url.searchParams.get('beforeId')).toBe('m&30');
+    expect(result.pages?.[0].nodeId).toBe(backendEntityId('r', 'n1'));
+    expect(result.pages?.[0].before?.id).toBe('m1');
+  });
+  it('accepts full history from older gateways and rejects malformed pagination', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ messages: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ messages: [], pages: [{ nodeId: 'n', total: 1 }] })));
+    vi.stubGlobal('fetch', fetch);
+    expect(await fetchTreeMessagePage('ws', 'tree')).toEqual({ messages: [] });
+    await expect(fetchTreeMessagePage('ws', 'tree')).rejects.toThrow('Invalid message page');
+  });
+});
 
 describe('fetchPersistenceCapabilities — paneInspection field', () => {
   let fetchMock: ReturnType<typeof vi.fn>;

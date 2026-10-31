@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { paneScopeKey } from '../../state/paneState';
 import { useTerminalColors } from './useTerminalColors';
-import { useEdgeSwipe } from '../../hooks/useEdgeSwipe';
+import { useEdgeSwipe, useSwipeLeft } from '../../hooks/useEdgeSwipe';
 import TerminalSidebar from './Sidebar';
 import TerminalTopbar from './Topbar';
 import { RemoteRecoveryDrawer, RemoteRecoveryIndicator } from '../RemoteRecoveryBanner';
@@ -22,6 +22,7 @@ import NewWorkspaceDialog from '../NewWorkspaceDialog';
 import { NewWorkspaceAutoOpen } from './NewWorkspaceAutoOpen';
 import { usePrefs } from '../../state/prefs';
 import { DrawerShell } from '../ui/DrawerShell';
+import { ModalShell } from '../ui/ModalShell';
 import type { PageId } from '../../state/commands';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
 import { IS_MAC } from '../../lib/platform';
@@ -63,7 +64,8 @@ import { openScheduledHome, requestScheduledJobDetail, setScheduledRoute, useSch
 import { META_AGENT_PAGE_TITLE, OPEN_SETTINGS_SECTION_EVENT } from './scheduled/metaAgent/metaAgentNav';
 import { useMetaAgentOverviewSnapshot } from './scheduled/metaAgent/useMetaAgentOverview';
 import { SpacesMetaChat, useMetaChatWindow, type SpacesChatView } from './spaces/metaChat';
-import { ALL_TASKS, SETTINGS_AREA_SECTIONS, SPACES_HOME, areaForPage, entryPageForArea, type SettingsAreaSection, type ShellArea, type SpacesHomeTarget } from '../../state/shellArea';
+import { ALL_TASKS, SPACES_HOME, areaForPage, entryPageForArea, type ShellArea, type SpacesHomeTarget } from '../../state/shellArea';
+import { settingsPageForRequest, type SettingsPage } from './rail/settingsPages';
 import { SourcePopoverHost } from './source';
 import { dismissSourceBack, openExactSourcePopover, registerSourceNavigator, type SourceOrigin } from '../../state/sourceNav/sourceNav';
 import { useSpaceTopbar } from '../../state/pages/spaceTopbar';
@@ -125,12 +127,13 @@ export default function TerminalShell() {
   const [spacesHome, setSpacesHome] = useState<SpacesHomeTarget>(SPACES_HOME);
   const [spacesSettingsOpen, setSpacesSettingsOpen] = useState(false);
   const spacesSettingsReturnPage = React.useRef<PageId>('spaces');
-  const [settingsSection, setSettingsSection] = useState<SettingsAreaSection>('appearance');
+  // Settings reopens on the page it was left on (rail/settingsPages.ts).
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>('appearance');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPresent, setSettingsPresent] = useState(false);
-  // A phone's Settings drawer shows one level at a time: the section list,
-  // then one section. Opening it plainly starts on the list; a request for one
-  // section opens on that section. Back to the list once the drawer is gone.
+  // A phone's Settings drawer shows one level at a time: the page list, then
+  // one page. Opening it plainly starts on the list; a request for one page
+  // opens on that page. Back to the list once the drawer is gone.
   const [settingsView, setSettingsView] = useState<SettingsLevel>('menu');
   useEffect(() => {
     if (!settingsOpen && !settingsPresent) setSettingsView('menu');
@@ -145,10 +148,9 @@ export default function TerminalShell() {
     metaAgentOverview.kind !== 'ready' || !metaAgentOverview.overview.managedJobIds?.includes(jobId), [metaAgentOverview]);
   useEffect(() => {
     const onSection = (event: Event) => {
-      const section = (event as CustomEvent<{ section?: SettingsAreaSection }>).detail?.section;
-      const selected = SETTINGS_AREA_SECTIONS.find(item => item.id === section);
-      if (selected) {
-        setSettingsSection(selected.id);
+      const requested = settingsPageForRequest((event as CustomEvent<{ section?: unknown }>).detail?.section);
+      if (requested) {
+        setSettingsPage(requested);
         setSettingsView('section');
         setSettingsOpen(true);
       }
@@ -787,13 +789,14 @@ export default function TerminalShell() {
   // Profile owns its own navigation rail, so the application sidebar stays
   // out of the layout without overwriting the user's persisted preference.
   const profileFullscreen = page === 'profile';
-  // A swipe right from the left screen edge opens the narrow drawer.
+  // A swipe right from the left screen edge opens the narrow drawer, and a
+  // swipe left anywhere closes it again.
   const openNarrowOverlay = React.useCallback(() => setNarrowOverlayOpen(true), []);
-  useEdgeSwipe(
-    narrowMode && !narrowOverlayOpen && !profileFullscreen
-      && !settingsOpen && !paletteOpen && !remoteAuthenticationOpen && !remoteRecoveryOpen,
-    openNarrowOverlay,
-  );
+  const dismissNarrowOverlay = React.useCallback(() => setNarrowOverlayOpen(false), []);
+  const drawerSwipeEnabled = narrowMode && !profileFullscreen
+    && !settingsOpen && !paletteOpen && !remoteAuthenticationOpen && !remoteRecoveryOpen;
+  useEdgeSwipe(drawerSwipeEnabled && !narrowOverlayOpen, openNarrowOverlay);
+  useSwipeLeft(drawerSwipeEnabled && narrowOverlayOpen, dismissNarrowOverlay);
   const sidebarCollapsedEffective = profileFullscreen
     || (narrowMode ? !narrowOverlayOpen : prefs.sidebarCollapsed);
   const handleToggleSidebarEffective = React.useCallback(() => {
@@ -883,7 +886,7 @@ export default function TerminalShell() {
                 onOpenHome={() => { handleNav('spaces'); closeNarrowOverlay(); }}
                 onOpenWorkspace={(target) => { openWorkspaceHome(target); closeNarrowOverlay(); }}
                 onOpenPage={(target) => { openSpaceRoute({ type: 'space', ...target }); closeNarrowOverlay(); }}
-                onOpenAssistant={() => { chat.focusInput(); closeNarrowOverlay(); }}
+                onOpenAssistant={() => { chat.restore(); closeNarrowOverlay(); }}
                 onOpenAllTasks={() => { openAllTasks(); closeNarrowOverlay(); }}
                 onOpenSettings={() => { if (!spacesSettingsOpen) spacesSettingsReturnPage.current = page; setPage('spaces'); setSpacesSettingsOpen(true); chat.minimize(); closeNarrowOverlay(); }}
                 settingsOpen={spacesSettingsOpen}
@@ -973,12 +976,19 @@ export default function TerminalShell() {
           setPage('home');
         }}
       />}
-      {/* On a phone, Back (and Esc) first returns from a section to the list. */}
-      <DrawerShell open={settingsOpen} title="Settings" width={720} motion={drawerMotion} onPresenceChange={setSettingsPresent}
-        onClose={() => { if (narrowMode && settingsView === 'section') setSettingsView('menu'); else setSettingsOpen(false); }}
-        closeControl={narrowMode ? 'back' : 'close'}>
-        <TerminalSettingsArea section={settingsSection} onSectionChange={setSettingsSection} view={settingsView} onViewChange={setSettingsView} stacked={narrowMode} workspaceReady={hydrated} onNav={handleNav} />
-      </DrawerShell>
+      {/* A phone's Settings fills the screen; Back (and Esc) first returns from a
+          page to the list. A wider window shows Settings as a window over the app. */}
+      {narrowMode ? (
+        <DrawerShell open={settingsOpen} title="Settings" width={720} motion={drawerMotion} onPresenceChange={setSettingsPresent}
+          onClose={() => { if (settingsView === 'section') setSettingsView('menu'); else setSettingsOpen(false); }}
+          closeControl="back">
+          <TerminalSettingsArea page={settingsPage} onPageChange={setSettingsPage} view={settingsView} onViewChange={setSettingsView} stacked workspaceReady={hydrated} onNav={handleNav} />
+        </DrawerShell>
+      ) : (
+        <ModalShell open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Settings" width={1080} maxHeight="calc(100vh - 48px)" layer="window">
+          <TerminalSettingsArea page={settingsPage} onPageChange={setSettingsPage} onViewChange={setSettingsView} workspaceReady={hydrated} onNav={handleNav} />
+        </ModalShell>
+      )}
       <RemoteRecoveryDrawer open={remoteRecoveryOpen} onClose={closeRemoteRecovery} motion={drawerMotion} onPresenceChange={setRemoteRecoveryPresent} />
       {hydrated && area !== 'spaces' && <AssistantPanelHost page={page} />}
       {hydrated && (artifactsOpen || artifactsPresent) && (

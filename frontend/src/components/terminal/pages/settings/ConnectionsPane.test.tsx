@@ -146,6 +146,7 @@ describe('ConnectionsPane', () => {
     mocks.workspaces.mockReturnValueOnce(pending.promise).mockResolvedValueOnce([{ id: 'new', name: 'New host workspace' }]);
     render(<ConnectionsPane projects={[]} />);
     await screen.findByText('Reading remote workspaces…');
+    await vi.waitFor(() => expect(mocks.workspaces).toHaveBeenCalledWith(desktop.id, expect.any(AbortSignal)));
     const signal = mocks.workspaces.mock.calls[0][1] as AbortSignal;
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('SSH host'), { target: { value: 'replacement' } });

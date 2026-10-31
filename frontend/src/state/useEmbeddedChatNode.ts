@@ -29,7 +29,7 @@ export function useEmbeddedChatNode(descriptor: EmbeddedChatNodeDescriptor | nul
   const [attempt, setAttempt] = useState(0);
   const projects = useChatProjects().projects;
   const present = !!node && node.projectId === descriptor?.workspaceId;
-  const placeholder = present && node?.messagesLoaded === false;
+  const placeholder = present && node?.messagesLoaded === false && !node.historyBefore;
   const project = descriptor ? projects.find((item) => item.id === descriptor.workspaceId) : undefined;
   const treeId = descriptor?.treeId || (descriptor && project ? findTreeIdForNode(descriptor.nodeId, project) : null);
 

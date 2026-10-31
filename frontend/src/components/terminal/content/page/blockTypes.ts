@@ -12,6 +12,8 @@ export interface MichiBlockCtx {
   frame?: (block: MichiPageBlock, ctx: MichiBlockCtx) => React.ReactNode;
   /** Ticks one item of a checklist the person may edit; without it checklists are read-only. */
   toggleItem?: (block: MichiPageBlock, index: number) => void;
+  /** Asks the assistant window about one checklist item (index into `items`); without it items offer no Ask. */
+  askItem?: (block: MichiPageBlock, index: number) => void;
   /** Native Pages supplies workspace-scoped renderers for resource references. */
   renderNativePageLink?: (block: MichiPageBlock) => React.ReactNode;
   /** Native Markdown preserves exact per-segment provenance, including inside containers. */

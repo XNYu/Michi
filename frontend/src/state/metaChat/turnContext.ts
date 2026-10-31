@@ -22,7 +22,7 @@ export function viewPageId(view: MetaChatView): string | null {
 /** The `metaAgentContext` for one message from the window. */
 export function buildMetaAgentTurnContext({ view, target, workspaces, remoteWorkspaces = [] }: {
   view: MetaChatView;
-  target: { pageId: string; blockId: string; backendConnectionId?: string } | null;
+  target: { pageId: string; blockId: string; backendConnectionId?: string; item?: { index: number; text: string } } | null;
   workspaces: ReadonlyArray<{ id: string; name: string }>;
   /** Workspaces on remote connections, which Spaces doesn't support yet: named so the Meta agent can say so. */
   remoteWorkspaces?: ReadonlyArray<{ id: string; name: string }>;
@@ -31,7 +31,10 @@ export function buildMetaAgentTurnContext({ view, target, workspaces, remoteWork
   const local = target && (target.backendConnectionId ?? 'local') === 'local' ? target : null;
   const pageId = usable(local?.pageId) ? local!.pageId : usable(onScreen) ? onScreen : null;
   const blockId = local && pageId === local.pageId && usable(local.blockId) ? local.blockId : null;
-  const context: MetaAgentChatTurnContext = { pageId, blockId, pages: knownSpacesPages(workspaces) };
+  const item = blockId && local?.item && Number.isInteger(local.item.index) && local.item.index >= 0 && local.item.index < META_AGENT_CHAT_CONTEXT_LIMITS.blockItemIndex
+    ? { index: local.item.index, text: Array.from(local.item.text).slice(0, META_AGENT_CHAT_CONTEXT_LIMITS.titleChars).join('') }
+    : null;
+  const context: MetaAgentChatTurnContext = { pageId, blockId, ...(item ? { blockItem: item } : {}), pages: knownSpacesPages(workspaces) };
   if (remoteWorkspaces.length === 0) return context;
   const shown = view.kind === 'home' ? null : remoteWorkspaces.find((workspace) => workspace.id === view.workspaceId);
   return {

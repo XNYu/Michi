@@ -85,7 +85,7 @@ export function useLazyTreeMessages({
         const nodes = nodesRef.current;
         const stillPlaceholder = activeProject.chatIds.some((nid) => {
           const n = nodes[nid];
-          if (!n || n.messagesLoaded !== false) return false;
+          if (!n || n.messagesLoaded !== false || n.historyBefore) return false;
           return findTreeIdForNode(nid, activeProject) === activeTreeId;
         });
         if (!stillPlaceholder) return;
@@ -95,7 +95,7 @@ export function useLazyTreeMessages({
       const nodes = nodesRef.current;
       const placeholderNodeIds = activeProject.chatIds.filter((nid) => {
         const n = nodes[nid];
-        if (!n || n.messagesLoaded !== false) return false;
+        if (!n || n.messagesLoaded !== false || n.historyBefore) return false;
         return findTreeIdForNode(nid, activeProject) === activeTreeId;
       });
       if (placeholderNodeIds.length === 0) {
@@ -121,9 +121,9 @@ export function useLazyTreeMessages({
       inFlight = true;
       (async () => {
         try {
-          const rows = await request.promise;
+          const page = await request.promise;
           if (cancelled) return;
-          const loaded = buildMessagesByNode(rows);
+          const loaded = buildMessagesByNode(page.messages);
           const byNode: typeof loaded = {};
           let skippedChangedNode = false;
           for (const nid of treeNodeIds) {
@@ -144,7 +144,8 @@ export function useLazyTreeMessages({
           }
           const nodeIds = Object.keys(byNode);
           if (nodeIds.length > 0) {
-            dispatch({ type: 'messages-loaded', nodeIds, messagesByNode: byNode });
+            dispatch({ type: 'messages-loaded', nodeIds, messagesByNode: byNode,
+              ...(page.pages ? { pages: page.pages.filter(item => nodeIds.includes(item.nodeId)) } : {}) });
             // Now that a reconnect target's assistant message exists, ask the
             // foreground-replay path to reattach its live stream. dispatch
             // updates nodesRef synchronously, so status is already fresh here.
@@ -180,7 +181,7 @@ export function useLazyTreeMessages({
       const nodes = nodesRef.current;
       const hasPlaceholders = activeProject.chatIds.some((nid) => {
         const n = nodes[nid];
-        if (!n || n.messagesLoaded !== false) return false;
+        if (!n || n.messagesLoaded !== false || n.historyBefore) return false;
         return findTreeIdForNode(nid, activeProject) === activeTreeId;
       });
       if (hasPlaceholders) {

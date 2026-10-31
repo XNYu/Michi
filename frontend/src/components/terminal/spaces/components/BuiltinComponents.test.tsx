@@ -59,6 +59,8 @@ describe('Built-in components', () => {
   it('previews grid widths and nested checklists locally, then inserts a valid default grid', async () => {
     const onInsert = vi.fn().mockResolvedValue(undefined);
     render(<BuiltinComponents onInsert={onInsert} now={NOW} />);
+    // Keep unrelated previews from contributing work to this grid interaction test.
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Responsive grid' } });
     const card = cardOf('Responsive grid');
     fireEvent.click(within(card).getByRole('checkbox', { name: 'Review the next step' }));
     expect(within(card).getByRole('checkbox').getAttribute('aria-checked')).toBe('true');
@@ -68,7 +70,7 @@ describe('Built-in components', () => {
     expect(onInsert).not.toHaveBeenCalled();
     fireEvent.click(within(card).getByRole('button', { name: 'Add Responsive grid to the page' }));
     await waitFor(() => expect(onInsert).toHaveBeenCalledWith(PAGE_BLOCK_CATALOG.grid.example));
-  });
+  }, 15_000); // Rendering the real gallery and editing its nested grid takes several seconds in jsdom.
 
   it('draws the plan in days around today and the thread cards from samples', () => {
     render(<BuiltinComponents onInsert={vi.fn()} now={NOW} />);
@@ -84,6 +86,7 @@ describe('Built-in components', () => {
 
   it('keeps the gallery available after an insertion fails', async () => {
     render(<BuiltinComponents onInsert={vi.fn().mockRejectedValue(new Error('Page changed. Please retry.'))} now={NOW} />);
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Metrics' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add Metrics to the page' }));
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Page changed. Please retry.');
     expect(screen.getByRole('button', { name: 'Add Metrics to the page' })).not.toHaveProperty('disabled', true);

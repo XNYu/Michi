@@ -18,7 +18,8 @@ import { isRunningStatus, isHiddenInternalTool } from './toolCallGrouping';
  *
  * Deliberately returns null while visible answer text is streaming (the cursor
  * already shows that), while the turn is brand-new and empty (MessageBlock's
- * ThinkingIndicator owns that), while the tail thought block's header already
+ * ThinkingIndicator owns that; when this row does show a label for that turn,
+ * PaneMessageList hides those dots instead), while the tail thought block's header already
  * shows a live Thinking…/Working… status, and while subagents are working
  * (their delegation cards and roster rows render richer per-agent detail).
  */

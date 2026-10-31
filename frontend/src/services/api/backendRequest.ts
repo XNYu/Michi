@@ -1,5 +1,6 @@
 import { backendRequestUrl, connectionIdFromApiUrl, mapBackendPayload } from '../../config/backendIdentity';
-import { backendConnectionGeneration, backendConnectionUnavailable, markBackendConnectionUnavailable } from '../../config/backendConnectionState';
+import { backendConnectionGeneration, backendConnectionUnavailable } from '../../config/backendConnectionState';
+import { confirmBackendConnectionUnavailable } from './backendReachability';
 
 export function backendRequestOptions(url: string, options: RequestInit = {}): RequestInit {
   if (typeof options.body !== 'string') return options;
@@ -20,10 +21,10 @@ export async function backendFetch(url: string, options?: RequestInit): Promise<
   let response: Response;
   try { response = await globalThis.fetch(backendRequestUrl(url), backendRequestOptions(url, options)); }
   catch (error) {
-    if (error instanceof TypeError) markBackendConnectionUnavailable(connectionId);
+    if (error instanceof TypeError) await confirmBackendConnectionUnavailable(connectionId, options?.signal, generation);
     throw error;
   }
-  if ([502, 503, 504].includes(response.status)) markBackendConnectionUnavailable(connectionId);
+  if ([502, 503, 504].includes(response.status)) await confirmBackendConnectionUnavailable(connectionId, options?.signal, generation);
   if (connectionId === 'local') return response;
   const json = response.json.bind(response);
   Object.defineProperty(response, 'json', {
@@ -31,7 +32,7 @@ export async function backendFetch(url: string, options?: RequestInit): Promise<
       let body: unknown;
       try { body = await json(); }
       catch (error) {
-        if (error instanceof TypeError && !options?.signal?.aborted) markBackendConnectionUnavailable(connectionId);
+        if (error instanceof TypeError) await confirmBackendConnectionUnavailable(connectionId, options?.signal, generation);
         throw error;
       }
       if (response.ok && generation !== backendConnectionGeneration(connectionId)) {
@@ -54,7 +55,7 @@ export function backendStreamResponse(response: Response, connectionId: string,
         const { done, value } = await reader.read();
         if (done) controller.close(); else controller.enqueue(value);
       } catch (error) {
-        if (!signal?.aborted) markBackendConnectionUnavailable(connectionId);
+        await confirmBackendConnectionUnavailable(connectionId, signal, generation);
         controller.error(error);
       }
     },

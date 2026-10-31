@@ -20,6 +20,7 @@ import {
 } from '../../../../state/metaChat/pageCardStates';
 import { LayoutRulesPopover } from '../layoutRules/LayoutRulesPopover';
 import { useLayoutRules } from '../layoutRules/useLayoutRules';
+import { useMetaChatRevealPage } from './MetaChatArea';
 
 export interface MetaChatCardsContext {
   backendConnectionId: string;
@@ -101,6 +102,7 @@ function PageWriteCard({ toolId, tool, receipt, filled = NO_RECEIPTS, boardPageI
   const stored = useSyncExternalStore(subscribePageCards, () => getPageCardState(toolId));
   const state = stored ?? initialState(receipt);
   const [busy, setBusy] = useState(false);
+  const revealPage = useMetaChatRevealPage();
   const workspaceId = receipt.workspaceId ?? context.workspaceId;
   const identity = useMemo(() => ({ backendConnectionId: context.backendConnectionId, workspaceId }), [context.backendConnectionId, workspaceId]);
   const pageId = receipt.resourceKind === 'page'
@@ -160,6 +162,7 @@ function PageWriteCard({ toolId, tool, receipt, filled = NO_RECEIPTS, boardPageI
       toast('This page has been deleted.');
       return;
     }
+    revealPage?.();
     void openSpacesPage({
       pageId, workspaceId, backendConnectionId: context.backendConnectionId,
       ...(receipt.affectedTargetIds[0] && receipt.resourceKind === 'page' && !receipt.created ? { blockId: receipt.affectedTargetIds[0] } : {}),

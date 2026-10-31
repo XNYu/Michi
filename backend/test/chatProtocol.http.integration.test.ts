@@ -112,21 +112,25 @@ test('real HTTP and SQLite retain consecutive answers/skip with stable IDs and d
   assert.deepEqual(replay.assistantMessage.blocks, blocks);
   assert.deepEqual(replay.assistantMessage.toolCalls, storedTools);
   assert.equal(events.at(-1)?.event, 'done');
-  // Simulate an evicted memory ring and disposed provider session. The same
-  // authorized HTTP endpoint must recover solely from the durable receipt.
+  // Simulate an evicted memory ring and disposed provider session. The live
+  // replay is gone; the stream says so instead of hanging.
   const noMemoryReplay = t.mock.method(chatHub, 'subscribeTurn', () => null);
   clearAllSessions();
-  const savedResponse = await fetch(`${base}/stream?fromTurnId=protocol-http-turn&fromSeq=0`, { headers: { 'x-user': 'alice' } });
-  assert.equal(savedResponse.status, 200);
-  const savedEvents = parseSse(await savedResponse.text());
-  assert.deepEqual(savedEvents.map(event => event.event), events.map(event => event.event));
-  assert.equal(savedEvents.find(event => event.event === 'chunk')?.data.text, 'All done.');
-  assert.equal(savedEvents.find(event => event.event === 'done')?.data.persisted, true);
-  const terminalSeq = events.at(-1)!.data.seq!;
-  const terminalResponse = await fetch(`${base}/stream?fromTurnId=protocol-http-turn&fromSeq=${terminalSeq}`, { headers: { 'x-user': 'alice' } });
-  assert.deepEqual(parseSse(await terminalResponse.text()).map(event => event.event), ['done']);
+  const goneResponse = await fetch(`${base}/stream?fromTurnId=protocol-http-turn&fromSeq=0`, { headers: { 'x-user': 'alice' } });
+  assert.equal(goneResponse.status, 410);
+  assert.equal((await goneResponse.json() as { code?: string }).code, 'turn_replay_unavailable');
   const forbidden = await fetch(`${base}/stream?fromTurnId=protocol-http-turn&fromSeq=0`, { headers: { 'x-user': 'bob' } });
   assert.equal(forbidden.status, 404);
+  // The saved turn still answers from SQLite alone.
+  const savedResponse = await fetch(`${base}/turns/protocol-http-turn`, { headers: { 'x-user': 'alice' } });
+  assert.equal(savedResponse.status, 200);
+  const saved = await savedResponse.json() as { status: string; completedAt: number | null; lastSeq: number; message: { id: string; blocks: string } };
+  assert.equal(saved.status, 'completed');
+  assert.equal(typeof saved.completedAt, 'number');
+  assert.equal(saved.lastSeq, events.at(-1)!.data.seq);
+  assert.equal(saved.message.id, started.assistantId);
+  assert.equal(saved.message.blocks, row.blocks);
+  assert.equal((await fetch(`${base}/turns/protocol-http-turn`, { headers: { 'x-user': 'bob' } })).status, 404);
   noMemoryReplay.mock.restore();
   closeDb(); initDb();
   assert.equal(listMessages(session.id).find(message => message.role === 'assistant')?.blocks, row.blocks, 'SQLite reopen must retain both interactions');

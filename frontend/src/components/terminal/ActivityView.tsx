@@ -2,15 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useChatPanes, useChatProjects, useChatActions, useChatNodesSnapshot, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import type { Project, Tree, ProjectEdge, ChatNodeState } from '../../state/chatTypes';
-import { buildTree, findTreeIdForNode } from '../../state/tree';
+import { buildTree } from '../../state/tree';
 import ThreadRow from './ThreadRow';
 import BranchRow from './BranchRow';
 import ContextMenu from '../ContextMenu';
-import { buildTreeContextMenu } from '../../lib/treeContextMenu';
 import { rowGeom, spinePadding, branchBlockGap } from './sidebarRowStyle';
+import { flattenBranchIds, useSidebarTreeController } from './sidebar/useSidebarTreeController';
 import {
-  isThreadExpanded,
-  isBranchExpanded as isBranchExpandedFn,
   nodeOpenState,
   subtreeOpenState,
   selectProjectNodeStatuses,
@@ -131,13 +129,11 @@ export default function ActivityView({
 }: {
   onActivate?: () => void;
 }) {
-  const { projects: allProjects, activeProjectId, activeProject, focusedNodeId, selection, treeSelection } = useChatProjects();
+  const { projects: allProjects, activeProjectId, focusedNodeId, treeSelection } = useChatProjects();
   // The assistant's system workspace has no place in the activity list.
   const projects = useMemo(() => withoutSystemWorkspaces(allProjects), [allProjects]);
   const { openPanes, focusedPane } = useChatPanes();
   const {
-    selectProject,
-    activateTree,
     archiveTree,
     unarchiveTree,
     pinTree,
@@ -145,34 +141,15 @@ export default function ActivityView({
     renameTree,
     deleteTree,
     moveTreeToWorkspace,
-    openPane,
-    openPaneInTree,
-    setFocusedNodeId,
-    toggleSelection,
-    clearSelection,
-    toggleTreeSelection,
     clearTreeSelection,
-    createBlankChild,
-    deleteNode,
-    trimNode,
-    archiveNode,
-    createMergedChat,
-    createDigest,
     renameNode,
-    pinNode,
-    unpinNode,
     openAgentRunPane,
   } = useChatActions();
   const agentDomain = useOptionalAgentDomain();
   const agentState = agentDomain?.state;
-  const { prefs, setPref } = usePrefs();
+  const { prefs } = usePrefs();
   const nodes = useChatNodesSnapshot();
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
-
-  const [menu, setMenu] = useState<
-    { x: number; y: number; targetId: string; project: Project } | null
-  >(null);
-  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
 
   const activityItems = useMemo(
     () => deriveActivityData(projects, nodes),
@@ -210,41 +187,34 @@ export default function ActivityView({
     [nodes],
   );
 
-  // ── Thread expand/collapse ──
-  const isThreadExpandedFn = useCallback(
-    (treeId: string, ownerActiveTreeId: string | null) =>
-      isThreadExpanded(prefs.sidebarExpanded, treeId, ownerActiveTreeId),
-    [prefs.sidebarExpanded],
+  // ⇧+click range selection walks a project's branches in the order this
+  // list shows its threads.
+  const branchIdsForProject = useCallback(
+    (project: Project) =>
+      flattenBranchIds(
+        activityItems.filter((item) => item.project.id === project.id).map((item) => item.tree),
+        project.edges,
+        isAlive,
+        nodePinnedAt,
+      ),
+    [activityItems, isAlive, nodePinnedAt],
   );
-
-  const toggleThread = useCallback(
-    (treeId: string) => {
-      const cur = prefs.sidebarExpanded.threads[treeId] ?? false;
-      const next = {
-        ...prefs.sidebarExpanded,
-        threads: { ...prefs.sidebarExpanded.threads, [treeId]: !cur },
-      };
-      setPref('sidebarExpanded', next);
-    },
-    [prefs.sidebarExpanded, setPref],
-  );
-
-  const isBranchExpandedCb = useCallback(
-    (nodeId: string) => isBranchExpandedFn(prefs.sidebarExpanded, nodeId),
-    [prefs.sidebarExpanded],
-  );
-
-  const toggleBranch = useCallback(
-    (nodeId: string) => {
-      const cur = !!prefs.sidebarExpanded.branches[nodeId];
-      const next = {
-        ...prefs.sidebarExpanded,
-        branches: { ...prefs.sidebarExpanded.branches, [nodeId]: !cur },
-      };
-      setPref('sidebarExpanded', next);
-    },
-    [prefs.sidebarExpanded, setPref],
-  );
+  const {
+    isThreadOpen,
+    isBranchOpen,
+    toggleThread,
+    toggleBranch,
+    openThreadRoot,
+    selectBranch,
+    isBranchSelected,
+    menu,
+    menuSections,
+    openBranchMenu,
+    closeMenu,
+    isBranchMenuTarget,
+    renamingNodeId,
+    endRename,
+  } = useSidebarTreeController({ onActivate, branchIdsForProject });
 
   // ── Node status for open-state bars ──
   const allChatIds = useMemo(
@@ -275,189 +245,6 @@ export default function ActivityView({
     (rootId: string, edges: readonly ProjectEdge[]): OpenState =>
       subtreeOpenState(rootId, edges, isAlive, getNodeOpenState),
     [isAlive, getNodeOpenState],
-  );
-
-  // ── Reveal focused pane: expand the owning thread and scroll the row
-  // into view, mirroring WorkspaceTree's reveal logic. ──
-  const revealRef = useRef({ sidebarExpanded: prefs.sidebarExpanded, setPref });
-  revealRef.current = { sidebarExpanded: prefs.sidebarExpanded, setPref };
-  useEffect(() => {
-    if (!focusedPane) return;
-    const { sidebarExpanded: cur, setPref: write } = revealRef.current;
-
-    // Find the owning project and tree for the focused node.
-    let owningProject: Project | undefined;
-    let owningTreeId: string | undefined;
-    for (const p of projects) {
-      if (p.deletedAt || p.archivedAt) continue;
-      const tid = findTreeIdForNode(focusedPane, p);
-      if (tid) { owningProject = p; owningTreeId = tid; break; }
-    }
-    if (!owningProject || !owningTreeId) return;
-
-    // Auto-expand the thread if it's collapsed so the focused row is visible.
-    const needThreadOpen = !isThreadExpanded(cur, owningTreeId, owningProject.activeTreeId ?? null);
-    if (needThreadOpen) {
-      const next = { ...cur, threads: { ...cur.threads, [owningTreeId]: true } };
-      write('sidebarExpanded', next);
-    }
-
-    // Expand ancestor branches between the focused node and the tree root.
-    const parentOf = new Map<string, string>();
-    for (const e of owningProject.edges) {
-      if (e.kind !== undefined && e.kind !== 'branch') continue;
-      parentOf.set(e.target, e.source);
-    }
-    const treeRoots = new Set(owningProject.trees.map((t) => t.rootNodeId));
-    let branchesNext = revealRef.current.sidebarExpanded.branches;
-    let branchChanged = false;
-    const seen = new Set<string>();
-    let walker: string | undefined = parentOf.get(focusedPane);
-    while (walker && !seen.has(walker)) {
-      seen.add(walker);
-      if (treeRoots.has(walker)) break;
-      if (!branchesNext[walker]) {
-        if (!branchChanged) { branchesNext = { ...branchesNext }; branchChanged = true; }
-        branchesNext[walker] = true;
-      }
-      walker = parentOf.get(walker);
-    }
-    if (branchChanged) {
-      const cur2 = revealRef.current.sidebarExpanded;
-      write('sidebarExpanded', { ...cur2, branches: branchesNext });
-    }
-
-    // Scroll the row into view after React re-renders with the new expansion.
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        const el = document.querySelector(
-          `[data-sidebar-row="${CSS.escape(focusedPane)}"]`,
-        ) as HTMLElement | null;
-        el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      if (raf2) cancelAnimationFrame(raf2);
-    };
-  }, [focusedPane, projects]);
-
-  // ── Navigation: clicking a tree/branch in Activity view ──
-  const handleActivateTree = useCallback(
-    (tree: Tree, project: Project) => {
-      if (selection.size > 0) clearSelection();
-      const rootNodeId = tree.rootNodeId;
-      const crossesThread =
-        project.id !== activeProjectId || tree.id !== project.activeTreeId;
-      if (crossesThread) {
-        openPaneInTree(project.id, tree.id, rootNodeId);
-        if (project.id !== activeProjectId) selectProject(project.id);
-        if (tree.id !== project.activeTreeId) activateTree(tree.id, project.id);
-      } else {
-        openPane(rootNodeId);
-      }
-      setFocusedNodeId(rootNodeId);
-      onActivate?.();
-    },
-    [selection, clearSelection, activeProjectId, selectProject, activateTree, openPane, openPaneInTree, setFocusedNodeId, onActivate],
-  );
-
-  const handleSelectBranch = useCallback(
-    (nodeId: string, event: React.MouseEvent) => {
-      if (event.metaKey || event.ctrlKey) {
-        event.preventDefault();
-        toggleSelection(nodeId);
-        return;
-      }
-      if (selection.size > 0) clearSelection();
-      // Find owning project/tree
-      const owningProject = projects.find(
-        (p) => !p.deletedAt && p.chatIds.includes(nodeId),
-      );
-      const owningTreeId = owningProject
-        ? findTreeIdForNode(nodeId, owningProject)
-        : null;
-      if (owningProject && owningTreeId) {
-        const crossesThread =
-          owningProject.id !== activeProjectId ||
-          owningTreeId !== owningProject.activeTreeId;
-        if (crossesThread) {
-          openPaneInTree(owningProject.id, owningTreeId, nodeId);
-          if (owningProject.id !== activeProjectId) selectProject(owningProject.id);
-          if (owningTreeId !== owningProject.activeTreeId) {
-            activateTree(owningTreeId, owningProject.id);
-          }
-        } else {
-          openPane(nodeId);
-        }
-      } else {
-        openPane(nodeId);
-      }
-      setFocusedNodeId(nodeId);
-      onActivate?.();
-    },
-    [projects, selection, clearSelection, toggleSelection, activeProjectId, selectProject, activateTree, openPane, openPaneInTree, setFocusedNodeId, onActivate],
-  );
-
-  const handleBranchContextMenu = useCallback(
-    (nodeId: string, event: React.MouseEvent) => {
-      event.preventDefault();
-      const project = projects.find(
-        (p) => !p.deletedAt && p.chatIds.includes(nodeId),
-      );
-      if (!project) return;
-      setMenu({ x: event.clientX, y: event.clientY, targetId: nodeId, project });
-    },
-    [projects],
-  );
-
-  const isBranchMenuTarget = useCallback(
-    (nodeId: string) => menu?.targetId === nodeId,
-    [menu],
-  );
-
-  const menuSections = menu
-    ? buildTreeContextMenu({
-        targetId: menu.targetId,
-        project: menu.project,
-        nodes,
-        selection,
-        actions: {
-          openPane: (id) => {
-            openPane(id);
-            setFocusedNodeId(id);
-            onActivate?.();
-          },
-          createBlankChild,
-          toggleSelection,
-          clearSelection,
-          deleteNode,
-          trimNode,
-          archiveNode,
-          createMergedChat,
-          createDigest,
-          openExportPanel: () =>
-            window.dispatchEvent(new CustomEvent('michi:toggle-export-panel')),
-          archiveTree,
-          focusOrOpen: (id) => {
-            openPane(id);
-            setFocusedNodeId(id);
-            onActivate?.();
-          },
-          beginInlineRename: (id) => {
-            setMenu(null);
-            setRenamingNodeId(id);
-          },
-          pinNode,
-          unpinNode,
-        },
-      })
-    : [];
-
-  const isBranchSelected = useCallback(
-    (nodeId: string) => selection.has(nodeId),
-    [selection],
   );
 
   // ── Other live workspaces for the "Move to workspace" menu ──
@@ -535,17 +322,17 @@ export default function ActivityView({
                 item={item}
                 isAlive={isAlive}
                 nodePinnedAt={nodePinnedAt}
-                isThreadExpandedFn={isThreadExpandedFn}
-                isBranchExpanded={isBranchExpandedCb}
+                isThreadExpandedFn={isThreadOpen}
+                isBranchExpanded={isBranchOpen}
                 isBranchSelected={isBranchSelected}
                 isBranchMenuTarget={isBranchMenuTarget}
                 toggleThread={toggleThread}
                 toggleBranch={toggleBranch}
                 getNodeOpenState={getNodeOpenState}
                 getSubtreeOpenState={getSubtreeOpenState}
-                onActivateTree={handleActivateTree}
-                onSelectBranch={handleSelectBranch}
-                onBranchContextMenu={handleBranchContextMenu}
+                onActivateTree={openThreadRoot}
+                onSelectBranch={selectBranch}
+                onBranchContextMenu={openBranchMenu}
                 moveTargets={moveTargetsFor(item.project.id)}
                 activeProjectId={activeProjectId}
                 focusedNodeId={focusedNodeId}
@@ -560,7 +347,7 @@ export default function ActivityView({
                 clearTreeSelection={clearTreeSelection}
                 renamingNodeId={renamingNodeId}
                 onRenameNode={renameNode}
-                onRenameEnd={() => setRenamingNodeId(null)}
+                onRenameEnd={endRename}
               />
             ))}
           </div>
@@ -586,7 +373,7 @@ export default function ActivityView({
           x={menu.x}
           y={menu.y}
           sections={menuSections}
-          onClose={() => setMenu(null)}
+          onClose={closeMenu}
         />
       )}
     </div>

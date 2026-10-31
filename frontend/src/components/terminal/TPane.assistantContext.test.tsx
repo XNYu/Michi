@@ -167,7 +167,7 @@ describe('TPane — the assistant context', () => {
     embeddedNodeId = null;
     const nodeId = await mount();
     expect(await screen.findByTitle('Mention context or node')).toBeTruthy();
-    expect(screen.getByText('+')).toBeTruthy();
+    expect(screen.getByTitle(/attach/i)).toBeTruthy();
     act(() => { store.closePane(nodeId); });
     await waitFor(() => expect(panes.openPanes).not.toContain(nodeId));
     embeddedNodeId = nodeId;

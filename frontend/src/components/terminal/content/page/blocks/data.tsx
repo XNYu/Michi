@@ -366,13 +366,16 @@ export function ProsConsBlock({ block }: BlockProps) {
 
 /**
  * Items with their marks; done ones are struck through. On a page the person
- * may edit, a mark ticks the item there and then.
+ * may edit, a mark ticks the item there and then. Where the assistant window
+ * is open, each item offers Ask at its end (on hover or focus; always on touch).
  */
 export function ChecklistBlock({ block, ctx }: BlockProps) {
   const all = objects(block.items);
   const items = all.map((it, index) => ({ it, index })).filter(({ it }) => str(it.text).trim());
   const done = items.filter(({ it }) => it.done === true).length;
-  const toggle = ctx.toggleItem && typeof block.id === 'string' && block.id ? ctx.toggleItem : undefined;
+  const hasId = typeof block.id === 'string' && !!block.id;
+  const toggle = ctx.toggleItem && hasId ? ctx.toggleItem : undefined;
+  const ask = ctx.askItem && hasId ? ctx.askItem : undefined;
   return (
     <div data-michi-block="checklist">
       <div className="michi-doc-block-head">
@@ -400,7 +403,18 @@ export function ChecklistBlock({ block, ctx }: BlockProps) {
                   {checked && <CheckIcon size={10} />}
                 </span>
               )}
-              <span>{str(it.text)}</span>
+              <span className="michi-doc-checklist__text">{str(it.text)}</span>
+              {ask && (
+                <button
+                  type="button"
+                  className="michi-doc-checklist__ask"
+                  aria-label={`Ask assistant about “${str(it.text)}”`}
+                  title="Ask assistant about this item"
+                  onClick={() => ask(block, index)}
+                >
+                  <MessageSquare size={13} strokeWidth={1.7} aria-hidden="true" />
+                </button>
+              )}
             </li>
           );
         })}

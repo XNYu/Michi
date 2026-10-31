@@ -7,7 +7,7 @@ import { FollowUpRow } from '../FollowUpRow';
 import { DARK_PALETTES } from './tokens';
 import { MessageBlock, NodeUserInputContext } from './MessageBlock';
 import { DiffReceipt } from './DiffReceipt';
-import { StreamActivityIndicator } from './StreamActivityIndicator';
+import { StreamActivityIndicator, deriveStreamActivity } from './StreamActivityIndicator';
 import type { ChildAnchor } from '../../state/branchAnchors';
 import { countRender } from '../../services/renderCounters';
 import { shouldShowFollowUps } from '../../state/followUpsVisibility';
@@ -37,6 +37,8 @@ function useOptionalAgentRunUi() {
 
 interface PaneMessageListProps {
   node: ChatNodeState;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   mergeSourceLabels?: readonly string[];
   prefs: Prefs;
   contentStyle: React.CSSProperties;
@@ -77,6 +79,8 @@ interface PaneMessageListProps {
 
 function PaneMessageListInner({
   node,
+  loadingOlder = false,
+  onLoadOlder,
   mergeSourceLabels,
   prefs,
   contentStyle,
@@ -148,7 +152,7 @@ function PaneMessageListInner({
   // m.streaming which mapMessageRow() resets to false on load.
   const turnStillRunning = node.status === 'streaming';
 
-  const showFollowUps = node.messagesLoaded === false
+  const showFollowUps = node.messagesLoaded === false && !node.historyBefore
     ? false
     : turnStillRunning
     ? false
@@ -170,9 +174,10 @@ function PaneMessageListInner({
 
   // Placeholder state: node has messages in the DB but they haven't loaded yet.
   // Show a subtle loading indicator instead of bare follow-ups.
-  const isPlaceholder = node.messagesLoaded === false && (node.messageCount ?? 0) > 0;
+  const isPlaceholder = node.messagesLoaded === false && node.messages.length === 0 && (node.messageCount ?? 0) > 0;
   // Messages before this cut were copied from the parent chain by extraction.
-  const inheritedCount = Math.min(node.inheritedMessageCount ?? 0, node.messages.length);
+  const historyOffset = node.historyBefore ? Math.max(0, (node.messageCount ?? 0) - node.messages.length) : 0;
+  const inheritedCount = Math.max(0, Math.min((node.inheritedMessageCount ?? 0) - historyOffset, node.messages.length));
 
   const userInputCtx = React.useMemo(
     () => ({ userInput: node.pendingUserInput, nodeId: node.nodeId }),
@@ -183,6 +188,12 @@ function PaneMessageListInner({
     <NodeUserInputContext.Provider value={userInputCtx}>
     <BackgroundWorkNodeContext.Provider value={nodeId}>
     <div style={contentStyle}>
+      {node.historyBefore && onLoadOlder && (
+        <button type="button" disabled={loadingOlder} onClick={onLoadOlder}
+          className="mb-4 w-full rounded border border-line px-3 py-2 text-sm text-muted hover:bg-surface disabled:opacity-50">
+          {loadingOlder ? 'Loading older messages…' : 'Load older messages'}
+        </button>
+      )}
       <MergeSourcesNotice node={node} sourceLabels={mergeSourceLabels} />
 
       {isPlaceholder && <MessagesLoadingPlaceholder />}
@@ -260,6 +271,7 @@ function PaneMessageListInner({
                 isDark={isDark}
                 editing={m.id === editingMessageId}
                 hideActions={isStreamingTail}
+                hidePendingIndicator={isStreamingTail && deriveStreamActivity(node) !== null}
                 onEditSave={m.id === editingMessageId ? (newText) => onEditSave?.(i, newText) : undefined}
                 onEditCancel={m.id === editingMessageId ? onEditCancel : undefined}
                 onCopy={() => {

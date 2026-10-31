@@ -20,9 +20,10 @@ export interface MetaChatWindowController {
   dock: () => void;
   float: () => void;
   minimize: () => void;
+  /** Opens the window if it is minimized and puts the cursor in its input, except on a touch screen: there a tap on the composer does. */
   restore: () => void;
   toggleMinimized: () => void;
-  /** Opens the window if it is minimized and puts the cursor in its input. */
+  /** Opens the window if it is minimized and puts the cursor in its input, on a touch screen too: something waits there to be typed. */
   focusInput: () => void;
   /** Shows the window floating without taking focus (the first run opening it for the user). */
   showFloating: () => void;
@@ -46,6 +47,11 @@ function defaultStorage(): Storage | null {
   } catch {
     return null;
   }
+}
+
+/** Touch is the main input (a phone or tablet): focusing a text field raises the on-screen keyboard. */
+function touchScreen(): boolean {
+  return typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
 }
 
 /** No stored window yet: this browser has never had the window placed. Without storage there is no first time to detect. */
@@ -108,6 +114,8 @@ export function useMetaChatWindow(options: UseMetaChatWindowOptions = {}): MetaC
   }, [endFirstOpen]);
 
   const requestFocus = useCallback(() => setFocusToken((n) => n + 1), []);
+  // Showing the window takes focus, except on a touch screen: the keyboard would come up over the conversation.
+  const focusOnShow = useCallback(() => { if (!touchScreen()) requestFocus(); }, [requestFocus]);
 
   const setRect = useCallback((rect: Rect) => commit((s) => (
     s.rect && s.rect.x === rect.x && s.rect.y === rect.y && s.rect.w === rect.w && s.rect.h === rect.h
@@ -118,15 +126,19 @@ export function useMetaChatWindow(options: UseMetaChatWindowOptions = {}): MetaC
   const dock = useCallback(() => {
     setFullscreen(false);
     commit((s) => ({ ...s, form: 'dock', minimized: false }));
-    requestFocus();
-  }, [commit, requestFocus]);
+    focusOnShow();
+  }, [commit, focusOnShow]);
   const float = useCallback(() => {
     setFullscreen(false);
     commit((s) => ({ ...s, form: 'float', minimized: false }));
-    requestFocus();
-  }, [commit, requestFocus]);
+    focusOnShow();
+  }, [commit, focusOnShow]);
   const minimize = useCallback(() => commit((s) => ({ ...s, minimized: true })), [commit]);
   const restore = useCallback(() => {
+    commit((s) => ({ ...s, minimized: false }));
+    focusOnShow();
+  }, [commit, focusOnShow]);
+  const focusInput = useCallback(() => {
     commit((s) => ({ ...s, minimized: false }));
     requestFocus();
   }, [commit, requestFocus]);
@@ -141,6 +153,6 @@ export function useMetaChatWindow(options: UseMetaChatWindowOptions = {}): MetaC
   }, [minimize, restore]);
 
   return useMemo(() => ({
-    state, focusToken, fullscreen, toggleFullscreen, setRect, setDockRatio, dock, float, minimize, restore, toggleMinimized, focusInput: restore, showFloating, firstOpen, placeFirstOpen,
-  }), [state, focusToken, fullscreen, toggleFullscreen, setRect, setDockRatio, dock, float, minimize, restore, toggleMinimized, showFloating, firstOpen, placeFirstOpen]);
+    state, focusToken, fullscreen, toggleFullscreen, setRect, setDockRatio, dock, float, minimize, restore, toggleMinimized, focusInput, showFloating, firstOpen, placeFirstOpen,
+  }), [state, focusToken, fullscreen, toggleFullscreen, setRect, setDockRatio, dock, float, minimize, restore, toggleMinimized, focusInput, showFloating, firstOpen, placeFirstOpen]);
 }

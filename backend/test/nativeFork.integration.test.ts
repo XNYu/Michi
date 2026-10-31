@@ -13,7 +13,7 @@ import { closeDb, getDb, initDb } from '../src/services/db';
 import { getNode, saveEdge, updateNodeResumeBinding } from '../src/services/dbRepository';
 import { getAgentConfig, loadAgentConfig, updateAgentConfig } from '../src/services/agentConfig';
 import { registerRuntime } from '../src/agents/registry';
-import { clearAllSessions, dropSession } from '../src/agents/sessionRegistry';
+import { clearAllSessions, dropSession, getSession, registerSession } from '../src/agents/sessionRegistry';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import { tryForkChatSession } from '../src/services/nativeFork';
 import { chatHub } from '../src/agents/chatHub';
@@ -148,6 +148,43 @@ test('native fork waits while the parent runtime still owns a visibly completed 
   t.mock.method(chatHub, 'isOwnerTurnActive', (nodeId: string) => nodeId === 'parent');
   assert.equal(await tryForkChatSession(runtime, { sessionId: 'child', cwd: directory, workspaceId: 'ws' }), null);
   assert.equal(forks.length, 0);
+});
+
+/** An unbound live child session (its binding was never persisted), with
+ * release and fork order recorded. */
+function liveUnboundChild(): { live: AgentSession; steps: string[] } {
+  const steps: string[] = [];
+  const live: AgentSession = {
+    id: 'child', nativeSessionId: 'old-child', runtimeId: 'codex', currentModelId: 'test-model',
+    getHistory: () => [], getPendingAssistant: () => undefined,
+    async *send() { yield { kind: 'turn_end', stopReason: 'end_turn' }; }, async cancel() {},
+  };
+  registerSession(live, null);
+  const releaseSession = runtime.releaseSession.bind(runtime);
+  runtime.releaseSession = async (id) => { steps.push(`release:${id}:${getSession(id)?.nativeSessionId}`); await releaseSession(id); };
+  const forkSession = runtime.forkSession!.bind(runtime);
+  runtime.forkSession = async (opts) => { steps.push('fork'); return forkSession(opts); };
+  return { live, steps };
+}
+
+test('native fork waits while the child runtime still owns a visibly completed turn', async (t) => {
+  const { live, steps } = liveUnboundChild();
+  const cleaningUp = t.mock.method(chatHub, 'isOwnerTurnActive', (nodeId: string) => nodeId === 'child');
+  const refused = await post('/nodes/child/ensure-session', { workspaceId: 'ws', cwd: directory, priorMessages: [] });
+  assert.equal(refused.status, 409);
+  assert.deepEqual(await refused.json(), { code: 'turn_active', error: 'Cannot replace an active turn' });
+  assert.deepEqual(steps, []);
+  assert.equal(getSession('child'), live);
+  cleaningUp.mock.restore();
+  assert.equal((await ensure()).resumeReason, 'native_fork');
+  assert.equal(getSession('child')?.nativeSessionId, 'fork-1');
+});
+
+test('native fork retires an idle live child session before registering the fork', async () => {
+  const { steps } = liveUnboundChild();
+  assert.equal((await ensure()).resumeReason, 'native_fork');
+  assert.deepEqual(steps, ['release:child:old-child', 'fork']);
+  assert.equal(getSession('child')?.nativeSessionId, 'fork-1');
 });
 
 test('native fork declines a parent with a queued runtime-initiated turn', async (t) => {

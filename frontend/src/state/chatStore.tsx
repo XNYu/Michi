@@ -8,13 +8,15 @@ import { chatPermissionChoiceParts, type ScheduledJobRunEvent, type SteerMessage
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
 import { bindPendingPrimaryAgent, type AgentStatus } from '../services/api';
-import { activeTreeRootNodeId, findTreeIdForNode } from './tree';
+import { activeTreeRootNodeId, findTreeIdForNode, descendants } from './tree';
+import { useMessageHistory, type MessageHistoryActions } from './useMessageHistory';
 export { activeTreeRootNodeId } from './tree';
 import { usePrefs } from './prefs';
 import { DARK_PALETTES } from '../components/terminal/tokens';
 import { resolveAtMentions, resolveAtNodeMentions, buildNodeTranscriptBlock, stripNodeMentionTokens, rewriteNodeMentionsForDisplay } from './contextBudget';
 import { runChatStream, type TurnEndReason } from './chatStreamRunner';
 import { inspectOriginalTurn, turnErrorAction } from './turnErrorRecovery';
+import { buildResumePrompt } from './turnInterruption';
 import { createBackgroundTurnBinding } from './observeChatStream';
 import { createBackgroundTurnTransport } from './backgroundTurnTransport';
 import { compactChat } from '../services/api/stream';
@@ -218,7 +220,7 @@ interface WorkspaceSnapshotActions {
 }
 
 type ExtendedChatContextValue = ChatContextValue & AgentRunPaneActions;
-type ExtendedChatActionsValue = ChatActionsValue & AgentRunPaneActions & WorkspaceSnapshotActions;
+type ExtendedChatActionsValue = ChatActionsValue & AgentRunPaneActions & WorkspaceSnapshotActions & MessageHistoryActions;
 
 const ChatContext = createContext<ExtendedChatContextValue | null>(null);
 
@@ -891,6 +893,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   // placeholder (hydration only eager-loads the initially-active tree).
   // Mounted after `dispatch` is defined so it can dispatch `messages-loaded`.
   const prefetchTreeForNode = useLazyTreeMessages({ hydrated, activeProjectId, projects, nodesRef, dispatch, reconnectStreamingRef: reconnectStreamingNodeRef });
+  const { loadOlderMessages, ensureCompleteHistory } = useMessageHistory(nodesRef, projectsRef, dispatch);
+  const preparingHistory = useRef(new Set<string>());
 
   const reconcileBackgroundGap = useCallback(async (gap: {
     chatId: string;
@@ -1007,8 +1011,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           const cursors: Record<string, { turnId: string; seq: number }> = {};
           for (const node of Object.values(nodesRef.current)) {
             if (!belongsToConnection(node)) continue;
-            if (!node.chatId || !node.lastAppliedBackgroundTurnId || typeof node.lastAppliedBackgroundSeq !== 'number') continue;
-            cursors[node.chatId] = { turnId: node.lastAppliedBackgroundTurnId, seq: node.lastAppliedBackgroundSeq };
+            const turnId = node.lastAppliedBackgroundTurnId ?? node.lastAppliedTurnId;
+            const seq = node.lastAppliedBackgroundTurnId ? node.lastAppliedBackgroundSeq : node.lastAppliedSeq;
+            if (!node.chatId || !turnId || typeof seq !== 'number') continue;
+            cursors[node.chatId] = { turnId, seq };
           }
           return cursors;
         },
@@ -1393,13 +1399,33 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       const tSubmit = perf.now();
       perf.mark('client:user_submit', { nodeId, textLen: text.length });
       startupMarkOnce('first_message_send', { nodeId, textLen: text.length });
-      const n = nodesRef.current[nodeId];
+      let n = nodesRef.current[nodeId];
       if (!n) return;
-      if (commandsInFlightRef.current.has(nodeId)) {
+      if (commandsInFlightRef.current.has(nodeId) || preparingHistory.current.has(nodeId)) {
         dispatch({ type: 'set-composer-draft', nodeId,
           draft: meta?.rejectedDraft ?? { value: text, mentions: [] }, preserveExisting: true });
         meta?.onRejected?.();
         return;
+      }
+      const contextProject = projectsRef.current.find(project => project.id === n.projectId);
+      const contextNodes = new Set([nodeId, ...linkedPeersOf(nodeId, contextProject?.edges ?? []),
+        ...resolveAtNodeMentions(text, nodesRef.current, { workspaceId: n.projectId,
+          backendConnectionId: backendConnectionIdForWorkspace(n.projectId) }).map(node => node.nodeId)]);
+      for (const source of n.mergeSources ?? []) {
+        contextNodes.add(source);
+        for (const id of descendants(source, contextProject?.edges ?? [])) contextNodes.add(id);
+      }
+      if ([...contextNodes].some(id => nodesRef.current[id]?.messagesLoaded === false)) {
+        preparingHistory.current.add(nodeId);
+        try { await ensureCompleteHistory([...contextNodes]); }
+        catch (error) {
+          dispatch({ type: 'set-composer-draft', nodeId, draft: meta?.rejectedDraft ?? { value: text, mentions: [] }, preserveExisting: true });
+          meta?.onRejected?.();
+          toast.error((error as Error).message);
+          return;
+        } finally { preparingHistory.current.delete(nodeId); }
+        n = nodesRef.current[nodeId];
+        if (!n || n.status === 'streaming') return;
       }
       const command = parseChatCommand(text, meta?.runtimeId ?? n.runtimeId ?? agentStatusRef.current?.runtime, n.sessionState?.nativeEngine);
       const priorMessagesForResume = n.chatId && boundSessionsRef.current.has(nodeId)
@@ -1684,7 +1710,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         cancel();
       }
     },
-    [createSharedStreamHandlers, dispatch, handleTurnEnd, refreshAgentStatus],
+    [createSharedStreamHandlers, dispatch, handleTurnEnd, refreshAgentStatus, ensureCompleteHistory],
   );
 
   // A spawn frame can be missed after its short replay window. The backend
@@ -1947,11 +1973,52 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     turnInspections.current.clear();
   }, []);
 
-  const retryLastTurn = useCallback(
-    (nodeId: string, fromIndex?: number, binding?: SendBindingMeta, explicitRerun = false) => {
-      const n = nodesRef.current[nodeId];
+  // A restart cut the last turn short. Its request and partial output are
+  // already in the transcript, so the agent is asked to carry on from there;
+  // the original request is never sent again (a second run would repeat the
+  // tool calls the first one completed).
+  const resumeLastTurn = useCallback(
+    async (nodeId: string, binding?: SendBindingMeta) => {
+      let n = nodesRef.current[nodeId];
       if (!n || n.status === 'streaming') return;
-      const uncertain = turnErrorAction(n.errorKind) === 'inspect-existing-turn';
+      if (n.messagesLoaded === false) {
+        try { await ensureCompleteHistory([nodeId]); }
+        catch (error) { toast.error((error as Error).message); return; }
+        n = nodesRef.current[nodeId];
+        if (!n || n.status === 'streaming') return;
+      }
+      const prompt = buildResumePrompt(n.messages);
+      if (!prompt) return;
+      turnInspections.current.get(nodeId)?.();
+      turnInspections.current.delete(nodeId);
+      cancelFns.current[nodeId]?.();
+      void startStream(nodeId, prompt.text, undefined, { displayText: prompt.displayText, ...binding });
+    },
+    [startStream, ensureCompleteHistory],
+  );
+
+  const retryLastTurn = useCallback(
+    async (nodeId: string, fromIndex?: number, binding?: SendBindingMeta, explicitRerun = false) => {
+      let n = nodesRef.current[nodeId];
+      if (!n || n.status === 'streaming') return;
+      if (n.messagesLoaded === false) {
+        const anchor = fromIndex === undefined ? undefined : n.messages[fromIndex]?.id;
+        try { await ensureCompleteHistory([nodeId]); }
+        catch (error) { toast.error((error as Error).message); return; }
+        n = nodesRef.current[nodeId];
+        if (!n || n.status === 'streaming') return;
+        if (fromIndex !== undefined) {
+          fromIndex = n.messages.findIndex(message => message.id === anchor);
+          if (fromIndex < 0) return;
+        }
+      }
+      const action = turnErrorAction(n.errorKind);
+      if (action === 'resume-turn' && !explicitRerun) {
+        resumeLastTurn(nodeId, binding);
+        return;
+      }
+      const uncertain = action === 'inspect-existing-turn';
+
       if (uncertain && !explicitRerun) {
         if (n.errorRecovery === 'checking') return;
         const turnId = n.errorTurnId;
@@ -1965,8 +2032,6 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         const detach = inspectOriginalTurn({
           chatId: n.chatId,
           turnId,
-          assistant: n.messages.find((m) => m.id === assistantId)!,
-          workspaceId: n.projectId,
           onResult: ({ persisted, completedAt, assistant, lastSeq }) => {
             turnInspections.current.delete(nodeId);
             const current = nodesRef.current[nodeId];
@@ -2036,7 +2101,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
         ...binding,
       });
     },
-    [dispatch, setProjects, startStream],
+    [dispatch, resumeLastTurn, setProjects, startStream, ensureCompleteHistory],
   );
 
   // An explicit rerun of an uncertain execution appends a new attempt, keeping
@@ -2047,9 +2112,18 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   );
 
   const editAndResend = useCallback(
-    (nodeId: string, fromIndex: number, newText: string) => {
-      const n = nodesRef.current[nodeId];
+    async (nodeId: string, fromIndex: number, newText: string) => {
+      let n = nodesRef.current[nodeId];
       if (!n) return;
+      if (n.messagesLoaded === false) {
+        const anchor = n.messages[fromIndex]?.id;
+        try { await ensureCompleteHistory([nodeId]); }
+        catch (error) { toast.error((error as Error).message); return; }
+        n = nodesRef.current[nodeId];
+        if (!n || n.status === 'streaming') return;
+        fromIndex = n.messages.findIndex(message => message.id === anchor);
+        if (fromIndex < 0) return;
+      }
       cancelFns.current[nodeId]?.();
       const survivingIds = computeSurvivingMessageIds(n.messages, fromIndex);
       dispatch({ type: 'retry-trim', nodeId, fromIndex });
@@ -2062,7 +2136,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       );
       void startStream(nodeId, newText);
     },
-    [dispatch, setProjects, startStream],
+    [dispatch, setProjects, startStream, ensureCompleteHistory],
   );
 
   const cancelStream = useCallback((nodeId: string) => {
@@ -2417,6 +2491,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     setNodes,
     sameTree,
     newNodeId,
+    ensureCompleteHistory,
   });
 
   const revealPane = useCallback((item: PaneItem): string => {
@@ -3203,6 +3278,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setChatPermissionMode,
       retryLastTurn,
       rerunLastTurn,
+      resumeLastTurn,
       editAndResend,
       createChildChat,
       createBlankChild,
@@ -3342,6 +3418,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setChatPermissionMode,
       retryLastTurn,
       rerunLastTurn,
+      resumeLastTurn,
       editAndResend,
       createChildChat,
       createBlankChild,
@@ -3461,6 +3538,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
   const hotActions = useMemo<ExtendedChatActionsValue>(
     () => ({
+      loadOlderMessages,
+      ensureCompleteHistory,
       createProject,
       enterChatsWorkspace,
       selectProject,
@@ -3472,6 +3551,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setChatPermissionMode,
       retryLastTurn,
       rerunLastTurn,
+      resumeLastTurn,
       editAndResend,
       createChildChat,
       createBlankChild,
@@ -3548,6 +3628,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       installWorkspaceSnapshot,
     }),
     [
+      loadOlderMessages,
+      ensureCompleteHistory,
       installWorkspaceSnapshot,
       createProject,
       enterChatsWorkspace,
@@ -3560,6 +3642,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       setChatPermissionMode,
       retryLastTurn,
       rerunLastTurn,
+      resumeLastTurn,
       editAndResend,
       createChildChat,
       createBlankChild,

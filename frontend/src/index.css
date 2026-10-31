@@ -2882,6 +2882,10 @@ html[data-vibrancy="on"],
 .t-toolbar-chip[data-icononly="true"] > .t-chip-label {
   display: none;
 }
+/* The agent chip's ⌄ (PaneComposerToolbarLeft) turns like the model chip's. */
+.composer-agent-chevron { flex-shrink: 0; transform: rotate(90deg); color: var(--term-muted); }
+.t-toolbar-chip[aria-expanded="true"] > .composer-agent-chevron { transform: rotate(-90deg); }
+.t-toolbar-chip[data-icononly="true"] > .composer-agent-chevron { display: none; }
 .t-toolbar-chip[aria-disabled="true"] {
   cursor: not-allowed;
   color: var(--term-faint);
@@ -2925,15 +2929,33 @@ html[data-vibrancy="on"],
 /* .t-action-btn.is-primary — its fill, hover and disabled states are declared
    once, together with the text Button, under ".ui-btn--primary" below, so Send
    and every other solid accent button stay the same button. */
+/* Send, Stop, Retry and Send next keep the chip-height hit square but paint a
+   smaller plate inside it, so the one solid control does not outweigh the row:
+   26 of 30 on desktop, 32 of 40 on a phone (mobile.css sets the inset). The
+   outer corners grow by the inset, so the plate keeps the chips' corners. */
+.t-action-btn.is-primary,
 .t-action-btn.is-queue {
-  background: var(--term-surface);
+  padding: calc(var(--composer-send-inset, 2px) - 1px);
+  background-clip: content-box;
+  border-radius: calc(var(--ui-radius) + var(--composer-send-inset, 2px));
+}
+/* The plate stands a little apart from the icon before it. */
+.terminal-composer__toolbar .t-action-btn:not(.is-outline) { margin-left: 4px; }
+/* Send next's accent ring is an inset outline, so it rings the plate rather
+   than the hit box; keyboard focus swaps in the usual focus ring. */
+.t-action-btn.is-queue {
+  background-color: var(--term-surface);
   color: var(--term-accent);
-  border-color: var(--term-accent);
+  outline: 1px solid var(--term-accent);
+  outline-offset: calc(-1px - var(--composer-send-inset, 2px));
 }
 .t-action-btn.is-queue:hover {
-  background: var(--term-hover-bg, var(--term-alt));
-  border-color: var(--term-accent);
+  background-color: var(--term-hover-bg, var(--term-alt));
   color: var(--term-accent);
+}
+.t-action-btn.is-queue:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent);
+  outline-offset: 1px;
 }
 @media (prefers-reduced-motion: reduce) {
   .t-toolbar-chip,
@@ -2976,6 +2998,11 @@ html[data-vibrancy="on"],
 .t-action-btn:focus-visible .t-action-kbd {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+/* A tap leaves :hover stuck on touch screens, which would pin a shortcut
+   hint for a key the on-screen keyboard does not have. */
+@media (hover: none) {
+  .t-action-btn .t-action-kbd { display: none; }
 }
 
 /* Sidebar contexts row — show subtle background on hover so the row
@@ -4013,9 +4040,10 @@ html[data-vibrancy="on"],
    Button and the composer's Send (.t-action-btn.is-primary). A coloured button
    is the same button wherever it sits — don't hand-roll another fill (fg,
    digest, …) at a call site; use <Button variant="primary">. */
+/* background-color, not the shorthand: Send's plate sets background-clip. */
 .ui-btn--primary,
 .t-action-btn.is-primary {
-  background: var(--term-accent);
+  background-color: var(--term-accent);
   color: var(--term-surface);
 }
 .ui-btn--primary {
@@ -4025,7 +4053,7 @@ html[data-vibrancy="on"],
 }
 .ui-btn--primary:hover:not(:disabled),
 .t-action-btn.is-primary:hover {
-  background: color-mix(in srgb, var(--term-accent) 88%, black);
+  background-color: color-mix(in srgb, var(--term-accent) 88%, black);
 }
 /* ghost — no border, quiet */
 .ui-btn--ghost {
@@ -4068,7 +4096,7 @@ html[data-vibrancy="on"],
 .t-action-btn.is-primary[aria-disabled="true"] {
   opacity: 1;
   border-color: transparent;
-  background: var(--term-alt2);
+  background-color: var(--term-alt2);
   color: var(--term-muted);
 }
 

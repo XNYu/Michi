@@ -44,8 +44,8 @@
   cursor: pointer;
 }
 .sidebar-lens-header__toggle[aria-pressed='true'] {
-  background: var(--term-accent-f);
-  color: var(--term-accent);
+  background: color-mix(in srgb, var(--term-fg) 6%, transparent);
+  color: var(--term-fg);
 }
 .sidebar-lens-header__toggle:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent);

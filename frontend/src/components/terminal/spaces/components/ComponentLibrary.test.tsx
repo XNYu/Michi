@@ -9,6 +9,9 @@ const api = vi.hoisted(() => ({
   readPageComponent: vi.fn(), savePageComponent: vi.fn(), updatePageComponent: vi.fn(),
 }));
 vi.mock('../../../../services/api/pageComponents', () => api);
+// The built-in gallery has its own interaction tests. Keep workspace-library
+// lifecycle tests focused on saved components and their asynchronous reads.
+vi.mock('./BuiltinComponents', () => ({ BuiltinComponents: () => null }));
 
 const component: PageComponent = {
   id: 'component-1', ownerUserId: 'owner-1', workspaceId: 'workspace-1', name: 'Risk card', description: 'Risk summary',

@@ -12,6 +12,9 @@ test('remote gap recovery keeps the same-ID Local copy separate and never writes
   let sendGap = false;
   let gapSent = false;
   let offline = false;
+  let failOneStatus = false;
+  let healthyProbes = 0;
+  let metaLoads = 0;
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => localStorage.setItem('michi:v1:prefs', JSON.stringify({ onboardingCompletedAt: 1 })));
@@ -25,7 +28,12 @@ test('remote gap recovery keeps the same-ID Local copy separate and never writes
     const apiPath = remote ? path.slice(prefix.length) : path.slice('/api'.length);
     if (path === '/api/backend-connections') { await route.fulfill({ json: { connections: [connection] } }); return true; }
     if (remote && offline) { await route.fulfill({ status: 503, json: { error: 'Remote offline' } }); return true; }
-    if (remote && apiPath === '/workspaces/all') { await route.fulfill({ json: { workspaces: [workspace] } }); return true; }
+    if (remote && apiPath === '/workspaces/all') { metaLoads++; await route.fulfill({ json: { workspaces: [workspace] } }); return true; }
+    if (remote && apiPath === '/health') { healthyProbes++; await route.fulfill({ json: { service: 'michi-backend', status: 'healthy' } }); return true; }
+    if (remote && failOneStatus && apiPath === '/agent/status') {
+      failOneStatus = false;
+      await route.fulfill({ status: 502, json: { error: 'One proxy request failed' } }); return true;
+    }
     if (remote && apiPath === '/chats/background/subscribe') {
       const body = sendGap && !gapSent
         ? 'event: background_sync_required\ndata: ' + JSON.stringify({ chatId: 'same-node', nodeId: 'same-node', turnId: 'durable-turn', seq: 8 }) + '\n\n'
@@ -75,8 +83,25 @@ test('remote gap recovery keeps the same-ID Local copy separate and never writes
   expect(remoteWorkspaceWrite).not.toContain('remote:remote-isolation:');
   expect(await page.evaluate(() => Object.values(localStorage).join('\n'))).not.toContain('/srv/project');
 
+  const loadsBeforeTransientFailure = metaLoads;
+  failOneStatus = true;
+  // Exercise the normal request wrapper while the visible remote tree is open.
+  await page.evaluate(async () => {
+    const modulePath = '/src/services/api/backendRequest.ts';
+    const { backendFetch } = await import(modulePath);
+    await backendFetch('/api/backend-connections/remote-isolation/proxy/agent/status');
+  });
+  await expect.poll(() => healthyProbes).toBe(1);
+  await expect(remoteRow.getByText('Remote edited', { exact: true })).toBeVisible();
+  expect(metaLoads).toBe(loadsBeforeTransientFailure);
+
   offline = true;
-  await expect(remoteRow).toHaveCount(0);
+  await expect.poll(() => page.evaluate(async () => {
+    const modulePath = '/src/config/backendConnectionState.ts';
+    const { backendConnectionUnavailable } = await import(modulePath);
+    return backendConnectionUnavailable('remote-isolation');
+  })).toBe(true);
+  await expect(remoteRow.getByText('Remote edited', { exact: true })).toBeVisible();
   await expect(page.getByTestId('workspace-row-same-ws')).toBeVisible();
   const localWritesBeforeReload = writes.filter(write => !write.remote).length;
   await page.reload();

@@ -15,7 +15,7 @@ import {
   listTrees, saveTree, listNodes, saveNode, updateNodeTitle,
   listEdges, saveEdge, listMessages, saveMessage, getMessageCount,
   listContexts, saveContext, loadFullWorkspace, loadAllWorkspaces,
-  loadAllWorkspacesMeta, loadTreeMessages,
+  loadAllWorkspacesMeta, loadTreeMessages, loadTreeMessagePage,
   deleteEdge, deleteTree, moveTreeToWorkspace, softDeleteNode, restoreNode, deleteContext,
   getAiGlobalContext, setAiGlobalContext,
   emptyWorkspaceTrash, purgeWorkspaceNodes,
@@ -202,6 +202,22 @@ export function setupPersistenceRoutes(): express.Router {
   router.get('/workspaces/:id/trees/:treeId/messages', requireWorkspaceOwner, (req, res) => {
     try {
       const userId: string | undefined = requestOwnerUserId(req);
+      if (req.query.limit !== undefined) {
+        const limit = Number(req.query.limit);
+        const nodeId = typeof req.query.nodeId === 'string' ? req.query.nodeId : undefined;
+        const beforeSeq = req.query.beforeSeq === undefined ? undefined : Number(req.query.beforeSeq);
+        const beforeId = typeof req.query.beforeId === 'string' ? req.query.beforeId : undefined;
+        if (typeof req.query.limit !== 'string' || !Number.isSafeInteger(limit) || limit < 1 || limit > 200
+          || (req.query.nodeId !== undefined && (!nodeId || nodeId.length > 256))
+          || ((beforeSeq !== undefined || req.query.beforeId !== undefined)
+            && (!nodeId || typeof req.query.beforeSeq !== 'string' || !Number.isSafeInteger(beforeSeq)
+              || beforeSeq! < 0 || !beforeId || beforeId.length > 256))) {
+          return res.status(400).json({ error: 'Invalid message page parameters' });
+        }
+        res.setHeader('Cache-Control', 'no-store');
+        return res.json(loadTreeMessagePage(req.params.id, req.params.treeId,
+          { limit, nodeId, before: beforeSeq === undefined ? undefined : { seq: beforeSeq, id: beforeId! } }, userId));
+      }
       const messages = loadTreeMessages(req.params.id, req.params.treeId, userId);
       res.json({ messages });
     } catch (err) {

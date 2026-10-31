@@ -1,8 +1,9 @@
 import { useState, type KeyboardEvent } from 'react';
 import { usePrefs, TerminalPalette, CORNER_RADIUS_MAX, DEFAULT_PREFS } from '../../../../state/prefs';
 import { Row as ClickableRow } from '../../primitives';
-import { PALETTES, resolveAccent } from '../../tokens';
+import { ACCENT_HUES, PALETTES, resolveAccent } from '../../tokens';
 import { Row, Radio, Toggle } from './controls';
+import { useSettingsLayout, useSettingsTarget } from './settingsPhone';
 import { PANE_MOTION_OPTIONS, type PaneMotion } from '../../paneMotion';
 import {
   SIDEBAR_ROW_STYLES,
@@ -45,6 +46,35 @@ function CornerRadiusPreview() {
   );
 }
 
+/** Settings under Advanced; a search result for one of them opens the list. */
+const ADVANCED_SETTINGS = new Set([
+  'Pane width mode', 'Pane animation', 'Default pane width', 'Single-pane reading width', 'Corner radius',
+  'Sidebar row style', 'Interface font', 'Message font', 'Message size', 'Composer size', 'Sidebar density',
+  'Sidebar edge padding', 'Sidebar timestamps', 'Code wrap', 'Chrome rules',
+]);
+
+/**
+ * A short conversation drawn with the live theme tokens and message fonts, so
+ * palette, accent, fonts and sizes show here as they change.
+ */
+function AppearancePreview() {
+  return (
+    <aside className="appearance-preview" aria-label="Preview">
+      <div className="appearance-preview__title">Preview</div>
+      <div className="appearance-preview__frame" aria-hidden="true">
+        <div className="appearance-preview__bar"><span>Michi</span><span className="appearance-preview__chip">Runtime · model</span></div>
+        <div className="appearance-preview__user">Can you compare the two approaches?</div>
+        <div className="appearance-preview__reply">
+          <strong>Two directions</strong>
+          <p>The first keeps one list; the second splits it by topic. Both read <code>settingsPages.ts</code>.</p>
+        </div>
+        <div className="appearance-preview__composer"><span>Reply…</span><span className="appearance-preview__send">↑</span></div>
+      </div>
+      <p className="appearance-preview__note">Shows the theme, accent, fonts and sizes as you change them.</p>
+    </aside>
+  );
+}
+
 /** Enter or Space presses a row that acts as a button, as a click does. */
 function pressKeys(run: () => void) {
   return (event: KeyboardEvent) => {
@@ -57,8 +87,12 @@ function pressKeys(run: () => void) {
 
 export function AppearancePane() {
   const { prefs, setPref } = usePrefs();
+  // A phone shows one pane at a time, so pane layout settings stay on desktop.
+  const layout = useSettingsLayout();
+  const phone = layout === 'phone';
+  const target = useSettingsTarget();
   const currentAccent = resolveAccent(prefs.terminalAccentOverrides, prefs.terminalPalette);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(() => !!target && ADVANCED_SETTINGS.has(target));
 
   const Swatch = ({
     c,
@@ -132,7 +166,8 @@ export function AppearancePane() {
   };
 
   return (
-    <div>
+    <div className="appearance-pane" data-preview={layout === 'window' || undefined}>
+    <div className="appearance-pane__settings">
       <Row k="home.recommendations" label="Home">
         <Toggle
           on={prefs.homeRecommendations}
@@ -177,7 +212,7 @@ export function AppearancePane() {
         </div>
       </Row>
 
-      <Row k="theme.focusDim" label="Focus dimming">
+      {!phone && <Row k="theme.focusDim" label="Focus dimming">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <input
             type="range"
@@ -192,7 +227,7 @@ export function AppearancePane() {
             {prefs.focusDim}%
           </span>
         </div>
-      </Row>
+      </Row>}
 
       <Row k="a11y.reduceMotion" label="Reduce motion">
         <Toggle
@@ -202,29 +237,17 @@ export function AppearancePane() {
         />
       </Row>
 
-      <Row k="layout.singlePage" label="Single-page mode">
+      {!phone && <Row k="layout.singlePage" label="Single-page mode">
         <Toggle
           on={prefs.singlePageMode}
           label="show one pane at a time; the thread's other panes become tabs"
           onChange={(v) => setPref('singlePageMode', v)}
         />
-      </Row>
+      </Row>}
 
       <Row k="theme.accent" label="Accent hue">
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {[
-            ['#b8451f', 'rust'],
-            ['#1a4d8f', 'ink'],
-            ['#2f6b4e', 'moss'],
-            ['#6d4aa8', 'violet'],
-            ['#c48300', 'amber'],
-            ['#a8261a', 'red'],
-            ['#58c6a5', 'mint'],
-            ['#10a37f', 'green'],
-            ['#c15f3c', 'clay'],
-            ['#00d9ff', 'cyan'],
-            ['#ff2d95', 'pink'],
-          ].map(([c, n]) => {
+          {ACCENT_HUES.map(([c, n]) => {
             const sel = currentAccent === c;
             const pick = () => setPref('terminalAccentOverrides', {
               ...prefs.terminalAccentOverrides,
@@ -270,6 +293,7 @@ export function AppearancePane() {
       <div style={{ marginTop: 20 }}>
         <button
           type="button"
+          className="appearance-advanced"
           onClick={() => setAdvancedOpen((v) => !v)}
           aria-expanded={advancedOpen}
           style={{
@@ -294,6 +318,7 @@ export function AppearancePane() {
 
         {advancedOpen && (
           <div>
+            {!phone && <>
             <Row k="layout.paneWidthMode" label="Pane width mode">
               <select
                 aria-label="Pane width mode"
@@ -391,6 +416,7 @@ export function AppearancePane() {
                 </button>
               </div>
             </Row>
+            </>}
 
             <Row k="theme.cornerRadius" label="Corner radius">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -530,16 +556,18 @@ export function AppearancePane() {
               />
             </Row>
 
-            <Row k="theme.rules" label="Chrome rules">
+            {!phone && <Row k="theme.rules" label="Chrome rules">
               <Toggle
                 on={prefs.paneRules}
                 label="hairline rules between panes"
                 onChange={(v) => setPref('paneRules', v)}
               />
-            </Row>
+            </Row>}
           </div>
         )}
       </div>
+    </div>
+    {layout === 'window' && <AppearancePreview />}
     </div>
   );
 }

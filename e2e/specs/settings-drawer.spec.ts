@@ -6,7 +6,7 @@ import { areaButton, leaveSettings, openSettings, selectSettingsSection } from '
 
 const evidence = resolve('.artifacts/settings-drawer');
 
-for (const palette of ['bone', 'monokai']) test(`global Settings stays a drawer in ${palette}`, async ({ page }) => {
+for (const palette of ['bone', 'monokai']) test(`global Settings opens as a window over the page in ${palette}`, async ({ page }) => {
   mkdirSync(evidence, { recursive: true });
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -27,14 +27,40 @@ for (const palette of ['bone', 'monokai']) test(`global Settings stays a drawer 
   await openSettings(page, 'Appearance');
   const drawer = page.getByRole('dialog', { name: 'Settings', exact: true });
   await expect(drawer).toHaveAttribute('aria-modal', 'true');
+  // Its search starts with focus, and its pages sit in groups beside the page.
+  const search = drawer.getByRole('searchbox', { name: 'Search settings' });
+  const sections = drawer.getByRole('navigation', { name: 'Settings sections' });
+  await expect(sections.getByRole('group', { name: 'Connections' }).getByRole('button', { name: 'Machines', exact: true })).toBeVisible();
+  await expect(sections.getByRole('button', { name: 'Keyboard shortcuts', exact: true })).toBeVisible();
+  await expect(drawer.getByRole('complementary', { name: 'Preview' })).toBeVisible();
   await expect(areaButton(page, 'settings')).toHaveAttribute('aria-expanded', 'true');
   await expect(areaButton(page, 'conversations')).toHaveAttribute('aria-current', 'page');
   await expect(page.locator('.terminal-topbar')).toHaveAttribute('data-page', originalPage!);
   expect(await page.locator('.terminal-topbar-breadcrumb').allTextContents()).toEqual(originalCrumb);
-  const bounds = await drawer.boundingBox();
-  expect(bounds!.x + bounds!.width).toBe(1440);
-  expect(bounds!.width).toBe(720);
+  // A window centred over the page, not a drawer at its edge.
+  const bounds = (await drawer.boundingBox())!;
+  expect(bounds.width).toBe(1080);
+  expect(Math.abs(bounds.x + bounds.width / 2 - 720)).toBeLessThanOrEqual(1);
+  expect(bounds.y).toBeGreaterThan(0);
+  expect(bounds.y + bounds.height).toBeLessThan(1000);
   await page.screenshot({ path: resolve(evidence, `global-settings-${palette}.png`) });
+
+  // Searching finds a setting on another page; picking it opens that page and marks it.
+  await search.fill('notify');
+  await drawer.getByRole('region', { name: 'Search results' }).getByRole('button', { name: /Notifications/ }).first().click();
+  await expect(drawer.getByRole('heading', { level: 1, name: 'Notifications', exact: true })).toBeVisible();
+  await expect(search).toHaveValue('');
+  await search.fill('corner');
+  await page.keyboard.press('Enter');
+  await expect(drawer.getByRole('slider', { name: 'Corner radius' })).toBeInViewport();
+  await expect(drawer.locator('[data-search-hit]')).toHaveCount(1);
+  // Escape clears a query before it closes the window.
+  await search.fill('zzz');
+  await expect(drawer.getByRole('status')).toHaveText('No settings match “zzz”.');
+  await search.press('Escape');
+  await expect(search).toHaveValue('');
+  await expect(drawer).toBeVisible();
+  await page.screenshot({ path: resolve(evidence, `global-settings-search-${palette}.png`) });
 
   await page.keyboard.press('Escape');
   await expect(drawer).toHaveCount(0);
@@ -57,8 +83,18 @@ for (const palette of ['bone', 'monokai']) test(`global Settings stays a drawer 
   const settingsContent = drawer.locator('.terminal-settings-content');
   expect(await settingsContent.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: resolve(evidence, `global-settings-narrow-${palette}.png`) });
-  await selectSettingsSection(page, 'Data & backup');
-  await drawer.getByRole('button', { name: 'Trash', exact: true }).click();
+  // The list has one row per page, grouped, each a finger-sized target; a
+  // phone has no keyboard shortcuts page.
+  await drawer.locator('.ui-overlay-header').getByRole('button', { name: 'Back', exact: true }).click();
+  const list = drawer.getByRole('navigation', { name: 'Settings sections' });
+  await expect(list).toBeVisible();
+  const machines = list.getByRole('group', { name: 'Connections' }).getByRole('button', { name: 'Machines', exact: true });
+  await expect(machines).toBeVisible();
+  expect((await machines.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(list.getByRole('button', { name: /shortcuts/i })).toHaveCount(0);
+  expect(await drawer.locator('.terminal-settings-sidebar').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: resolve(evidence, `global-settings-narrow-list-${palette}.png`) });
+  await list.getByRole('button', { name: 'Trash', exact: true }).click();
   await expect(drawer).toHaveCount(0);
   await expect(page.locator('.terminal-topbar')).toHaveAttribute('data-page', 'trash');
   await openSettings(page, 'Appearance');
@@ -71,7 +107,7 @@ test('a stalled settings category does not block Appearance or category navigati
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   let requested = false;
-  await page.route(/\/(?:pages\/settings\/GeneralPane\.tsx|assets\/GeneralPane-[^/]+\.js)(?:\?.*)?$/, async route => {
+  await page.route(/\/(?:rail\/GeneralTopicPage\.tsx|assets\/GeneralTopicPage-[^/]+\.js)(?:\?.*)?$/, async route => {
     requested = true;
     await pending;
     await route.continue();
@@ -83,7 +119,7 @@ test('a stalled settings category does not block Appearance or category navigati
     const drawer = page.getByRole('dialog', { name: 'Settings', exact: true });
     await expect(drawer.getByText('Palette', { exact: true })).toBeVisible();
     expect(requested).toBe(false);
-    await selectSettingsSection(page, 'General');
+    await selectSettingsSection(page, 'Notifications');
     await expect.poll(() => requested).toBe(true);
     await expect(drawer.getByRole('status')).toHaveText('Loading settings…');
     await selectSettingsSection(page, 'Appearance');

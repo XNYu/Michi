@@ -105,6 +105,48 @@ test.describe('chat stream', () => {
     });
   }
 
+  test('sending while the finished turn still holds its session waits silently, then sends once', async ({ page }) => {
+    // The previous reply is done, but its runtime cleanup still holds the
+    // session, so ensure-session answers 409 turn_active for a moment.
+    let busy = false;
+    const busyBodies: string[] = [];
+    const messageBodies: string[] = [];
+    await installMockApi(page, { custom: async (route) => {
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      if (/\/chats\/[^/]+\/message$/.test(pathname)) messageBodies.push(request.postData()!);
+      if (!busy || !/\/nodes\/[^/]+\/ensure-session$/.test(pathname)) return false;
+      busyBodies.push(request.postData()!);
+      await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({
+        code: 'turn_active', error: 'Cannot replace an active turn',
+      }) });
+      return true;
+    } });
+    await bootWithWorkspace(page);
+    const composer = page.locator(COMPOSER_EDITOR).first();
+    await composer.fill('hello kiro');
+    await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+    await expect(page.locator('.terminal-message-assistant').getByText('This is a fake reply.')).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Send (Enter)', exact: true })).toBeVisible();
+
+    busy = true;
+    await composer.fill('Run the next check');
+    await page.getByRole('button', { name: 'Send (Enter)', exact: true }).click();
+    await expect.poll(() => busyBodies.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(busyBodies).size).toBe(1);
+    await expect(page.locator('.terminal-message-user').getByText('Run the next check', { exact: true })).toHaveCount(1);
+    await expect(page.getByText(/active turn|Native session restore|Waiting for/i)).toHaveCount(0);
+    await expect(page.getByText('failed', { exact: true })).toHaveCount(0);
+    expect(messageBodies).toHaveLength(1);
+
+    busy = false;
+    // The next retry may be a few seconds out (the waits double from 150 ms).
+    await expect(page.locator('.terminal-message-assistant').getByText('This is a fake reply.')).toHaveCount(2, { timeout: 12_000 });
+    await expect(page.locator('.terminal-message-user').getByText('Run the next check', { exact: true })).toHaveCount(1);
+    await expect(page.getByText(/active turn|Native session restore/i)).toHaveCount(0);
+    expect(messageBodies.filter((body) => JSON.parse(body).displayText === 'Run the next check')).toHaveLength(1);
+  });
+
   test('user message → assistant chunks rendered → title applied', async ({ page }) => {
     await installMockApi(page);
     await bootWithWorkspace(page);
