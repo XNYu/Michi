@@ -40,13 +40,27 @@ test('preload forwards typed service and terminal responses without wrapping or 
   const { bridge, calls, responses } = loadPreload();
   const service = { supported: true, enabled: false, running: false, port: null };
   const terminal = { surfaceId: 'surface', data: 'hello', exited: true, exitCode: 2 };
+  const lifetime = { supported: true, keepInBackground: false, openAtLogin: false, trayActive: false, canStartHidden: false };
   responses.set('service:getStatus', service);
   responses.set('service:setEnabled', service);
+  responses.set('lifetime:getStatus', lifetime);
+  responses.set('lifetime:setKeepInBackground', lifetime);
+  responses.set('lifetime:setOpenAtLogin', lifetime);
   responses.set('terminal:create', terminal);
   assert.equal(await bridge.getBackgroundServiceStatus(), service);
   assert.equal(await bridge.setBackgroundServiceEnabled(true), service);
+  assert.equal(await bridge.getDesktopLifetimeStatus(), lifetime);
+  assert.equal(await bridge.setKeepInBackground(true), lifetime);
+  assert.equal(await bridge.setOpenAtLogin(false), lifetime);
   assert.equal(await bridge.terminalCreate('surface', '/workspace', 80, 24), terminal);
-  assert.deepEqual(calls, [['service:getStatus'], ['service:setEnabled', true], ['terminal:create', 'surface', '/workspace', 80, 24]]);
+  assert.deepEqual(calls, [
+    ['service:getStatus'],
+    ['service:setEnabled', true],
+    ['lifetime:getStatus'],
+    ['lifetime:setKeepInBackground', true],
+    ['lifetime:setOpenAtLogin', false],
+    ['terminal:create', 'surface', '/workspace', 80, 24],
+  ]);
 });
 
 test('remote authentication target crosses only its dedicated IPC channel', async () => {

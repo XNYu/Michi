@@ -3,7 +3,7 @@ import type { LegacyDesktopBridge } from 'michi-shared';
 export type {
   AppUpdateState, AppUpdateStatus, ChooseFolderResult, ChooseFoldersResult, SaveMarkdownResult, VibrancyMaterial,
   BrowserSurfaceState, TerminalSurfaceSnapshot, FileTreeEntry, GitChangeEntry,
-  FilePreviewResult, BackgroundServiceStatus, ScheduledRunTarget, ScheduledNotice,
+  FilePreviewResult, BackgroundServiceStatus, DesktopLifetimeStatus, ScheduledRunTarget, ScheduledNotice,
 } from 'michi-shared';
 
 export interface ElectronBridge extends LegacyDesktopBridge {

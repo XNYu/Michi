@@ -26,7 +26,7 @@ function fixture() {
   const calls: string[][] = [];
   const children: Array<{ args: string[]; process: ReturnType<typeof child> }> = [];
   const access = new TailscaleMobileAccess({ target: () => 'http://127.0.0.1:3000', token: () => 'private-backend-token',
-    resolveBinary: () => installed ? '/fixture/tailscale' : null, pollMs: 60_000, retryMs: 1,
+    resolveBinary: () => installed ? '/fixture/tailscale' : null, pollMs: 60_000, retryMs: 1, windowsPowerShell: () => null,
     probe: async (origin, token) => { assert.match(origin, /^https:\/\/michi\.tail123\.ts\.net(?::\d+)?$/); assert.match(token, /^[a-f0-9]{48}$/); if (probeFailure) throw new Error('Serve cannot dial the Unix socket'); },
     run: async (_binary, args) => { calls.push(args); if (args[0] === commandFailure) throw new Error('CLI unavailable'); return JSON.stringify(args[0] === 'status' ? status : config); },
     spawn: (_binary, args) => { const process = child(); children.push({ args, process }); return process as unknown as ChildProcess; },
@@ -80,7 +80,7 @@ test('Serve owns one private socket, confirms config before publishing and prese
   assert.equal(f.calls.some(args => args.includes('reset') || args.includes('off') || args[0] === 'down'), false);
 });
 
-test('a fresh Tailscale installation with no Serve config can start, but Windows never exposes a header-trusting TCP ingress', async t => {
+test('a fresh Tailscale installation with no Serve config can start, but Windows without an OS peer verifier never exposes a header-trusting TCP ingress', async t => {
   const f = fixture(); t.after(() => f.access.stop());
   f.setConfig(null as unknown as object);
   await f.access.start();
@@ -88,8 +88,18 @@ test('a fresh Tailscale installation with no Serve config can start, but Windows
   await f.access.stop();
   t.mock.method(os, 'platform', () => 'win32');
   assert.equal((await f.access.status()).available, false);
-  await assert.rejects(f.access.start(), /private Unix socket/);
+  await assert.rejects(f.access.start(), /PowerShell to verify Tailscale connections/);
   assert.equal(f.children.length, 1);
+});
+
+test('a Unix Serve entry that forwards raw TCP to the private socket fails closed', async t => {
+  const f = fixture(); t.after(() => f.access.stop());
+  await f.access.start(); f.connect();
+  assert.equal((await f.access.status()).state, 'connected');
+  f.config().TCP = { '9999': { TCPForward: f.children[0].args[2] } };
+  const status = await f.access.status();
+  assert.equal(status.state, 'error'); assert.match(status.error, /Another Tailscale Serve entry/);
+  assert.equal(status.url, ''); assert.equal(f.children[0].process.signalCode, 'SIGTERM');
 });
 
 test('restoring an enabled choice waits for Tailscale startup without opening an ingress or signing in automatically', async t => {

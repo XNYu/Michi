@@ -110,14 +110,14 @@ export function MobileAccessPanel({ connections }: { connections: BackendConnect
       <ol>
         <li><strong>Connect this machine.</strong> {setup?.account ? <>Signed in as {setup.account}.</> : setup?.message || 'Checking Tailscale…'}</li>
         <li><strong>Connect your phone.</strong> Install Tailscale on your phone, sign in with the same account and allow its VPN connection. <button type="button" className="mobile-access__text-link" onClick={() => openExternalUrl('https://tailscale.com/download')}>Get Tailscale</button></li>
-        <li><strong>Open Michi.</strong> Scan the code below in your phone’s camera. Bookmark the link or add it to your home screen.</li>
+        <li><strong>Open Michi.</strong> Scan the code below inside Michi on your iPhone to connect the app. Your phone’s Camera app opens the web version, which you can bookmark or add to your home screen.</li>
       </ol>
       {setup?.state === 'not-installed' && <Button onClick={() => openExternalUrl('https://tailscale.com/download')}>Install Tailscale on this machine</Button>}
       {setup?.state === 'not-running' && setup.canOpenApp && <Button disabled={busy} onClick={() => void act('open-app')}>Open Tailscale</Button>}
       {setup?.state === 'needs-login' && <Button disabled={busy} onClick={() => void act('login')}>Connect Tailscale</Button>}
       {setup?.state === 'needs-approval' && !setup.actionUrl && <Button onClick={() => openExternalUrl('https://login.tailscale.com/admin/machines')}>Approve this machine</Button>}
       {setup?.actionUrl && <Button onClick={() => openExternalUrl(setup.actionUrl!)}>{setup.state === 'needs-login' ? 'Continue Tailscale sign-in' : 'Allow Tailscale HTTPS'}</Button>}
-      {setup?.state === 'not-running' && !setup.canOpenApp && <p>On Linux, start the Tailscale service on this machine, then connect it to your account.</p>}
+      {setup?.state === 'not-running' && !setup.canOpenApp && <p>Start the Tailscale app or service on this computer, then connect it to your account.</p>}
     </div>}
     <div className="mobile-access__actions">
       <Button disabled={busy || !status || (!running && (!status.available || !ready))} variant={running ? 'secondary' : 'primary'} onClick={() => void act(running ? 'stop' : 'start')}>{running ? 'Turn off' : 'Enable phone access'}</Button>
@@ -128,7 +128,7 @@ export function MobileAccessPanel({ connections }: { connections: BackendConnect
         <rect x="-4" y="-4" width={qr.getModuleCount() + 8} height={qr.getModuleCount() + 8} fill="white" />
         <path fill="black" d={Array.from({ length: qr.getModuleCount() }, (_, r) => Array.from({ length: qr.getModuleCount() }, (_, c) => qr.isDark(r, c) ? `M${c} ${r}h1v1h-1z` : '').join('')).join('')} />
       </svg>
-      <div><p>Keep Tailscale connected on your phone, then scan with your camera.</p><p>{activeLink.reusable ? 'Reuse or bookmark this link while phone access is enabled.' : <>One use · expires in {Math.max(1, Math.ceil((activeLink.expiresAt - now) / 60_000))} min</>}</p>
+      <div><p>Keep Tailscale connected on your phone, then scan inside Michi or with your phone’s Camera app.</p><p>{activeLink.reusable ? 'Reuse or bookmark this link while phone access is enabled.' : <>One use · expires in {Math.max(1, Math.ceil((activeLink.expiresAt - now) / 60_000))} min</>}</p>
         <Button onClick={() => { const revision = generation.current; void Promise.resolve().then(() => navigator.clipboard.writeText(activeLink.url)).then(() => { if (revision === generation.current) setCopied(true); }, () => { if (revision === generation.current) setError('Could not copy. Scan the code to connect.'); }); }}>{copied ? 'Copied' : activeLink.reusable ? 'Copy phone link' : 'Copy sign-in link'}</Button>
       </div>
     </div>}

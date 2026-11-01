@@ -3,14 +3,17 @@ import type { ScheduledJobSessionMode } from 'michi-shared';
 import { getScheduledJobSettings, updateScheduledJobSettings } from '../../../../services/api/scheduledJobs';
 import { confirmDialog } from '../../../ui/ConfirmDialog';
 import { useBackgroundService } from '../../scheduled/useBackgroundService';
+import { useDesktopLifetime } from '../../scheduled/useDesktopLifetime';
 import { Switch } from '../../../ui/controls';
 import { Radio } from './controls';
 import { SettingsRow, SettingsSection } from './SettingsSection';
+import { shouldShowLifetimeRows } from './desktopLifetime';
 import { useSettingsPhone } from './settingsPhone';
 
 /** Settings → Background: the always-on backend that keeps scheduled jobs running. */
 export function BackgroundPane({ onOpenScheduled }: { onOpenScheduled?: () => void }) {
   const service = useBackgroundService();
+  const lifetime = useDesktopLifetime();
   // The background service belongs to the desktop app; a phone only links to the jobs.
   const phone = useSettingsPhone();
   const status = service.status;
@@ -63,7 +66,86 @@ export function BackgroundPane({ onOpenScheduled }: { onOpenScheduled?: () => vo
           )}
         </p>
       </SettingsRow>}
+      <LifetimeRows lifetime={lifetime} phone={phone} />
     </SettingsSection>
+  );
+}
+
+function LifetimeRows({
+  lifetime,
+  phone,
+}: {
+  lifetime: ReturnType<typeof useDesktopLifetime>;
+  phone: boolean;
+}) {
+  if (!shouldShowLifetimeRows(lifetime.available, phone, lifetime.status)) return null;
+  const status = lifetime.status;
+  const toggleTray = async (next: boolean) => {
+    const confirmed = await confirmDialog(next
+      ? {
+          title: 'Keep Michi in the system tray?',
+          message: 'Closing the last window will leave Michi running in the tray so chats stay connected. Use Quit or the tray menu to exit.',
+          confirmLabel: 'Keep in tray',
+          danger: false,
+        }
+      : {
+          title: 'Quit when the last window closes?',
+          message: 'Michi will quit when you close the last window. Scheduled jobs then run only while Michi is open.',
+          confirmLabel: 'Quit with last window',
+        });
+    if (confirmed) await lifetime.setKeepInBackground(next);
+  };
+  const toggleLogin = async (next: boolean) => {
+    const confirmed = await confirmDialog(next
+      ? {
+          title: 'Open Michi when you sign in?',
+          message: 'Michi will start when you sign in to Windows. Hidden start is used only while the tray is working. You can turn this off here or in Windows Settings.',
+          confirmLabel: 'Open at sign-in',
+          danger: false,
+        }
+      : {
+          title: 'Stop opening Michi at sign-in?',
+          message: 'Michi will no longer start when you sign in to Windows.',
+          confirmLabel: 'Don’t open at sign-in',
+        });
+    if (confirmed) await lifetime.setOpenAtLogin(next);
+  };
+  const trayOn = !!status?.keepInBackground;
+  const loginOn = !!status?.openAtLogin;
+  const ready = !!status?.supported;
+  const trayDescription = !status ? <span role="status">Checking…</span>
+    : !status.supported ? status.reason ?? 'Not available on this install.'
+      : <span role="status">
+        {status.trayActive
+          ? 'Closing the last window leaves Michi running in the tray. Use Show Michi or Quit from the tray.'
+          : trayOn
+            ? 'The tray is unavailable, so closing the last window will quit. Michi will not start hidden.'
+            : 'Michi quits when you close the last window.'}
+      </span>;
+  const loginDescription = !status ? <span role="status">Checking…</span>
+    : !status.supported ? status.reason ?? 'Not available on this install.'
+      : <span role="status">
+        {status.openAtLogin
+          ? (status.canStartHidden
+            ? 'Michi starts when you sign in, hidden while the tray is working.'
+            : 'Michi starts when you sign in. It stays visible unless the tray is working.')
+          : 'Michi starts only when you open it.'}
+      </span>;
+  return (
+    <>
+      <SettingsRow label="Keep Michi in the system tray" description={trayDescription} control={ready && <>
+        <span className="settings-row__state">{lifetime.busy ? 'Updating…' : trayOn ? 'On' : 'Off'}</span>
+        <Switch on={trayOn} disabled={lifetime.busy} aria-label="Keep Michi in the system tray"
+          onChange={(next) => { if (!lifetime.busy) void toggleTray(next); }} />
+      </>}>
+        {lifetime.error && <p role="alert" className="settings-row__note">{lifetime.error}</p>}
+      </SettingsRow>
+      <SettingsRow label="Open Michi when I sign in" description={loginDescription} control={ready && <>
+        <span className="settings-row__state">{loginOn ? 'On' : 'Off'}</span>
+        <Switch on={loginOn} disabled={lifetime.busy} aria-label="Open Michi when I sign in"
+          onChange={(next) => { if (!lifetime.busy) void toggleLogin(next); }} />
+      </>} />
+    </>
   );
 }
 

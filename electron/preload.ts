@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   AppUpdateState, BackgroundServiceStatus, BrowserSurfaceState, ChooseFolderResult, ChooseFoldersResult,
   DesktopBridge, DesktopCommandContract, DesktopEventContract, DesktopInvokeContract, DesktopInvokeArgs,
-  DesktopInvokeResult, FilePreviewResult, FileTreeEntry, GitChangeEntry,
+  DesktopInvokeResult, DesktopLifetimeStatus, FilePreviewResult, FileTreeEntry, GitChangeEntry,
   RemoteAuthenticationTarget, SaveMarkdownResult, ScheduledNotice, ScheduledRunTarget,
   TerminalSurfaceSnapshot, VibrancyMaterial,
 } from 'michi-shared';
@@ -95,6 +95,15 @@ const electronBridge = {
   /** Hand the backend over to / back from the background service. */
   setBackgroundServiceEnabled(enabled: boolean): Promise<BackgroundServiceStatus> {
     return invoke('service:setEnabled', enabled);
+  },
+  getDesktopLifetimeStatus(): Promise<DesktopLifetimeStatus> {
+    return invoke('lifetime:getStatus');
+  },
+  setKeepInBackground(enabled: boolean): Promise<DesktopLifetimeStatus> {
+    return invoke('lifetime:setKeepInBackground', enabled);
+  },
+  setOpenAtLogin(enabled: boolean): Promise<DesktopLifetimeStatus> {
+    return invoke('lifetime:setOpenAtLogin', enabled);
   },
   initialScheduledRun,
   /** A scheduled-run notification was clicked while this window exists. */

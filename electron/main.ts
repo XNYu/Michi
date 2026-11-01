@@ -2,7 +2,7 @@ import type {
   BackgroundServiceStatus, BrowserSurfaceState, DesktopCommandContract, DesktopEventContract, DesktopInvokeContract,
   DesktopInvokeArgs, DesktopInvokeResult, ScheduledRunTarget, TerminalSurfaceSnapshot,
 } from 'michi-shared';
-import { app, BrowserWindow, Menu, WebContentsView, ipcMain, dialog, shell, nativeTheme, powerSaveBlocker, powerMonitor, Notification as ElectronNotification } from 'electron';
+import { app, BrowserWindow, Menu, Tray, WebContentsView, ipcMain, dialog, nativeImage, shell, nativeTheme, powerSaveBlocker, powerMonitor, Notification as ElectronNotification } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import * as pty from 'node-pty';
 import * as path from 'path';
@@ -39,6 +39,15 @@ import {
   writeServiceState,
 } from './backgroundService';
 import { planNoticeDelivery, ScheduledNotificationFeed, type ScheduledRunNotice } from './scheduledNotifications';
+import {
+  BACKGROUND_LAUNCH_ARG,
+  HIDDEN_LAUNCH_ARG,
+  PACKAGED_TRAY_ICON_NAME,
+  TRAY_MENU,
+  WindowsLifetimeController,
+  isOwnedLifetimeSender,
+  packagedTrayIconPath,
+} from './windowsLifecycle';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -161,6 +170,7 @@ function elog(level: 'INFO' | 'WARN' | 'ERROR', stage: string, msg: string, meta
 }
 
 const windows = new Set<BrowserWindow>();
+const restoredWindows = new WeakSet<BrowserWindow>();
 const windowSlots = new WeakMap<BrowserWindow, number>();
 let nextWindowSlot = 0;
 let backendChild: ChildProcess | null = null;
@@ -170,8 +180,8 @@ let backendMode: 'child' | 'service' | 'external' = 'child';
 
 // The background service launches the app with this flag so it can deliver
 // notifications without opening a window (see backend appLauncher.ts).
-const BACKGROUND_LAUNCH_ARG = '--michi-background-launch';
 const launchedInBackground = process.argv.includes(BACKGROUND_LAUNCH_ARG);
+const launchedHidden = process.argv.includes(HIDDEN_LAUNCH_ARG);
 /** Background launches quit after this long without any window. */
 const BACKGROUND_IDLE_QUIT_MS = 15 * 60_000;
 
@@ -1177,6 +1187,179 @@ handleDesktopInvoke('service:setEnabled', (_ev, enabled: unknown) => {
   return setBackgroundServiceEnabled(enabled);
 });
 
+function lifetimePrefsFile(): string {
+  return path.join(app.getPath('userData'), 'desktop-lifetime.json');
+}
+
+function findWindowById(id: number): BrowserWindow | undefined {
+  return [...windows].find((win) => !win.isDestroyed() && win.id === id);
+}
+
+function restoreLifetimeWindow(): void {
+  const decision = windowsLifetime.handleSecondInstance([]);
+  if (decision.action === 'create-window') void createWindow(resolvedBackendPort);
+}
+
+function resolveTrayImage(): Electron.NativeImage | null {
+  const candidates = [
+    packagedTrayIconPath(process.resourcesPath),
+    path.join(path.dirname(process.execPath), PACKAGED_TRAY_ICON_NAME),
+    path.join(__dirname, '..', '..', 'assets', 'icons', PACKAGED_TRAY_ICON_NAME),
+    path.join(__dirname, '..', '..', 'assets', 'icons', 'icon.png'),
+  ];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    const image = nativeImage.createFromPath(candidate);
+    if (!image.isEmpty()) return image;
+  }
+  return null;
+}
+
+let windowsTray: Tray | null = null;
+
+function createWindowsTray(): boolean {
+  if (windowsTray && !windowsTray.isDestroyed()) return true;
+  try {
+    const image = resolveTrayImage();
+    if (!image) return false;
+    const tray = new Tray(image);
+    tray.setToolTip('Michi');
+    tray.setContextMenu(Menu.buildFromTemplate(TRAY_MENU.map((item) => ({
+      label: item.label,
+      click: () => {
+        if (item.id === 'show') restoreLifetimeWindow();
+        else {
+          windowsLifetime.beginQuit('user');
+          app.quit();
+        }
+      },
+    }))));
+    tray.on('click', () => restoreLifetimeWindow());
+    windowsTray = tray;
+    return !tray.isDestroyed();
+  } catch (err) {
+    elog('WARN', 'lifetime', 'tray creation failed', { err: (err as Error).message });
+    windowsTray = null;
+    return false;
+  }
+}
+
+function destroyWindowsTray(): void {
+  if (!windowsTray) return;
+  try { if (!windowsTray.isDestroyed()) windowsTray.destroy(); } catch { /* already gone */ }
+  windowsTray = null;
+}
+
+const windowsLifetime = new WindowsLifetimeController(
+  { platform: process.platform, isPackaged: app.isPackaged, isDev },
+  {
+    readPreferences() {
+      try { return JSON.parse(fs.readFileSync(lifetimePrefsFile(), 'utf8')); } catch { return null; }
+    },
+    writePreferences(prefs) {
+      const file = lifetimePrefsFile();
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${JSON.stringify(prefs)}\n`, { mode: 0o600 });
+    },
+    fileExists: (candidate) => fs.existsSync(candidate),
+    execPath: process.execPath,
+    createTray: createWindowsTray,
+    destroyTray: destroyWindowsTray,
+    hideWindow(id) { findWindowById(id)?.hide(); },
+    restoreWindow(id) {
+      const win = findWindowById(id);
+      if (win) revealWindow(win);
+    },
+    focusWindow(id) { findWindowById(id)?.focus(); },
+    listWindows: () => [...windows].filter((win) => !win.isDestroyed()).map((win) => ({
+      id: win.id,
+      webContentsId: win.webContents.id,
+      visible: win.isVisible(),
+      minimized: win.isMinimized(),
+      destroyed: win.isDestroyed(),
+    })),
+    quit: () => { app.quit(); },
+    stopBackend: () => stopBackend(),
+    setLoginItem(settings) {
+      try {
+        app.setLoginItemSettings({
+          openAtLogin: settings.openAtLogin,
+          path: settings.path,
+          args: settings.args,
+          ...(settings.enabled !== undefined ? { enabled: settings.enabled } : {}),
+        });
+        return true;
+      } catch (err) {
+        elog('WARN', 'lifetime', 'login item update failed', { err: (err as Error).message });
+        return false;
+      }
+    },
+    getLoginItem(query) {
+      const settings = app.getLoginItemSettings({ path: query.path, args: query.args });
+      const items = settings.launchItems ?? [];
+      return {
+        openAtLogin: settings.openAtLogin,
+        executableWillLaunchAtLogin: settings.executableWillLaunchAtLogin,
+        enabled: items.length === 0 ? undefined : items.every((item) => item.enabled),
+      };
+    },
+  },
+);
+
+function revealWindow(win: BrowserWindow): void {
+  restoredWindows.add(win);
+  win.setSkipTaskbar(false);
+  if (win.isMinimized()) win.restore();
+  win.show();
+}
+
+function recoverVisibleWindows(): void {
+  for (const win of windows) {
+    if (!win.isDestroyed()) revealWindow(win);
+  }
+}
+
+function attachWindowSessionEnd(win: BrowserWindow): void {
+  win.on('query-session-end', () => {
+    // Query can still be cancelled by Windows. Do not mark an irrevocable quit.
+  });
+  win.on('session-end', () => {
+    windowsLifetime.beginQuit('shutdown');
+    destroyWindowsTray();
+    void stopBackend();
+  });
+}
+
+function assertOwnedLifetimeSender(event: Electron.IpcMainInvokeEvent): void {
+  const ids = [...windows].filter((win) => !win.isDestroyed()).map((win) => win.webContents.id);
+  const frame = event.senderFrame;
+  const mainFrame = event.sender.mainFrame;
+  if (!isOwnedLifetimeSender({
+    senderId: event.sender.id,
+    windowWebContentsIds: ids,
+    senderFrameIsMainFrame: !!frame && !!mainFrame && frame === mainFrame,
+  })) throw new Error('Unauthorized');
+}
+
+handleDesktopInvoke('lifetime:getStatus', (event) => {
+  assertOwnedLifetimeSender(event);
+  return windowsLifetime.status();
+});
+
+handleDesktopInvoke('lifetime:setKeepInBackground', (event, enabled: unknown) => {
+  assertOwnedLifetimeSender(event);
+  if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
+  const status = windowsLifetime.setKeepInBackground(enabled);
+  if (!status.canStartHidden) recoverVisibleWindows();
+  return status;
+});
+
+handleDesktopInvoke('lifetime:setOpenAtLogin', (event, enabled: unknown) => {
+  assertOwnedLifetimeSender(event);
+  if (typeof enabled !== 'boolean') throw new Error('enabled must be a boolean');
+  return windowsLifetime.setOpenAtLogin(enabled);
+});
+
 // Custom application menu. macOS's default menu binds Cmd+W to "Close Window",
 // which intercepts the accelerator before the renderer can use it for "close
 // focused pane". We rebuild the menu mirroring the platform default but bind
@@ -1239,6 +1422,7 @@ async function createWindow(
   backendPort: number | null,
   healthPromise?: Promise<void>,
   openRun?: ScheduledRunTarget,
+  options?: { hidden?: boolean },
 ): Promise<void> {
   showDock();
   const slot = nextWindowSlot++;
@@ -1294,6 +1478,7 @@ async function createWindow(
   windowSlots.set(win, slot);
   const ownerWebContentsId = win.webContents.id;
   startupMark('browser_window_created', { backendPort, slot });
+  attachWindowSessionEnd(win);
 
   if (savedState.isMaximized) {
     win.maximize();
@@ -1308,6 +1493,12 @@ async function createWindow(
   win.on('close', (event) => {
     flushWindowState(win);
     if (closingConfirmed) return;
+    const closeDecision = windowsLifetime.handleWindowClose(win.id);
+    if (closeDecision === 'hide') {
+      event.preventDefault();
+      return;
+    }
+    if (closeDecision === 'quit-close') return;
 
     let activeTerminals = 0;
     for (const [, surface] of terminalSurfaces) {
@@ -1335,6 +1526,11 @@ async function createWindow(
 
   win.once('ready-to-show', () => {
     startupMark('window_ready_to_show', { slot });
+    if (options?.hidden && !restoredWindows.has(win)) {
+      win.setSkipTaskbar(true);
+      return;
+    }
+    win.setSkipTaskbar(false);
     win.show();
   });
 
@@ -1704,8 +1900,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on('second-instance', (_event, argv) => {
-  // A background wake while we are already running needs no window.
-  if (argv.includes(BACKGROUND_LAUNCH_ARG)) return;
+  if (process.platform !== 'win32') {
+    if (argv.includes(BACKGROUND_LAUNCH_ARG)) return;
+    void createWindow(resolvedBackendPort);
+    return;
+  }
+  const decision = windowsLifetime.handleSecondInstance(argv);
+  if (decision.action === 'ignore' || decision.action === 'restore') return;
   void createWindow(resolvedBackendPort);
 });
 
@@ -1767,7 +1968,9 @@ app.whenReady().then(async () => {
       elog('INFO', 'boot', 'background launch; delivering notifications without a window', { backendMode });
       armBackgroundIdleQuit();
     } else {
-      await createWindow(backendPort, healthPromise);
+      const ready = windowsLifetime.onAppReady({ launchedHidden });
+      if (ready.startHidden) elog('INFO', 'lifetime', 'hidden login start; keeping a real window for shutdown');
+      await createWindow(backendPort, healthPromise, undefined, { hidden: ready.startHidden });
     }
 
     // Wait for backend health to finish (may already be resolved by now).
@@ -1797,12 +2000,14 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    void app.quit();
-  }
+  if (process.platform === 'darwin') return;
+  if (!windowsLifetime.shouldQuitWhenNoWindows()) return;
+  void app.quit();
 });
 
 app.on('before-quit', async (ev) => {
+  windowsLifetime.beginQuit('user');
+  destroyWindowsTray();
   notificationFeed.stop();
   // Only an app-owned backend stops with the app. The background service
   // (backendMode === 'service') deliberately keeps running.

@@ -82,6 +82,21 @@ export interface BackgroundServiceStatus {
   port: number | null;
 }
 
+/** Windows tray lifetime and opt-in login startup. Absent or unsupported on other platforms. */
+export interface DesktopLifetimeStatus {
+  supported: boolean;
+  /** Why tray/login startup cannot be used on this install (dev build, platform…). */
+  reason?: string;
+  /** Preference: keep the app and child backend after the last window closes. */
+  keepInBackground: boolean;
+  /** Preference: start Michi at Windows login. Packaged Windows only. */
+  openAtLogin: boolean;
+  /** True when a working tray icon is installed this session. */
+  trayActive: boolean;
+  /** Hidden login start is allowed only while the tray is working. */
+  canStartHidden: boolean;
+}
+
 /** Thread a scheduled-run notification points at. */
 export interface ScheduledRunTarget {
   runId: string;
@@ -102,6 +117,10 @@ export interface DesktopBridge {
   /** Background service controls. Absent in browsers and older builds. */
   getBackgroundServiceStatus(): Promise<BackgroundServiceStatus>;
   setBackgroundServiceEnabled(enabled: boolean): Promise<BackgroundServiceStatus>;
+  /** Windows tray / login-startup controls. Absent in browsers and older builds. */
+  getDesktopLifetimeStatus(): Promise<DesktopLifetimeStatus>;
+  setKeepInBackground(enabled: boolean): Promise<DesktopLifetimeStatus>;
+  setOpenAtLogin(enabled: boolean): Promise<DesktopLifetimeStatus>;
   /** Set when this window was opened by clicking a scheduled-run notification. */
   initialScheduledRun: ScheduledRunTarget | null;
   onScheduledRunOpen(handler: (target: ScheduledRunTarget) => void): () => void;
@@ -185,6 +204,9 @@ export interface DesktopInvokeContract {
   'app:openPath': { args: [absPath: string]; result: { ok: boolean; error?: string } };
   'service:getStatus': { args: []; result: BackgroundServiceStatus };
   'service:setEnabled': { args: [enabled: boolean]; result: BackgroundServiceStatus };
+  'lifetime:getStatus': { args: []; result: DesktopLifetimeStatus };
+  'lifetime:setKeepInBackground': { args: [enabled: boolean]; result: DesktopLifetimeStatus };
+  'lifetime:setOpenAtLogin': { args: [enabled: boolean]; result: DesktopLifetimeStatus };
   'app:chooseFiles': { args: []; result: { canceled: boolean; paths?: string[] } };
   'app:readFile': { args: [absPath: string]; result: { content: string; size: number; modifiedAt: number } | null };
   'app:statFile': { args: [absPath: string]; result: { size: number; modifiedAt: number } | null };

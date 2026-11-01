@@ -4,10 +4,15 @@ import { once } from 'node:events';
 import { get } from 'node:https';
 import fs from 'node:fs';
 import { chmod, mkdtemp, rm } from 'node:fs/promises';
+import { BlockList, isIP, type AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { MobileAccessStatus, TailscaleSetup } from 'michi-shared';
 import { createMobileAccessGateway } from './mobileAccessGateway';
+import {
+  createWindowsServeVerifier, powershellIngressProbe, resolveWindowsTailscaleBinary,
+  windowsPowerShellPath, windowsTailscaledFor, type WindowsIngressProbe,
+} from './windowsTailscaleIngress';
 
 interface NodeStatus {
   BackendState?: string;
@@ -17,10 +22,12 @@ interface NodeStatus {
   User?: Record<string, { LoginName?: string }>;
 }
 interface ServeConfig {
-  TCP?: Record<string, { HTTPS?: boolean }>;
+  TCP?: Record<string, { HTTPS?: boolean; TCPForward?: string; TerminateTLS?: string }>;
   Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>;
   AllowFunnel?: Record<string, boolean>;
   Foreground?: Record<string, ServeConfig>;
+  /** Tailscale Services (VIP) configurations use the same TCP/Web shape. */
+  Services?: Record<string, ServeConfig>;
 }
 interface Options {
   target: () => string;
@@ -32,9 +39,15 @@ interface Options {
   pollMs?: number;
   retryMs?: number;
   probe?: (origin: string, expectedToken: string) => Promise<void>;
+  platform?: () => NodeJS.Platform;
+  /** Windows: OS snapshot used to prove each ingress connection's peer. */
+  windowsIngressProbe?: WindowsIngressProbe;
+  /** Windows: inbox PowerShell used by the default snapshot probe. */
+  windowsPowerShell?: () => string | null;
 }
 
-export function resolveTailscaleBinary(): string | null {
+export function resolveTailscaleBinary(platform: NodeJS.Platform = os.platform()): string | null {
+  if (platform === 'win32') return resolveWindowsTailscaleBinary();
   const override = process.env.MICHI_TAILSCALE_BIN?.trim();
   const candidates = override ? [override] : [
     ...((process.env.PATH ?? '').split(path.delimiter).filter(Boolean).map(dir => path.join(dir, 'tailscale'))),
@@ -59,6 +72,91 @@ export function tailscaleActionUrl(output: string): string | undefined {
 
 function configurations(config: ServeConfig): ServeConfig[] {
   return [config, ...Object.values(config.Foreground ?? {}).flatMap(configurations)];
+}
+
+function everyConfiguration(config: ServeConfig): ServeConfig[] {
+  return [config, ...[...Object.values(config.Foreground ?? {}), ...Object.values(config.Services ?? {})]
+    .filter(c => c && typeof c === 'object').flatMap(everyConfiguration)];
+}
+
+/** This machine's loopback and unspecified addresses, including IPv4-mapped IPv6. */
+const LOCAL_ADDRESSES = (() => {
+  const list = new BlockList();
+  list.addSubnet('127.0.0.0', 8, 'ipv4'); list.addSubnet('0.0.0.0', 8, 'ipv4');
+  list.addAddress('::1', 'ipv6'); list.addAddress('::', 'ipv6');
+  return list;
+})();
+
+/** inet_aton-style IPv4 (`127.1`, `2130706433`, `0x7f.1`, `0177.0.0.1`), which
+ * some resolvers accept even where URL parsing keeps the host opaque. */
+function legacyIPv4(host: string): string | null {
+  const parts = host.replace(/\.$/, '').split('.');
+  if (parts.length > 4) return null;
+  const values: number[] = [];
+  for (const part of parts) {
+    if (/^0x[0-9a-f]*$/i.test(part)) values.push(part.length === 2 ? 0 : parseInt(part.slice(2), 16));
+    else if (/^0[0-7]*$/.test(part)) values.push(parseInt(part, 8));
+    else if (/^[1-9][0-9]*$/.test(part)) values.push(Number(part));
+    else return null;
+  }
+  const last = values.pop()!;
+  if (!values.every(v => v <= 255) || !Number.isSafeInteger(last) || last >= 256 ** (4 - values.length)) return null;
+  const n = values.reduce((sum, v, i) => sum + v * 256 ** (3 - i), 0) + last;
+  return [Math.floor(n / 2 ** 24), Math.floor(n / 2 ** 16) % 256, Math.floor(n / 256) % 256, n % 256].join('.');
+}
+
+/** 'other' only for an IP literal proven not to be this machine's loopback. */
+function hostScope(hostname: string): 'local' | 'other' | 'name' {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const address = isIP(host) ? host : legacyIPv4(host);
+  if (!address) return 'name';
+  try { return LOCAL_ADDRESSES.check(address, isIP(address) === 6 ? 'ipv6' : 'ipv4') ? 'local' : 'other'; }
+  catch { return 'local'; }
+}
+
+/** The same socket file, through a symlinked directory, a hard link, or a path
+ * relative to tailscaled's unknown working directory. */
+function sameUnixSocket(target: string, socket: string): boolean {
+  if (!path.isAbsolute(target)) {
+    return target.replace(/\\/g, '/').replace(/\/+$/, '').endsWith(`${path.basename(path.dirname(socket))}/${path.basename(socket)}`);
+  }
+  if (path.resolve(target) === path.resolve(socket)) return true;
+  try {
+    const theirs = fs.statSync(target), ours = fs.statSync(socket);
+    return theirs.dev === ours.dev && theirs.ino === ours.ino;
+  } catch { return false; }
+}
+
+/** Whether a Serve proxy/forward target can dial Michi's ingress address.
+ * A matching port with a DNS name counts as a match, because Michi does not
+ * trust name resolution. Only an IP literal outside loopback is excluded. */
+function targetsIngress(target: string, endpoint: string): boolean {
+  if (endpoint.startsWith('unix:')) return target.startsWith('unix:') && sameUnixSocket(target.slice(5), endpoint.slice(5));
+  if (target.startsWith('unix:')) return false;
+  const port = Number(new URL(endpoint).port);
+  let url: URL;
+  try { url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(target) ? target : `tcp://${target}`); }
+  catch { return new RegExp(`:0*${port}(?![0-9])`).test(target); }
+  if (url.port === '' || Number(url.port) !== port) return false;
+  return hostScope(url.hostname) !== 'other';
+}
+
+/** Any Serve entry other than Michi's own HTTPS root handler that reaches the
+ * ingress (raw TCP forwards, other listeners, other mounts, Services). Raw TCP
+ * would deliver caller-written identity headers, so this always fails closed. */
+export function foreignIngressRoute(config: ServeConfig, endpoint: string, hostPort: string): boolean {
+  if (!endpoint) return false;
+  for (const c of everyConfiguration(config)) {
+    for (const tcp of Object.values(c.TCP ?? {})) if (tcp?.TCPForward && targetsIngress(tcp.TCPForward, endpoint)) return true;
+    for (const [listener, web] of Object.entries(c.Web ?? {})) {
+      for (const [mount, handler] of Object.entries(web?.Handlers ?? {})) {
+        if (!handler?.Proxy || !targetsIngress(handler.Proxy, endpoint)) continue;
+        if (listener === hostPort && mount === '/' && handler.Proxy === endpoint) continue;
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function parseServeConfig(output: string): ServeConfig {
@@ -88,7 +186,7 @@ function command(binary: string, args: string[]): Promise<string> {
 
 /** Use the actual tailnet HTTPS path, including TLS and the provider's identity
  * header. A configured listener alone cannot prove that Serve can dial us. */
-function probeServe(origin: string, expectedToken: string): Promise<void> {
+function probeServe(origin: string, expectedToken: string, timeoutMs = 5000): Promise<void> {
   return new Promise((resolve, reject) => {
     const request = get(`${origin}/_michi/mobile/ready`, { headers: { origin }, agent: false }, response => {
       let body = '';
@@ -101,19 +199,23 @@ function probeServe(origin: string, expectedToken: string): Promise<void> {
       response.on('end', () => response.statusCode === 200 && body === expectedToken
         ? resolve() : reject(new Error('Tailscale Serve did not reach the authenticated Michi ingress')));
     });
-    const timer = setTimeout(() => request.destroy(new Error('Tailscale Serve connection timed out')), 5000);
+    const timer = setTimeout(() => request.destroy(new Error('Tailscale Serve connection timed out')), timeoutMs);
     request.on('error', reject);
     request.on('close', () => clearTimeout(timer));
   });
 }
 
 /** A foreground Serve session owns only its own ephemeral configuration.
- * The proxy trusts Serve identity headers only over a private Unix socket;
- * the desktop API and other users' Serve/Funnel listeners are never exposed. */
+ * The proxy trusts Serve identity headers only over a private Unix socket
+ * (macOS/Linux) or, on Windows, over loopback TCP connections that the OS
+ * proves belong to the Tailscale service and that carry the per-run path
+ * secret of Michi's own Serve handler. The desktop API and other users'
+ * Serve/Funnel listeners are never exposed. */
 export class TailscaleMobileAccess {
   private current: MobileAccessStatus = { state: 'stopped', url: '', error: '', available: false };
   private setup: TailscaleSetup = { state: 'not-installed' };
   private gateway?: ReturnType<typeof createMobileAccessGateway>;
+  private verifier?: ReturnType<typeof createWindowsServeVerifier>;
   private directory?: string;
   private child?: ChildProcess;
   private loginChild?: ChildProcess;
@@ -134,7 +236,20 @@ export class TailscaleMobileAccess {
 
   constructor(private readonly options: Options) {}
 
-  private binary() { return (this.options.resolveBinary ?? resolveTailscaleBinary)(); }
+  private platform(): NodeJS.Platform { return this.options.platform?.() ?? os.platform(); }
+  private binary() { return this.options.resolveBinary ? this.options.resolveBinary() : resolveTailscaleBinary(this.platform()); }
+  private windowsProbe(): WindowsIngressProbe | null {
+    if (this.options.windowsIngressProbe) return this.options.windowsIngressProbe;
+    const powershell = (this.options.windowsPowerShell ?? windowsPowerShellPath)();
+    return powershell ? powershellIngressProbe(powershell) : null;
+  }
+  private unavailable(): string {
+    const reason = this.options.unavailableReason?.();
+    if (reason) return reason;
+    // Without an OS peer check, a loopback ingress would trust forged headers.
+    if (this.platform() === 'win32' && !this.windowsProbe()) return 'Phone hosting on Windows needs the built-in Windows PowerShell to verify Tailscale connections.';
+    return '';
+  }
   private run(args: string[]) {
     const binary = this.binary();
     if (!binary) throw new Error('Install Tailscale on this machine first.');
@@ -146,10 +261,9 @@ export class TailscaleMobileAccess {
     return result;
   }
   private snapshot(): MobileAccessStatus {
-    const reason = this.options.unavailableReason?.() || (os.platform() === 'win32'
-      ? 'Phone hosting currently requires macOS or Linux with a private Unix socket.' : '');
+    const reason = this.unavailable();
     return { ...this.current, available: !reason && !!this.binary(),
-      error: reason || this.current.error, tailscale: { ...this.setup, canOpenApp: os.platform() === 'darwin' } };
+      error: reason || this.current.error, tailscale: { ...this.setup, canOpenApp: this.platform() === 'darwin' } };
   }
 
   status(): Promise<MobileAccessStatus> {
@@ -227,14 +341,23 @@ export class TailscaleMobileAccess {
           this.suspendIngress(); this.enabled = false;
           this.current = { state: 'error', url: '', error: 'This listener was made public with Funnel. Michi stopped phone access. Use private Tailscale Serve.', available: true };
           await this.cleanupServe();
+        } else if (foreignIngressRoute(config, this.endpoint, hostPort)) {
+          this.suspendIngress(); this.enabled = false;
+          this.current = { state: 'error', url: '', error: 'Another Tailscale Serve entry points at Michi’s private phone ingress. Michi stopped phone access. Remove that entry, then enable phone access again.', available: true };
+          await this.cleanupServe();
         } else if (own && this.child) {
           const origin = `https://${hostname}${this.port === 443 ? '' : `:${this.port}`}`;
           this.ingressOrigin = origin;
           if (this.current.state !== 'connected' || this.current.url !== origin) {
-            try { await (this.options.probe ?? probeServe)(origin, this.probeToken); }
+            const windows = !!this.verifier;
+            // Windows adds a bounded OS peer check to the first new connection.
+            try { await (this.options.probe ?? ((o: string, t: string) => probeServe(o, t, windows ? 20_000 : 5000)))(origin, this.probeToken); }
             catch {
               this.suspendIngress();
-              this.current = { ...this.current, state: 'reconnecting', error: 'Michi could not be reached through Tailscale HTTPS. Check this machine’s Tailscale connection, DNS and socket permissions.' };
+              const verification = this.verifier?.lastError();
+              this.current = { ...this.current, state: 'reconnecting', error: verification
+                ? `${verification} Phone access stays off until Michi can prove each connection comes from Tailscale.`
+                : 'Michi could not be reached through Tailscale HTTPS. Check this machine’s Tailscale connection, DNS and socket permissions.' };
               return this.snapshot();
             }
             // The Serve child may exit while HTTPS is being checked.
@@ -290,15 +413,34 @@ export class TailscaleMobileAccess {
       this.failures = 0; this.retryAt = 0; this.connectedAt = 0;
       this.current = { state: 'starting', url: '', error: '', available: true };
       this.probeToken = randomBytes(24).toString('hex');
-      this.gateway = createMobileAccessGateway({ target: this.options.target(), token: this.options.token(),
-        owner: this.account, identityHeader: 'tailscale-user-login', probeToken: this.probeToken,
-        publicOrigin: () => this.enabled ? this.ingressOrigin : '' });
-      this.directory = await mkdtemp(path.join(os.tmpdir(), 'michi-ts-'));
-      await chmod(this.directory, 0o700);
-      const socket = path.join(this.directory, 'http.sock');
-      this.gateway.server.listen(socket);
-      await once(this.gateway.server, 'listening');
-      this.endpoint = `unix:${socket}`;
+      const shared = { target: this.options.target(), token: this.options.token(),
+        owner: this.account, identityHeader: 'tailscale-user-login' as const, probeToken: this.probeToken,
+        publicOrigin: () => this.enabled ? this.ingressOrigin : '' };
+      if (this.platform() === 'win32') {
+        // Windows Serve cannot target a Unix socket. Use loopback TCP, but parse
+        // nothing until the OS proves the peer is the Tailscale service, and
+        // require the per-run path segment only Michi's Serve handler prepends.
+        // The segment stays out of logs, links and status responses.
+        const binary = this.binary();
+        const probe = this.windowsProbe();
+        if (!binary || !probe) throw new Error(this.unavailable() || 'Install Tailscale on this machine first.');
+        const verifier = createWindowsServeVerifier({ expectedBinary: windowsTailscaledFor(binary), probe });
+        this.verifier = verifier;
+        const pathSecret = randomBytes(24).toString('hex');
+        this.gateway = createMobileAccessGateway({ ...shared, pathSecret, verifyConnection: socket => verifier.verify(socket) });
+        this.gateway.server.listen({ host: '127.0.0.1', port: 0 });
+        await once(this.gateway.server, 'listening');
+        const { port } = this.gateway.server.address() as AddressInfo;
+        this.endpoint = `http://127.0.0.1:${port}/${pathSecret}`;
+      } else {
+        this.gateway = createMobileAccessGateway(shared);
+        this.directory = await mkdtemp(path.join(os.tmpdir(), 'michi-ts-'));
+        await chmod(this.directory, 0o700);
+        const socket = path.join(this.directory, 'http.sock');
+        this.gateway.server.listen(socket);
+        await once(this.gateway.server, 'listening');
+        this.endpoint = `unix:${socket}`;
+      }
       this.launchServe();
     } catch (error) {
       this.enabled = false;
@@ -409,6 +551,7 @@ export class TailscaleMobileAccess {
     const child = this.child; this.child = undefined;
     if (child) await this.stopChild(child);
     await this.gateway?.close(); this.gateway = undefined;
+    this.verifier?.close(); this.verifier = undefined;
     if (this.directory) await rm(this.directory, { recursive: true, force: true });
     this.directory = undefined; this.endpoint = ''; this.ingressOrigin = ''; this.probeToken = '';
   }

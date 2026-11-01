@@ -7,6 +7,8 @@ import type { StreamTransportResponse } from 'michi-shared';
 import { createMobileAccessGateway } from '../src/services/mobileAccessGateway';
 import { createStreamTransport } from '../src/services/streamTransport';
 import { createLocalOriginGuard } from '../src/routes/middleware/localControl';
+import { setupBackendConnectionRoutes } from '../src/routes/backendConnections';
+import { saveBackendConnection } from '../src/services/backendConnections';
 
 const origin = 'https://michi.tail123.ts.net';
 const bundle = 'console.log("michi");\n'.repeat(100);
@@ -223,3 +225,42 @@ test(`${identityHeader}: real multiplexed WS tickets work through the ingress, r
   const stopped = once(next, 'close'); await f.gateway.close(); await stopped;
 });
 }
+
+test('saved-connection proxy paths cannot reach another machine\'s phone-access routes through decoding or URL-parser aliases', async t => {
+  // The real saved-connection proxy decodes its path segments and fetch() then
+  // reads '\\' as '/', removes tab/newline and ends the path at '?' or '#'.
+  const remoteCalls: string[] = [];
+  const remote = express();
+  remote.use((req, res) => { remoteCalls.push(`${req.method} ${req.originalUrl}`); res.json({ ok: true }); });
+  const remoteServer = remote.listen(0, '127.0.0.1'); await once(remoteServer, 'listening');
+  const remotePort = (remoteServer.address() as { port: number }).port;
+  const saved = saveBackendConnection({ name: 'Remote fixture', apiUrl: `http://127.0.0.1:${remotePort}`, token: 'remote-fixture-token' });
+  const local = express();
+  local.use(express.json());
+  local.use('/api', createLocalOriginGuard({ loopbackListener: true }), setupBackendConnectionRoutes());
+  const localServer = local.listen(0, '127.0.0.1'); await once(localServer, 'listening');
+  const gateway = createMobileAccessGateway({ target: `http://127.0.0.1:${(localServer.address() as { port: number }).port}`,
+    owner: 'owner', identityHeader: 'tailscale-user-login', publicOrigin: () => origin });
+  gateway.server.listen(0, '127.0.0.1'); await once(gateway.server, 'listening');
+  t.after(async () => {
+    await gateway.close();
+    for (const server of [localServer, remoteServer]) { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); }
+  });
+  const { request } = await import('node:http');
+  const send = (path: string, method = 'POST') => new Promise<number>((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port: (gateway.server.address() as { port: number }).port, path, method, agent: false,
+      headers: { 'tailscale-user-login': 'owner', origin, 'content-type': 'application/json' } }, res => { res.resume(); resolve(res.statusCode!); });
+    req.on('error', reject); req.end(method === 'POST' ? '{}' : undefined);
+  });
+  const proxy = `/api/backend-connections/${saved.id}/proxy/`;
+  assert.equal(await send(`${proxy}files/mobile-access.md`, 'GET'), 200);
+  assert.deepEqual(remoteCalls, ['GET /api/files/mobile-access.md']);
+  for (const [suffix, method] of [
+    ['mobile-access%5Cstart', 'POST'], ['%5Cmobile-access%5Cstart', 'POST'], ['mobile-ac%09cess/start', 'POST'], ['mobile-access%0D%0A/start', 'POST'],
+    ['mobile-access%3F', 'GET'], ['mobile-access%23x', 'GET'], ['mobile-access%252Fstart', 'POST'], ['x/..%5Cmobile-access/link', 'POST'],
+    ['MOBILE-ACCESS%5CSTART', 'POST'],
+  ] as const) {
+    assert.equal(await send(proxy + suffix, method), 403, `${suffix} reached ${JSON.stringify(remoteCalls.slice(1))}`);
+  }
+  assert.deepEqual(remoteCalls, ['GET /api/files/mobile-access.md']);
+});
