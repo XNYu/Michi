@@ -10,7 +10,7 @@ import type { McpSlotRegistry } from "../services/mcpServer";
 import { PiRuntime } from "./pi/PiRuntime";
 import { ClaudeRuntime } from "michi-runtime/internal/adapters/claude/ClaudeRuntime";
 import { michiClaudeAdapterOptions } from "./michiClaudeOptions";
-import { KiroRuntime } from "michi-runtime/internal/adapters/kiro/KiroRuntime";
+import { AcpAgentRuntime } from "michi-runtime/internal/adapters/kiro/AcpAgentRuntime";
 import { resolveKiroEngine } from "michi-runtime/internal/adapters/kiro/kiroProtocol";
 import { createCrewRuntime } from "michi-runtime/internal/adapters/crew/crewRuntime";
 import { crewEnvOptions, kiroEnvOptions } from "./michiKiroOptions";
@@ -81,7 +81,7 @@ export const RUNTIME_FACTORIES: readonly RuntimeFactory[] = [
         id: "kiro",
         label: "Kiro",
         staticDescriptor: STATIC_RUNTIME_DESCRIPTORS.kiro,
-        create: (deps) => new KiroRuntime({
+        create: (deps) => new AcpAgentRuntime({
             ...kiroEnvOptions(),
             restrictedAgent: michiKiroRestrictedAgent,
             startClient: (launch) => {
@@ -193,6 +193,7 @@ export function codexAdapterOptions(
         host: deps.host,
         modelCache: deps.modelCache,
         binaryPath: env.CODEX_CLI_BIN,
+        binaryCacheFile: path.join(env.MICHI_DATA_DIR || path.join(os.homedir(), ".michi"), "cache", "codex-binary.json"),
         codexHome: env.CODEX_HOME,
         spawnEnv: () => env,
         rpcTimeoutMs: parseInt(env.MICHI_CODEX_RPC_TIMEOUT_MS ?? "30000", 10),
@@ -216,7 +217,7 @@ export function codexAdapterOptions(
  * separated runtime ids). Unset → every factory (current default; local
  * dev keeps its kiro+pi+claude lineup). Set → only listed runtimes are
  * instantiated, which is what Pi-only / Claude-only containers want so
- * we don't even construct KiroRuntime (whose ensureClient would later
+ * we don't even construct AcpAgentRuntime (whose ensureClient would later
  * try to spawn kiro-cli, fatally on hosts without the binary).
  *
  * Unknown ids are logged but skipped — typos go to stderr instead of

@@ -2,8 +2,8 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
 import { KiroCancelRecoveryBusyError } from 'michi-runtime/internal/adapters/kiro/acpErrors';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import * as sessions from '../src/agents/sessionRegistry';
@@ -117,7 +117,7 @@ test('cancelling a queued prompt does not wait for or cancel its predecessor', a
 
 function runtimeFixture(t: TestContext) {
   const { client: old } = fixture();
-  const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, defaultCwd: '/tmp', host: michiTestHost() }) as any;
+  const runtime = new AcpAgentRuntime({ bridge: {} as AgentToolBridge, defaultCwd: '/tmp', host: michiTestHost() }) as any;
   const binding = { publicSessionId: 'watchdog-node', nativeSessionId: 'watchdog-sid',
     owner: chatOwner('watchdog-node'), cwd: '/tmp', workspaceId: 'w1',
     ownerUserId: 'owner1', runtimeProfileHash: 'profile1', modelId: 'model1' };
@@ -128,7 +128,7 @@ function runtimeFixture(t: TestContext) {
   runtime.sessionCurrentModel.set(binding.nativeSessionId, 'model1');
   old.quarantinedSessions ??= new Set();
   old.quarantinedSessions.add(binding.nativeSessionId);
-  const session = new KiroSession(binding.publicSessionId, binding.nativeSessionId, runtime, '/tmp', {
+  const session = new AcpAgentSession(binding.publicSessionId, binding.nativeSessionId, runtime, '/tmp', {
     owner: binding.owner, runtimeProfileHash: binding.runtimeProfileHash,
   });
   sessions.registerSession(session, binding.ownerUserId);

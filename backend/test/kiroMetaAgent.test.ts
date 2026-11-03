@@ -4,7 +4,7 @@ import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
 import { michiKiroRestrictedAgent } from '../src/agents/kiro/kiroMetaAgent';
 /**
  * The Meta agent on Kiro: the generated agent config, catalog normalization
- * and checks for both engines, and KiroRuntime opening a per-toolset worker,
+ * and checks for both engines, and AcpAgentRuntime opening a per-toolset worker,
  * shared by that toolset's sessions, whose sessions are each selected,
  * checked and locked. kiro-cli is replaced by an
  * AcpClient whose RPCs are scripted; no real process runs.
@@ -20,7 +20,7 @@ import {
     KIRO_META_AGENT_NAMES, ensureKiroMetaAgent, kiroMetaAgentClientOptions, kiroMetaAgentConfig, kiroMetaAgentDir,
     kiroV2MetaAgentCatalog, kiroV3MetaAgentCatalog, verifyKiroMetaAgentCatalog,
 } from '../src/agents/kiro/kiroMetaAgent';
-import { KiroProcessCapError, KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { KiroProcessCapError, AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { MetaAgentGuardError, isMetaAgentGuardError } from '../src/agents/metaAgentGuard';
 import { META_AGENT_MAINTENANCE_TOOL_NAMES, MaintenanceRuntimeUnsupportedError, maintenanceToolProfile } from '../src/agents/maintenancePolicy';
 import { AssistantRuntimeUnsupportedError, META_AGENT_CHAT_TOOL_NAMES, assistantToolProfile } from '../src/assistant/policy';
@@ -199,7 +199,7 @@ describe('verifyKiroMetaAgentCatalog', () => {
 
 });
 
-describe('KiroRuntime Meta agent sessions', () => {
+describe('AcpAgentRuntime Meta agent sessions', () => {
     let tmpDir: string;
     beforeEach(() => {
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kiro-meta-rt-'));
@@ -215,14 +215,14 @@ describe('KiroRuntime Meta agent sessions', () => {
     function setup(t: TestContext, script: Script, ordinary = false) {
         const scripted = scriptedClient(script);
         const opened: Array<{ cwd: string; options: unknown; runtime: any }> = [];
-        t.mock.method(KiroRuntime.prototype, 'ensureClient', async function (this: any, cwd: string) {
+        t.mock.method(AcpAgentRuntime.prototype, 'ensureClient', async function (this: any, cwd: string) {
             if (!ordinary && !this.runtimeOptions.metaAgent) throw new Error('an ordinary client was asked for');
             opened.push({ cwd, options: this.clientOptions(), runtime: this });
             this.pool.set(cwd, scripted.client);
             return scripted.client;
         });
         const registry = makeRegistry();
-        const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry as any, { mcpPort: 9999 }), defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({ engine: script.engine, sidecarTitles: false }) });
+        const runtime = new AcpAgentRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry as any, { mcpPort: 9999 }), defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({ engine: script.engine, sidecarTitles: false }) });
         t.after(() => runtime.shutdown());
         return { ...scripted, registry, runtime, opened };
     }
@@ -341,7 +341,7 @@ describe('KiroRuntime Meta agent sessions', () => {
         engine: 'v2', currentModeId: KIRO_META_AGENT_NAMES.maintenance,
         v2Tools: [{ name: 'maintenance_read_source', source: 'mcp:michi' }, { name: 'maintenance_no_change', source: 'mcp:michi' }],
     };
-    const maintain = (runtime: KiroRuntime, sessionId: string, toolProfile = maintenanceToolProfile()) =>
+    const maintain = (runtime: AcpAgentRuntime, sessionId: string, toolProfile = maintenanceToolProfile()) =>
         runtime.newSession({ sessionId, cwd: '/x', workspaceId: 'ws-1', ownerUserId: null, toolProfile }) as Promise<any>;
 
     test('maintenance sessions share one kiro-cli with a slot each; the last release stops it after the idle TTL', async (t) => {
@@ -438,7 +438,7 @@ describe('KiroRuntime Meta agent sessions', () => {
     });
 
     test('Crew still refuses both toolsets with its own reason', async () => {
-        const crew = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(makeRegistry() as any, { mcpPort: 9999 }), defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({
+        const crew = new AcpAgentRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(makeRegistry() as any, { mcpPort: 9999 }), defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({
             id: 'crew', engine: 'v2', launch: { bin: '/bin/false', args: () => [] }, sidecarTitles: false,
         }) });
         try {

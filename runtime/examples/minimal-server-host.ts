@@ -31,7 +31,7 @@ import {
   type NormalizedEvent, type RuntimeAvailability, type RuntimeHost,
 } from 'michi-runtime';
 import { createMcpHost, createMcpSlotProvider } from 'michi-runtime/mcp-host';
-import { KiroRuntime, resolveKiroEngine } from 'michi-runtime/adapters/kiro';
+import { AcpAgentRuntime, resolveKiroEngine } from 'michi-runtime/adapters/kiro';
 import { createCrewRuntime } from 'michi-runtime/adapters/crew';
 import { CodexRuntime } from 'michi-runtime/adapters/codex';
 import { ClaudeRuntime, ClaudeSdkMissingError, claudeAdapterOptions } from 'michi-runtime/adapters/claude';
@@ -66,7 +66,7 @@ function buildRuntime(name: RuntimeName, host: RuntimeHost, mcpSlots: McpSlotPro
   // it when spawnEnv is absent, and Crew's adapter always inherits it. A host
   // holding secrets the agent must not see passes a filtered copy instead.
   switch (name) {
-    case 'kiro': return new KiroRuntime({ host, bridge, mcpSlots, defaultCwd: cwd, engine: resolveKiroEngine(engine) });
+    case 'kiro': return new AcpAgentRuntime({ host, bridge, mcpSlots, defaultCwd: cwd, engine: resolveKiroEngine(engine) });
     case 'crew': return createCrewRuntime({ host, bridge, mcpSlots, defaultCwd: cwd });
     case 'codex': return new CodexRuntime({ host, bridge, mcpSlots, spawnEnv: () => process.env });
     case 'claude': return new ClaudeRuntime({ ...claudeAdapterOptions({ host, spawnEnv: () => process.env }), bridge, mcpSlots });

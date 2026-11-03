@@ -41,8 +41,8 @@ import { McpSlotRegistry, mountMcp, type McpSlot } from '../src/services/mcpServ
 import { JSON_BODY_LIMIT_BYTES } from '../src/services/requestBodyLimit';
 import { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSession';
 import type { CodexAppServerClient } from 'michi-runtime/internal/adapters/codex/CodexAppServerClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
 import { mapAgentEvent } from '../src/agents/pi/eventMapper';
 import { buildPiTools } from '../src/agents/pi/piTools';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
@@ -428,7 +428,7 @@ test('Codex: a session reports branches, artifacts, images, overview and follow-
 test('Kiro: Michi tools called over MCP inject updates that the session reports as events', async () => {
   const injected: Array<Record<string, unknown>> = [];
   const mcp = await michiMcp();
-  const runtime = new KiroRuntime({ bridge: goldenBridge('kiro'), mcpSlots: mcp.registry, defaultCwd: cwd, host: michiTestHost() });
+  const runtime = new AcpAgentRuntime({ bridge: goldenBridge('kiro'), mcpSlots: mcp.registry, defaultCwd: cwd, host: michiTestHost() });
   const rt = runtime as any;
   // The ACP client of the chat's cwd: every update injected into its session is the session's.
   rt.pool.set(cwd, {
@@ -437,7 +437,7 @@ test('Kiro: Michi tools called over MCP inject updates that the session reports 
       injected.push(update);
     },
   });
-  // As KiroRuntime opens a chat: the slot of its ACP session, with the runtime's own callbacks.
+  // As AcpAgentRuntime opens a chat: the slot of its ACP session, with the runtime's own callbacks.
   let slotId: string | undefined;
   const slot = mcp.registry.create('kiro-golden-sid', cwd, null, rt.makeSlotCallbacks(() => slotId),
     { nodeId: 'kiro-golden-node', workspaceId: null });
@@ -463,8 +463,8 @@ test('Kiro: Michi tools called over MCP inject updates that the session reports 
     }),
     getCurrentMode: () => undefined,
     getCurrentModel: () => undefined,
-  } as unknown as KiroRuntime;
-  const session = new KiroSession('kiro-golden-node', 'kiro-golden-sid', fakeRuntime, cwd);
+  } as unknown as AcpAgentRuntime;
+  const session = new AcpAgentSession('kiro-golden-node', 'kiro-golden-sid', fakeRuntime, cwd);
   const events: NormalizedEvent[] = [];
   for await (const event of session.send('hello')) events.push(event);
   await record('kiro', events);

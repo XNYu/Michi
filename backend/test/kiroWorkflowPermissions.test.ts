@@ -11,8 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ChatPermissionMode } from 'michi-shared';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { RuntimeSessionOwner } from '../src/agents/types';
 import { michiTestHost } from './helpers/michiTestHost';
 import { chatOwner, runOwner } from './helpers/owners';
@@ -42,12 +42,12 @@ beforeEach(() => {
 
 after(() => __resetRuntimeDeps());
 
-function session(owner: RuntimeSessionOwner, opts: Record<string, unknown> = {}): KiroSession {
+function session(owner: RuntimeSessionOwner, opts: Record<string, unknown> = {}): AcpAgentSession {
   const runtime = {
     host: michiTestHost(),
     getCurrentMode: () => undefined, getCurrentModel: () => undefined,
-  } as unknown as KiroRuntime;
-  return new KiroSession('chat-1', 'native-1', runtime, '/tmp', { owner, ownerUserId: 'alice', workspaceId: 'ws', ...opts });
+  } as unknown as AcpAgentRuntime;
+  return new AcpAgentSession('chat-1', 'native-1', runtime, '/tmp', { owner, ownerUserId: 'alice', workspaceId: 'ws', ...opts });
 }
 
 const WRITE = { toolCall: { title: 'Write File' }, meta: { toolName: 'write' } };

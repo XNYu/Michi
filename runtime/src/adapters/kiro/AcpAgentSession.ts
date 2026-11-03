@@ -39,8 +39,8 @@ import type {
 } from "../../contract/types";
 import type { NormalizedEvent, PlanEntry } from "../../contract/events";
 import { ACPRequestNotSentError, type AcpClient, type AcpPromptBlock, type AcpUpdate } from "./acpClient";
-import type { KiroRuntime } from "./KiroRuntime";
-import { KIRO_FLAVOR, type KiroFlavor } from "./kiroFlavor";
+import type { AcpAgentRuntime } from "./AcpAgentRuntime";
+import { KIRO_FLAVOR, type AcpAgentFlavor } from "./acpAgentFlavor";
 import { injectedHostEvent } from "./kiroHostEvents";
 import { KIRO_APPROVE_FOR_ME_PRESET, KIRO_METADATA_DONE_SENTINEL } from "./kiroProtocol";
 import { imageMimeType, prepareAttachments, type ResolvedAttachment } from "../../core/attachments";
@@ -70,7 +70,7 @@ function buildKiroImageBlocks(images: ResolvedAttachment[]): AcpPromptBlock[] {
 }
 
 /** Local image attachments as ACP resource_link blocks to their files
- *  (KiroFlavor.promptImages 'resourceLink'); the agent reads them itself. */
+ *  (AcpAgentFlavor.promptImages 'resourceLink'); the agent reads them itself. */
 function buildImageLinkBlocks(images: ResolvedAttachment[]): AcpPromptBlock[] {
     return images.flatMap((attachment) => {
         const mimeType = imageMimeType(attachment.absPath);
@@ -206,7 +206,7 @@ class TrailingSentinelStripper {
 }
 
 /**
- * KiroSession wraps an ACP `AcpClient.prompt(sessionId, text)` async
+ * AcpAgentSession wraps an ACP `AcpClient.prompt(sessionId, text)` async
  * generator. Each instance corresponds to one ACP sessionId on a specific
  * cwd. The `send()` method translates raw `session/update` payloads into
  * the unified `NormalizedEvent` stream that ChatManager (and the SSE
@@ -218,12 +218,12 @@ class TrailingSentinelStripper {
  *     auto-branch shared buffer (ChatManager).
  *   - Perf timing of `first_chunk` (ChatManager — needs the original `tStart`).
  */
-export class KiroSession implements AgentSession {
+export class AcpAgentSession implements AgentSession {
     /** Owning runtime id; chatHub resolves the runtime by it. Default "kiro". */
     public readonly runtimeId: string;
     public readonly owner?: RuntimeSessionOwner;
     /** How the agent differs from kiro-cli; read instead of the runtime id. */
-    private readonly flavor: KiroFlavor;
+    private readonly flavor: AcpAgentFlavor;
     private turnPermissionMode: import('michi-shared').ChatPermissionMode = 'ask';
     private readonly approvals: ApprovalCoordinator;
     private readonly pendingChatPermissions = new Map<number, {
@@ -281,12 +281,12 @@ export class KiroSession implements AgentSession {
     constructor(
         public readonly id: string,
         public readonly nativeSessionId: string,
-        private readonly runtime: KiroRuntime,
+        private readonly runtime: AcpAgentRuntime,
         private readonly cwd: string,
         opts?: {
             runtimeId?: string;
             /** Default: the runtime's flavor, else KIRO_FLAVOR. */
-            flavor?: KiroFlavor;
+            flavor?: AcpAgentFlavor;
             parentChatId?: string;
             enableFollowUps?: boolean;
             owner?: RuntimeSessionOwner;
@@ -404,7 +404,7 @@ export class KiroSession implements AgentSession {
     /**
      * Set a preamble that will be glued onto the next call's transport text
      * (the bytes sent to kiro-cli) without being recorded in `history`. Used
-     * by KiroRuntime.newSession to prime the first user turn.
+     * by AcpAgentRuntime.newSession to prime the first user turn.
      */
     primeFirstMessage(preamble: string): void {
         this.firstMessagePreamble = preamble;
@@ -896,7 +896,7 @@ export class KiroSession implements AgentSession {
             } else if (kind === "__heartbeat__") {
                 yield { kind: "heartbeat", idleMs: update.idleMs || 0 };
             } else if (kind === "host_event") {
-                // What the host's tools reported through the slot's sink (KiroRuntime.slotEventSink).
+                // What the host's tools reported through the slot's sink (AcpAgentRuntime.slotEventSink).
                 const event = injectedHostEvent(update);
                 if (event) yield event;
             } else if (kind === "branch_overview") {

@@ -9,7 +9,7 @@ export type { AcpConfigOption, AcpConfigValue, AcpSessionInfo } from '../acp/typ
 /** Reply for a Kiro turn whose last step was set_branch_overview. An ACP
  *  turn needs a non-empty model response after that tool result; the
  *  convention is declared in the host's per-turn reminder
- *  (PromptPolicyPort.turnSuffix), not in the tool result, and KiroSession's
+ *  (PromptPolicyPort.turnSuffix), not in the tool result, and AcpAgentSession's
  *  TrailingSentinelStripper removes it. */
 export const KIRO_METADATA_DONE_SENTINEL = "[MICHI_METADATA_DONE]";
 

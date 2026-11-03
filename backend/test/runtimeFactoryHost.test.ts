@@ -9,7 +9,7 @@ import './isolatedConfigDir';
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RUNTIME_FACTORIES } from '../src/agents/runtimeFactories';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { McpSlotRegistry } from '../src/services/mcpServer';
 import type { AgentRuntime, AgentSession } from '../src/agents/types';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
@@ -22,7 +22,7 @@ after(async () => { await Promise.all(created.map((runtime) => runtime.shutdown(
 /** Where each adapter keeps its host (white box: private until the adapter switch reads it). */
 function storedHost(runtime: AgentRuntime): unknown {
   const fields = runtime as unknown as { host?: unknown; runtimeOptions?: { host?: unknown } };
-  return runtime instanceof KiroRuntime ? fields.runtimeOptions?.host : fields.host;
+  return runtime instanceof AcpAgentRuntime ? fields.runtimeOptions?.host : fields.host;
 }
 
 test('extracted runtime factories receive deps.host; app-owned adapters retain their existing construction', () => {
@@ -40,15 +40,15 @@ test('extracted runtime factories receive deps.host; app-owned adapters retain t
 
 test('a Kiro v3 session worker gets its parent runtime\'s host', async () => {
   const host = michiTestHost();
-  const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/michi-factory-host', engine: 'v3', host });
+  const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/michi-factory-host', engine: 'v3', host });
   created.push(runtime);
   const session = {} as AgentSession;
-  let worker: KiroRuntime | undefined;
+  let worker: AcpAgentRuntime | undefined;
   const opener = runtime as unknown as {
-    openIsolatedSession(id: string, cwd: string, open: (worker: KiroRuntime) => Promise<AgentSession>): Promise<AgentSession>;
+    openIsolatedSession(id: string, cwd: string, open: (worker: AcpAgentRuntime) => Promise<AgentSession>): Promise<AgentSession>;
   };
   const opened = await opener.openIsolatedSession('chat-1', '/tmp/michi-factory-host', async (w) => { worker = w; return session; });
   assert.equal(opened, session);
-  assert.ok(worker instanceof KiroRuntime && worker !== runtime);
+  assert.ok(worker instanceof AcpAgentRuntime && worker !== runtime);
   assert.equal(storedHost(worker), host);
 });

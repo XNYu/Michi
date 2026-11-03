@@ -35,7 +35,7 @@ export class CrewTurn {
         if (event.type === 'context_usage') { this.context(event.data.pct); return; }
         if (event.type === 'todo_update') { this.todo(event.data.todo); return; }
         if (event.type.startsWith('subagent_')) {
-            // Michi-native roster frames: KiroSession passes them through as-is.
+            // Michi-native roster frames: AcpAgentSession passes them through as-is.
             for (const update of this.subagents.apply(event)) {
                 if (update.kind === 'roster') this.emit({ sessionUpdate: 'subagent_list_update', michi: true, subagents: [update.entry] });
                 else this.emit({ sessionUpdate: 'subagent_tool_activity', michi: true, ...update.activity });

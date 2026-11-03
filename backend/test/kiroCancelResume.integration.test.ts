@@ -14,8 +14,8 @@ import * as dbWorkerClient from '../src/services/dbWorkerClient';
 import { loadAgentConfig, updateAgentConfig } from '../src/services/agentConfig';
 import { registerRuntime } from '../src/agents/registry';
 import { clearAllSessions, getSession } from '../src/agents/sessionRegistry';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { AgentRuntime, LoadAgentSessionOptions, NewAgentSessionOptions } from '../src/agents/types';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
@@ -87,7 +87,7 @@ beforeEach(async () => {
     getCurrentModel: () => currentModel,
     setModel: async (_id: string, model: string) => { currentModel = model; },
     recoverSession: async () => { throw new Error('cancel must not recover'); },
-  } as unknown as KiroRuntime;
+  } as unknown as AcpAgentRuntime;
   runtime = {
     descriptor: UNKNOWN_RUNTIME_DESCRIPTOR,
     id: 'kiro', label: 'Kiro cancellation test',
@@ -101,13 +101,13 @@ beforeEach(async () => {
       const failure = loadFailures.shift();
       if (failure) throw failure;
       currentModel = options.model ?? currentModel;
-      return new KiroSession(options.nodeId!, getNode(options.nodeId!)!.acp_session_id!, adapter, directory);
+      return new AcpAgentSession(options.nodeId!, getNode(options.nodeId!)!.acp_session_id!, adapter, directory);
     },
     async newSession(options) {
       created.push(options);
       await new Promise((resolve) => setTimeout(resolve, 20));
       const { sessionId } = await client.newSession();
-      const session = new KiroSession(options.sessionId!, sessionId, adapter, directory, { enableFollowUps: false });
+      const session = new AcpAgentSession(options.sessionId!, sessionId, adapter, directory, { enableFollowUps: false });
       session.primeFirstMessage('FIRST-TURN-ONLY');
       return session;
     },
@@ -248,7 +248,7 @@ test('editing compatibility endpoints let both windows operate without exclusive
   }
   // Runtime operations use account authorization, regardless of window tokens.
   assert.equal((await post('/chats/cancel-node/steer', { text: 'continue', ownerToken: 'window-b' })).status, 409);
-  t.mock.method(getSession('cancel-node') as KiroSession, 'compact', async () => ({ started: true, completed: true }));
+  t.mock.method(getSession('cancel-node') as AcpAgentSession, 'compact', async () => ({ started: true, completed: true }));
   assert.equal((await post('/chats/cancel-node/compact', { ownerToken: 'window-b' })).status, 200);
   const first = post('/chats/cancel-node/message', { text: 'first', turnId: 'editable-first', ownerToken: 'window-b' });
   await promptStarted;

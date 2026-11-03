@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { McpSlotRegistry } from '../src/services/mcpServer';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import { initDb, closeDb } from '../src/services/db';
@@ -50,7 +50,7 @@ test('v3 defaults to shared warm sessions with a stable MCP definition and per-t
     });
     const bridge: AgentToolBridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null,
         agentRunToolsForSession: () => process.env.MICHI_CUSTOM_AGENTS === '1' ? { invoke: async () => ({}) } : null };
-    const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: dir, host: michiTestHost(), engine: 'v3' });
+    const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry, defaultCwd: dir, host: michiTestHost(), engine: 'v3' });
     try {
         await runtime.warm(dir);
         const warmSid = runtime.listWarmedSessions()[0]?.sid;
@@ -98,7 +98,7 @@ test('v3 defaults to shared warm sessions with a stable MCP definition and per-t
         await assert.rejects(runtime.newSession({ sessionId: 'another-attempt', cwd: dir,
             owner: runOwner('run', 'another-attempt') }), /process cap/i);
         process.env.MICHI_CUSTOM_AGENTS = '1';
-        const enabled = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: dir, host: michiTestHost(), engine: 'v3', customAgents: () => true });
+        const enabled = new AcpAgentRuntime({ bridge, mcpSlots: registry, defaultCwd: dir, host: michiTestHost(), engine: 'v3', customAgents: () => true });
         try {
             await enabled.warm(dir);
             assert.ok(registry.getSessionGroupCatalog(group)?.agentRuns,

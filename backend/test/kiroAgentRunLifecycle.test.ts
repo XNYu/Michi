@@ -13,15 +13,15 @@
  * - Shutdown is deterministic for idle timers, slots, sessions, and clients.
  *
  * These tests use mock/stub AcpClient and McpSlotRegistry. They do NOT
- * require node:sqlite — KiroRuntime is imported but the tests stub out
+ * require node:sqlite — AcpAgentRuntime is imported but the tests stub out
  * ensureClient/loadAcpSession so the db import path is never exercised
  * at runtime (the import will fail at load time on Node < 22, same as
  * kiroAgentRunRuntime.test.ts).
  */
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { KiroRuntime, KiroConcurrencyError } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
-import type { KiroSessionBinding } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime, KiroConcurrencyError } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
+import type { KiroSessionBinding } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type {
     RuntimeSessionOwner,
@@ -82,10 +82,10 @@ function fakeClient(cwd: string, opts?: { loadFail?: boolean }) {
 // rebindRunSession
 // ---------------------------------------------------------------------------
 
-describe('KiroRuntime.rebindRunSession', () => {
+describe('AcpAgentRuntime.rebindRunSession', () => {
     test('restores owner, broker, result callback, model/mode, maps, and MCP slot', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         const client = fakeClient('/tmp/worktree-a');
@@ -148,7 +148,7 @@ describe('KiroRuntime.rebindRunSession', () => {
     });
 
     test('rejects a chat (interactive) owner', async () => {
-        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const binding: KiroSessionBinding = {
             publicSessionId: 'node-1',
             nativeSessionId: 'acp-sid',
@@ -166,7 +166,7 @@ describe('KiroRuntime.rebindRunSession', () => {
 
     test('cleans up MCP slot when loadSession fails', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         const client = fakeClient('/tmp/worktree-fail', { loadFail: true });
@@ -193,9 +193,9 @@ describe('KiroRuntime.rebindRunSession', () => {
 // Process cap
 // ---------------------------------------------------------------------------
 
-describe('KiroRuntime process cap', () => {
+describe('AcpAgentRuntime process cap', () => {
     test('session cap reports KiroConcurrencyError (distinct from process cap)', async () => {
-        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         // Set low session cap.
@@ -217,10 +217,10 @@ describe('KiroRuntime process cap', () => {
 // Idle TTL cleanup
 // ---------------------------------------------------------------------------
 
-describe('KiroRuntime idle cleanup', () => {
+describe('AcpAgentRuntime idle cleanup', () => {
     test('schedules idle cleanup after last session for a cwd is released', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         // Set a very short idle TTL for testing.
@@ -265,7 +265,7 @@ describe('KiroRuntime idle cleanup', () => {
     });
 
     test('creating a new session cancels the idle timer for its cwd', async () => {
-        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         (rt as any).idleTtlMs = 50;
@@ -294,10 +294,10 @@ describe('KiroRuntime idle cleanup', () => {
 // purgeSessionsForCwd isolation
 // ---------------------------------------------------------------------------
 
-describe('KiroRuntime purgeSessionsForCwd isolation', () => {
+describe('AcpAgentRuntime purgeSessionsForCwd isolation', () => {
     test('process exit purges ONLY sessions bound to that cwd', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         const ownerA = makeOwner('run-a', 'attempt-a');
@@ -349,10 +349,10 @@ describe('KiroRuntime purgeSessionsForCwd isolation', () => {
 // Concurrent worktree Runs isolation
 // ---------------------------------------------------------------------------
 
-describe('KiroRuntime concurrent worktree Run isolation', () => {
+describe('AcpAgentRuntime concurrent worktree Run isolation', () => {
     test('two Runs on different worktrees have independent sessions and MCP slots', async () => {
         const registry = makeRegistry();
-        const runtime = new KiroRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
 
         let clientForCwd: Record<string, any> = {};

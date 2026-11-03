@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AcpClient } from '../src/adapters/kiro/acpClient';
 import { KIRO_HARNESS, KIRO_STATIC_DESCRIPTOR, kiroDescriptor } from '../src/adapters/kiro/kiroDescriptor';
-import { KIRO_FLAVOR } from '../src/adapters/kiro/kiroFlavor';
+import { KIRO_FLAVOR } from '../src/adapters/kiro/acpAgentFlavor';
 import { CREW_KIRO_FLAVOR } from '../src/adapters/crew/crewFlavor';
 import { CREW_STATIC_DESCRIPTOR } from '../src/adapters/crew/crewDescriptor';
 

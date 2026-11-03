@@ -39,8 +39,8 @@ import { RuntimeRunExecutor } from '../src/agents/runs/runtimeRunExecutor';
 import { intersectPermissionPolicies } from '../src/agents/runs/effectivePermissionPolicy';
 import { DEFAULT_PLATFORM_POLICY } from '../src/agents/agentRunAssembly';
 import type { AgentRunSpec } from '../src/agents/runs/ports';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
 import type { CodexSession } from 'michi-runtime/internal/adapters/codex/CodexSession';
 import { CODEX_SERVER_REQUESTS } from 'michi-runtime/internal/adapters/codex/codexProtocol';
@@ -192,7 +192,7 @@ function drainPrompts(session: AgentSession, text: string, prompts: Map<number, 
   })();
 }
 
-// Kiro: KiroSession over a stub ACP client. A tool is given as an ACP
+// Kiro: AcpAgentSession over a stub ACP client. A tool is given as an ACP
 // request_permission: `title:<t>`, `meta:<name>` (params._meta.toolName),
 // `toolCallMeta:<name>` (toolCall._meta.toolName). Prose titles carry no name.
 // `v2wire:` and `v3wire:` rows are the request shapes kiro-cli 2.34.0 sends
@@ -287,8 +287,8 @@ async function kiroDriver({ owner, id }: DriverInput): Promise<Driver> {
     getCurrentMode: () => undefined, getCurrentModel: () => undefined,
     respondToPermission: (_sid: string, requestId: number, optionId: string) => { answers.set(requestId, `select:${optionId}`); },
     cancelPermission: (_sid: string, requestId: number) => { answers.set(requestId, 'cancel'); },
-  } as unknown as KiroRuntime;
-  const session = new KiroSession(id, `native-${id}`, runtime, '/tmp', {
+  } as unknown as AcpAgentRuntime;
+  const session = new AcpAgentSession(id, `native-${id}`, runtime, '/tmp', {
     owner, ownerUserId: 'alice', workspaceId: 'ws', ...(isRunOwner(owner) ? { permissionBroker: recordingBroker } : {}),
   });
   const prompts = new Map<number, Prompt>();

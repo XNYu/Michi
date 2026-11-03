@@ -2,8 +2,8 @@ import { michiKiroRestrictedAgent } from '../src/agents/kiro/kiroMetaAgent';
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
 import { hostEventUpdate } from 'michi-runtime/internal/adapters/kiro/kiroHostEvents';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { AgentSession } from '../src/agents/types';
@@ -26,9 +26,9 @@ const bridge: AgentToolBridge = {
   updateContext: () => null,
 };
 
-describe('KiroRuntime warm session handoff', () => {
+describe('AcpAgentRuntime warm session handoff', () => {
   test('newSession cold-opens when inflight warm finishes without a slot', async () => {
-    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
     const rt = runtime as any;
 
     rt.ensureClient = async () => ({});
@@ -56,7 +56,7 @@ describe('KiroRuntime warm session handoff', () => {
       ...bridge,
       agentRunToolsForSession: (binding: unknown) => { bindings.push(binding); return { invoke: async () => ({}) }; },
     };
-    const runtime = new KiroRuntime({ bridge: sessionBridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
+    const runtime = new AcpAgentRuntime({ bridge: sessionBridge, mcpSlots: registry as any, defaultCwd: '/tmp/default', host: michiTestHost() });
     const rt = runtime as any;
     rt.ensureClient = async () => ({});
     rt.warmNextSession = () => {};
@@ -76,7 +76,7 @@ describe('KiroRuntime warm session handoff', () => {
     const slot: any = { slotId: 'slot-cold', parentChatId: '__pending__', nodeId: null, cwd: '/tmp/a', workspaceId: null, ownerUserId: null };
     const registry = fakeMcpRegistry();
     registry.slots.set(slot.slotId, slot);
-    const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: registry, defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({}) });
+    const runtime = new AcpAgentRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: registry, defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({}) });
     const rt = runtime as any;
     rt.ensureClient = async () => ({});
     rt.warmNextSession = () => {};
@@ -89,7 +89,7 @@ describe('KiroRuntime warm session handoff', () => {
     assert.equal(slot.workspaceId, 'ws-a');
   });
 });
-describe('KiroRuntime model catalog cache', () => {
+describe('AcpAgentRuntime model catalog cache', () => {
   test('native catalog setup and refresh retain the last nonempty engine-scoped snapshot', async () => {
     const loaded: string[] = [];
     const saved: Array<{ key: string; models: any[] }> = [];
@@ -97,7 +97,7 @@ describe('KiroRuntime model catalog cache', () => {
       load: (key) => { loaded.push(key); return [{ id: 'cached' }]; },
       save: (key, models) => { saved.push({ key, models }); },
     };
-    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', modelCache: cache, host: michiTestHost(), engine: 'v3' });
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', modelCache: cache, host: michiTestHost(), engine: 'v3' });
     const rt = runtime as any;
     try {
       rt.storeAvailableModels([{ modelId: 'native', name: 'Native', _meta: { kiro: { hasEffort: true, effortLevels: ['low', 'high'] } } }]);
@@ -116,7 +116,7 @@ describe('KiroRuntime model catalog cache', () => {
       load: () => [{ id: 'auto', label: 'auto' }, { id: 'claude-opus-5.5', label: 'claude-opus-5.5' }],
       save: () => {},
     };
-    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', modelCache: cache, host: michiTestHost(), engine: 'v2' });
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', modelCache: cache, host: michiTestHost(), engine: 'v2' });
     const rt = runtime as any;
     rt.getAvailableModels = async () => [{ modelId: 'auto', name: 'auto' }, { modelId: 'claude-opus-5.5', name: 'claude-opus-5.5' }];
 
@@ -130,10 +130,10 @@ describe('KiroRuntime model catalog cache', () => {
   });
 });
 
-describe('KiroRuntime node/native identity', () => {
+describe('AcpAgentRuntime node/native identity', () => {
   test('chat MCP slots carry the owning node through native session load', async () => {
     const registry = fakeMcpRegistry();
-    const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: registry, defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({}) });
+    const runtime = new AcpAgentRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: registry, defaultCwd: '/tmp/default', modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({}) });
     const loaded = await runtime.loadAcpSession({
       sessionId: 'acp-session-1', nodeId: 'node-1', workspaceId: 'ws-1', cwd: '/tmp/a',
       client: { loadSession: async () => ({}) } as any,
@@ -163,7 +163,7 @@ describe('KiroRuntime node/native identity', () => {
         external_session_id: null, trim_snapshot: null, created_at: 1,
       });
 
-      const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
+      const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
       const rt = runtime as any;
       rt.ensureClient = async () => ({});
       rt.warmNextSession = () => {};
@@ -184,8 +184,8 @@ describe('KiroRuntime node/native identity', () => {
       assert.equal(loadedSid, 'acp-session-1');
       assert.equal(session.id, 'node-1');
       assert.equal(session.nativeSessionId, 'acp-session-1');
-      assert.equal((fresh as KiroSession).getEnableFollowUps(), false);
-      assert.equal((session as KiroSession).getEnableFollowUps(), false);
+      assert.equal((fresh as AcpAgentSession).getEnableFollowUps(), false);
+      assert.equal((session as AcpAgentSession).getEnableFollowUps(), false);
     } finally {
       closeDb();
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -194,7 +194,7 @@ describe('KiroRuntime node/native identity', () => {
 });
 
 describe('Kiro branch overview metadata tool', () => {
-  test('KiroSession reminds the agent and translates injected overview updates', async () => {
+  test('AcpAgentSession reminds the agent and translates injected overview updates', async () => {
     const prompts: string[] = [];
     const promptSessionIds: string[] = [];
     const fakeRuntime = {
@@ -209,8 +209,8 @@ describe('Kiro branch overview metadata tool', () => {
       }),
       getCurrentMode: () => undefined,
       getCurrentModel: () => undefined,
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('node-overview', 'kiro-overview-session', fakeRuntime, '/tmp/a');
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-overview', 'kiro-overview-session', fakeRuntime, '/tmp/a');
 
     const events: any[] = [];
     for await (const event of session.send('hello')) events.push(event);
@@ -231,7 +231,7 @@ describe('Kiro branch overview metadata tool', () => {
         ? { parentChatId: 'kiro-session-a', cwd: '/tmp/a' }
         : undefined,
     } as any;
-    const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/default', host: michiTestHost() });
+    const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/default', host: michiTestHost() });
     const rt = runtime as any;
     rt.pool.set('/tmp/a', {
       injectUpdate: (sessionId: string, update: Record<string, unknown>) => {
@@ -270,8 +270,8 @@ describe('Kiro host events', () => {
       }),
       getCurrentMode: () => undefined,
       getCurrentModel: () => undefined,
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('node-host-events', 'kiro-host-events-session', fakeRuntime, '/tmp/a');
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-host-events', 'kiro-host-events-session', fakeRuntime, '/tmp/a');
 
     const events: any[] = [];
     for await (const event of session.send('hello')) events.push(event);
@@ -289,7 +289,7 @@ describe('Kiro host events', () => {
       'slot-warm': { parentChatId: '__pending__', cwd },
     };
     const registry = { get: (slotId: string) => slots[slotId] } as any;
-    const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/default', host: michiTestHost() });
+    const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/default', host: michiTestHost() });
     const rt = runtime as any;
 
     const bound = rt.makeSlotCallbacks(() => 'slot-bound');
@@ -303,9 +303,9 @@ describe('Kiro host events', () => {
   });
 });
 
-describe('KiroRuntime default agent discovery', () => {
+describe('AcpAgentRuntime default agent discovery', () => {
   test('does not treat a loaded session current mode as the cwd default', async () => {
-    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
     const client = {
       loadSession: async () => ({
         modes: {
@@ -326,7 +326,7 @@ describe('KiroRuntime default agent discovery', () => {
   });
 });
 
-describe('KiroRuntime host sessions port', () => {
+describe('AcpAgentRuntime host sessions port', () => {
   test('new, recovered and released sessions reach the host sessions port, not the process registry', async (t) => {
     // Recovery re-registers only on the session-anchor path, which cloud mode turns off.
     const oldCloud = process.env.MICHI_CLOUD;
@@ -341,7 +341,7 @@ describe('KiroRuntime host sessions port', () => {
       registerSession: (session) => { calls.push(`registerSession ${session.id}`); live.set(session.id, session); },
       dropSession: (chatId) => { calls.push(`dropSession ${chatId}`); live.delete(chatId); },
     };
-    const runtime = new KiroRuntime({ bridge, mcpSlots: fakeMcpRegistry(), defaultCwd: '/tmp/default',
+    const runtime = new AcpAgentRuntime({ bridge, mcpSlots: fakeMcpRegistry(), defaultCwd: '/tmp/default',
       host: { ...michiTestHost(), sessions }, engine: 'v3' });
     t.after(() => runtime.shutdown());
     const rt = runtime as any;
@@ -385,10 +385,10 @@ describe('KiroRuntime host sessions port', () => {
   });
 });
 
-test('KiroRuntime refuses the old positional arguments with a TypeError', async () => {
-  const Untyped = KiroRuntime as unknown as new (...args: unknown[]) => KiroRuntime;
+test('AcpAgentRuntime refuses the old positional arguments with a TypeError', async () => {
+  const Untyped = AcpAgentRuntime as unknown as new (...args: unknown[]) => AcpAgentRuntime;
   const host = michiTestHost();
-  const expected = { name: 'TypeError', message: 'KiroRuntime takes one options object { host, bridge, mcpSlots?, … } (runtime contract v1)' };
+  const expected = { name: 'TypeError', message: 'AcpAgentRuntime takes one options object { host, bridge, mcpSlots?, … } (runtime contract v1)' };
   assert.throws(() => new Untyped(bridge, fakeMcpRegistry(), '/tmp/default', undefined, { host }), expected);
   assert.throws(() => new Untyped(undefined), expected);
   assert.throws(() => new Untyped({ host }), expected);
@@ -397,7 +397,7 @@ test('KiroRuntime refuses the old positional arguments with a TypeError', async 
   assert.throws(() => new Untyped({ host, bridge: undefined }), expected);
   assert.throws(() => new Untyped({ host: undefined, bridge }), expected);
   // MCP slots stay optional: without them sessions get no host tools.
-  const runtime = new KiroRuntime({ host, bridge, defaultCwd: '/tmp/default' });
+  const runtime = new AcpAgentRuntime({ host, bridge, defaultCwd: '/tmp/default' });
   assert.deepEqual(runtime.descriptor.topology.toolDelivery, []);
   await runtime.shutdown();
 });

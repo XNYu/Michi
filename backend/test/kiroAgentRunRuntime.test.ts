@@ -1,16 +1,16 @@
 /**
- * T05 — KiroRuntime Agent Run session tests (requires Node 22+ for node:sqlite).
+ * T05 — AcpAgentRuntime Agent Run session tests (requires Node 22+ for node:sqlite).
  *
- * These tests exercise KiroRuntime.newSession, loadSession, releaseSession,
- * and binding records for `agent_run` owners. They import KiroRuntime which
+ * These tests exercise AcpAgentRuntime.newSession, loadSession, releaseSession,
+ * and binding records for `agent_run` owners. They import AcpAgentRuntime which
  * transitively depends on node:sqlite via dbRepository. On Node < 22 these
  * tests will fail with ERR_UNKNOWN_BUILTIN_MODULE — same as the pre-existing
  * kiroRuntime.test.ts. Run on Node 22+ for full coverage.
  */
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { RuntimePermissionBroker, RuntimePermissionRequest, RuntimeSessionOwner } from '../src/agents/types';
 import { michiTestHost } from './helpers/michiTestHost';
@@ -36,9 +36,9 @@ const WRONG_ATTEMPT = 'attempt-2';
 // loadSession for agent_run
 // ---------------------------------------------------------------------------
 
-describe('KiroRuntime Agent Run loadSession', () => {
+describe('AcpAgentRuntime Agent Run loadSession', () => {
     test('fresh and resumed Runs both disable follow-ups', async () => {
-        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost(), engine: 'v2' });
+        const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost(), engine: 'v2' });
         const rt = runtime as any;
         rt.ensureClient = async () => ({
             newSession: async () => ({ sessionId: 'acp-fresh', modes: {}, models: {} }),
@@ -50,8 +50,8 @@ describe('KiroRuntime Agent Run loadSession', () => {
             const resumed = await runtime.loadSession({
                 sessionId: 'attempt-resume', owner: resumedOwner, cwd: '/tmp/cwd', nativeResumeToken: 'acp-resumed',
             });
-            assert.equal((fresh as KiroSession).getEnableFollowUps(), false);
-            assert.equal((resumed as KiroSession).getEnableFollowUps(), false);
+            assert.equal((fresh as AcpAgentSession).getEnableFollowUps(), false);
+            assert.equal((resumed as AcpAgentSession).getEnableFollowUps(), false);
         } finally {
             await runtime.shutdown();
         }
@@ -59,7 +59,7 @@ describe('KiroRuntime Agent Run loadSession', () => {
 
     test('resumes from nativeResumeToken without Node lookup', async () => {
         const loadedSids: string[] = [];
-        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
         rt.ensureClient = async () => ({
             loadSession: async (sid: string) => {
@@ -97,7 +97,7 @@ describe('KiroRuntime Agent Run loadSession', () => {
             async requestPermission(request) { requests.push(request); return 'deny'; },
         };
         const options = [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }];
-        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost(), engine: 'v2' });
+        const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost(), engine: 'v2' });
         (runtime as any).ensureClient = async () => ({
             newSession: async () => ({ sessionId: 'acp-fresh', modes: {}, models: {} }),
             loadSession: async () => ({ modes: {}, models: {} }),
@@ -132,7 +132,7 @@ describe('KiroRuntime Agent Run loadSession', () => {
     });
 
     test('rejects agent_run loadSession without nativeResumeToken', async () => {
-        const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/default', host: michiTestHost() });
         const rt = runtime as any;
         rt.ensureClient = async () => ({});
 

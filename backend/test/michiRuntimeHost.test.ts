@@ -168,8 +168,8 @@ describe('prompt', () => {
     assert.equal(prompt.stableSystemPrompt(), preamble.buildStableSystemPrompt());
   });
 
-  it('turnSuffix reproduces the reminders KiroSession.send appends today', () => {
-    // The expression KiroSession.send appended before it asked turnSuffix: (reminder || "") + overviewReminder.
+  it('turnSuffix reproduces the reminders AcpAgentSession.send appends today', () => {
+    // The expression AcpAgentSession.send appended before it asked turnSuffix: (reminder || "") + overviewReminder.
     const today = (crew: boolean, userTurnCount: number, enableFollowUps: boolean, owner: RuntimeSessionOwner | undefined) => {
       const reminder = crew ? '' : preamble.followUpReminder(userTurnCount, enableFollowUps);
       const overviewReminder = crew

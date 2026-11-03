@@ -69,7 +69,7 @@ export function createMichiRuntimeHost(): RuntimeHost {
       stableSystemPrompt: (metadataOutputMode, enableFollowUps, nativeAskUser, restricted, profile) => preamble.buildStableSystemPrompt(
         metadataOutputMode, enableFollowUps, nativeAskUser, maintenancePolicy.isMaintenanceProfile(profile) ? 'maintenance' : (restricted || assistantPolicy.isAssistantProfile(profile)) ? 'assistant' : undefined,
       ),
-      // As KiroSession.send builds it: Crew's inline answer format (none for
+      // As AcpAgentSession.send builds it: Crew's inline answer format (none for
       // Agent Runs), else the follow-up reminder and the set_branch_overview note.
       turnSuffix: ({ metadataChannel, userTurnCount, enableFollowUps, owner }) => {
         if (metadataChannel === 'inline') return isRunOwner(owner) ? '' : kiroHostText.crewTurnFormat(enableFollowUps);

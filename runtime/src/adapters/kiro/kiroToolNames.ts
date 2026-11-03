@@ -1,7 +1,7 @@
 // Kiro's permission tool names: where an ACP request names its tool, and
 // Michi's canonical name for it.
 
-/** How an agent names a tool call itself (KiroFlavor.tools.name); undefined: it does not. */
+/** How an agent names a tool call itself (AcpAgentFlavor.tools.name); undefined: it does not. */
 export type KiroToolNameResolver = (toolCall: Record<string, any> | undefined) => string | undefined;
 
 /** ACP titles can be prose. Only the agent's own name for the call, explicit

@@ -5,10 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AgentSession } from '../src/agents/types';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 
 /**
- * Opt-in live check of the Michi Crew runtime (createCrewRuntime: KiroRuntime
+ * Opt-in live check of the Michi Crew runtime (createCrewRuntime: AcpAgentRuntime
  * with the Crew flavor and the bundled ACP adapter) against a real official
  * Kiro Crew Gateway, for the capabilities probed on 0.11.0.1: subagent roster,
  * per-turn credits, the Gateway-confirmed cancel and manual compaction.
@@ -97,7 +97,7 @@ test('real Crew Gateway: subagent roster, credits, confirmed cancel and compacti
     const factory = RUNTIME_FACTORIES.find((entry) => entry.id === 'crew');
     assert.ok(factory);
     const runtime = factory.create({ bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
-        mcpPort: 0, defaultCwd: directory, host: michiTestHost() }) as KiroRuntime;
+        mcpPort: 0, defaultCwd: directory, host: michiTestHost() }) as AcpAgentRuntime;
     assert.deepEqual(await runtime.checkAvailability?.(), { available: true });
     const gateway = new CrewGatewayClient({ ...parseCrewAcpConfig([], process.env).gateway, requestTimeoutMs: 10_000 });
     const record: Array<Record<string, unknown>> = [];

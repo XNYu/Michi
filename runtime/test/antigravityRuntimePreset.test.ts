@@ -8,8 +8,8 @@ import type { McpSlotProvider } from '../src/contract/mcp';
 import type { AgentToolBridge } from '../src/contract/tools';
 import type { NewAgentSessionOptions } from '../src/contract/types';
 import { createDefaultHost } from '../src/core/defaultHost';
-import { KiroRuntime } from '../src/adapters/kiro/KiroRuntime';
-import { KIRO_FLAVOR } from '../src/adapters/kiro/kiroFlavor';
+import { AcpAgentRuntime } from '../src/adapters/kiro/AcpAgentRuntime';
+import { KIRO_FLAVOR } from '../src/adapters/kiro/acpAgentFlavor';
 import type { AcpLaunch } from '../src/adapters/kiro/acpClient';
 import { CREW_KIRO_FLAVOR } from '../src/adapters/crew/crewFlavor';
 import {
@@ -40,12 +40,12 @@ function executable(dir: string, name: string, body = 'exit 0'): string {
   return file;
 }
 
-function antigravity(options: Partial<AntigravityRuntimeOptions> = {}): KiroRuntime {
+function antigravity(options: Partial<AntigravityRuntimeOptions> = {}): AcpAgentRuntime {
   return createAntigravityRuntime({ host: createDefaultHost({ logLevel: 'silent' }), bridge, mcpSlots, ...options });
 }
 
-/** The options the preset passed KiroRuntime. */
-function kiroOptions(runtime: KiroRuntime): Record<string, unknown> & { launch: AcpLaunch } {
+/** The options the preset passed AcpAgentRuntime. */
+function kiroOptions(runtime: AcpAgentRuntime): Record<string, unknown> & { launch: AcpLaunch } {
   return (runtime as any).runtimeOptions;
 }
 
@@ -67,7 +67,7 @@ const ANTIGRAVITY_CAPABILITIES = {
 describe('createAntigravityRuntime', () => {
   it("pins Antigravity's id, label, engine, flavor, descriptor and capabilities", () => {
     const runtime = antigravity();
-    assert.ok(runtime instanceof KiroRuntime);
+    assert.ok(runtime instanceof AcpAgentRuntime);
     assert.equal(runtime.id, 'antigravity');
     assert.equal(runtime.label, 'Antigravity');
     assert.equal(runtime.engine, 'v2');
@@ -92,7 +92,7 @@ describe('createAntigravityRuntime', () => {
     assert.equal(runtime.checkAvailability().available, false);
   });
 
-  it('passes the rest of its options to KiroRuntime, and not its own', () => {
+  it('passes the rest of its options to AcpAgentRuntime, and not its own', () => {
     const runtime = antigravity({ antigravity: {}, processCap: 7, defaultCwd: '/tmp/agy-default' });
     const options = kiroOptions(runtime);
     assert.equal(options.processCap, 7);
@@ -108,7 +108,7 @@ describe('createAntigravityRuntime', () => {
       titleModels: { kiro: { model: 'title-model', timeoutMs: 1_000 }, antigravity: { model: 'title-model', timeoutMs: 1_000 } },
       ports: { title: { enabled: () => true, prompt: () => '' } },
     });
-    assert.notEqual((new KiroRuntime({ host, bridge }) as any).titleGenerator, null);
+    assert.notEqual((new AcpAgentRuntime({ host, bridge }) as any).titleGenerator, null);
     const runtime = createAntigravityRuntime({ host, bridge, mcpSlots });
     assert.equal((runtime as any).titleGenerator, null);
     assert.equal(await runtime.generateTitle({ userText: 'hello' }), null);

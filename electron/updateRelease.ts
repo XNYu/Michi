@@ -3,7 +3,7 @@
  * Kept free of Electron imports so node:test can exercise the logic.
  */
 
-export const GITHUB_REPO = 'XNYu/Michi';
+export const GITHUB_REPO = 'michiworks/Michi';
 export const PLACEHOLDER_APP_VERSION = '1.0.0';
 
 export interface GithubReleaseAsset {

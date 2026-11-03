@@ -6,10 +6,10 @@
  * records, and the next_turn steering model — all without a real kiro-cli
  * binary or node:sqlite dependency.
  *
- * NOTE: This file uses lightweight fakes instead of importing real KiroRuntime/
- * KiroSession to avoid the transitive `node:sqlite` dependency (KiroRuntime →
+ * NOTE: This file uses lightweight fakes instead of importing real AcpAgentRuntime/
+ * AcpAgentSession to avoid the transitive `node:sqlite` dependency (AcpAgentRuntime →
  * dbRepository → db.ts → node:sqlite) on Node versions without built-in sqlite.
- * The real KiroRuntime integration tests live in kiroAgentRunRuntime.test.ts
+ * The real AcpAgentRuntime integration tests live in kiroAgentRunRuntime.test.ts
  * and kiroAgentRunSession.test.ts (which require Node 22+).
  *
  * Kiro uses `runtime_default` tool mode, `next_turn` steering, and supports
@@ -27,7 +27,7 @@ import { chatOwner, isRunOwner } from './helpers/owners';
 import { UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 
 // ---------------------------------------------------------------------------
-// Fake Kiro session — simulates KiroSession without node:sqlite
+// Fake Kiro session — simulates AcpAgentSession without node:sqlite
 // ---------------------------------------------------------------------------
 
 class FakeKiroSession implements AgentSession {
@@ -66,7 +66,7 @@ class FakeKiroSession implements AgentSession {
 }
 
 // ---------------------------------------------------------------------------
-// Fake Kiro runtime — simulates KiroRuntime without node:sqlite
+// Fake Kiro runtime — simulates AcpAgentRuntime without node:sqlite
 // ---------------------------------------------------------------------------
 
 let acpSessionCounter = 0;

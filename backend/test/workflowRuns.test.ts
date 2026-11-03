@@ -506,9 +506,9 @@ describe('workflow approvals', () => {
 
 describe('Kiro workflow opt-in on recovery', () => {
   async function recoveringRuntime(anchors: boolean) {
-    const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+    const { AcpAgentRuntime } = await import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
     const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null } as any;
-    const runtime = new KiroRuntime({ bridge, defaultCwd: os.tmpdir(), host: michiTestHost(), engine: 'v3', isolatedSession: !anchors }) as any;
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: os.tmpdir(), host: michiTestHost(), engine: 'v3', isolatedSession: !anchors }) as any;
     runtime.sessionAnchorsEnabled = anchors;
     const loads: Array<{ sessionId: string; workflows?: boolean }> = [];
     const bindings = new Map<string, any>([
@@ -557,9 +557,9 @@ describe('Kiro workflow opt-in on recovery', () => {
 
 describe('Kiro workflow runs through the owner port', () => {
   it('record the chat binding\'s node id and no node for an Agent Run, as the node-id context did', async () => {
-    const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+    const { AcpAgentRuntime } = await import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
     const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null } as any;
-    const runtime = new KiroRuntime({ bridge, defaultCwd: os.tmpdir(), host: michiTestHost(), engine: 'v3' }) as any;
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: os.tmpdir(), host: michiTestHost(), engine: 'v3' }) as any;
     const bindings = [['node-1', 'sid-chat', chatOwner('node-1')], ['attempt-1', 'sid-run', runOwner('run-1', 'attempt-1')]] as const;
     for (const [publicId, sid, owner] of bindings) {
       runtime.bindings.set(publicId, { publicSessionId: publicId, nativeSessionId: sid, owner, cwd: os.tmpdir(), workspaceId: 'ws-a', ownerUserId: 'owner-a' });

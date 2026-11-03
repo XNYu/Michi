@@ -1,5 +1,5 @@
 /**
- * Real kiro-cli through Michi's adapter (KiroRuntime, KiroSession, ChatHub):
+ * Real kiro-cli through Michi's adapter (AcpAgentRuntime, AcpAgentSession, ChatHub):
  * Stop on a streaming turn is acknowledged natively (the prompt settles with
  * stopReason "cancelled"), the same session answers the next prompt, and
  * that turn reports Kiro's own metering (credits and context %), no tokens.
@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChatStreamEvent } from 'michi-shared';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { AgentSession } from '../src/agents/types';
 
 const enabled = (process.env.MICHI_KIRO_CANCEL_SMOKE ?? '').split(',');
@@ -51,12 +51,12 @@ for (const engine of ['v2', 'v3'] as const) {
       getWorkspace: repo.getWorkspace, getWorkspaceInstructions: repo.getWorkspaceInstructions }, dataDir: directory,
       providerKeys: { getProviderApiKey: () => null },
       agentConfig: { getAgentConfig: config.getAgentConfig, resolveModel: config.resolveModel, resolveReasoning: config.resolveReasoning } });
-    let runtime: KiroRuntime | undefined;
+    let runtime: AcpAgentRuntime | undefined;
     try {
-      runtime = new (require('michi-runtime/internal/adapters/kiro/KiroRuntime').KiroRuntime)({
+      runtime = new (require('michi-runtime/internal/adapters/kiro/AcpAgentRuntime').AcpAgentRuntime)({
         bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
         defaultCwd: directory, ...kiroEnvOptions(), host: michiTestHost(), engine,
-      }) as KiroRuntime;
+      }) as AcpAgentRuntime;
       const nodeId = randomUUID();
       const session: AgentSession = await runtime.newSession({
         cwd: directory, sessionId: nodeId, enableFollowUps: false,

@@ -12,7 +12,7 @@ test('README documents the one-command installer', () => {
 
   assert.match(
     readme,
-    /curl -fsSL https:\/\/raw\.githubusercontent\.com\/XNYu\/Michi\/main\/install\.sh \| bash/,
+    /curl -fsSL https:\/\/raw\.githubusercontent\.com\/michiworks\/Michi\/main\/install\.sh \| bash/,
   );
 });
 
@@ -21,7 +21,7 @@ test('install.sh is strict, public, and non-sudo by default', () => {
 
   assert.match(script, /^#!\/usr\/bin\/env bash/);
   assert.match(script, /set -euo pipefail/);
-  assert.match(script, /MICHI_REPO_URL:=https:\/\/github\.com\/XNYu\/Michi\.git/);
+  assert.match(script, /MICHI_REPO_URL:=https:\/\/github\.com\/michiworks\/Michi\.git/);
   assert.match(script, /MICHI_INSTALL_DIR:=\$HOME\/Michi/);
   assert.doesNotMatch(script, /\bsudo\b/);
 });

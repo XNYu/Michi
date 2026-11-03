@@ -19,7 +19,7 @@ export function useAgentModeCatalog(
   } | null>(null);
   const key = JSON.stringify([backendConnectionId, workspaceId, cwd, status?.runtime, status?.capabilities.modes]);
   const supported = status?.capabilities.modes;
-  // KiroRuntime exposes one global catalog, but the fresh-session default is
+  // AcpAgentRuntime exposes one global catalog, but the fresh-session default is
   // workspace-specific. Reuse only the list while discovering a new default.
   const globalKey = status?.runtime === 'kiro' && supported
     ? JSON.stringify([backendConnectionId, 'kiro']) : null;

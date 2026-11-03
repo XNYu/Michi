@@ -1,23 +1,23 @@
 /**
  * T05 — Kiro owner-aware Agent Run session tests.
  *
- * Validates that KiroRuntime and KiroSession correctly handle `agent_run`
+ * Validates that AcpAgentRuntime and AcpAgentSession correctly handle `agent_run`
  * owners: fresh ACP sessions with Run MCP slots, nativeResumeToken-based
  * resume without Node access, permission brokering, owner-verified release,
  * and no interference with existing chat session behavior.
  *
  * Tests are split into two groups:
- *  - KiroSession tests (permission brokering, retry disabling) that only
- *    import KiroSession and work on any Node version.
- *  - KiroRuntime tests (newSession, loadSession, release, bindings) that
- *    import KiroRuntime and require Node 22+ for the node:sqlite dependency.
+ *  - AcpAgentSession tests (permission brokering, retry disabling) that only
+ *    import AcpAgentSession and work on any Node version.
+ *  - AcpAgentRuntime tests (newSession, loadSession, release, bindings) that
+ *    import AcpAgentRuntime and require Node 22+ for the node:sqlite dependency.
  *    These are guarded with a node:sqlite availability check and skipped
  *    gracefully on older Node versions.
  */
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { RuntimePermissionBroker, RuntimePermissionRequest, RuntimeSessionOwner } from '../src/agents/types';
 import { AgentPolicyCategory, AgentPolicyDecision } from 'michi-shared';
 import { RuntimeRunExecutor } from '../src/agents/runs/runtimeRunExecutor';
@@ -36,10 +36,10 @@ const WRONG_OWNER: RuntimeSessionOwner = runOwner('run-2', 'attempt-2');
 const CHAT_OWNER: RuntimeSessionOwner = chatOwner('node-chat-1');
 
 // ---------------------------------------------------------------------------
-// KiroSession permission brokering for agent_run
+// AcpAgentSession permission brokering for agent_run
 // ---------------------------------------------------------------------------
 
-describe('KiroSession permission brokering', () => {
+describe('AcpAgentSession permission brokering', () => {
     test('agent_run owner routes deny through broker and cancels ACP permission', async () => {
         const cancelCalls: Array<{ sid: string; requestId: number }> = [];
 
@@ -66,9 +66,9 @@ describe('KiroSession permission brokering', () => {
             cancelPermission: (_sid: string, requestId: number) => {
                 cancelCalls.push({ sid: _sid, requestId });
             },
-        } as unknown as KiroRuntime;
+        } as unknown as AcpAgentRuntime;
 
-        const session = new KiroSession('attempt-deny', 'acp-deny-sid', fakeRuntime, '/tmp/cwd', {
+        const session = new AcpAgentSession('attempt-deny', 'acp-deny-sid', fakeRuntime, '/tmp/cwd', {
             owner: RUN_OWNER,
             permissionBroker: broker,
         });
@@ -114,9 +114,9 @@ describe('KiroSession permission brokering', () => {
                 respondCalls.push({ requestId, optionId });
             },
             cancelPermission: () => {},
-        } as unknown as KiroRuntime;
+        } as unknown as AcpAgentRuntime;
 
-        const session = new KiroSession('attempt-always', 'acp-always-sid', fakeRuntime, '/tmp/cwd', {
+        const session = new AcpAgentSession('attempt-always', 'acp-always-sid', fakeRuntime, '/tmp/cwd', {
             owner: RUN_OWNER,
             permissionBroker: broker,
         });
@@ -160,9 +160,9 @@ describe('KiroSession permission brokering', () => {
             getCurrentModel: () => undefined,
             respondToPermission: () => {},
             cancelPermission: () => {},
-        } as unknown as KiroRuntime;
+        } as unknown as AcpAgentRuntime;
 
-        const session = new KiroSession('attempt-ask', 'acp-ask-sid', fakeRuntime, '/tmp/cwd', {
+        const session = new AcpAgentSession('attempt-ask', 'acp-ask-sid', fakeRuntime, '/tmp/cwd', {
             owner: RUN_OWNER,
             permissionBroker: broker,
         });
@@ -211,12 +211,12 @@ function v2RunSession(turns: Array<Array<Record<string, unknown>>>, broker: Runt
         getCurrentModel: () => undefined,
         respondToPermission: (_sid: string, requestId: number, optionId: string) => { answers.push(`${requestId}:${optionId}`); },
         cancelPermission: (_sid: string, requestId: number) => { answers.push(`${requestId}:cancel`); },
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('attempt-v2', 'acp-v2-sid', fakeRuntime, '/tmp/cwd', { owner: RUN_OWNER, permissionBroker: broker });
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('attempt-v2', 'acp-v2-sid', fakeRuntime, '/tmp/cwd', { owner: RUN_OWNER, permissionBroker: broker });
     return { session, answers };
 }
 
-async function drainTurn(session: KiroSession): Promise<void> {
+async function drainTurn(session: AcpAgentSession): Promise<void> {
     for await (const _event of session.send('go')) { /* drain */ }
 }
 
@@ -228,7 +228,7 @@ function defaultBroker(categories: Partial<Record<AgentPolicyCategory, AgentPoli
     return executor.createPermissionBroker({ spec: { effectiveDefinition: { permissionPolicy: { categories } } } as unknown as AgentRunSpec });
 }
 
-describe('KiroSession names Kiro v2 permission requests by their tool_call update', () => {
+describe('AcpAgentSession names Kiro v2 permission requests by their tool_call update', () => {
     test('the broker receives the canonical name of the tool kiro-cli called', async () => {
         const requests: RuntimePermissionRequest[] = [];
         const broker: RuntimePermissionBroker = { async requestPermission(request) { requests.push(request); return 'allow_once'; } };

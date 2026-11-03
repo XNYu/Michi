@@ -5,13 +5,13 @@ import type {
     RuntimeTitleSource,
     RuntimeToolDelivery,
 } from '../../contract/descriptor';
-import { KIRO_FLAVOR, type KiroFlavor } from './kiroFlavor';
+import { KIRO_FLAVOR, type AcpAgentFlavor } from './acpAgentFlavor';
 import type { KiroEngine } from './kiroProtocol';
 
 /**
  * kiro-cli v2. On v3, compaction, fork and steering depend on what the
  * clients negotiated. The cancel ack and usage slots follow the flavor
- * (KiroFlavor.cancelAck, metersUsage): an agent that confirms or meters
+ * (AcpAgentFlavor.cancelAck, metersUsage): an agent that confirms or meters
  * neither keeps them unconfirmed.
  */
 export const KIRO_HARNESS: CapabilityDescriptor = {
@@ -20,7 +20,7 @@ export const KIRO_HARNESS: CapabilityDescriptor = {
     // kiro-cli 2.35.1 settles the pending session/prompt with stopReason
     // "cancelled" within ~30 ms of session/cancel on both engines.
     interruptAck: slot('native', 'native', 'session/cancel; the pending session/prompt settles with stopReason cancelled'),
-    // KiroSession.compact() now drives the ACP compact command, so this is a
+    // AcpAgentSession.compact() now drives the ACP compact command, so this is a
     // real, invocable capability rather than "you can watch compaction happen".
     compact: slot('native', 'native', '_kiro.dev/commands/execute compact'),
     retry: invisibleSlot(),
@@ -92,7 +92,7 @@ export interface KiroDescriptorInput {
      * What the agent confirms on its own (cancel acknowledgement, metering).
      * Absent: neither, as for an ACP agent that only speaks Kiro's protocol.
      */
-    flavor?: Pick<KiroFlavor, 'cancelAck' | 'metersUsage'>;
+    flavor?: Pick<AcpAgentFlavor, 'cancelAck' | 'metersUsage'>;
     override?: KiroDescriptorOverride;
 }
 

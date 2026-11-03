@@ -20,7 +20,7 @@ const { values } = parseArgs({ options: {
 async function serve() {
   const directory = values.fixture!;
   const { AcpClient } = await import('michi-runtime/internal/adapters/kiro/acpClient');
-  const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+  const { AcpAgentRuntime } = await import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
   const { resolveKiroEngine } = await import('michi-runtime/internal/adapters/kiro/kiroProtocol');
   const { kiroEnvOptions } = await import('../src/agents/michiKiroOptions');
   const { createMichiRuntimeHost } = await import('../src/agents/michiRuntimeHost');
@@ -44,7 +44,7 @@ async function serve() {
   // A second node exercises switching to another native session and back.
   getDb().prepare("INSERT OR IGNORE INTO nodes (id,workspace_id,title,kind,status,minimized,spawned_by_agent,created_at,runtime_id,model_id) VALUES ('other-node','probe-ws','Other probe','chat','idle',0,0,1,'kiro',?)").run(values.model!);
   // As the Kiro factory builds it, without MCP slots.
-  const runtime = new KiroRuntime({ bridge: {} as any, defaultCwd: directory,
+  const runtime = new AcpAgentRuntime({ bridge: {} as any, defaultCwd: directory,
     ...kiroEnvOptions(), engine: resolveKiroEngine(process.env.MICHI_KIRO_ENGINE), host: createMichiRuntimeHost() });
   registerRuntime(runtime);
   const app = express();

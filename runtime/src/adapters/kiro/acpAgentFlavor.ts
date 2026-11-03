@@ -4,11 +4,11 @@ import type { NormalizedEvent } from '../../contract/events';
 import type { CancelAck, NewAgentSessionOptions } from '../../contract/types';
 
 // How an ACP agent that speaks Kiro's protocol differs from kiro-cli.
-// KiroRuntime and KiroSession read these differences, never the runtime id,
+// AcpAgentRuntime and AcpAgentSession read these differences, never the runtime id,
 // so the Kiro adapter and a preset built on it (Kiro Crew, adapters/crew/) can
 // move separately. KIRO_FLAVOR is kiro-cli itself.
 
-export interface KiroFlavor {
+export interface AcpAgentFlavor {
     /** Host ports the flavor reads besides Kiro's own, asserted when the runtime is built. */
     readonly hostPorts: readonly RuntimePortName[];
     /** How the host's text reaches the agent. */
@@ -161,7 +161,7 @@ export interface KiroNewSessionMemory {
  * "cancelled" and report credits and context usage (kiro-cli 2.35.1,
  * docs/kiro-acp-validation.md).
  */
-export const KIRO_FLAVOR: KiroFlavor = {
+export const KIRO_FLAVOR: AcpAgentFlavor = {
     hostPorts: [],
     prompt: {
         firstMessage: (host, input) => host.prompt.preamble(input),

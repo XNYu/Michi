@@ -8,7 +8,7 @@ import {
 } from 'michi-shared';
 
 /** The source `michi update` (bin/michi) builds from, unless the machine's environment overrides it. */
-const SELF_UPDATE_SOURCE_URL = 'https://github.com/XNYu/Michi.git';
+const SELF_UPDATE_SOURCE_URL = 'https://github.com/michiworks/Michi.git';
 const SELF_UPDATE_SOURCE_REF = 'main';
 /** Where a check fetches the branch to, in the running checkout. */
 const LATEST_REF = 'refs/michi/self-update/latest';

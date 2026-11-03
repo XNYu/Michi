@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { AcpClient, ACPError, ACPNativeSessionMissingError, ACPNotRunningError } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import { isNativeSessionUnavailable } from 'michi-runtime/internal/adapters/kiro/acpErrors';
 import { nativeSessionExists } from 'michi-runtime/internal/adapters/kiro/nativeSessionLookup';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { michiTestHost } from './helpers/michiTestHost';
 
 test('V3 refuses create-or-load for a missing native ID, permitting only explicit unavailable fallback', async () => {
@@ -36,8 +36,8 @@ for (const failure of [new ACPError('connection reset'), new ACPNotRunningError(
         let prompts = 0, recoveries = 0;
         const runtime = { host: michiTestHost(), engine: 'v3', ensureClient: async () => ({ async *prompt() { prompts++; throw failure; } }),
             recoverSession: async () => { recoveries++; return true; },
-        } as unknown as KiroRuntime;
-        const session = new KiroSession('node', 'native', runtime, '/tmp');
+        } as unknown as AcpAgentRuntime;
+        const session = new AcpAgentSession('node', 'native', runtime, '/tmp');
         await assert.rejects(async () => { for await (const _ of session.send('write once')) {} }, /may have performed actions/);
         assert.equal(prompts, 1);
         assert.equal(recoveries, 0);

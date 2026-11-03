@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
 import { CREW_KIRO_FLAVOR } from 'michi-runtime/internal/adapters/crew/crewFlavor';
 import { RUNTIME_FACTORIES } from '../src/agents/runtimeFactories';
 import { CREW_DESCRIPTOR, describeRuntimeCapabilities } from '../src/agents/capabilityDescriptors';
@@ -57,10 +57,10 @@ function crewHomeWithSecret(app = 'michi-crew-runtime', enabled = true): string 
   return home;
 }
 
-function createCrew(): KiroRuntime {
+function createCrew(): AcpAgentRuntime {
   const factory = RUNTIME_FACTORIES.find((f) => f.id === 'crew');
   assert.ok(factory, 'crew factory registered');
-  return factory.create({ bridge, mcpPort: 0, defaultCwd: '/tmp/crew-default', host: michiTestHost() }) as KiroRuntime;
+  return factory.create({ bridge, mcpPort: 0, defaultCwd: '/tmp/crew-default', host: michiTestHost() }) as AcpAgentRuntime;
 }
 
 const ORIGINAL_KIRO_CAPABILITIES = {
@@ -99,7 +99,7 @@ describe('crew runtime registration', () => {
   test('engine stays v2 under MICHI_KIRO_ENGINE=v3', () => {
     process.env.MICHI_KIRO_ENGINE = 'v3';
     const kiro = RUNTIME_FACTORIES.find((f) => f.id === 'kiro')!;
-    assert.equal((kiro.create({ bridge, mcpPort: 0, defaultCwd: '/tmp/default', host: michiTestHost() }) as KiroRuntime).engine, 'v3');
+    assert.equal((kiro.create({ bridge, mcpPort: 0, defaultCwd: '/tmp/default', host: michiTestHost() }) as AcpAgentRuntime).engine, 'v3');
     assert.equal(createCrew().engine, 'v2');
   });
 
@@ -232,7 +232,7 @@ describe('crew native fork and sessions', () => {
     const runtime = createCrew();
     (runtime as any).ensureClient = async () => client;
     try {
-      const session = new KiroSession('node', 'sid', runtime, '/tmp', { runtimeId: 'crew' });
+      const session = new AcpAgentSession('node', 'sid', runtime, '/tmp', { runtimeId: 'crew' });
       const events: any[] = [];
       for await (const event of session.send('go')) events.push(event);
       assert.deepEqual(events.filter((e) => e.kind === 'title').map((e) => e.title), ['Gateway title']);
@@ -247,7 +247,7 @@ describe('crew native fork and sessions', () => {
     const missing = () => new ACPError('Internal error', { method: 'session/load', sessionId: 'gone', rpcCode: -32603,
       rpcData: 'Failed to start session: Session not found: gone' });
     const kiro = RUNTIME_FACTORIES.find((f) => f.id === 'kiro')!
-      .create({ bridge, mcpPort: 0, defaultCwd: '/tmp/crew-default', host: michiTestHost() }) as KiroRuntime;
+      .create({ bridge, mcpPort: 0, defaultCwd: '/tmp/crew-default', host: michiTestHost() }) as AcpAgentRuntime;
     for (const runtime of [createCrew(), kiro]) {
       (runtime as any).ensureClient = async () => ({ loadSession: async () => { throw missing(); } });
       await assert.rejects(runtime.loadAcpSession({ sessionId: 'gone', cwd: '/tmp/a' }),
@@ -284,8 +284,8 @@ describe('crew native fork and sessions', () => {
       yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
     } };
     for (const id of ['crew', 'kiro']) {
-      const runtime = { host: michiTestHost(), id, ensureClient: async () => client, getCurrentMode: () => null, getCurrentModel: () => null } as unknown as KiroRuntime;
-      const session = new KiroSession('node', 'sid', runtime, '/tmp', { runtimeId: id, ...(id === 'crew' ? { flavor: CREW_KIRO_FLAVOR } : {}) });
+      const runtime = { host: michiTestHost(), id, ensureClient: async () => client, getCurrentMode: () => null, getCurrentModel: () => null } as unknown as AcpAgentRuntime;
+      const session = new AcpAgentSession('node', 'sid', runtime, '/tmp', { runtimeId: id, ...(id === 'crew' ? { flavor: CREW_KIRO_FLAVOR } : {}) });
       const events: any[] = [];
       for await (const event of session.send('go')) events.push(event);
       assert.equal(events.filter((e) => e.kind === 'title').length, id === 'crew' ? 1 : 0);
@@ -307,8 +307,8 @@ describe('crew native fork and sessions', () => {
       cancel: async () => { calls.push('session/cancel'); return true; },
       executeCommand: async (_sid: string, command: string) => { calls.push(command); return { success: true, data: report }; },
     };
-    const runtime = { host: michiTestHost(), id: 'crew', getClient: () => client, endMcpSessionTurn: () => {} } as unknown as KiroRuntime;
-    const crew = new KiroSession('node', 'sid', runtime, '/tmp', { runtimeId: 'crew', flavor: CREW_KIRO_FLAVOR });
+    const runtime = { host: michiTestHost(), id: 'crew', getClient: () => client, endMcpSessionTurn: () => {} } as unknown as AcpAgentRuntime;
+    const crew = new AcpAgentSession('node', 'sid', runtime, '/tmp', { runtimeId: 'crew', flavor: CREW_KIRO_FLAVOR });
     assert.deepEqual(await crew.cancel(), { acknowledged: true, source: 'native', confidence: 'native', nativeMethod: 'Crew stop_event stopped' });
     assert.deepEqual(calls, ['session/cancel', 'cancel_status']);
 
@@ -320,7 +320,7 @@ describe('crew native fork and sessions', () => {
     // kiro-cli's ack is the prompt's settlement: it never asks for a stop record.
     calls.length = 0;
     const settling = { ...client, cancelAndSettle: async () => { calls.push('session/cancel'); return { dispatched: true }; } };
-    const kiro = new KiroSession('node', 'sid', { ...runtime, id: 'kiro', getClient: () => settling } as unknown as KiroRuntime, '/tmp', { runtimeId: 'kiro' });
+    const kiro = new AcpAgentSession('node', 'sid', { ...runtime, id: 'kiro', getClient: () => settling } as unknown as AcpAgentRuntime, '/tmp', { runtimeId: 'kiro' });
     assert.equal((await kiro.cancel()).source, 'inferred');
     assert.deepEqual(calls, ['session/cancel']);
   });
@@ -348,7 +348,7 @@ describe('crew session state', () => {
     t.mock.method(AcpClient.prototype, 'initialize', async () => ({}));
     const runtime = createCrew();
     try {
-      const session = new KiroSession('node-crew', 'crew-sid', runtime, '/tmp/crew-state', { runtimeId: 'crew' });
+      const session = new AcpAgentSession('node-crew', 'crew-sid', runtime, '/tmp/crew-state', { runtimeId: 'crew' });
       assert.equal(session.getSessionState().runtimeId, 'crew', 'before the adapter starts');
       const client = await runtime.ensureClient('/tmp/crew-state');
       const update = (value: unknown) => (client as any).dispatch({ method: 'session/update', params: { sessionId: 'crew-sid', update: value } });

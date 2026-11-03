@@ -109,7 +109,7 @@ async function listCatalog(route: string): Promise<ServedCatalog> {
 
 const noAnswer = async () => null;
 
-/** The callbacks KiroRuntime.makeSlotCallbacks gives a chat slot. */
+/** The callbacks AcpAgentRuntime.makeSlotCallbacks gives a chat slot. */
 function kiroChatCallbacks(): McpSlotCallbacks {
     return {
         onSpawnBranches: async () => [],
@@ -166,7 +166,7 @@ async function snapshot(): Promise<Record<string, ServedCatalog>> {
         isServing: () => true,
     }, { nodeId: assistant.nodeId, workspaceId: assistant.workspaceId });
 
-    // KiroRuntime.chatMcpServer: the shared catalog is a copy of the warm
+    // AcpAgentRuntime.chatMcpServer: the shared catalog is a copy of the warm
     // slot with a catalog-only Agent Run invoker when Custom Agents are on.
     const warm = registry.create('__pending__', dataDir, null, kiroChatCallbacks());
     const group = registry.createSessionGroup({

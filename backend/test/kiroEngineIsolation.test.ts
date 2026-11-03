@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import { michiTestHost } from './helpers/michiTestHost';
@@ -15,7 +15,7 @@ test('v3 gives same-cwd Run sessions independent clients, release preserves peer
     let sequence = 0;
     t.mock.method(AcpClient.prototype, 'newSession', async () => ({ sessionId: `native-${++sequence}` }));
     t.mock.method(AcpClient.prototype, 'cancel', async () => false);
-    const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, defaultCwd: '/tmp', host: michiTestHost(), engine: 'v3' });
+    const runtime = new AcpAgentRuntime({ bridge: {} as AgentToolBridge, defaultCwd: '/tmp', host: michiTestHost(), engine: 'v3' });
     const a = runOwner('run-a', 'a');
     const b = runOwner('run-b', 'b');
     try {

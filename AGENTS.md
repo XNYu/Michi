@@ -171,7 +171,7 @@ npm run test:runtime
 - Runtime adapters live in runtime/src/adapters/ (package michi-runtime);
   Pi stays in backend/src/agents/pi/. Kiro uses kiro-cli over ACP, Pi uses
   provider APIs in-process, Claude uses the pinned Agent SDK with the installed
-  Claude CLI, and Codex uses app-server JSON-RPC. Crew reuses KiroRuntime with a
+  Claude CLI, and Codex uses app-server JSON-RPC. Crew reuses AcpAgentRuntime with a
   bundled ACP adapter connected to the official Kiro Crew Gateway; its preset
   (createCrewRuntime) pins the v2 engine independently of MICHI_KIRO_ENGINE.
   Preserve Crew's own capabilities and approval/setup requirements; see

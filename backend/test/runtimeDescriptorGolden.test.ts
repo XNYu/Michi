@@ -9,7 +9,7 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { describeRuntimeCapabilities } from '../src/agents/capabilityDescriptors';
-import { KiroRuntime, type KiroAdapterOptions } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime, type KiroAdapterOptions } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { ClaudeRuntime } from 'michi-runtime/internal/adapters/claude/ClaudeRuntime';
 import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
 import type { CodexAppServerClient } from 'michi-runtime/internal/adapters/codex/CodexAppServerClient';
@@ -72,10 +72,10 @@ function track<T extends AgentRuntime>(runtime: T): T {
   return runtime;
 }
 
-function kiro(options: Omit<KiroAdapterOptions, 'host'>, env: { cloud?: boolean; mcp?: boolean } = {}): KiroRuntime {
+function kiro(options: Omit<KiroAdapterOptions, 'host'>, env: { cloud?: boolean; mcp?: boolean } = {}): AcpAgentRuntime {
   if (env.cloud) process.env.MICHI_CLOUD = '1';
   try {
-    return track(new KiroRuntime({ bridge, mcpSlots: env.mcp ? mcpRegistry : undefined, defaultCwd: '/tmp/michi-descriptor-golden', ...options, host: michiTestHost() }));
+    return track(new AcpAgentRuntime({ bridge, mcpSlots: env.mcp ? mcpRegistry : undefined, defaultCwd: '/tmp/michi-descriptor-golden', ...options, host: michiTestHost() }));
   } finally {
     delete process.env.MICHI_CLOUD;
   }
@@ -91,7 +91,7 @@ function negotiated(extensions: readonly string[], fork: boolean) {
   };
 }
 
-function withClients(runtime: KiroRuntime, ...clients: Array<ReturnType<typeof negotiated>>): KiroRuntime {
+function withClients(runtime: AcpAgentRuntime, ...clients: Array<ReturnType<typeof negotiated>>): AcpAgentRuntime {
   const pool = (runtime as unknown as { pool: Map<string, unknown> }).pool;
   clients.forEach((client, index) => pool.set(`/tmp/michi-descriptor-golden-${index}`, client));
   return runtime;
@@ -126,7 +126,7 @@ describe('runtime capability descriptor golden', () => {
   test('capabilityDescriptor of each runtime instance', () => {
     const cloudWorker = withClients(kiro({ engine: 'v3', isolatedSession: true }, { mcp: true }), negotiated(ALL_V3_EXTENSIONS, true));
     const cloud = kiro({ engine: 'v3' }, { cloud: true, mcp: true });
-    (cloud as unknown as { sessionWorkers: Map<string, KiroRuntime> }).sessionWorkers.set('chat-golden', cloudWorker);
+    (cloud as unknown as { sessionWorkers: Map<string, AcpAgentRuntime> }).sessionWorkers.set('chat-golden', cloudWorker);
     const instances: Record<string, AgentRuntime> = {
       'kiro-v2': kiro({ engine: 'v2' }, { mcp: true }),
       'kiro-v2-without-mcp': kiro({ engine: 'v2' }),
@@ -180,7 +180,7 @@ describe('runtime capability descriptor golden', () => {
     });
 
     /** Registers this Kiro instance and the other runtimes, all with pinned availability. */
-    function registerRuntimes(kiroRuntime: KiroRuntime): void {
+    function registerRuntimes(kiroRuntime: AcpAgentRuntime): void {
       const piRuntime = pi();
       // Provider readiness reads this machine's keys; the descriptor does not depend on it.
       piRuntime.listProviders = async () => [];

@@ -2657,7 +2657,11 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
           // card's bottom inset + the tail gap, so the last line of content
           // scrolls clear of the card rather than resting against it.
           // A docked phone selection can add room below it (SelectionActions).
-          paddingBottom: `calc(${composerMounted ? composerHeight + COMPOSER_CLEARANCE : COMPOSER_BOTTOM_INSET}px + var(${DOCK_ROOM_VAR}, 0px))`,
+          paddingBottom: `calc(${
+            composerMounted
+              ? composerHeight + COMPOSER_CLEARANCE
+              : COMPOSER_BOTTOM_INSET
+          }px + var(${DOCK_ROOM_VAR}, 0px))`,
           fontSize:
             prefs.terminalDensity === 'dense'
               ? 11

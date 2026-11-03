@@ -1,7 +1,7 @@
 /**
  * Kiro subagent observability, replayed from real (sanitized) wires recorded
  * by benchmarks/subagent-observability/2026-10-14. Each test drives the
- * production path: AcpClient.dispatch → session queue → KiroSession.send →
+ * production path: AcpClient.dispatch → session queue → AcpAgentSession.send →
  * NormalizedEvents → the shared roster fold used by persistence and the UI.
  */
 import { describe, it } from 'node:test';
@@ -15,8 +15,8 @@ import {
   type SubagentInfo,
 } from 'michi-shared';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import { createSubtaskNarration, kiroV2SummaryResult, kiroV3DelegationEntry } from 'michi-runtime/internal/adapters/kiro/kiroSubagents';
 import { michiTestHost } from './helpers/michiTestHost';
@@ -44,8 +44,8 @@ async function sendThroughSession(updates: Array<Record<string, any>>): Promise<
       yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
     },
   };
-  const runtime = { host: michiTestHost(), ensureClient: async () => client, getCurrentMode: () => null, getCurrentModel: () => null } as unknown as KiroRuntime;
-  const session = new KiroSession('node-1', 'native-1', runtime, '/tmp');
+  const runtime = { host: michiTestHost(), ensureClient: async () => client, getCurrentMode: () => null, getCurrentModel: () => null } as unknown as AcpAgentRuntime;
+  const session = new AcpAgentSession('node-1', 'native-1', runtime, '/tmp');
   const events: NormalizedEvent[] = [];
   for await (const event of session.send('probe')) events.push(event);
   return events;
@@ -177,8 +177,8 @@ describe('Kiro V2 subagent approvals (kiro-cli 2.35.1 wire)', () => {
       getCurrentModel: () => null,
       respondToPermission: (_sid: string, requestId: number, optionId: string) => client.respondToPermission(requestId, optionId),
       cancelPermission: (_sid: string, requestId: number) => client.cancelPermission(requestId),
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('node-1', 'native-1', runtime, '/tmp');
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-1', 'native-1', runtime, '/tmp');
     const events: NormalizedEvent[] = [];
     for await (const event of session.send('probe')) events.push(event);
     return events;

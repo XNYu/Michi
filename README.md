@@ -7,7 +7,7 @@
 A branch-native AI workspace for divergent thinking. Explore many paths from one
 conversation, run them side by side, and fold the good ones back together.
 
-[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white)](https://github.com/XNYu/Michi/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white)](https://github.com/michiworks/Michi/releases/latest)
 [![Electron](https://img.shields.io/badge/desktop-Electron-47848F?logo=electron&logoColor=white)](#desktop-app)
 [![Stack](https://img.shields.io/badge/stack-React%20%C2%B7%20TypeScript%20%C2%B7%20SQLite-3178C6?logo=typescript&logoColor=white)](#common-commands)
 [![License](https://img.shields.io/badge/license-ISC-blue)](#license)
@@ -154,13 +154,13 @@ YOLO remain authoritative. Default installer users install directly from `~/.mic
 ## Quick Start
 
 On macOS (Apple Silicon), download the signed DMG from the
-[latest release](https://github.com/XNYu/Michi/releases/latest), open it, and
+[latest release](https://github.com/michiworks/Michi/releases/latest), open it, and
 drag Michi into Applications.
 
 Or install the desktop app from source:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/XNYu/Michi/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/michiworks/Michi/main/install.sh | bash
 ```
 
 The installer clones the repo into `~/Michi`, installs Node.js 22 locally if
@@ -169,7 +169,7 @@ needed, builds the desktop app, and installs it to `~/Applications/michi.app`.
 On **Windows** (x64), open PowerShell and run:
 
 ```powershell
-irm https://raw.githubusercontent.com/XNYu/Michi/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/michiworks/Michi/main/install.ps1 | iex
 ```
 
 The installer clones the repo into `%USERPROFILE%\Michi`, downloads Node.js 22

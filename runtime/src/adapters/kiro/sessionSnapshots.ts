@@ -12,7 +12,7 @@ export class KiroSessionSnapshots {
     private readonly listeners = new Map<string, Set<() => void>>();
 
     /** The id of the runtime instance that owns this client (Crew is a second
-     * KiroRuntime); state carrying another id is discarded downstream. */
+     * AcpAgentRuntime); state carrying another id is discarded downstream. */
     constructor(private readonly runtimeId: string) {}
 
     set(sessionId: string, patch: Snapshot): void {

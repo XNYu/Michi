@@ -23,7 +23,7 @@ import { buildClaudeMcpConfig, MICHI_INTERNAL_MCP_NAME } from 'michi-runtime/int
 import { validateMichiEndpoint } from 'michi-runtime/internal/adapters/crew/crewMcpBinding';
 import { mcpSlotProviderInternals } from 'michi-runtime/internal/mcp-host/slotProviderInternals';
 import { CursorRuntime } from '../src/agents/cursor/CursorRuntime';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { injectedHostEvent } from 'michi-runtime/internal/adapters/kiro/kiroHostEvents';
 import { chatOwner, runOwner } from './helpers/owners';
 import { michiTestHost } from './helpers/michiTestHost';
@@ -397,7 +397,7 @@ test("a Kiro slot's tool events reach only its own ACP session, directly and thr
     t.mock.method(dbRepository, 'getNodeSessionBinding', () => null);
     const { registry, connect } = await startMcpApp(t);
     const cwd = '/tmp/michi-kiro-sink';
-    const runtime = new KiroRuntime({
+    const runtime = new AcpAgentRuntime({
         bridge: {
             spawnBranches: async () => [],
             saveContext: ({ chatId, name, body = '' }) => ({ id: `ctx-${chatId}`, name, filePath: `.contexts/${name}.md`, size: body.length }),
@@ -418,7 +418,7 @@ test("a Kiro slot's tool events reach only its own ACP session, directly and thr
             return true;
         },
     });
-    // As KiroRuntime opens two chats on one cwd, each slot with the runtime's own callbacks.
+    // As AcpAgentRuntime opens two chats on one cwd, each slot with the runtime's own callbacks.
     const open = (sid: string, nodeId: string) => {
         let slotId: string | undefined;
         const slot = registry.create(sid, cwd, 'user-1', rt.makeSlotCallbacks(() => slotId), { nodeId });
@@ -427,7 +427,7 @@ test("a Kiro slot's tool events reach only its own ACP session, directly and thr
     };
     const a = open('sid-a', 'node-a');
     const b = open('sid-b', 'node-b');
-    // KiroRuntime.chatMcpServer: the group's catalog copy comes from A.
+    // AcpAgentRuntime.chatMcpServer: the group's catalog copy comes from A.
     const groupId = registry.createSessionGroup(a);
     registry.bindSession(groupId, 'sid-a', a.slotId);
     registry.bindSession(groupId, 'sid-b', b.slotId);
@@ -464,7 +464,7 @@ test("a Kiro slot serves a business tool only when the runtime's bridge has its 
     const { registry, connect } = await startMcpApp(t);
     const effects = ['spawn_branches', 'save_artifact', 'update_artifact'];
     const served = async (bridge: Record<string, unknown>) => {
-        const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/michi-kiro-bridge', host: michiTestHost() });
+        const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/michi-kiro-bridge', host: michiTestHost() });
         let slotId: string | undefined;
         const slot = registry.create('sid-bridge', '/tmp/michi-kiro-bridge', null,
             (runtime as any).makeSlotCallbacks(() => slotId), { nodeId: 'node-bridge' });

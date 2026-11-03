@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import { closeDb, initDb } from '../src/services/db';
@@ -29,7 +29,7 @@ for (const supported of [true, false]) {
     t.mock.method(AcpClient.prototype, 'loadSession', async () => ({}));
     t.mock.method(AcpClient.prototype, 'forkSession', async () => { forks++; return 'native-child'; });
     t.mock.method(AcpClient.prototype, 'shutdown', async () => {});
-    const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, defaultCwd: directory, host: michiTestHost(), engine: 'v3' });
+    const runtime = new AcpAgentRuntime({ bridge: {} as AgentToolBridge, defaultCwd: directory, host: michiTestHost(), engine: 'v3' });
     try {
       assert.equal(runtime.descriptor.harness.sessionFork.availability, 'invisible');
       const pending = runtime.forkSession({ sessionId: 'child', sourceNativeSessionId: 'parent-native', cwd: directory });

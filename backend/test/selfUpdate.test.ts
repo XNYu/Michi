@@ -97,7 +97,7 @@ test('a check fetches the configured branch into a private ref and lists what th
   assert.equal(check.total, 2);
   assert.deepEqual(check.commits.map((commit) => commit.subject), ['feat: Newest', 'fix: Older']);
   assert.equal(check.blocked, undefined);
-  assert.deepEqual(calls[0], ['fetch', '--quiet', '--no-tags', '--', 'https://github.com/XNYu/Michi.git', '+refs/heads/main:refs/michi/self-update/latest']);
+  assert.deepEqual(calls[0], ['fetch', '--quiet', '--no-tags', '--', 'https://github.com/michiworks/Michi.git', '+refs/heads/main:refs/michi/self-update/latest']);
   assert.ok(calls.some((args) => args[0] === 'log' && args.includes(`${CURRENT}..${LATEST}`)));
 });
 

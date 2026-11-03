@@ -77,7 +77,7 @@ remote_update() {
       *) remote_fail "unknown option: $arg" ;;
     esac
   done
-  url="${MICHI_REMOTE_SOURCE_URL:-https://github.com/XNYu/Michi.git}"
+  url="${MICHI_REMOTE_SOURCE_URL:-https://github.com/michiworks/Michi.git}"
   ref="${MICHI_REMOTE_SOURCE_REF:-main}"
   old_repo="$(remote_running_repo)"
   mkdir -p "$REMOTE_ROOT/releases"

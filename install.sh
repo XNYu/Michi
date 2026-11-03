@@ -11,7 +11,7 @@ Options:
   --dir PATH       Install or update the source checkout at PATH.
                    Default: $HOME/Michi
   --repo URL       Git repository to clone.
-                   Default: https://github.com/XNYu/Michi.git
+                   Default: https://github.com/michiworks/Michi.git
   --node VERSION   Node.js 22 version to download if Node 22+ is missing.
                    Default: 22.21.1
   -h, --help       Show this help.
@@ -33,7 +33,7 @@ fail() {
 }
 
 : "${MICHI_INSTALL_DIR:=$HOME/Michi}"
-: "${MICHI_REPO_URL:=https://github.com/XNYu/Michi.git}"
+: "${MICHI_REPO_URL:=https://github.com/michiworks/Michi.git}"
 : "${MICHI_NODE_VERSION:=22.21.1}"
 
 while [ "$#" -gt 0 ]; do

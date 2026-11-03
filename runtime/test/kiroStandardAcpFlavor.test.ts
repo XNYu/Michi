@@ -1,6 +1,6 @@
 /**
- * KiroRuntime and KiroSession for a standard ACP agent (AcpLaunch.standardAcp,
- * Antigravity's `agy acp`) and the KiroFlavor fields it reads: reasoning
+ * AcpAgentRuntime and AcpAgentSession for a standard ACP agent (AcpLaunch.standardAcp,
+ * Antigravity's `agy acp`) and the AcpAgentFlavor fields it reads: reasoning
  * through the `thought_level` config option, no probe for modes it lacks, no
  * warm sessions, its own "session gone" errors, resource_link images, its own
  * tool titles and names, token usage, failed cards for declined approvals and
@@ -15,9 +15,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDefaultHost } from '../src/core/defaultHost';
-import { KiroRuntime } from '../src/adapters/kiro/KiroRuntime';
-import { KiroSession } from '../src/adapters/kiro/KiroSession';
-import { KIRO_FLAVOR, type KiroFlavor } from '../src/adapters/kiro/kiroFlavor';
+import { AcpAgentRuntime } from '../src/adapters/kiro/AcpAgentRuntime';
+import { AcpAgentSession } from '../src/adapters/kiro/AcpAgentSession';
+import { KIRO_FLAVOR, type AcpAgentFlavor } from '../src/adapters/kiro/acpAgentFlavor';
 import { NativeResumeUnavailableError } from '../src/contract/errors';
 import { KiroSessionSnapshots } from '../src/adapters/kiro/sessionSnapshots';
 import {
@@ -57,7 +57,7 @@ const AGY_MODELS = {
 };
 
 /** What an agy-like preset sets on the flavor (the real one lives in adapters/antigravity). */
-const STANDARD_FLAVOR: KiroFlavor = {
+const STANDARD_FLAVOR: AcpAgentFlavor = {
     ...KIRO_FLAVOR,
     nativeSessions: { replaceable: true, isUnavailable: (error) => /no such session here/.test(String(error)) },
     promptImages: 'resourceLink',
@@ -70,9 +70,9 @@ const STANDARD_FLAVOR: KiroFlavor = {
     signIn: { matches: () => false, message: 'Sign in to the agent.' },
 };
 
-function runtime(options: { standard?: boolean; flavor?: KiroFlavor; modes?: boolean; launch?: AcpLaunch } = {}): KiroRuntime {
+function runtime(options: { standard?: boolean; flavor?: AcpAgentFlavor; modes?: boolean; launch?: AcpLaunch } = {}): AcpAgentRuntime {
     const standard = options.standard ?? true;
-    return new KiroRuntime({
+    return new AcpAgentRuntime({
         host: createDefaultHost({ logLevel: 'silent' }),
         bridge: {},
         engine: 'v2',
@@ -115,8 +115,8 @@ function fakeClient() {
 
 type FakeClient = ReturnType<typeof fakeClient>;
 
-/** The KiroRuntime surface a KiroSession reads, over one fake client. */
-function standIn(client: FakeClient, options: { standard?: boolean; flavor?: KiroFlavor } = {}): KiroRuntime {
+/** The AcpAgentRuntime surface an AcpAgentSession reads, over one fake client. */
+function standIn(client: FakeClient, options: { standard?: boolean; flavor?: AcpAgentFlavor } = {}): AcpAgentRuntime {
     return {
         host: createDefaultHost({ logLevel: 'silent' }),
         engine: 'v2',
@@ -128,11 +128,11 @@ function standIn(client: FakeClient, options: { standard?: boolean; flavor?: Kir
         getCurrentModel: () => null,
         respondToPermission: (_sid: string, requestId: number, optionId: string) => client.respondToPermission(requestId, optionId),
         cancelPermission: (_sid: string, requestId: number) => client.cancelPermission(requestId),
-    } as unknown as KiroRuntime;
+    } as unknown as AcpAgentRuntime;
 }
 
 /** A turn read in the background: its events so far, and a wait for one. */
-function startTurn(session: KiroSession, input?: Parameters<KiroSession['send']>[1]) {
+function startTurn(session: AcpAgentSession, input?: Parameters<AcpAgentSession['send']>[1]) {
     const events: any[] = [];
     const done = (async () => { for await (const event of session.send('go', input)) events.push(event); })();
     const until = async (predicate: (event: any) => boolean) => {
@@ -158,7 +158,7 @@ function permissionRequest(requestId: number, toolCall: Record<string, any> = WR
 
 const FAILED = (toolCallId: string) => ({ sessionUpdate: 'tool_call_update', toolCallId, status: 'failed' });
 
-describe('KiroRuntime reasoning for a standard ACP agent', () => {
+describe('AcpAgentRuntime reasoning for a standard ACP agent', () => {
     function configClient(configOptions?: unknown[]) {
         const calls: unknown[][] = [];
         return {
@@ -190,7 +190,7 @@ describe('KiroRuntime reasoning for a standard ACP agent', () => {
     });
 });
 
-describe('KiroRuntime model catalog for a standard ACP agent', () => {
+describe('AcpAgentRuntime model catalog for a standard ACP agent', () => {
     it('marks every model with the thought_level levels', async () => {
         const rt = runtime();
         (rt as any).absorbModels('sid', AGY_MODELS, [MODEL_OPTION, THOUGHT_LEVEL]);
@@ -214,7 +214,7 @@ describe('KiroRuntime model catalog for a standard ACP agent', () => {
     });
 });
 
-describe('KiroRuntime probes and warm sessions', () => {
+describe('AcpAgentRuntime probes and warm sessions', () => {
     function probeClient(result: Record<string, any>) {
         const calls: string[] = [];
         return {
@@ -275,7 +275,7 @@ describe('KiroRuntime probes and warm sessions', () => {
     });
 });
 
-describe('KiroRuntime native sessions the agent no longer has', () => {
+describe('AcpAgentRuntime native sessions the agent no longer has', () => {
     const failing = (error: Error) => ({ loadSession: async () => { throw error; }, setModel: async () => {} });
 
     it("treats the flavor's own error as unavailable, so the host rebuilds the chat", async () => {
@@ -292,7 +292,7 @@ describe('KiroRuntime native sessions the agent no longer has', () => {
     });
 });
 
-describe('KiroRuntime user input asked through an ACP client', () => {
+describe('AcpAgentRuntime user input asked through an ACP client', () => {
     it("answers or skips a client's question that is not ask_user's own", () => {
         const rt = runtime();
         const calls: unknown[][] = [];
@@ -321,7 +321,7 @@ describe('KiroRuntime user input asked through an ACP client', () => {
     });
 });
 
-describe('KiroRuntime ACP client options', () => {
+describe('AcpAgentRuntime ACP client options', () => {
     it("passes the flavor's sign-in check and the agent's name to a standard ACP launch only", () => {
         const options = (runtime({ flavor: STANDARD_FLAVOR }) as any).acpClientOptions();
         assert.equal(options.signIn, STANDARD_FLAVOR.signIn);
@@ -332,7 +332,7 @@ describe('KiroRuntime ACP client options', () => {
     });
 });
 
-describe('KiroSession images', () => {
+describe('AcpAgentSession images', () => {
     function image(): { name: string; absPath: string } {
         const absPath = path.join(tempDir(), 'red pixel.png');
         fs.writeFileSync(absPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
@@ -341,7 +341,7 @@ describe('KiroSession images', () => {
 
     it('links each image to its file and names it in the text for a resourceLink flavor', async () => {
         const client = fakeClient();
-        const session = new KiroSession('node', 'sid', standIn(client), '/w', { owner: interactive('node') });
+        const session = new AcpAgentSession('node', 'sid', standIn(client), '/w', { owner: interactive('node') });
         const attachment = image();
         client.push({ sessionUpdate: 'turn_end', stopReason: 'end_turn' });
         await startTurn(session, { attachments: [attachment] }).done;
@@ -354,7 +354,7 @@ describe('KiroSession images', () => {
 
     it('Kiro still sends base64 image blocks and no note', async () => {
         const client = fakeClient();
-        const session = new KiroSession('node', 'sid', standIn(client, { standard: false }), '/w', { owner: interactive('node') });
+        const session = new AcpAgentSession('node', 'sid', standIn(client, { standard: false }), '/w', { owner: interactive('node') });
         client.push({ sessionUpdate: 'turn_end', stopReason: 'end_turn' });
         await startTurn(session, { attachments: [image()] }).done;
         const [{ text, blocks }] = client.prompts;
@@ -363,10 +363,10 @@ describe('KiroSession images', () => {
     });
 });
 
-describe('KiroSession tool calls of a standard ACP agent', () => {
+describe('AcpAgentSession tool calls of a standard ACP agent', () => {
     async function toolEvents(updates: Record<string, any>[], standard = true) {
         const client = fakeClient();
-        const session = new KiroSession('node', 'sid', standIn(client, { standard }), '/w', { owner: interactive('node') });
+        const session = new AcpAgentSession('node', 'sid', standIn(client, { standard }), '/w', { owner: interactive('node') });
         const turn = startTurn(session);
         for (const update of updates) client.push(update);
         client.push({ sessionUpdate: 'turn_end', stopReason: 'end_turn' });
@@ -404,10 +404,10 @@ describe('KiroSession tool calls of a standard ACP agent', () => {
     });
 });
 
-describe('KiroSession usage of a standard ACP agent', () => {
+describe('AcpAgentSession usage of a standard ACP agent', () => {
     async function usage(update: Record<string, any>) {
         const client = fakeClient();
-        const session = new KiroSession('node', 'sid', standIn(client), '/w', { owner: interactive('node') });
+        const session = new AcpAgentSession('node', 'sid', standIn(client), '/w', { owner: interactive('node') });
         const turn = startTurn(session);
         client.push(update);
         client.push({ sessionUpdate: 'turn_end', stopReason: 'end_turn' });
@@ -434,10 +434,10 @@ describe('KiroSession usage of a standard ACP agent', () => {
     });
 });
 
-describe('KiroSession approvals of a standard ACP agent', () => {
+describe('AcpAgentSession approvals of a standard ACP agent', () => {
     it("names the tool by the agent's name, so it can be trusted, and a trusted tool asks no more", async () => {
         const client = fakeClient();
-        const session = new KiroSession('node', 'sid', standIn(client), '/w', { owner: interactive('node') });
+        const session = new AcpAgentSession('node', 'sid', standIn(client), '/w', { owner: interactive('node') });
         const turn = startTurn(session);
         client.push(WRITE_FILE);
         client.push(permissionRequest(1));
@@ -456,7 +456,7 @@ describe('KiroSession approvals of a standard ACP agent', () => {
 
     it('Kiro without a name keeps the prose title and no grant', async () => {
         const client = fakeClient();
-        const session = new KiroSession('node', 'sid', standIn(client, { standard: false }), '/w', { owner: interactive('node') });
+        const session = new AcpAgentSession('node', 'sid', standIn(client, { standard: false }), '/w', { owner: interactive('node') });
         const turn = startTurn(session);
         client.push(permissionRequest(1));
         const shown = await turn.until((event) => event.kind === 'permission_request');
@@ -471,7 +471,7 @@ describe('KiroSession approvals of a standard ACP agent', () => {
     for (const how of ['deny', 'cancel'] as const) {
         it(`settles a call whose approval is ${how === 'deny' ? 'denied' : 'cancelled'} as failed`, async () => {
             const client = fakeClient();
-            const session = new KiroSession('node', 'sid', standIn(client), '/w', { owner: interactive('node') });
+            const session = new AcpAgentSession('node', 'sid', standIn(client), '/w', { owner: interactive('node') });
             const turn = startTurn(session);
             client.push(WRITE_FILE);
             client.push(permissionRequest(1));
@@ -497,7 +497,7 @@ describe('KiroSession approvals of a standard ACP agent', () => {
         const broker: RuntimePermissionBroker = {
             requestPermission: async (request) => { asked.push(request.toolName); return request.toolName === 'bash' ? 'allow_once' : 'deny'; },
         } as RuntimePermissionBroker;
-        const session = new KiroSession('attempt', 'sid', standIn(client), '/w', { owner: headless('attempt'), permissionBroker: broker });
+        const session = new AcpAgentSession('attempt', 'sid', standIn(client), '/w', { owner: headless('attempt'), permissionBroker: broker });
         const turn = startTurn(session);
         client.push(permissionRequest(1, { toolCallId: 'cmd', name: 'run_command', title: 'ls -la' }));
         client.push(permissionRequest(2));
@@ -514,7 +514,7 @@ describe('KiroSession approvals of a standard ACP agent', () => {
         const client = fakeClient();
         const asked: string[] = [];
         const broker = { requestPermission: async (request: { toolName: string }) => { asked.push(request.toolName); return 'deny'; } } as RuntimePermissionBroker;
-        const session = new KiroSession('attempt', 'sid', standIn(client, { standard: false }), '/w', { owner: headless('attempt'), permissionBroker: broker });
+        const session = new AcpAgentSession('attempt', 'sid', standIn(client, { standard: false }), '/w', { owner: headless('attempt'), permissionBroker: broker });
         const turn = startTurn(session);
         client.push(permissionRequest(1));
         await delay(5);

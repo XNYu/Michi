@@ -90,7 +90,7 @@ when you build:
 
 | Runtime | Entry | Talks to | Process model | Needs on the machine |
 |---|---|---|---|---|
-| Kiro CLI | `./adapters/kiro` (`KiroRuntime`) | `kiro-cli` over ACP, engine v2 (default) or v3 | one `kiro-cli` per working directory, sessions multiplexed on it, warm sessions | `kiro-cli`, signed in |
+| Kiro CLI | `./adapters/kiro` (`AcpAgentRuntime`, formerly `KiroRuntime`, which stays as an alias) | `kiro-cli` over ACP, engine v2 (default) or v3 | one `kiro-cli` per working directory, sessions multiplexed on it, warm sessions | `kiro-cli`, signed in |
 | Kiro Crew | `./adapters/crew` (`createCrewRuntime`) | the Kiro Crew Gateway through the bundled Crew ACP adapter | one adapter process per working directory | Kiro Crew, and the Michi Crew App from a Michi installation; see [Using Kiro Crew](#using-kiro-crew) |
 | Codex | `./adapters/codex` (`CodexRuntime`) | `codex app-server` over JSON-RPC | one app-server for the runtime, a thread per session | `codex`, signed in |
 | Claude Code | `./adapters/claude` (`ClaudeRuntime`, `claudeAdapterOptions`) | the Claude Agent SDK and the installed Claude CLI | one CLI process per session, warm processes per (cwd, model) | `claude`, signed in, and the optional peer `@anthropic-ai/claude-agent-sdk@0.3.306` |
@@ -214,7 +214,7 @@ none. Without `mcpSlots` a session gets no host tools.
 ```ts
 import { createDefaultHost, type AgentToolBridge, type McpSlot } from 'michi-runtime';
 import { createMcpHost, createMcpSlotProvider } from 'michi-runtime/mcp-host';
-import { KiroRuntime } from 'michi-runtime/adapters/kiro';
+import { AcpAgentRuntime } from 'michi-runtime/adapters/kiro';
 import { createCrewRuntime } from 'michi-runtime/adapters/crew';
 import { CodexRuntime } from 'michi-runtime/adapters/codex';
 import { ClaudeRuntime, claudeAdapterOptions } from 'michi-runtime/adapters/claude';
@@ -226,7 +226,7 @@ const mcpSlots = createMcpSlotProvider(mcpHost);
 const bridge: AgentToolBridge = {};
 const cwd = process.cwd();
 
-const kiro = new KiroRuntime({ host, bridge, mcpSlots, defaultCwd: cwd, engine: 'v3' });
+const kiro = new AcpAgentRuntime({ host, bridge, mcpSlots, defaultCwd: cwd, engine: 'v3' });
 const crew = createCrewRuntime({ host, bridge, mcpSlots, defaultCwd: cwd });
 const codex = new CodexRuntime({ host, bridge, mcpSlots, spawnEnv: () => process.env });
 const claude = new ClaudeRuntime({ ...claudeAdapterOptions({ host, spawnEnv: () => process.env }), bridge, mcpSlots });
@@ -566,7 +566,7 @@ the flag as the tool being offered.
 These members are implementation details or experimental. Experimental members
 are marked `@experimental` in the source, and an experimental argument or
 value is described as such in its member's doc. The last two entries carry no
-such mark: `CodexRuntime`'s test seams are `@internal`, and `KiroRuntime`'s
+such mark: `CodexRuntime`'s test seams are `@internal`, and `AcpAgentRuntime`'s
 members beyond `AgentRuntime` are named here only.
 
 - `RuntimeHost.interaction` (`InteractionBroker`): no adapter calls it yet.
@@ -579,8 +579,8 @@ members beyond `AgentRuntime` are named here only.
   and `PromptPolicyPort.followUpsTurnReminder`.
 - `CodexRuntime`'s test seams: an internal second constructor argument, left
   out of the generated validation declarations.
-- `KiroRuntime`'s members that `AgentRuntime` does not declare, and the types
-  only they use (`KiroSession`, `KiroSessionBinding`, `OpenSessionResult`,
+- `AcpAgentRuntime`'s members that `AgentRuntime` does not declare, and the types
+  only they use (`AcpAgentSession`, `KiroSessionBinding`, `OpenSessionResult`,
   `LoadSessionResult`, `McpSlotCallbacksFactory`): Michi's own wiring of Kiro.
   A host drives Kiro through `AgentRuntime` and `AgentSession`.
 

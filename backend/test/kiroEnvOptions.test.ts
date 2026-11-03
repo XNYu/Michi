@@ -1,7 +1,7 @@
 /**
  * Kiro and Crew take their settings as KiroAdapterOptions; Michi reads them
  * from the environment (michiKiroOptions.ts, used by the factories) with the
- * parsing KiroRuntime and AcpClient used, at the same moments: four were
+ * parsing AcpAgentRuntime and AcpClient used, at the same moments: four were
  * module constants, read once when the module loaded, and still are; the
  * concurrency cap is read when a runtime is created; the rest each time they
  * are used.
@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type * as Factories from '../src/agents/runtimeFactories';
 import type * as KiroOptions from '../src/agents/michiKiroOptions';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { michiTestHost } from './helpers/michiTestHost';
 import { fakeMcpRegistry } from './helpers/fakeMcpRegistry';
 
@@ -51,7 +51,7 @@ function settings(options: ReturnType<typeof KiroOptions.kiroEnvOptions>) {
     preloadTools: preloadTools?.() };
 }
 
-test('unset: the defaults KiroRuntime and AcpClient used', (t) => {
+test('unset: the defaults AcpAgentRuntime and AcpClient used', (t) => {
   const { kiroEnvOptions } = loadFactories({});
   assert.deepEqual(settings(kiroEnvOptions()), {
     processCap: 20, idleTtlMs: 300_000, warmPoolSize: 3, acpIdleTimeoutMs: 180_000, concurrencyCap: 100,
@@ -117,9 +117,9 @@ test('Kiro takes its engine from MICHI_KIRO_ENGINE (unset is v3); Crew stays v2 
   runtimes.push(RUNTIME_FACTORIES.find((factory) => factory.id === 'crew')!.create(deps()));
 });
 
-test('a KiroRuntime without these options runs on the defaults, whatever the environment says', async (t) => {
+test('an AcpAgentRuntime without these options runs on the defaults, whatever the environment says', async (t) => {
   loadFactories({ MICHI_KIRO_MAX_PROCESSES: '1', MICHI_KIRO_MAX_CONCURRENT: '1', MICHI_KIRO_ENGINE: 'v3' });
-  const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/michi-kiro-env-options', host: michiTestHost() });
+  const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/michi-kiro-env-options', host: michiTestHost() });
   t.after(() => runtime.shutdown());
   const fields = runtime as unknown as Record<string, unknown>;
   assert.deepEqual(

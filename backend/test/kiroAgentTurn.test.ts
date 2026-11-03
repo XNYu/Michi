@@ -16,8 +16,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { AcpClient, type AcpUpdate } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import { ChatHub } from '../src/agents/chatHub';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { NormalizedEvent } from '../src/services/chatEvents';
 import type { ChatStreamEvent } from 'michi-shared';
 import * as sessionRegistry from '../src/agents/sessionRegistry';
@@ -890,7 +890,7 @@ describe('Kiro agent-initiated turns (AcpClient)', () => {
   });
 });
 
-function fakeRuntime(client: AcpClient): KiroRuntime {
+function fakeRuntime(client: AcpClient): AcpAgentRuntime {
   return {
     host: michiTestHost(),
     id: 'kiro',
@@ -899,7 +899,7 @@ function fakeRuntime(client: AcpClient): KiroRuntime {
     getClient: () => client,
     respondToPermission: () => {},
     cancelPermission: (_sid: string, requestId: number) => client.cancelPermission(requestId),
-  } as unknown as KiroRuntime;
+  } as unknown as AcpAgentRuntime;
 }
 
 function hubForTests(begin: () => Promise<void> | void = () => {}): ChatHub {
@@ -913,7 +913,7 @@ function hubForTests(begin: () => Promise<void> | void = () => {}): ChatHub {
 describe('Kiro agent-initiated turns (session and chat)', () => {
   it('translates the wake into chat events and remembers its answer', async () => {
     const { client } = harness();
-    const session = new KiroSession('node-1', 'parent', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
+    const session = new AcpAgentSession('node-1', 'parent', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
     const updates = (async function* (): AsyncIterableIterator<AcpUpdate> {
       yield { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Both markers: A, B.' }, _meta: { kiro: { agentInitiated: true } } };
       yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
@@ -926,7 +926,7 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
 
   it('shows the wake as a self-initiated chat turn that the Stop route ends without marking the next prompt', async () => {
     const { client, written, dispatch } = harness(5_000);
-    const session = new KiroSession('node-1', 'parent', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
+    const session = new AcpAgentSession('node-1', 'parent', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
     const hub = hubForTests();
     const events: ChatStreamEvent[] = [];
     hub.subscribeBackground({ send: (_chatId, event) => events.push(event), close: () => {} });
@@ -954,7 +954,7 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
 
   it('stops the native wake when the chat stops showing it, so it cannot hold the session', async () => {
     const { client, written, dispatch } = harness(5_000);
-    const session = new KiroSession('node-1', 'parent', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
+    const session = new AcpAgentSession('node-1', 'parent', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
     const hub = hubForTests();
     const events: ChatStreamEvent[] = [];
     hub.subscribeBackground({ send: (_chatId, event) => events.push(event), close: () => {} });
@@ -974,8 +974,8 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
 
   it('runs a message sent before the wake shows anything, and never shows the wake', async () => {
     const { client, written, dispatch } = harness(5_000);
-    const runtime = { ...fakeRuntime(client), ensureClient: async () => client } as unknown as KiroRuntime;
-    const session = new KiroSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
+    const runtime = { ...fakeRuntime(client), ensureClient: async () => client } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
     const hub = hubForTests();
     const background: ChatStreamEvent[] = [];
     const direct: ChatStreamEvent[] = [];
@@ -1006,8 +1006,8 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
     const { client, written, dispatch } = harness(5_000);
     let resolveClient!: () => void;
     const clientReady = new Promise<void>((resolve) => { resolveClient = resolve; });
-    const runtime = { ...fakeRuntime(client), ensureClient: async () => { await clientReady; return client; } } as unknown as KiroRuntime;
-    const session = new KiroSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
+    const runtime = { ...fakeRuntime(client), ensureClient: async () => { await clientReady; return client; } } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
     const wake = collector();
     client.setAgentTurnHandler(() => (updates) => wake.take(updates));
     dispatch(info({ kind: 'turn_start', turnStart: true }));
@@ -1027,8 +1027,8 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
 
   it('does not show a wake whose first frame arrives while an accepted message is still being saved', async () => {
     const { client, written, dispatch } = harness(5_000);
-    const runtime = { ...fakeRuntime(client), ensureClient: async () => client } as unknown as KiroRuntime;
-    const session = new KiroSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
+    const runtime = { ...fakeRuntime(client), ensureClient: async () => client } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
     let finishBegin!: () => void;
     let begins = 0;
     const hub = hubForTests(() => {
@@ -1060,8 +1060,8 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
 
   it('does not show a wake that starts while a requested self-turn waits its turn', async () => {
     const { client, written, dispatch } = harness(5_000);
-    const runtime = { ...fakeRuntime(client), ensureClient: async () => client } as unknown as KiroRuntime;
-    const session = new KiroSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
+    const runtime = { ...fakeRuntime(client), ensureClient: async () => client } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
     const hub = hubForTests();
     const background: ChatStreamEvent[] = [];
     hub.subscribeBackground({ send: (_chatId, event) => background.push(event), close: () => {} });
@@ -1086,8 +1086,8 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
   for (const mode of ['stop-during-save', 'save-fails'] as const) {
     it(`shows a wake held back for a message that never prompted (${mode})`, async () => {
       const { client, written, dispatch } = harness(5_000);
-      const runtime = { ...fakeRuntime(client), ensureClient: async () => client } as unknown as KiroRuntime;
-      const session = new KiroSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
+      const runtime = { ...fakeRuntime(client), ensureClient: async () => client } as unknown as AcpAgentRuntime;
+      const session = new AcpAgentSession('node-1', 'parent', runtime, os.tmpdir(), { owner: chatOwner('node-1') });
       let finishBegin!: (ok: boolean) => void;
       let begins = 0;
       const hub = hubForTests(() => {
@@ -1116,7 +1116,7 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
 
   it('stops the wake when its self-turn cannot be saved, so its approvals do not wait forever', async () => {
     const { client, written, dispatch } = harness(5_000);
-    const session = new KiroSession('node-1', 'parent', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
+    const session = new AcpAgentSession('node-1', 'parent', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
     const hub = hubForTests(() => { throw new Error('SQLITE_BUSY'); });
     client.setAgentTurnHandler(() => (updates) => hub.startSelfTurn({
       chatId: 'node-1', nodeId: 'node-1', events: session.agentTurnEvents(updates), cancel: () => session.cancelAgentTurn(),
@@ -1170,9 +1170,9 @@ describe('Kiro agent-initiated turns (session and chat)', () => {
 
 describe('Kiro recovery with a workflow running', () => {
   it('refuses to restart the process and says how to unblock it', async () => {
-    const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+    const { AcpAgentRuntime } = await import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
     const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null } as any;
-    const runtime = new KiroRuntime({ bridge, defaultCwd: os.tmpdir(), host: michiTestHost(), engine: 'v3' }) as any;
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: os.tmpdir(), host: michiTestHost(), engine: 'v3' }) as any;
     const busy = (workflows: boolean) => ({
       needsSessionRecovery: () => true, hasHealthyWork: () => true, hasOpenWorkflowRuns: () => workflows,
     });
@@ -1185,11 +1185,11 @@ describe('Kiro recovery with a workflow running', () => {
 
 describe('Kiro ask_user while its question cannot be shown', () => {
   it('answers "no answer" at once instead of waiting for the timeout', async () => {
-    const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+    const { AcpAgentRuntime } = await import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
     const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null } as any;
     const registry = { get: () => ({ parentChatId: 'parent', cwd: '/tmp/cwd' }) } as any;
     // A regression fails fast instead of waiting 300 s.
-    const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: os.tmpdir(),
+    const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry, defaultCwd: os.tmpdir(),
       host: michiTestHost(), engine: 'v3', approveTimeoutMs: () => 1500 }) as any;
     const { client, dispatch } = harness();
     runtime.pool.set('/tmp/cwd', client);
@@ -1208,16 +1208,16 @@ describe('Kiro ask_user while its question cannot be shown', () => {
 
 describe('Kiro agent-initiated turns (runtime claim)', () => {
   async function runtimeWith(bindingOwner: RuntimeSessionOwner | null, registered: 'match' | 'other-native' | 'none') {
-    const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+    const { AcpAgentRuntime } = await import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
     const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null } as any;
-    const runtime = new KiroRuntime({ bridge, defaultCwd: os.tmpdir(), host: michiTestHost(), engine: 'v3' }) as any;
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: os.tmpdir(), host: michiTestHost(), engine: 'v3' }) as any;
     const { client } = harness();
     if (bindingOwner) {
       runtime.bindings.set('node-1', { publicSessionId: 'node-1', nativeSessionId: 'parent', owner: bindingOwner, cwd: os.tmpdir(), workspaceId: 'ws', ownerUserId: 'owner-a' });
       runtime.publicIdByNativeSid.set('parent', 'node-1');
     }
     if (registered !== 'none') {
-      const session = new KiroSession('node-1', registered === 'match' ? 'parent' : 'someone-else', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
+      const session = new AcpAgentSession('node-1', registered === 'match' ? 'parent' : 'someone-else', fakeRuntime(client), os.tmpdir(), { owner: chatOwner('node-1') });
       sessionRegistry.registerSession(session as any, 'owner-a');
     }
     runtime.attachAgentTurns(client);

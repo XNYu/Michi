@@ -95,8 +95,8 @@ export function AttachmentPills({ items }: Props) {
                   loading="lazy"
                   onError={() => setBroken(prev => new Set(prev).add(src))}
                   style={{
-                    width: 160,
-                    height: 160,
+                    width: 'var(--att-thumb-size, 160px)',
+                    height: 'var(--att-thumb-size, 160px)',
                     objectFit: 'cover',
                     display: 'block',
                   }}

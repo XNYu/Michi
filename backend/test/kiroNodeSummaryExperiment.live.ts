@@ -73,7 +73,7 @@ async function main() {
   const config = require('../src/services/agentConfig') as typeof import('../src/services/agentConfig');
   const repo = require('../src/services/dbRepository') as typeof import('../src/services/dbRepository');
   const { McpSlotRegistry, mountMcp } = require('../src/services/mcpServer') as typeof import('../src/services/mcpServer');
-  const { KiroRuntime } = require('michi-runtime/internal/adapters/kiro/KiroRuntime') as typeof import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+  const { AcpAgentRuntime } = require('michi-runtime/internal/adapters/kiro/AcpAgentRuntime') as typeof import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
   const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
   const { kiroEnvOptions } = require('../src/agents/michiKiroOptions') as typeof import('../src/agents/michiKiroOptions');
   closeDb(); initDb();
@@ -93,14 +93,14 @@ async function main() {
   app.use('/api', router);
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
-  let runtime: InstanceType<typeof KiroRuntime> | undefined;
+  let runtime: InstanceType<typeof AcpAgentRuntime> | undefined;
   const records: unknown[] = [];
   const watchdog = setTimeout(() => { void runtime?.shutdown(); }, 300_000);
   try {
     const workspaceId = 'kiro-summary-pilot';
     getDb().prepare('INSERT INTO workspaces (id,name,cwd,created_at,updated_at) VALUES (?,?,?,1,1)')
       .run(workspaceId, 'Disposable Kiro summary pilot', dataDir);
-    runtime = new KiroRuntime({
+    runtime = new AcpAgentRuntime({
       bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
       mcpSlots: registry, defaultCwd: dataDir, ...kiroEnvOptions(), host: michiTestHost(), engine });
     for (const fixture of fixtures) {
@@ -165,7 +165,7 @@ async function main() {
         };
         records.push(record);
         fs.writeFileSync(outputFile, JSON.stringify({
-          runtime: 'Michi KiroRuntime + KiroSession + local MCP + isolated SQLite',
+          runtime: 'Michi AcpAgentRuntime + AcpAgentSession + local MCP + isolated SQLite',
           kiroCliVersion: '2.28.0', variant, requestedModel: model ?? null,
           reasoning: reasoningSetting, fixtureSet, engine, fixtures, records,
         }, null, 2));

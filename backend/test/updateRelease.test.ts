@@ -47,7 +47,7 @@ describe('parseGithubRelease / pickMacDmgAsset', () => {
       prerelease: false,
       draft: false,
       assets: [
-        { name: 'michi-0.3.0-arm64.dmg', browser_download_url: 'https://github.com/XNYu/Michi/releases/download/v0.3.0/michi-0.3.0-arm64.dmg' },
+        { name: 'michi-0.3.0-arm64.dmg', browser_download_url: 'https://github.com/michiworks/Michi/releases/download/v0.3.0/michi-0.3.0-arm64.dmg' },
         { name: 'notes.txt' },
       ],
     });
@@ -75,9 +75,9 @@ describe('parseGithubRelease / pickMacDmgAsset', () => {
 
 describe('isAllowedDownloadUrl', () => {
   test('allows github download hosts and rejects others', () => {
-    assert.equal(isAllowedDownloadUrl('https://github.com/XNYu/Michi/releases/download/v0.3.0/michi.dmg'), true);
+    assert.equal(isAllowedDownloadUrl('https://github.com/michiworks/Michi/releases/download/v0.3.0/michi.dmg'), true);
     assert.equal(isAllowedDownloadUrl('https://objects.githubusercontent.com/foo'), true);
-    assert.equal(isAllowedDownloadUrl('http://github.com/XNYu/Michi/a.dmg'), false);
+    assert.equal(isAllowedDownloadUrl('http://github.com/michiworks/Michi/a.dmg'), false);
     assert.equal(isAllowedDownloadUrl('https://evil.example/michi.dmg'), false);
   });
 });
@@ -159,7 +159,7 @@ describe('parseUpdateState / paths / url', () => {
   test('builds the public latest-release API url', () => {
     assert.equal(
       githubLatestReleaseUrl(),
-      'https://api.github.com/repos/XNYu/Michi/releases/latest',
+      'https://api.github.com/repos/michiworks/Michi/releases/latest',
     );
   });
 });

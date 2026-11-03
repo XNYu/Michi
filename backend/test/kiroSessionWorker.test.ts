@@ -9,8 +9,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
-import type { KiroFlavor } from 'michi-runtime/internal/adapters/kiro/kiroFlavor';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
+import type { AcpAgentFlavor } from 'michi-runtime/internal/adapters/kiro/acpAgentFlavor';
 import { CREW_KIRO_FLAVOR } from 'michi-runtime/internal/adapters/crew/crewFlavor';
 import type { AgentSession } from '../src/agents/types';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
@@ -38,7 +38,7 @@ test('a v3 session worker shares its parent\'s host and slot provider', async (t
   });
   const host = michiTestHost();
   const registry = fakeMcpRegistry({}, { mcpPort: 45678 });
-  const runtime = new KiroRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/michi-kiro-worker', host, engine: 'v3' });
+  const runtime = new AcpAgentRuntime({ bridge, mcpSlots: registry, defaultCwd: '/tmp/michi-kiro-worker', host, engine: 'v3' });
   t.after(() => runtime.shutdown());
 
   // Local v3 chats share one MCP group; an Agent Run gets its own worker.
@@ -47,8 +47,8 @@ test('a v3 session worker shares its parent\'s host and slot provider', async (t
     owner: runOwner('run-1', 'attempt-1'),
     toolProfile: { allowedToolNames: [] },
   });
-  const worker = (runtime as unknown as { sessionWorkers: Map<string, KiroRuntime> }).sessionWorkers.get('attempt-1');
-  assert.ok(worker instanceof KiroRuntime && worker !== runtime, 'the Run opened on a session worker');
+  const worker = (runtime as unknown as { sessionWorkers: Map<string, AcpAgentRuntime> }).sessionWorkers.get('attempt-1');
+  assert.ok(worker instanceof AcpAgentRuntime && worker !== runtime, 'the Run opened on a session worker');
   assert.equal(worker.host, host, 'same host');
   assert.equal((worker as unknown as { mcpRegistry: unknown }).mcpRegistry, registry, 'same slot provider');
 
@@ -70,8 +70,8 @@ test('a v3 session worker shares its parent\'s host and slot provider', async (t
 
 test('a Kiro runtime refuses a host without the ports it reads', () => {
   const host = michiTestHost();
-  const construct = (overrides: Partial<typeof host>, options: { engine?: 'v2' | 'v3'; id?: string; flavor?: KiroFlavor } = {}) =>
-    () => new KiroRuntime({ bridge, defaultCwd: '/tmp/michi-kiro-worker', ...options, host: { ...host, ...overrides } });
+  const construct = (overrides: Partial<typeof host>, options: { engine?: 'v2' | 'v3'; id?: string; flavor?: AcpAgentFlavor } = {}) =>
+    () => new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/michi-kiro-worker', ...options, host: { ...host, ...overrides } });
   const missing = (ports: string[]) => (error: unknown) => error instanceof RuntimeHostConfigError
     && JSON.stringify(error.missing) === JSON.stringify(ports);
   assert.throws(construct({ backgroundTurns: undefined }), missing(['backgroundTurns']));

@@ -13,7 +13,7 @@ import { registerRuntime } from '../src/agents/registry';
 import { chatHub } from '../src/agents/chatHub';
 import { setupMichiRoutes } from '../src/routes/michi';
 import { RUNTIME_FACTORIES } from '../src/agents/runtimeFactories';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { ChatManager } from '../src/services/chatManager';
 import type { AgentRuntime, AgentSession } from '../src/agents/types';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
@@ -69,7 +69,7 @@ test('/clear resets the context on Kiro v3 and clears in place on Kiro v2 and Cr
         return { status: response.status, error: body.error, inPlace };
     }
 
-    const kiro = (engine: 'v2' | 'v3') => new KiroRuntime({ bridge, defaultCwd: dir, host: michiTestHost(), engine });
+    const kiro = (engine: 'v2' | 'v3') => new AcpAgentRuntime({ bridge, defaultCwd: dir, host: michiTestHost(), engine });
     const crew = RUNTIME_FACTORIES.find((factory) => factory.id === 'crew')!.create({ bridge, defaultCwd: dir, host: michiTestHost() });
 
     assert.deepEqual(await clear(kiro('v3'), 'v3'), { status: 500, error: 'context reset', inPlace: [] });

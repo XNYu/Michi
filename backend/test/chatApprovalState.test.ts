@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import { ApprovalCoordinator } from 'michi-runtime';
 import { ChatApprovalState, chatApprovalOptions, acpPermissionToolName, approvalCoversTool } from '../src/agents/chatApprovalState';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { michiTestHost } from './helpers/michiTestHost';
 import { chatOwner, runOwner } from './helpers/owners';
 
@@ -95,8 +95,8 @@ test('ACP resolved and cancelled requests cannot create grants', async () => {
             yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
         } }), getCurrentMode: () => undefined, getCurrentModel: () => undefined,
         respondToPermission: (...args: unknown[]) => wire.push(args), cancelPermission: () => {},
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('a', 'native-a', runtime, '/tmp', { owner });
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('a', 'native-a', runtime, '/tmp', { owner });
     for await (const event of session.send('test')) {
         if (event.kind === 'permission_request') assert.throws(() => session.respondToPermission(10, 'forged'), /Invalid/);
         if (event.kind === 'permission_resolved') session.respondToPermission(10, 'michi:allow_always');
@@ -116,8 +116,8 @@ for (const choice of ['michi:allow_always', 'michi:allow_session']) test(`ACP ${
             yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
         } }), getCurrentMode: () => undefined, getCurrentModel: () => undefined,
         respondToPermission: (...args: unknown[]) => wire.push(args),
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('a', 'native-a', runtime, '/tmp', { owner });
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('a', 'native-a', runtime, '/tmp', { owner });
     const turn = session.send('test');
     assert.equal((await turn.next()).value?.kind, 'permission_request');
     assert.equal((await turn.next()).value?.kind, 'permission_request');

@@ -1,5 +1,5 @@
 import { isCrewMemoryMode } from 'michi-shared';
-import type { KiroFlavor, KiroSessionMemory } from '../kiro/kiroFlavor';
+import type { AcpAgentFlavor, KiroSessionMemory } from '../kiro/acpAgentFlavor';
 import { rewindPoints } from '../kiro/kiroProtocol';
 import type { AcpClient } from '../kiro/acpClient';
 import type { CancelAck } from '../../contract/types';
@@ -50,7 +50,7 @@ const CREW_MEMORY: KiroSessionMemory = {
  * Crew sidebar folder of that workspace. A cancel is acknowledged by the
  * Gateway's own stop record when one arrives.
  */
-export const CREW_KIRO_FLAVOR: KiroFlavor = {
+export const CREW_KIRO_FLAVOR: AcpAgentFlavor = {
     hostPorts: ['bindings.crewMemory'],
     prompt: {
         firstMessage: (host, input) => host.prompt.firstTurnPrefix(input),

@@ -7,8 +7,8 @@ import path from 'node:path';
 import type { McpSlotProvider } from '../src/contract/mcp';
 import type { AgentToolBridge } from '../src/contract/tools';
 import { createDefaultHost } from '../src/core/defaultHost';
-import { KiroRuntime } from '../src/adapters/kiro/KiroRuntime';
-import { KIRO_FLAVOR, joinSessionMetadata } from '../src/adapters/kiro/kiroFlavor';
+import { AcpAgentRuntime } from '../src/adapters/kiro/AcpAgentRuntime';
+import { KIRO_FLAVOR, joinSessionMetadata } from '../src/adapters/kiro/acpAgentFlavor';
 import type { AcpLaunch } from '../src/adapters/kiro/acpClient';
 import { CREW_APP_VERSION } from '../src/adapters/crew/crewAppVersion';
 import {
@@ -56,12 +56,12 @@ function nowhere(): CrewAdapterOptions {
   return { bundledScript: path.join(dir, 'crewAcp.js'), sourceMain: path.join(dir, 'main.ts'), kirocrewHome: dir };
 }
 
-function crew(options: Partial<CrewRuntimeOptions> = {}): KiroRuntime {
+function crew(options: Partial<CrewRuntimeOptions> = {}): AcpAgentRuntime {
   return createCrewRuntime({ host: createDefaultHost({ logLevel: 'silent' }), bridge, mcpSlots, ...options });
 }
 
-/** The options the preset passed KiroRuntime. */
-function kiroOptions(runtime: KiroRuntime): Record<string, unknown> & { launch: AcpLaunch } {
+/** The options the preset passed AcpAgentRuntime. */
+function kiroOptions(runtime: AcpAgentRuntime): Record<string, unknown> & { launch: AcpLaunch } {
   return (runtime as any).runtimeOptions;
 }
 
@@ -83,7 +83,7 @@ const CREW_CAPABILITIES = {
 describe('createCrewRuntime', () => {
   it("pins Crew's id, label, engine, flavor, descriptor and capabilities", () => {
     const runtime = crew({ crew: nowhere() });
-    assert.ok(runtime instanceof KiroRuntime);
+    assert.ok(runtime instanceof AcpAgentRuntime);
     assert.equal(runtime.id, 'crew');
     assert.equal(runtime.label, 'Kiro Crew');
     assert.equal(runtime.engine, 'v2');
@@ -109,7 +109,7 @@ describe('createCrewRuntime', () => {
     assert.equal(runtime.checkAvailability().available, false);
   });
 
-  it('passes the rest of its options to KiroRuntime, and not its own', () => {
+  it('passes the rest of its options to AcpAgentRuntime, and not its own', () => {
     const runtime = crew({ crew: nowhere(), processCap: 7, defaultCwd: '/tmp/crew-default' });
     const options = kiroOptions(runtime);
     assert.equal(options.processCap, 7);
@@ -125,7 +125,7 @@ describe('createCrewRuntime', () => {
       titleModels: { kiro: { model: 'title-model', timeoutMs: 1_000 }, crew: { model: 'title-model', timeoutMs: 1_000 } },
       ports: { title: { enabled: () => true, prompt: () => '' } },
     });
-    assert.notEqual((new KiroRuntime({ host, bridge }) as any).titleGenerator, null);
+    assert.notEqual((new AcpAgentRuntime({ host, bridge }) as any).titleGenerator, null);
     const runtime = createCrewRuntime({ host, bridge, mcpSlots, crew: nowhere() });
     assert.equal((runtime as any).titleGenerator, null);
     assert.equal(await runtime.generateTitle({ userText: 'hello' }), null);

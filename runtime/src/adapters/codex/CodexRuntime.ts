@@ -37,7 +37,7 @@ import { CodexSession } from './CodexSession';
 import {
   CODEX_RESTRICTED_TURN_POLICY, codexRestrictedMcpCheck, codexRestrictedThreadConfig, codexThreadSandbox,
 } from './codexRestrictedProfile';
-import { CodexAuthMissingError, findCodexBinary, preflightCodexAuth } from './codexBinary';
+import { CodexAuthMissingError, configureCodexBinaryCache, findCodexBinary, preflightCodexAuth } from './codexBinary';
 import { NativeResumeUnavailableError } from '../../contract/errors';
 import type { RuntimeModelCache } from '../../core/runtimeModelCache';
 import {
@@ -147,6 +147,12 @@ export interface CodexAdapterOptions {
   modelCache?: RuntimeModelCache;
   /** The Codex CLI to run when that file exists, before PATH and the standard locations. */
   binaryPath?: string;
+  /**
+   * A JSON file remembering where the Codex CLI was found, so later starts
+   * skip the search while that file still exists. Default: none (searched
+   * once per process).
+   */
+  binaryCacheFile?: string;
   /** The user's Codex home, holding auth.json. Default: ~/.codex. */
   codexHome?: string;
   /**
@@ -269,6 +275,7 @@ export class CodexRuntime implements AgentRuntime {
     this.mcpRegistry = options.mcpSlots;
     this.host = options.host;
     this.binaryPath = options.binaryPath;
+    if (options.binaryCacheFile !== undefined) configureCodexBinaryCache(options.binaryCacheFile);
     this.approveTimeoutMs = options.approveTimeoutMs;
     this.titleTimeoutMs = options.titleTimeoutMs;
     this.hostText = options.hostText;

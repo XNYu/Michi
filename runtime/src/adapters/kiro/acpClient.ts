@@ -28,7 +28,7 @@ export type { AcpPromptBlock, AcpUpdate } from "../acp/types";
 import { AcpClient as AcpCoreClient, rpcErrorDataForLog } from "../acp/client";
 import { KiroAcpProfile, type AcpLaunch } from "./kiroAcpProfile";
 import { findKiroCli, type KiroCliLookup } from "./kiroCli";
-import type { KiroFlavor } from "./kiroFlavor";
+import type { AcpAgentFlavor } from "./acpAgentFlavor";
 
 export type { AcpLaunch } from "./kiroAcpProfile";
 export { findKiroCli, probeKiroCli, type KiroCliLookup } from "./kiroCli";
@@ -90,12 +90,12 @@ export interface AcpClientOptions extends AcpProcessOptions {
      */
     observability?: RuntimeObservability;
     /**
-     * How a launch override reports that it is signed out (KiroFlavor.signIn):
+     * How a launch override reports that it is signed out (AcpAgentFlavor.signIn):
      * a matching RPC error, or stderr before the process exits, fails as
      * KiroSignedOutError with its message. Ignored without a launch override,
      * which uses kiro-cli's own detection. Default: none.
      */
-    signIn?: KiroFlavor['signIn'];
+    signIn?: AcpAgentFlavor['signIn'];
     /** The agent's name in user-visible errors of a standardAcp launch (KiroAcpProfileOptions.displayName). */
     displayName?: string;
 }
@@ -117,7 +117,7 @@ export class AcpClient extends AcpCoreClient {
     private readonly toolCatalogWaiters = new Map<string, Set<() => void>>();
     private readonly rejectPermissions: boolean;
     private readonly onSignedOut?: (binary: string) => void;
-    private readonly signIn?: KiroFlavor['signIn'];
+    private readonly signIn?: AcpAgentFlavor['signIn'];
 
     override start(): void {
         if (this.proc) return;
@@ -218,7 +218,7 @@ export class AcpClient extends AcpCoreClient {
     private readonly heldPermissions = new Map<string, AcpUpdate[]>();
     /** Workflow traffic (`_kiro/workflow/*`, step notifications, step
      *  sessions and their approvals); routed out of band, never into a turn
-     *  queue. One router per client (KiroRuntime's workflow bridge). */
+     *  queue. One router per client (AcpAgentRuntime's workflow bridge). */
     private workflowRouter: AcpWorkflowRouter | null = null;
 
     setWorkflowRouter(router: AcpWorkflowRouter | null): void {
@@ -677,7 +677,7 @@ export class AcpClient extends AcpCoreClient {
                 const update = msg.params?.update ?? {};
                 const parentQ = this.sessionQueues.get(parentSid);
                 if (parentQ) {
-                    // The child frame rides along whole: KiroSession derives
+                    // The child frame rides along whole: AcpAgentSession derives
                     // the activity row, its output and the V2 summary result.
                     parentQ.push({ update: {
                         sessionUpdate: "subagent_tool_activity",

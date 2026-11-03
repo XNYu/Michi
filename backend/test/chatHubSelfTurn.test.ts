@@ -310,7 +310,7 @@ describe('ChatHub.startTurn', () => {
     assert.equal('code' in uncoded, false);
     assert.equal('recoverable' in uncoded, false);
 
-    // KiroSession's classification of a thrown error comes first.
+    // AcpAgentSession's classification of a thrown error comes first.
     const tagged = await wireError('tagged-error-chat', {
       ...sessionFrom([]),
       send: async function* () {

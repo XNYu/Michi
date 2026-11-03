@@ -27,7 +27,7 @@ const { ensureAssistant } = require('../src/assistant/store') as typeof import('
 const { assistantToolProfile } = require('../src/assistant/policy') as typeof import('../src/assistant/policy');
 const { maintenanceToolProfile } = require('../src/agents/maintenancePolicy') as typeof import('../src/agents/maintenancePolicy');
 const { McpSlotRegistry, mountMcp } = require('../src/services/mcpServer') as typeof import('../src/services/mcpServer');
-const { KiroRuntime } = require('michi-runtime/internal/adapters/kiro/KiroRuntime') as typeof import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+const { AcpAgentRuntime } = require('michi-runtime/internal/adapters/kiro/AcpAgentRuntime') as typeof import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
 const { kiroV2MetaAgentCatalog, kiroV3MetaAgentCatalog, kiroMetaAgentDir } = require('../src/agents/kiro/kiroMetaAgent') as typeof import('../src/agents/kiro/kiroMetaAgent');
 const { MetaAgentGuardError } = require('../src/agents/metaAgentGuard') as typeof import('../src/agents/metaAgentGuard');
 const { saveWorkspace } = require('../src/services/dbRepository') as typeof import('../src/services/dbRepository');
@@ -64,7 +64,7 @@ async function main() {
     try {
         for (const engine of ['v2', 'v3'] as const) {
             for (const toolset of ['chat', 'maintenance'] as const) {
-                const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry, { mcpPort: port }), defaultCwd: dataDir, modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({ engine, sidecarTitles: false }) });
+                const runtime = new AcpAgentRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry, { mcpPort: port }), defaultCwd: dataDir, modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({ engine, sidecarTitles: false }) });
                 const id = toolset === 'chat' ? assistant.nodeId : `n-maint-${engine}`;
                 const profile: RuntimeToolProfile = toolset === 'chat' ? restrictedChatProfile() : maintenanceToolProfile();
                 const started = Date.now();
@@ -87,7 +87,7 @@ async function main() {
             }
 
             // A Michi slot that wrongly exposes one more tool than the profile allows must stop the session.
-            const runtime = new KiroRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry, { mcpPort: port }), defaultCwd: dataDir, modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({ engine, sidecarTitles: false }) });
+            const runtime = new AcpAgentRuntime({ host: michiTestHost(), bridge: bridge, mcpSlots: fakeMcpRegistry(registry, { mcpPort: port }), defaultCwd: dataDir, modelCache: undefined, restrictedAgent: michiKiroRestrictedAgent, ...({ engine, sidecarTitles: false }) });
             const narrowed: RuntimeToolProfile = {
                 ...restrictedChatProfile(), allowedToolNames: restrictedChatProfile().allowedToolNames!.filter((name) => name !== EXTRA_TOOL),
             };

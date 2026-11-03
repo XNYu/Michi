@@ -8,8 +8,8 @@ import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { parseChatStreamEvent } from 'michi-shared';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { toChatStreamEvent } from '../src/routes/chatStreamEvents';
 import { setupMichiRoutes } from '../src/routes/michi';
 import { ChatManager } from '../src/services/chatManager';
@@ -45,8 +45,8 @@ for (const choice of ['allow-once', 'deny', 'cancel']) test(`UUID permission sur
     const runtime = { host: michiTestHost(), engine: 'v3', ensureClient: async () => c,
         respondToPermission: (_sid: string, id: number, option: string) => c.respondToPermission(id, option),
         cancelPermission: (_sid: string, id: number) => c.cancelPermission(id),
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('node', 'native', runtime, '/tmp');
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node', 'native', runtime, '/tmp');
     registerSession(session, null);
     const stream = session.send('please run');
     let next = await stream.next();

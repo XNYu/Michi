@@ -7,7 +7,7 @@ import path from 'node:path';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { AgentSession, RuntimePermissionBroker } from '../src/agents/types';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { runOwner } from './helpers/owners';
 
 // Explicit opt-in only: real authenticated CLI, provider credits, isolated DB.
@@ -40,7 +40,7 @@ for (const engine of ['v2', 'v3'] as const) {
         const router = express.Router(); mountMcp(router, registry); app.use('/api', router);
         const server = app.listen(0, '127.0.0.1');
         await new Promise<void>((resolve) => server.once('listening', resolve));
-        let runtime: KiroRuntime | undefined;
+        let runtime: AcpAgentRuntime | undefined;
         const watchdog = setTimeout(() => { void runtime?.shutdown(); }, 400_000);
         const parentId = randomUUID(); const childId = randomUUID();
         const token = `QuartzHarbor${Date.now()}`;
@@ -87,7 +87,7 @@ for (const engine of ['v2', 'v3'] as const) {
             }
             const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
             const { kiroEnvOptions } = require('../src/agents/michiKiroOptions') as typeof import('../src/agents/michiKiroOptions');
-            runtime = new (require('michi-runtime/internal/adapters/kiro/KiroRuntime').KiroRuntime)({
+            runtime = new (require('michi-runtime/internal/adapters/kiro/AcpAgentRuntime').AcpAgentRuntime)({
                 bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
                 mcpSlots: registry, defaultCwd: directory, ...kiroEnvOptions(), host: michiTestHost(), engine });
             const parent = await runtime!.newSession({ ...options, sessionId: parentId }); bind(parent);
@@ -201,9 +201,9 @@ for (const engine of ['v2', 'v3'] as const) {
             return decision;
         } };
         const marker = `MICHI_RUN_SHELL_PROBE_${Date.now()}`;
-        let runtime: KiroRuntime | undefined;
+        let runtime: AcpAgentRuntime | undefined;
         try {
-            runtime = new (require('michi-runtime/internal/adapters/kiro/KiroRuntime').KiroRuntime)({
+            runtime = new (require('michi-runtime/internal/adapters/kiro/AcpAgentRuntime').AcpAgentRuntime)({
                 bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
                 defaultCwd: directory, ...kiroEnvOptions(), host: michiTestHost(), engine });
             const attemptId = randomUUID();

@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { ACPError, ACPProcessExitedError } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import { michiTestHost } from './helpers/michiTestHost';
 import { runOwner } from './helpers/owners';
@@ -37,7 +37,7 @@ function scriptedRuntime(attempts: Array<Update[] | Error>) {
       recoverCalls.push({ sid, cwd });
       return true;
     },
-  } as unknown as KiroRuntime;
+  } as unknown as AcpAgentRuntime;
   return { runtime, recoverCalls, calls: () => call };
 }
 
@@ -49,13 +49,13 @@ function connErr(): ACPError {
   });
 }
 
-describe('KiroSession connection-class auto-retry', () => {
+describe('AcpAgentSession connection-class auto-retry', () => {
   for (const error of [connErr(), new ACPError('failed to generate a response')]) {
   }
 
   it('gives up after a second consecutive failure (only one retry)', async () => {
     const { runtime, recoverCalls } = scriptedRuntime([connErr(), connErr()]);
-    const session = new KiroSession('node-5', 'sid-5', runtime, '/tmp');
+    const session = new AcpAgentSession('node-5', 'sid-5', runtime, '/tmp');
 
     let thrown: unknown;
     try {
@@ -84,8 +84,8 @@ describe('KiroSession connection-class auto-retry', () => {
         recoverCount += 1;
         return false; // recovery failed
       },
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('node-6', 'sid-6', runtime, '/tmp');
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-6', 'sid-6', runtime, '/tmp');
 
     let thrown: unknown;
     try {
@@ -99,12 +99,12 @@ describe('KiroSession connection-class auto-retry', () => {
   });
 });
 
-describe('KiroSession agent_run owner retry behavior', () => {
+describe('AcpAgentSession agent_run owner retry behavior', () => {
   it('agent_run owner surfaces ACPProcessExitedError without retry', async () => {
     const { runtime, recoverCalls } = scriptedRuntime([
       new ACPProcessExitedError('ACP process exited with code 1'),
     ]);
-    const session = new KiroSession('attempt-2', 'sid-run-2', runtime, '/tmp', {
+    const session = new AcpAgentSession('attempt-2', 'sid-run-2', runtime, '/tmp', {
       owner: runOwner('run-2', 'attempt-2'),
     });
 
@@ -120,7 +120,7 @@ describe('KiroSession agent_run owner retry behavior', () => {
   });
 });
 
-describe('KiroSession Pages turn context and attribution', () => {
+describe('AcpAgentSession Pages turn context and attribution', () => {
   it('sends manifest context only to the model and exposes attribution only for the owning send', async () => {
     let activeGetter: (() => { turnId: string; assistantId: string } | null) | undefined;
     let modelText = '';
@@ -141,8 +141,8 @@ describe('KiroSession Pages turn context and attribution', () => {
         activeGetter = getter;
         return () => { activeGetter = undefined; };
       },
-    } as unknown as KiroRuntime;
-    const session = new KiroSession('node-pages', 'sid-pages', runtime, '/tmp', {
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-pages', 'sid-pages', runtime, '/tmp', {
       owner: { mode: 'interactive', key: 'node-pages' },
     });
 
@@ -160,13 +160,13 @@ describe('KiroSession Pages turn context and attribution', () => {
   });
 });
 
-describe('KiroSession auto-retry is visible to the UI', () => {
+describe('AcpAgentSession auto-retry is visible to the UI', () => {
   it('transient retry reads as "model unavailable", not "cannot reach"', async () => {
     const { runtime } = scriptedRuntime([
       new ACPError('failed to generate a response'),
       [{ sessionUpdate: 'turn_end', stopReason: 'end_turn' }],
     ]);
-    const session = new KiroSession('vis-2', 'sid-vis-2', runtime, '/tmp');
+    const session = new AcpAgentSession('vis-2', 'sid-vis-2', runtime, '/tmp');
 
     const events = [];
     for await (const ev of session.send('hi')) events.push(ev);

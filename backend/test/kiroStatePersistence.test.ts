@@ -12,8 +12,8 @@ import { resetKiroContext } from '../src/services/resetKiroContext';
 import { closeDb, initDb } from '../src/services/db';
 import { saveWorkspace, saveNode, getNode, updateNodeResumeBinding } from '../src/services/dbRepository';
 import { chatHub } from '../src/agents/chatHub';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import { michiTestHost } from './helpers/michiTestHost';
 
@@ -55,14 +55,14 @@ test('a Crew session persists its settings under the crew runtime id', async (t)
     t.mock.method(AcpClient.prototype, 'start', () => {});
     t.mock.method(AcpClient.prototype, 'initialize', async () => ({}));
     const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
-    const runtime = new KiroRuntime({ bridge, defaultCwd: directory, host: michiTestHost(), id: 'crew', engine: 'v2' });
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: directory, host: michiTestHost(), id: 'crew', engine: 'v2' });
     try {
         const client = await runtime.ensureClient(directory);
         (client as any).dispatch({ method: 'session/update', params: { sessionId: 'crew-native', update: {
             sessionUpdate: 'config_option_update',
             configOptions: [{ id: 'model', type: 'select', currentValue: 'm2', options: [{ value: 'm1' }, { value: 'm2' }] }],
         } } });
-        const crew = new KiroSession('node', 'crew-native', runtime, directory, { runtimeId: 'crew' });
+        const crew = new AcpAgentSession('node', 'crew-native', runtime, directory, { runtimeId: 'crew' });
         persistSessionState(crew, 'alice', crew.getSessionState());
         assert.equal(getNode('node')?.model_id, 'm2');
     } finally {

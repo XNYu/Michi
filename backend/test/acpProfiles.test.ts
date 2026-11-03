@@ -479,7 +479,7 @@ describe('Cursor/Grok runtime capability overrides', () => {
     const acp = fs.readFileSync(path.join(__dirname, '../src/agents/acp/AcpRuntime.ts'), 'utf8');
     const cursor = fs.readFileSync(path.join(__dirname, '../src/agents/cursor/CursorRuntime.ts'), 'utf8');
     const grok = fs.readFileSync(path.join(__dirname, '../src/agents/grok/GrokRuntime.ts'), 'utf8');
-    const kiro = fs.readFileSync(require.resolve('michi-runtime/internal/adapters/kiro/KiroRuntime'), 'utf8');
+    const kiro = fs.readFileSync(require.resolve('michi-runtime/internal/adapters/kiro/AcpAgentRuntime'), 'utf8');
     assert.match(acp, /CURSOR_GROK_ACP_CAPABILITIES/);
     assert.match(acp, /saveContext:\s*true/);
     assert.match(acp, /spawnBranches:\s*true/);

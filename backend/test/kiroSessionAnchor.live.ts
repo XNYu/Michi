@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { AgentSession } from '../src/agents/types';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
 
 if (process.env.MICHI_KIRO_ANCHOR_LIVE !== '1') throw new Error('Set MICHI_KIRO_ANCHOR_LIVE=1 to use real Kiro');
@@ -21,7 +21,7 @@ delete process.env.MICHI_CLOUD;
 const { initDb, closeDb } = require('../src/services/db') as typeof import('../src/services/db');
 const repo = require('../src/services/dbRepository') as typeof import('../src/services/dbRepository');
 const { McpSlotRegistry, mountMcp } = require('../src/services/mcpServer') as typeof import('../src/services/mcpServer');
-const { KiroRuntime: Runtime } = require('michi-runtime/internal/adapters/kiro/KiroRuntime') as typeof import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+const { AcpAgentRuntime: Runtime } = require('michi-runtime/internal/adapters/kiro/AcpAgentRuntime') as typeof import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
 const { michiTestHost } = require('./helpers/michiTestHost') as typeof import('./helpers/michiTestHost');
 const { kiroEnvOptions } = require('../src/agents/michiKiroOptions') as typeof import('../src/agents/michiKiroOptions');
 initDb();
@@ -54,7 +54,7 @@ const bridge = {
     updateContext: () => null,
 };
 const model = process.env.MICHI_KIRO_ANCHOR_MODEL ?? 'claude-opus-5.5';
-let runtime: KiroRuntime | undefined;
+let runtime: AcpAgentRuntime | undefined;
 let unused: { sid: string; slotId?: string } | undefined;
 let passed = false;
 const watchdog = setTimeout(() => {

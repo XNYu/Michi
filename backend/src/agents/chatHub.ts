@@ -1596,7 +1596,7 @@ export class ChatHub {
         message = detail;
       }
     }
-    // KiroSession tags connection/auth/generic on the thrown error so the UI
+    // AcpAgentSession tags connection/auth/generic on the thrown error so the UI
     // can show a class-appropriate banner (retry vs. re-login vs. raw). Failing
     // that, a runtime_error event's own code is used if it is one of those
     // kinds. Absent for unclassified errors — the UI falls back to a plain

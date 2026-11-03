@@ -4,7 +4,7 @@ import type { RuntimeObservability } from "../../contract/host";
 /**
  * The slice of AcpClient the title generator needs. Kept narrow so tests can
  * drive it with a fake and so the generator never reaches into chat-session
- * bookkeeping (sessionCwd, sidByNodeId, …) that belongs to KiroRuntime.
+ * bookkeeping (sessionCwd, sidByNodeId, …) that belongs to AcpAgentRuntime.
  */
 export interface KiroTitleClient {
     isAlive(): boolean;

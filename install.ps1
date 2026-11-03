@@ -9,7 +9,7 @@
 
 .EXAMPLE
     # One-liner from the web:
-    irm https://raw.githubusercontent.com/XNYu/Michi/main/install.ps1 | iex
+    irm https://raw.githubusercontent.com/michiworks/Michi/main/install.ps1 | iex
 
     # Or saved locally with options:
     .\install.ps1
@@ -23,7 +23,7 @@ $ErrorActionPreference = "Stop"
 
 # Configuration — override via environment variables before running.
 $Dir         = if ($env:MICHI_INSTALL_DIR) { $env:MICHI_INSTALL_DIR } else { Join-Path $env:USERPROFILE "Michi" }
-$Repo        = if ($env:MICHI_REPO_URL)    { $env:MICHI_REPO_URL }    else { "https://github.com/XNYu/Michi.git" }
+$Repo        = if ($env:MICHI_REPO_URL)    { $env:MICHI_REPO_URL }    else { "https://github.com/michiworks/Michi.git" }
 $NodeVersion = if ($env:MICHI_NODE_VERSION) { $env:MICHI_NODE_VERSION } else { "22.21.1" }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

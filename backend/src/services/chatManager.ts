@@ -1,5 +1,5 @@
 import type { NormalizedEvent } from "./chatEvents";
-import type { KiroRuntime } from "michi-runtime/internal/adapters/kiro/KiroRuntime";
+import type { AcpAgentRuntime } from "michi-runtime/internal/adapters/kiro/AcpAgentRuntime";
 import type { AgentReasoning, AgentSession, ChatMessage, ExtraContext, NewAgentSessionOptions } from "../agents/types";
 import * as sessionRegistry from "../agents/sessionRegistry";
 import { normalizeWorkspaceCwd } from "../agents/tools/pathSandbox";
@@ -101,12 +101,12 @@ export function primaryAgentSessionOptions(binding: PrimaryAgentBinding | null):
 }
 
 /**
- * Thin facade that brokers chat-creation requests to KiroRuntime and
+ * Thin facade that brokers chat-creation requests to AcpAgentRuntime and
  * registers the resulting AgentSession with sessionRegistry. Used by
  * digestGenerator, which still takes a ChatManager handle —
  * routes/michi.ts now goes through sessionRegistry directly.
  *
- * KiroRuntime is constructed by RUNTIME_FACTORIES in server.ts; ChatManager
+ * AcpAgentRuntime is constructed by RUNTIME_FACTORIES in server.ts; ChatManager
  * holds a reference to the registered instance instead of owning its
  * lifecycle. The runtime is optional so Pi-only / Claude-only deployments
  * (where Kiro isn't registered) can still construct a ChatManager — the
@@ -114,11 +114,11 @@ export function primaryAgentSessionOptions(binding: PrimaryAgentBinding | null):
  */
 export class ChatManager {
     constructor(
-        private readonly runtime: KiroRuntime | undefined,
+        private readonly runtime: AcpAgentRuntime | undefined,
         private readonly defaultCwd: string = process.cwd(),
     ) {}
 
-    getRuntime(): KiroRuntime | undefined {
+    getRuntime(): AcpAgentRuntime | undefined {
         return this.runtime;
     }
 

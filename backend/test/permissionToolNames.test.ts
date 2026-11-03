@@ -47,7 +47,7 @@ const beforeClaudeBrokerName = (name: string) => {
   const sent = ({ Read: 'read', Glob: 'find', Grep: 'grep' } as Record<string, string>)[name] ?? name.replace(/^mcp____michi_internal____/, '');
   return sent === 'Bash' ? 'bash' : ['Edit', 'MultiEdit', 'NotebookEdit'].includes(sent) ? 'edit' : sent === 'Write' ? 'write' : sent;
 };
-/** KiroSession's broker name, then RuntimeRunExecutor's own aliases. */
+/** AcpAgentSession's broker name, then RuntimeRunExecutor's own aliases. */
 const beforeKiroBrokerName = (toolCall: unknown, meta: unknown) => {
   const sent = acpPermissionToolName(toolCall, meta) ?? 'unknown';
   return sent === 'Bash' ? 'bash' : ['Edit', 'MultiEdit', 'NotebookEdit'].includes(sent) ? 'edit' : sent === 'Write' ? 'write' : sent;

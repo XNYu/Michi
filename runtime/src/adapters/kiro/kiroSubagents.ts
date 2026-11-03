@@ -7,7 +7,7 @@ import {
 } from 'michi-shared';
 
 /**
- * Kiro subagent mapping (pure; KiroSession owns the stream loop).
+ * Kiro subagent mapping (pure; AcpAgentSession owns the stream loop).
  *
  * V2 publishes a native roster (`_kiro.dev/subagent/list_update`) and runs each
  * stage in its own child session; AcpClient forwards that session's tool calls.

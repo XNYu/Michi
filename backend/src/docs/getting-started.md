@@ -9,7 +9,7 @@ Pages-related sections checked against source on 2026-10-26; other topics retain
 On macOS (Apple Silicon), use the desktop release linked from the repository README, or install from the public source:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/XNYu/Michi/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/michiworks/Michi/main/install.sh | bash
 ```
 
 The source installer uses `~/Michi` and installs the macOS application at `~/Applications/michi.app`. The default application state and configuration live under `~/.michi`; your workspace project folder is separate. A standalone desktop bundle does not include the source checkout required for Crew's portable App.

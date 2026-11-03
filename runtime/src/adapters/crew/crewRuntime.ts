@@ -1,12 +1,12 @@
 import type { AgentCapabilities } from '../../contract/types';
 import type { AcpLaunch } from '../kiro/acpClient';
-import { KiroRuntime, type KiroRuntimeOptions } from '../kiro/KiroRuntime';
+import { AcpAgentRuntime, type KiroRuntimeOptions } from '../kiro/AcpAgentRuntime';
 import { CREW_DESCRIPTOR_OVERRIDE } from './crewDescriptor';
 import { CREW_KIRO_FLAVOR } from './crewFlavor';
 import { crewAvailability, resolveCrewAcpLaunch, type CrewAdapterOptions } from './crewLaunch';
 
 /**
- * KiroRuntime's options less those the Crew preset pins, and less
+ * AcpAgentRuntime's options less those the Crew preset pins, and less
  * isolatedSession, which the preset leaves alone: only a v3 runtime reads it,
  * and the preset pins v2. kiroCli, spawnEnv and preloadTools do not apply:
  * the Crew adapter is a custom launch, whose process inherits this process's
@@ -43,7 +43,7 @@ const CREW_CAPABILITIES: Partial<AgentCapabilities> = {
 };
 
 /**
- * Placeholder when no adapter resolves at spawn time. KiroRuntime never reaches it
+ * Placeholder when no adapter resolves at spawn time. AcpAgentRuntime never reaches it
  * while crewAvailability() is false; if the adapter vanishes later, the child
  * exits at once with a readable stderr line instead of a spawn ENOENT.
  */
@@ -73,7 +73,7 @@ function lazyCrewLaunch(locations: () => CrewAdapterOptions): AcpLaunch {
 }
 
 /**
- * Kiro Crew through its ACP adapter, as a KiroRuntime with id `crew`. The
+ * Kiro Crew through its ACP adapter, as an AcpAgentRuntime with id `crew`. The
  * preset pins engine v2 (one adapter process per cwd, sessions multiplexed;
  * a v3 setting elsewhere must not flip Crew to per-session workers), Crew's
  * flavor, descriptor and capabilities, no sidecar titles (the sidecar would
@@ -87,10 +87,10 @@ function lazyCrewLaunch(locations: () => CrewAdapterOptions): AcpLaunch {
  * checked here: the adapter refuses any other endpoint when it binds a
  * session's slot.
  */
-export function createCrewRuntime(options: CrewRuntimeOptions): KiroRuntime {
+export function createCrewRuntime(options: CrewRuntimeOptions): AcpAgentRuntime {
     const { crew, ...rest } = options;
     const locations = typeof crew === 'function' ? crew : () => crew ?? {};
-    return new KiroRuntime({
+    return new AcpAgentRuntime({
         ...rest,
         engine: 'v2',
         id: 'crew',

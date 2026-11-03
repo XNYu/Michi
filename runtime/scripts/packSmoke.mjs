@@ -62,11 +62,11 @@ try {
   manager.register(codex);
   assert.equal(manager.get('codex'), codex);
   ok('a CodexRuntime constructs and registers with the manager');
-  const { KiroRuntime } = await import(`${NAME}/adapters/kiro`);
-  const kiro = new KiroRuntime({ host, bridge: {}, defaultCwd: scratch });
+  const { AcpAgentRuntime } = await import(`${NAME}/adapters/kiro`);
+  const kiro = new AcpAgentRuntime({ host, bridge: {}, defaultCwd: scratch });
   manager.register(kiro);
   assert.equal(manager.get('kiro'), kiro);
-  ok('a KiroRuntime constructs and registers with the manager');
+  ok('an AcpAgentRuntime constructs and registers with the manager');
 
   // The reference slot provider on a loopback MCP host: a host tool reached
   // through a slot's URL, its report through the session's sink, and the URL
@@ -120,7 +120,7 @@ try {
   assert.equal(manager.get('crew'), crew);
   assert.deepEqual([crew.id, crew.engine], ['crew', 'v2']);
   assert.equal(crew.checkAvailability().available, false, 'Crew is available without a Kiro Crew home');
-  ok('createCrewRuntime builds a v2 KiroRuntime with id crew, unavailable without a Kiro Crew home');
+  ok('createCrewRuntime builds a v2 AcpAgentRuntime with id crew, unavailable without a Kiro Crew home');
   const { ClaudeRuntime, DEFAULT_CLAUDE_LIMITS, DEFAULT_CLAUDE_CLI_FLAGS, claudeAdapterOptions } = await import(`${NAME}/adapters/claude`);
   assert.ok(Object.isFrozen(DEFAULT_CLAUDE_LIMITS) && Object.isFrozen(DEFAULT_CLAUDE_LIMITS.pool) && Object.isFrozen(DEFAULT_CLAUDE_CLI_FLAGS));
   const claudeOptions = claudeAdapterOptions({ host, spawnEnv: () => ({}), configDir: () => join(scratch, 'claude') });

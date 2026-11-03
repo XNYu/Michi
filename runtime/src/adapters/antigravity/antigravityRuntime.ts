@@ -1,12 +1,12 @@
 import type { AgentCapabilities } from '../../contract/types';
 import type { AcpLaunch } from '../kiro/acpClient';
-import { KiroRuntime, type KiroRuntimeOptions } from '../kiro/KiroRuntime';
+import { AcpAgentRuntime, type KiroRuntimeOptions } from '../kiro/AcpAgentRuntime';
 import { ANTIGRAVITY_DESCRIPTOR_OVERRIDE } from './antigravityDescriptor';
 import { ANTIGRAVITY_KIRO_FLAVOR } from './antigravityFlavor';
 import { antigravityAvailability, resolveAntigravityLaunch, type AntigravityAdapterOptions } from './antigravityLaunch';
 
 /**
- * KiroRuntime's options less those the Antigravity preset pins, and less
+ * AcpAgentRuntime's options less those the Antigravity preset pins, and less
  * isolatedSession, which only a v3 runtime reads. kiroCli, spawnEnv and
  * preloadTools do not apply: agy is a custom launch, whose process inherits
  * this process's environment unchanged.
@@ -41,7 +41,7 @@ const ANTIGRAVITY_CAPABILITIES: Partial<AgentCapabilities> = {
 };
 
 /**
- * Placeholder when agy does not resolve at spawn time. KiroRuntime never
+ * Placeholder when agy does not resolve at spawn time. AcpAgentRuntime never
  * reaches it while antigravityAvailability() is false; if agy vanishes later,
  * the child exits at once with a readable stderr line instead of a spawn ENOENT.
  */
@@ -69,7 +69,7 @@ function lazyAntigravityLaunch(locations: () => AntigravityAdapterOptions): AcpL
 }
 
 /**
- * Antigravity's `agy acp` as a KiroRuntime with id `antigravity`. The preset
+ * Antigravity's `agy acp` as an AcpAgentRuntime with id `antigravity`. The preset
  * pins engine v2 (one agy process per cwd, sessions multiplexed), the
  * standard-ACP launch, Antigravity's flavor, descriptor and capabilities, no
  * sidecar titles (agy titles sessions itself) and an offline check that agy
@@ -77,10 +77,10 @@ function lazyAntigravityLaunch(locations: () => AntigravityAdapterOptions): AcpL
  * pinned members win over the same members of `options`, from untyped
  * callers too. A launch override also keeps the Meta agent off Antigravity.
  */
-export function createAntigravityRuntime(options: AntigravityRuntimeOptions): KiroRuntime {
+export function createAntigravityRuntime(options: AntigravityRuntimeOptions): AcpAgentRuntime {
     const { antigravity, ...rest } = options;
     const locations = typeof antigravity === 'function' ? antigravity : () => antigravity ?? {};
-    return new KiroRuntime({
+    return new AcpAgentRuntime({
         ...rest,
         engine: 'v2',
         id: 'antigravity',

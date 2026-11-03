@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import { KiroRuntime as KiroRuntimeClass, type KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import { AcpAgentRuntime as KiroRuntimeClass, type AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { ChatPermissionMode } from 'michi-shared';
 import { michiTestHost } from './helpers/michiTestHost';
 import { chatOwner, runOwner } from './helpers/owners';
@@ -45,16 +45,16 @@ function harness(choice: { mode: ChatPermissionMode; approveForMe: boolean }, op
     getClient: () => client,
     getCurrentMode: () => null,
     getCurrentModel: () => null,
-  } as unknown as KiroRuntime;
-  const session = new KiroSession('node-1', 'sid-1', runtime, '/tmp', { owner: chatOwner('node-1') });
+  } as unknown as AcpAgentRuntime;
+  const session = new AcpAgentSession('node-1', 'sid-1', runtime, '/tmp', { owner: chatOwner('node-1') });
   return { session, reopens, prompts, presets: () => presets };
 }
 
-async function send(session: KiroSession): Promise<void> {
+async function send(session: AcpAgentSession): Promise<void> {
   for await (const _event of session.send('hi')) { /* drain */ }
 }
 
-describe('KiroSession Approve for me', () => {
+describe('AcpAgentSession Approve for me', () => {
   it('turns the preset on before the next prompt and leaves a matching session alone', async () => {
     const h = harness({ mode: 'ask', approveForMe: true }, []);
     await send(h.session);
@@ -102,7 +102,7 @@ describe('KiroSession Approve for me', () => {
   });
 });
 
-describe('KiroRuntime Approve for me eligibility', () => {
+describe('AcpAgentRuntime Approve for me eligibility', () => {
   const bridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
   function runtime(options: Record<string, unknown>, choice: { mode: ChatPermissionMode; approveForMe: boolean }) {
     const host = michiTestHost();

@@ -4,7 +4,7 @@ import { ChatHub, type SidecarTitleRequest } from '../src/agents/chatHub';
 import type { AgentRuntime, AgentSession } from '../src/agents/types';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import { registerRuntime } from '../src/agents/registry';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { RUNTIME_FACTORIES } from '../src/agents/runtimeFactories';
 import { michiTestHost } from './helpers/michiTestHost';
 import type { NormalizedEvent } from '../src/services/chatEvents';
@@ -15,7 +15,7 @@ import { runOwner } from './helpers/owners';
 // titles need the user's opt-in from its descriptor.
 const bridge: AgentToolBridge = { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null };
 const registered: AgentRuntime[] = [
-  new KiroRuntime({ bridge, defaultCwd: '/tmp/michi-title-gate', host: michiTestHost(), sidecarTitles: false }),
+  new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/michi-title-gate', host: michiTestHost(), sidecarTitles: false }),
   RUNTIME_FACTORIES.find((factory) => factory.id === 'crew')!.create({ bridge, defaultCwd: '/tmp/michi-title-gate', host: michiTestHost() }),
 ];
 for (const runtime of registered) registerRuntime(runtime);

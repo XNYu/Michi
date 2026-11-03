@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { log as michiLog } from '../src/services/logger';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { RuntimeObservability } from 'michi-runtime/internal/contract/host';
@@ -60,13 +60,13 @@ test('an AcpClient without a host reports nothing and still runs', async () => {
   await client.shutdown();
 });
 
-test('KiroRuntime hands its host\'s observability to every ACP client it starts', async (t) => {
+test('AcpAgentRuntime hands its host\'s observability to every ACP client it starts', async (t) => {
   t.mock.method(AcpClient.prototype, 'start', () => {});
   t.mock.method(AcpClient.prototype, 'initialize', async () => {});
   t.mock.method(AcpClient.prototype, 'shutdown', async () => {});
   const { events, observability } = recordingObservability();
   const host = { ...michiTestHost(), observability };
-  const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/michi-kiro-observability', host });
+  const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/michi-kiro-observability', host });
   try {
     const client = await runtime.ensureClient('/tmp/michi-kiro-observability');
     assert.equal((client as unknown as { observability: unknown }).observability, observability);
@@ -94,7 +94,7 @@ test('Kiro\'s remaining warnings and notices go to the observability port', asyn
 
   events.length = 0;
   const cache = { load: () => [{ modelId: 'cached-model', name: 'Cached' }], save: () => {} };
-  const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp/michi-kiro-observability', modelCache: cache as never,
+  const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp/michi-kiro-observability', modelCache: cache as never,
     host: { ...michiTestHost(), observability } });
   try {
     runtime.refreshModels = async () => { throw new Error('offline'); };

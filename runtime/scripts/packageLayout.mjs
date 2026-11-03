@@ -64,14 +64,14 @@ export const INTERNAL_MARKERS = {
  * entry here is no longer reached unexported. A new type in a public
  * signature is exported, or listed here with its reason.
  */
-const KIRO_EXTRAS = "used only by KiroRuntime's members that AgentRuntime does not declare: "
+const KIRO_EXTRAS = "used only by AcpAgentRuntime's members that AgentRuntime does not declare: "
   + "Michi's own wiring of Kiro, outside the v1 guarantee (README)";
 export const REACHABLE_UNEXPORTED = {
-  'adapters/kiro/KiroRuntime#KiroSessionBinding': KIRO_EXTRAS,
-  'adapters/kiro/KiroRuntime#LoadSessionResult': KIRO_EXTRAS,
-  'adapters/kiro/KiroRuntime#McpSlotCallbacksFactory': KIRO_EXTRAS,
-  'adapters/kiro/KiroRuntime#OpenSessionResult': KIRO_EXTRAS,
-  'adapters/kiro/KiroSession#KiroSession': KIRO_EXTRAS,
+  'adapters/kiro/AcpAgentRuntime#KiroSessionBinding': KIRO_EXTRAS,
+  'adapters/kiro/AcpAgentRuntime#LoadSessionResult': KIRO_EXTRAS,
+  'adapters/kiro/AcpAgentRuntime#McpSlotCallbacksFactory': KIRO_EXTRAS,
+  'adapters/kiro/AcpAgentRuntime#OpenSessionResult': KIRO_EXTRAS,
+  'adapters/kiro/AcpAgentSession#AcpAgentSession': KIRO_EXTRAS,
   'core/defaultHost#PortOverride': "the mapped type behind DefaultHostPortOverrides; a host writes DefaultHostPortOverrides['<port>']",
   'vendor/michi-shared/harness#CAPABILITY_KEYS': 'a value, reached only as typeof CAPABILITY_KEYS[number] in CapabilityKey, which is exported',
   'vendor/michi-shared/reasoning#REASONING_LEVELS': 'a value, reached only as typeof REASONING_LEVELS[number] in RuntimeReasoning, which is exported',

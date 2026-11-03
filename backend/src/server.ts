@@ -81,7 +81,7 @@ import { createAgentToolBridge } from './agents/toolBridge';
 import type { ProviderEnvBinding } from './agents/types';
 import * as sessionRegistry from './agents/sessionRegistry';
 import type { AgentRuntime } from './agents/types';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { printEnvInfo } from './envDetect';
 import { startupMark } from './services/startupTrace';
 import { configureRuntimeDeps } from './agents/runtimeDeps';
@@ -254,7 +254,7 @@ sessionRegistry.configureRuntimeManager(runtimeHost);
 // env bindings are collected here and pushed into secrets.ts after
 // registration.
 const allEnvBindings: ProviderEnvBinding[] = [];
-let kiroRuntime: KiroRuntime | undefined;
+let kiroRuntime: AcpAgentRuntime | undefined;
 let agentRunAssembly: AgentRunAssembly | null = null;
 for (const factory of getEnabledFactories()) {
     let runtime!: AgentRuntime;
@@ -386,7 +386,7 @@ for (const factory of getEnabledFactories()) {
       host: runtimeHost,
     });
     registerRuntime(runtime);
-    if (factory.id === 'kiro') kiroRuntime = runtime as KiroRuntime;
+    if (factory.id === 'kiro') kiroRuntime = runtime as AcpAgentRuntime;
     if (factory.envBindings) allEnvBindings.push(...factory.envBindings);
     log.info('boot', 'runtime registered', { id: runtime.id });
 }

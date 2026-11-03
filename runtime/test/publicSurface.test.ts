@@ -16,8 +16,8 @@ import type { CodexAdapterOptions, CodexHostText, CodexRuntimeOptions } from '..
 import type {
   AcpLaunch, AcpProcessOptions, KiroAcpAgentTurnHandler, KiroAcpAgentTurnUpdate, KiroAcpClient, KiroAcpClientOptions,
   KiroAcpInitializeResult, KiroAcpMcpServer, KiroAcpSessionOptions, KiroAcpWorkflowRouter, KiroAdapterOptions,
-  KiroCancelAck, KiroCliLookup, KiroDescriptorOverride, KiroEngine, KiroFlavor, KiroNewSessionMemory, KiroRuntimeOptions,
-  KiroSessionMemory,
+  KiroCancelAck, KiroCliLookup, KiroDescriptorOverride, KiroEngine, AcpAgentFlavor, KiroFlavor, KiroNewSessionMemory,
+  KiroRuntimeOptions, KiroSessionMemory,
 } from '../src/adapters/kiro/index';
 import type { CrewAdapterOptions, CrewAppLocation, CrewLaunchResolution, CrewRuntimeOptions } from '../src/adapters/crew/index';
 import type {
@@ -55,7 +55,7 @@ export type PublicTypeExports = [
   ClaudeAdapterOptions, ClaudeAdapterOptionsInput, ClaudeCliFlags, ClaudeHostText, ClaudeLimits, ClaudeModelCatalogOptions,
   ClaudeModelProbe, ClaudeRuntimeOptions, CodexAdapterOptions, CodexHostText, CodexRuntimeOptions,
   AcpLaunch, AcpProcessOptions, KiroAcpClient, KiroAdapterOptions, KiroCliLookup, KiroDescriptorOverride, KiroEngine,
-  KiroCancelAck, KiroFlavor, KiroNewSessionMemory, KiroRuntimeOptions, KiroSessionMemory,
+  KiroCancelAck, AcpAgentFlavor, KiroNewSessionMemory, KiroRuntimeOptions, KiroSessionMemory,
   KiroAcpAgentTurnHandler, KiroAcpAgentTurnUpdate, KiroAcpClientOptions, KiroAcpInitializeResult, KiroAcpMcpServer,
   KiroAcpSessionOptions, KiroAcpWorkflowRouter,
   CrewAdapterOptions, CrewAppLocation, CrewLaunchResolution, CrewRuntimeOptions,
@@ -129,21 +129,29 @@ describe('public surface', () => {
     ]);
   });
 
-  it('./adapters/kiro exports the Kiro runtime, its errors, engine, descriptor and flavor', () => {
+  it('./adapters/kiro exports the ACP agent runtime, its errors, engine, descriptor and flavor', () => {
     assert.deepEqual(valueNames(kiro), [
-      'KIRO_FLAVOR', 'KIRO_STATIC_DESCRIPTOR', 'KiroConcurrencyError', 'KiroProcessCapError', 'KiroRuntime',
-      'resolveKiroEngine',
+      'AcpAgentRuntime', 'KIRO_FLAVOR', 'KIRO_STATIC_DESCRIPTOR', 'KiroConcurrencyError', 'KiroProcessCapError',
+      'KiroRuntime', 'resolveKiroEngine',
     ]);
   });
 
-  it('./adapters/crew exports createCrewRuntime, the pieces it passes KiroRuntime and its launch lookup', () => {
+  it('./adapters/kiro keeps the old KiroRuntime and KiroFlavor names as aliases', () => {
+    assert.equal(kiro.KiroRuntime, kiro.AcpAgentRuntime);
+    const flavor: KiroFlavor = kiro.KIRO_FLAVOR;
+    const runtime: kiro.KiroRuntime | undefined = undefined;
+    assert.equal(flavor, kiro.KIRO_FLAVOR);
+    assert.equal(runtime, undefined);
+  });
+
+  it('./adapters/crew exports createCrewRuntime, the pieces it passes AcpAgentRuntime and its launch lookup', () => {
     assert.deepEqual(valueNames(crew), [
       'CREW_DESCRIPTOR_OVERRIDE', 'CREW_KIRO_FLAVOR', 'CREW_STATIC_DESCRIPTOR', 'DEFAULT_CREW_APP', 'createCrewRuntime',
       'crewAvailability', 'resolveCrewAcpLaunch',
     ]);
   });
 
-  it('./adapters/antigravity exports createAntigravityRuntime, the pieces it passes KiroRuntime and its launch lookup', () => {
+  it('./adapters/antigravity exports createAntigravityRuntime, the pieces it passes AcpAgentRuntime and its launch lookup', () => {
     assert.deepEqual(valueNames(antigravity), [
       'ANTIGRAVITY_DESCRIPTOR_OVERRIDE', 'ANTIGRAVITY_HARNESS', 'ANTIGRAVITY_KIRO_FLAVOR', 'ANTIGRAVITY_STATIC_DESCRIPTOR',
       'antigravityAvailability', 'createAntigravityRuntime', 'resolveAntigravityLaunch',

@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '../..');
 process.env.TS_NODE_PROJECT = path.join(root, 'backend/tsconfig.json');
 require('ts-node/register');
 const { AcpClient } = require('michi-runtime/internal/adapters/kiro/acpClient');
-const { KiroSession } = require('michi-runtime/internal/adapters/kiro/KiroSession');
+const { AcpAgentSession } = require('michi-runtime/internal/adapters/kiro/AcpAgentSession');
 const { CREW_KIRO_FLAVOR } = require('michi-runtime/internal/adapters/crew/crewFlavor');
 const { createCrewGateway } = require('michi-runtime/internal/adapters/crew/acp/gatewayClient');
 const { parseCrewAcpConfig } = require('michi-runtime/internal/adapters/crew/acp/main');
@@ -35,7 +35,7 @@ const report = { model, effort, checks: [] };
         assert.equal((await client.executeCommand(sid, 'effort', { value: effort })).success, true);
         const runtime = { id: 'crew', host, ensureClient: async () => client,
             getCurrentMode: () => info.modes.currentModeId, getCurrentModel: () => model };
-        const session = new KiroSession('disposable-node', sid, runtime, cwd, { runtimeId: 'crew', flavor: CREW_KIRO_FLAVOR, enableFollowUps: false });
+        const session = new AcpAgentSession('disposable-node', sid, runtime, cwd, { runtimeId: 'crew', flavor: CREW_KIRO_FLAVOR, enableFollowUps: false });
         const started = Date.now();
         let firstOutputMs, text = '', tools = 0;
         timer = setTimeout(() => { void client.cancel(sid); }, 180000);

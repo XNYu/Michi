@@ -14,6 +14,8 @@ import path from 'node:path';
 
 import {
   findCodexBinary,
+  findExecutableInDirBounded,
+  invalidateCodexBinaryCache,
   preflightCodexAuth,
   resetCodexBinaryCacheForTest,
   CodexBinaryNotFoundError,
@@ -69,6 +71,23 @@ describe('codexBinary', () => {
     process.env.PATH = emptyBinDir;
 
     const chatGptCodex = '/Applications/ChatGPT.app/Contents/Resources/codex';
+    const origExistsSync = fs.existsSync;
+    (fs as typeof fs & { existsSync: typeof fs.existsSync }).existsSync = (candidate: fs.PathLike) =>
+      candidate.toString() === chatGptCodex;
+
+    try {
+      assert.equal(findCodexBinary(), chatGptCodex);
+    } finally {
+      fs.existsSync = origExistsSync;
+    }
+  });
+
+  test('findCodexBinary resolves the codex-cli package bundled with newer ChatGPT.app builds', () => {
+    const emptyBinDir = path.join(tmpDir, 'emptybin');
+    fs.mkdirSync(emptyBinDir);
+    process.env.PATH = emptyBinDir;
+
+    const chatGptCodex = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
     const origExistsSync = fs.existsSync;
     (fs as typeof fs & { existsSync: typeof fs.existsSync }).existsSync = (candidate: fs.PathLike) =>
       candidate.toString() === chatGptCodex;
@@ -159,5 +178,55 @@ describe('codexBinary', () => {
     } finally {
       fs.existsSync = origMethod;
     }
+  });
+
+  test('findExecutableInDirBounded discovers codex inside arbitrary nested .app/Contents subdirectories', () => {
+    const fakeContents = path.join(tmpDir, 'ChatGPT.app', 'Contents');
+    const nestedBinDir = path.join(fakeContents, 'Resources', 'vendor', 'codex-runtime', 'bin');
+    fs.mkdirSync(nestedBinDir, { recursive: true });
+    const nestedCodex = path.join(nestedBinDir, 'codex');
+    fs.writeFileSync(nestedCodex, '#!/bin/sh\necho codex', { mode: 0o755 });
+
+    assert.equal(findExecutableInDirBounded(fakeContents, 'codex', 4), nestedCodex);
+    assert.equal(findExecutableInDirBounded(fakeContents, 'codex', 2), null);
+  });
+
+  test('persistent cache skips full discovery on subsequent startups and re-discovers only when missing', () => {
+    const cacheFile = path.join(tmpDir, 'cache', 'codex-binary.json');
+    const binDirV1 = path.join(tmpDir, 'v1');
+    const binDirV2 = path.join(tmpDir, 'v2');
+    fs.mkdirSync(binDirV1, { recursive: true });
+    fs.mkdirSync(binDirV2, { recursive: true });
+
+    const codexV1 = path.join(binDirV1, 'codex');
+    fs.writeFileSync(codexV1, '#!/bin/sh\necho v1', { mode: 0o755 });
+
+    // Startup 1 (first launch): no cache file yet -> discovers codexV1 on PATH and persists it.
+    resetCodexBinaryCacheForTest(cacheFile);
+    process.env.PATH = binDirV1;
+    assert.equal(findCodexBinary(), codexV1);
+    assert.ok(fs.existsSync(cacheFile), 'cache file should be written after first discovery');
+
+    // Startup 2: simulate a fresh process start with an empty PATH.
+    // Because codexV1 still exists on disk, it should be returned directly from the persisted cache
+    // without needing PATH to contain binDirV1.
+    resetCodexBinaryCacheForTest(cacheFile);
+    const emptyBinDir = path.join(tmpDir, 'emptybin');
+    fs.mkdirSync(emptyBinDir);
+    process.env.PATH = emptyBinDir;
+    assert.equal(findCodexBinary(), codexV1);
+
+    // Startup 3: simulate ChatGPT.app / user moving codex from v1 to v2 ("找不到的时候才检查").
+    fs.rmSync(codexV1);
+    const codexV2 = path.join(binDirV2, 'codex');
+    fs.writeFileSync(codexV2, '#!/bin/sh\necho v2', { mode: 0o755 });
+    process.env.PATH = binDirV2;
+
+    resetCodexBinaryCacheForTest(cacheFile);
+    assert.equal(findCodexBinary(), codexV2);
+
+    // And invalidateCodexBinaryCache removes the persisted file and in-memory cache.
+    invalidateCodexBinaryCache();
+    assert.equal(fs.existsSync(cacheFile), false);
   });
 });

@@ -6,7 +6,7 @@ import { NativeResumeFailedError } from "../../contract/errors";
  * Cancel-watchdog recovery restarts the shared Kiro process, so it is refused
  * while a healthy peer session or control request still uses that process.
  * The quarantined session is untouched; recovery can be attempted again once
- * the peer finishes. KiroSession waits on this error instead of failing.
+ * the peer finishes. AcpAgentSession waits on this error instead of failing.
  */
 export class KiroCancelRecoveryBusyError extends NativeResumeFailedError {
   /** The busy peer is a workflow run. A paused workflow never finishes by itself. */

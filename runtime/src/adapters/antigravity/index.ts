@@ -1,5 +1,5 @@
 // Public entry of the Antigravity preset (`michi-runtime/adapters/antigravity`):
-// createAntigravityRuntime, and the pieces it passes KiroRuntime to run
+// createAntigravityRuntime, and the pieces it passes AcpAgentRuntime to run
 // Antigravity's `agy acp`.
 export { createAntigravityRuntime, type AntigravityRuntimeOptions } from './antigravityRuntime';
 export { ANTIGRAVITY_KIRO_FLAVOR } from './antigravityFlavor';

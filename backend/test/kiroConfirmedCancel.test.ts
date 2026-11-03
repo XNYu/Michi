@@ -1,5 +1,5 @@
 /**
- * Stop on a Kiro chat turn, through ChatHub, KiroSession and the real
+ * Stop on a Kiro chat turn, through ChatHub, AcpAgentSession and the real
  * AcpClient (fake stdio). kiro-cli 2.35.1 settles a cancelled session/prompt
  * with stopReason "cancelled" on both engines (.probe/kiro, probe-cancel.mjs),
  * so that answer is reported as the agent's own acknowledgement, ahead of the
@@ -9,8 +9,8 @@ import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { AcpClient } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { CREW_KIRO_FLAVOR } from 'michi-runtime/internal/adapters/crew/crewFlavor';
 import type { ChatStreamEvent } from 'michi-shared';
 import { ChatHub } from '../src/agents/chatHub';
@@ -39,7 +39,7 @@ function fixture(engine: 'v2' | 'v3', cancelTimeoutMs = 2_000) {
     ensureClient: async () => client,
     respondToPermission: () => {},
     cancelPermission: (_sid: string, requestId: number) => client.cancelPermission(requestId),
-  } as unknown as KiroRuntime;
+  } as unknown as AcpAgentRuntime;
   const promptIds = () => wire.filter((m) => m.method === 'session/prompt').map((m) => m.id);
   return { client: client as any, wire, runtime, promptIds };
 }
@@ -66,7 +66,7 @@ const phases = (events: ChatStreamEvent[]) => events.filter((e) => e.event === '
 async function cancelledTurn(engine: 'v2' | 'v3', answer: (client: any, id: number) => void, options: { cancelTimeoutMs?: number; crew?: boolean } = {}) {
   const { client, wire, runtime, promptIds } = fixture(engine, options.cancelTimeoutMs);
   await client.newSession();
-  const session = new KiroSession('node-1', 'sid', runtime, '/tmp', {
+  const session = new AcpAgentSession('node-1', 'sid', runtime, '/tmp', {
     owner: chatOwner('node-1'), ...(options.crew ? { flavor: CREW_KIRO_FLAVOR, runtimeId: 'crew' } : {}),
   });
   const chat = hub();
@@ -144,7 +144,7 @@ describe('Kiro confirmed cancel through ChatHub', () => {
         const settle = client.cancelAndSettle.bind(client);
         client.cancelAndSettle = async (...args: unknown[]) => { const settled = await settle(...args); await delay(20); return settled; };
       }
-      const session = new KiroSession('node-1', 'sid', runtime, '/tmp', { owner: chatOwner('node-1') });
+      const session = new AcpAgentSession('node-1', 'sid', runtime, '/tmp', { owner: chatOwner('node-1') });
       const stream = session.send('count to 400');
       const first = stream.next();
       await until(() => promptIds().length === 1);
@@ -170,7 +170,7 @@ describe('Kiro confirmed cancel through ChatHub', () => {
     client.executeCommand = () => new Promise((resolve) => {
       release = () => resolve({ success: true, data: { confirmed: true, state: 'stopped' } });
     });
-    const session = new KiroSession('node-1', 'sid', runtime, '/tmp', { owner: chatOwner('node-1'), flavor: CREW_KIRO_FLAVOR, runtimeId: 'crew' });
+    const session = new AcpAgentSession('node-1', 'sid', runtime, '/tmp', { owner: chatOwner('node-1'), flavor: CREW_KIRO_FLAVOR, runtimeId: 'crew' });
     const stream = session.send('count to 400');
     const first = stream.next();
     await until(() => promptIds().length === 1);
@@ -193,7 +193,7 @@ describe('Kiro confirmed cancel through ChatHub', () => {
   it('cancel without a running prompt dispatches, and claims nothing more', async () => {
     const { client, runtime } = fixture('v2');
     await client.newSession();
-    const session = new KiroSession('node-1', 'sid', runtime, '/tmp', { owner: chatOwner('node-1') });
+    const session = new AcpAgentSession('node-1', 'sid', runtime, '/tmp', { owner: chatOwner('node-1') });
     assert.deepEqual(await session.cancel(), { acknowledged: true, source: 'inferred', confidence: 'unknown', nativeMethod: 'session/cancel' });
     client.proc = null;
   });

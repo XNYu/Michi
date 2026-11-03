@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PiRuntime } from '../src/agents/pi/PiRuntime';
 import { PiSession } from '../src/agents/pi/PiSession';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { CREW_KIRO_FLAVOR } from 'michi-runtime/internal/adapters/crew/crewFlavor';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import { clearAllSessions, getSession, getSessionForUser } from '../src/agents/sessionRegistry';
@@ -94,7 +94,7 @@ for (const runtimeId of ['kiro', 'crew'] as const) {
     const previousDataDir = process.env.MICHI_DATA_DIR;
     process.env.MICHI_DATA_DIR = root; closeDb(); initDb();
     const prompts: string[] = [];
-    const runtime = new KiroRuntime({ bridge, defaultCwd: '/tmp',
+    const runtime = new AcpAgentRuntime({ bridge, defaultCwd: '/tmp',
       host: michiTestHost(), id: runtimeId, engine: 'v2', sidecarTitles: false, ...(runtimeId === 'crew' ? { flavor: CREW_KIRO_FLAVOR } : {}) });
     const client = {
       async *prompt(_sid: string, text: string) { prompts.push(text); yield { type: 'text' as const, text: 'answer' }; },

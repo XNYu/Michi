@@ -1,11 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { michiTestHost } from './helpers/michiTestHost';
 
-function runtimeWithUpdates(updates: Array<Record<string, unknown>>): KiroRuntime {
+function runtimeWithUpdates(updates: Array<Record<string, unknown>>): AcpAgentRuntime {
     const client = {
         async *prompt() {
             for (const update of updates) yield update;
@@ -16,14 +16,14 @@ function runtimeWithUpdates(updates: Array<Record<string, unknown>>): KiroRuntim
         ensureClient: async () => client,
         getCurrentMode: () => null,
         getCurrentModel: () => null,
-    } as unknown as KiroRuntime;
+    } as unknown as AcpAgentRuntime;
 }
 
-describe('KiroSession metadata completion tail', () => {
+describe('AcpAgentSession metadata completion tail', () => {
     it('shows a set_branch_overview result without the instruction it gives Kiro', async () => {
         // The result Michi's MCP server returns for a Kiro slot (services/mcpServer.ts).
         const result = 'Branch overview recorded. This turn\'s user-facing response is already complete; emit [MICHI_METADATA_DONE] as the runtime end-of-turn marker (auto-stripped before display).';
-        const session = new KiroSession('node-5', 'session-5', runtimeWithUpdates([
+        const session = new AcpAgentSession('node-5', 'session-5', runtimeWithUpdates([
             { sessionUpdate: 'tool_call_update', toolCallId: 'overview-1', title: 'set_branch_overview', status: 'completed', rawOutput: result },
             { sessionUpdate: 'tool_call_update', toolCallId: 'other-1', title: 'Read', status: 'completed', rawOutput: 'file contents' },
             { sessionUpdate: 'turn_end', stopReason: 'end_turn' },
@@ -34,7 +34,7 @@ describe('KiroSession metadata completion tail', () => {
     });
 
     it('strips a completion sentinel split across ACP chunks and keeps it out of history', async () => {
-        const session = new KiroSession('node-1', 'session-1', runtimeWithUpdates([
+        const session = new AcpAgentSession('node-1', 'session-1', runtimeWithUpdates([
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Visible answer.' } },
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '[MICHI_META' } },
             { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'DATA_DONE]' } },
@@ -61,7 +61,7 @@ describe('KiroSession metadata completion tail', () => {
             __tool_use_purpose: purpose,
             operations: [{ mode: 'Line', path: '/workspace/example-app/package.json' }],
         };
-        const session = new KiroSession('node-4', 'session-4', runtimeWithUpdates([
+        const session = new AcpAgentSession('node-4', 'session-4', runtimeWithUpdates([
             {
                 sessionUpdate: 'tool_call',
                 toolCallId: 'read-1',

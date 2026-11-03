@@ -6,7 +6,7 @@ import { ClaudeRuntime } from 'michi-runtime/internal/adapters/claude/ClaudeRunt
 import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
 import { ACPError, ACPNotRunningError } from 'michi-runtime/internal/adapters/kiro/acpClient';
 import { isNativeSessionUnavailable } from 'michi-runtime/internal/adapters/kiro/acpErrors';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import type { AgentRuntime, AgentSession } from '../src/agents/types';
 
 const options = { sessionId: 'node', nodeId: 'node', cwd: '/tmp' };
@@ -61,7 +61,7 @@ test('Kiro missing-session classification uses the exact observed error envelope
 });
 
 test('Kiro retries dead processes and service throttling but not auth, MCP or ambiguous idle timeouts', () => {
-  const retryable = KiroRuntime.prototype.isNativeResumeRetryable;
+  const retryable = AcpAgentRuntime.prototype.isNativeResumeRetryable;
   assert.equal(retryable(new ACPNotRunningError('not running')), true);
   assert.equal(retryable(new ACPError('Internal error', { rpcData: 'ThrottlingException' })), true);
   for (const error of [new ACPError('Request session/load idle for 180000ms (no updates from agent)'),
@@ -96,5 +96,5 @@ test('a signed-out native restore runs once and preserves the actionable cause',
     return true;
   });
   assert.equal(attempts, 1);
-  assert.equal(KiroRuntime.prototype.isNativeResumeRetryable(new KiroSignedOutError()), false);
+  assert.equal(AcpAgentRuntime.prototype.isNativeResumeRetryable(new KiroSignedOutError()), false);
 });

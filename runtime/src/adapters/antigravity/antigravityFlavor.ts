@@ -1,4 +1,4 @@
-import type { KiroFlavor } from '../kiro/kiroFlavor';
+import type { AcpAgentFlavor } from '../kiro/acpAgentFlavor';
 import { isHeadlessOwner } from '../kiro/kiroOwner';
 
 /** agy names a tool of an MCP server `<server>` as `mcp_<server>_<tool>`; Michi's server is `michi`. */
@@ -31,7 +31,7 @@ function isAuthenticationRequired(error: { code?: number; message?: string } | s
  * and settles a cancelled prompt at once. A lost native session is rebuilt
  * from the host's history. It reports token usage, not metering.
  */
-export const ANTIGRAVITY_KIRO_FLAVOR: KiroFlavor = {
+export const ANTIGRAVITY_KIRO_FLAVOR: AcpAgentFlavor = {
     hostPorts: [],
     prompt: {
         firstMessage: (host, input) => host.prompt.firstTurnPrefix(input),

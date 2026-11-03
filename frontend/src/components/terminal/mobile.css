@@ -157,7 +157,7 @@ html[data-reduce-motion='on'] .terminal-composer .t-action-btn:active:not(:disab
   .terminal-dashboard .composer-model-trigger.t-toolbar-chip { min-width: 40px; max-width: 100px; flex: 1 1 52px; padding-inline: 4px; }
   /* TPane sets the sides inline per density; phones use one inset just
      inside the composer's, and user cards take up to 80% of the text. */
-  .terminal-pane__transcript { padding-left: 14px !important; padding-right: 14px !important; }
+  .terminal-pane__transcript { --att-thumb-size: 56px; padding-left: 14px !important; padding-right: 14px !important; }
   .terminal-pane__transcript :is(.terminal-message-user, .terminal-message-user-editing) { max-width: 80%; }
   .terminal-pane__transcript .terminal-message-user-editing { width: 80%; }
 }

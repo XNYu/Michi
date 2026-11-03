@@ -2,7 +2,7 @@
  * Live, opt-in cancel/continue probe using the production ACP transport.
  * Run from the root:
  * npx ts-node --project backend/tsconfig.json backend/scripts/probe-kiro-cancel.ts
- * Add --http to exercise real HTTP routes, SQLite, ChatHub and KiroRuntime too.
+ * Add --http to exercise real HTTP routes, SQLite, ChatHub and AcpAgentRuntime too.
  * Uses a temporary cwd/data dir and a restricted local agent. Does not open or
  * mutate existing Michi conversations. Requires an authenticated kiro-cli.
  */
@@ -19,7 +19,7 @@ async function startHttpProbe(directory: string, client: AcpClient) {
   const { default: express } = await import('express');
   const { initDb, closeDb, getDb } = await import('../src/services/db');
   const { getNode } = await import('../src/services/dbRepository');
-  const { KiroRuntime } = await import('michi-runtime/internal/adapters/kiro/KiroRuntime');
+  const { AcpAgentRuntime } = await import('michi-runtime/internal/adapters/kiro/AcpAgentRuntime');
   const { resolveKiroEngine } = await import('michi-runtime/internal/adapters/kiro/kiroProtocol');
   const { kiroEnvOptions } = await import('../src/agents/michiKiroOptions');
   const { createMichiRuntimeHost } = await import('../src/agents/michiRuntimeHost');
@@ -32,7 +32,7 @@ async function startHttpProbe(directory: string, client: AcpClient) {
   getDb().prepare('INSERT INTO workspaces (id,name,cwd,created_at,updated_at) VALUES (?,?,?,1,1)').run('probe-ws', 'Isolated cancel probe', directory);
   getDb().prepare("INSERT INTO nodes (id,workspace_id,title,kind,status,minimized,spawned_by_agent,created_at) VALUES ('probe-node','probe-ws','Cancel probe','chat','idle',0,0,1)").run();
   // As the Kiro factory builds it, without MCP slots.
-  const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, defaultCwd: directory,
+  const runtime = new AcpAgentRuntime({ bridge: {} as AgentToolBridge, defaultCwd: directory,
     ...kiroEnvOptions(), engine: resolveKiroEngine(process.env.MICHI_KIRO_ENGINE), host: createMichiRuntimeHost() });
   // Attach the instrumented, already initialized client to the real pool.
   (runtime as any).pool.set(directory, client);

@@ -1,11 +1,11 @@
-import type { KiroAdapterOptions } from "michi-runtime/internal/adapters/kiro/KiroRuntime";
+import type { KiroAdapterOptions } from "michi-runtime/internal/adapters/kiro/AcpAgentRuntime";
 import type { CrewAdapterOptions } from "michi-runtime/internal/adapters/crew/crewLaunch";
 
 // Michi's environment settings for the Kiro and Crew adapters, read here so
 // the adapters read none themselves, each when the adapter used to read it.
 // Type imports only: loading this module loads no adapter.
 
-// These four were module constants of KiroRuntime and AcpClient, read when
+// These four were module constants of AcpAgentRuntime and AcpClient, read when
 // those modules loaded, before server.ts loads backend/.env. They stay module
 // constants: this module loads at the same point (runtimeFactories and
 // routes/crew import it statically), so backend/.env still does not set them.
@@ -23,7 +23,7 @@ const KIRO_ACP_IDLE_TIMEOUT_MS = (() => {
 /**
  * The KiroAdapterOptions Michi takes from its environment, for Kiro and Crew
  * (Crew pins its own engine). Besides the module constants above, the
- * concurrency cap is read when the runtime is created, as KiroRuntime's
+ * concurrency cap is read when the runtime is created, as AcpAgentRuntime's
  * constructor read it; the functions are called where the adapter read the
  * variable (each question, catalog, kiro-cli lookup and spawn, where the
  * tool-preload switch was read off the spawn environment).

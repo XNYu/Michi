@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AcpClient, ACPError } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroSession } from 'michi-runtime/internal/adapters/kiro/KiroSession';
-import type { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentSession } from 'michi-runtime/internal/adapters/kiro/AcpAgentSession';
+import type { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { michiTestHost } from './helpers/michiTestHost';
 
 const config = [
@@ -43,8 +43,8 @@ test('pre-new snapshots and inter-turn MCP state survive draining without cancel
     await c.newSession();
     c.injectUpdate('sid', { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'STALE' } });
     const events = [];
-    const runtime = { host: michiTestHost(), engine: 'v3', ensureClient: async () => c, getClient: () => c } as unknown as KiroRuntime;
-    for await (const event of new KiroSession('node', 'sid', runtime, '/tmp').send('hello')) events.push(event);
+    const runtime = { host: michiTestHost(), engine: 'v3', ensureClient: async () => c, getClient: () => c } as unknown as AcpAgentRuntime;
+    for await (const event of new AcpAgentSession('node', 'sid', runtime, '/tmp').send('hello')) events.push(event);
     const state = events.find((event) => event.kind === 'session_state');
     assert.ok(state?.kind === 'session_state');
     assert.ok(state.state.commands?.some((c) => c.name === 'context' && c.description === 'Latest context'));

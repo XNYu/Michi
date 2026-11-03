@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { RuntimeDescriptor, RuntimeRunFacet, RuntimeTopology } from 'michi-runtime/internal/contract/descriptor';
 import { descriptorOf, UNKNOWN_RUNTIME_DESCRIPTOR } from 'michi-runtime/internal/core/descriptors';
 import { describeRuntimeCapabilities } from '../src/agents/capabilityDescriptors';
-import { KiroRuntime, type KiroAdapterOptions } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime, type KiroAdapterOptions } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { ClaudeRuntime } from 'michi-runtime/internal/adapters/claude/ClaudeRuntime';
 import { CodexRuntime } from 'michi-runtime/internal/adapters/codex/CodexRuntime';
 import type { CodexAppServerClient } from 'michi-runtime/internal/adapters/codex/CodexAppServerClient';
@@ -54,9 +54,9 @@ function withEnv<T>(env: Partial<Record<(typeof DESCRIPTOR_ENV)[number], string>
   }
 }
 
-function kiro(options: Omit<KiroAdapterOptions, 'host'>, env: { cloud?: boolean; mcp?: boolean; sidecarModel?: string } = {}): KiroRuntime {
+function kiro(options: Omit<KiroAdapterOptions, 'host'>, env: { cloud?: boolean; mcp?: boolean; sidecarModel?: string } = {}): AcpAgentRuntime {
   return withEnv({ MICHI_CLOUD: env.cloud ? '1' : undefined, MICHI_TITLE_MODEL_KIRO: env.sidecarModel },
-    () => track(new KiroRuntime({ bridge, mcpSlots: env.mcp ? mcpRegistry : undefined, defaultCwd: '/tmp/michi-descriptors', ...options, host: michiTestHost() })));
+    () => track(new AcpAgentRuntime({ bridge, mcpSlots: env.mcp ? mcpRegistry : undefined, defaultCwd: '/tmp/michi-descriptors', ...options, host: michiTestHost() })));
 }
 
 function factory(id: string) {

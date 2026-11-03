@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AcpClient, ACPError } from 'michi-runtime/internal/adapters/kiro/acpClient';
-import { KiroRuntime } from 'michi-runtime/internal/adapters/kiro/KiroRuntime';
+import { AcpAgentRuntime } from 'michi-runtime/internal/adapters/kiro/AcpAgentRuntime';
 import { NativeResumeUnavailableError } from '../src/services/nativeResume';
 import type { AgentToolBridge } from '../src/agents/toolBridge';
 import type { McpSlot } from 'michi-runtime/internal/contract/mcp';
@@ -19,7 +19,7 @@ function fixture() {
     create: () => ({ slotId: 'slot' }) as McpSlot,
     dispose: async (slot: string) => { disposed.push(slot); },
   });
-  const runtime = new KiroRuntime({ bridge: {} as AgentToolBridge, mcpSlots: registry, defaultCwd: '/tmp', host: michiTestHost() });
+  const runtime = new AcpAgentRuntime({ bridge: {} as AgentToolBridge, mcpSlots: registry, defaultCwd: '/tmp', host: michiTestHost() });
   runtime.ensureClient = async () => client as unknown as AcpClient;
   return { runtime, client, models, disposed };
 }

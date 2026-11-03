@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawnAgentProcess, killProcessTree } from '../../core/processTree';
 import { withDeadline } from '../../core/runtimeLifecycle';
-import { findCodexBinary, warnIfCodexVersionBelowMinimum } from './codexBinary';
+import { findCodexBinary, invalidateCodexBinaryCache, warnIfCodexVersionBelowMinimum } from './codexBinary';
 import type { CodexIncoming, CodexRpcId } from './codexProtocol';
 
 export class CodexRpcTimeoutError extends Error {
@@ -145,7 +145,10 @@ export class CodexAppServerClient {
     child.stdout.on('error', broken);
     child.stderr.on('error', broken);
     child.on('error', (err) => {
-      if (!child.pid) this.failedSpawns.add(child);
+      if (!child.pid) {
+        this.failedSpawns.add(child);
+        invalidateCodexBinaryCache();
+      }
       console.error('[CodexAppServerClient] spawn error:', err);
       broken();
     });

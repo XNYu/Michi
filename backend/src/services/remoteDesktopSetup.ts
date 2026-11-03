@@ -440,7 +440,7 @@ export class RemoteDesktopSetup {
     const attemptId = diagnostics?.report.id ?? randomUUID();
     diagnostics?.append('remote update log', '~/.local/share/michi/devdesktop/update.' + attemptId + '.log');
     const result = readRemoteJson<RemoteInfo>(await run(target, buildRemoteUpdateScript({ repo: info.repo, dataDir: info.dataDir, token: info.token!, port: info.port! },
-      this.deps.sourceUrl ?? process.env.MICHI_REMOTE_SOURCE_URL ?? 'https://github.com/XNYu/Michi.git',
+      this.deps.sourceUrl ?? process.env.MICHI_REMOTE_SOURCE_URL ?? 'https://github.com/michiworks/Michi.git',
       this.deps.ref ?? process.env.MICHI_REMOTE_SOURCE_REF ?? 'main', status.local.revision, attemptId), signal, progress, diagnostics));
     if (!result.healthy || result.token !== connection.token || result.port !== connection.remotePort || result.dataDir !== info.dataDir) {
       throw new RemoteDesktopError('verify', 'The updated service did not retain this connection’s data directory, port and credentials.');
@@ -554,7 +554,7 @@ export class RemoteDesktopSetup {
         remoteDataDir ??= '~/.michi';
         diagnostics?.append('remote setup log', '~/.local/share/michi/devdesktop/setup.' + diagnostics.report.id + '.log');
         info = readRemoteJson<RemoteInfo>(await run(target, buildRemoteInstallScript(
-          this.deps.sourceUrl ?? process.env.MICHI_REMOTE_SOURCE_URL ?? 'https://github.com/XNYu/Michi.git',
+          this.deps.sourceUrl ?? process.env.MICHI_REMOTE_SOURCE_URL ?? 'https://github.com/michiworks/Michi.git',
           this.deps.ref ?? process.env.MICHI_REMOTE_SOURCE_REF ?? 'main',
           process.env.MICHI_REMOTE_EXPERIMENT_BUNDLE, diagnostics?.report.id, installDataDir,
         ), signal, progress, diagnostics));
