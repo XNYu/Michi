@@ -3,7 +3,9 @@ import { installMockApi } from '../fixtures/mockApi';
 import { leaveSettings, openSettings } from '../fixtures/shell';
 
 const variants = [
-  ['soft-fade', 'Soft Fade', 150, 0, 0],
+  // The default drifts the content in from the side the pane arrives on: the
+  // third pane opens right of the focused root, so it comes from the right.
+  ['soft-fade', 'Soft Fade', 180, 8, 0],
   ['gentle-glide', 'Gentle Glide', 180, 0, 8],
   ['frozen-retract', 'Frozen Retract', 220, 0, -6],
 ] as const;

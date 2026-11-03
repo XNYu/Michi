@@ -823,3 +823,65 @@
 .settings-backup__preview { margin-top: 20px; padding: 16px; border: 1px solid var(--term-line); border-radius: 6px; }
 .settings-backup__preview strong { overflow-wrap: anywhere; font-size: var(--fs-md); }
 .settings-backup [role='alert'] { color: var(--term-fg); }
+
+/* ── Runtime & model (ModelPane.tsx) ──────────────────────────────
+   Model: a trigger shaped like the rows' selects that opens the catalog,
+   with its filter inside the list (ModelCombobox.tsx). */
+.settings-model-combo__trigger.ui-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-model-combo__trigger.ui-select:disabled { opacity: 0.55; cursor: default; }
+.settings-model-combo__trigger[aria-busy='true'] { cursor: progress; }
+.settings-model-combo__value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-model-combo__chevron { flex: none; color: var(--term-muted); transform: rotate(90deg); }
+.settings-model-combo__trigger[aria-expanded='true'] .settings-model-combo__chevron { transform: rotate(-90deg); }
+.settings-model-combo__popover { display: flex; flex-direction: column; }
+.settings-model-combo__body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.settings-model-combo__list { flex: 0 1 auto; max-height: 300px; }
+.settings-model-combo__list:focus { outline: none; }
+.settings-model-combo__copy { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
+.settings-model-combo__label,
+.settings-model-combo__detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-model-combo__detail { color: var(--term-muted); font-size: var(--m-captionSize); font-weight: 400; }
+
+/* API key: whether one is saved, in the same box as the buttons beside it
+   (.ui-btn's font, line height, padding, border and radius). */
+.settings-key-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--term-line);
+  border-radius: var(--ui-radius);
+  color: var(--term-mid);
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.settings-key-status[data-tone='ok'] {
+  border-color: color-mix(in srgb, var(--term-digest) 40%, var(--term-line));
+  background: var(--term-digest-f);
+  color: var(--term-digest);
+}
+.settings-key-status[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--term-select) 40%, var(--term-line));
+  background: var(--term-select-f);
+  color: var(--term-select);
+}
+.settings-key-status__dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+/* The field for a new key, at the buttons' height. */
+.settings-key-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-key-editor > .ui-input { flex: 1 1 220px; width: auto; min-width: 0; padding-block: 6px; line-height: 1.2; }
+.settings-row__note[data-tone='ok'] { color: var(--term-digest); }
+a.settings-row__link { text-decoration: none; }
+/* Narrow: the key's status and actions move under its name. */
+@container settings-section (max-width: 520px) {
+  .settings-section .settings-row:has(> .settings-row__control > .settings-key-status) { grid-template-columns: minmax(0, 1fr); }
+  .settings-section .settings-row__control:has(> .settings-key-status) { justify-content: flex-start; flex-wrap: wrap; }
+}

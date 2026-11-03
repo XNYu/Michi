@@ -65,7 +65,9 @@ try {
   const runtimeStatus = (status.availableRuntimes ?? []).find((item) => item.id === runtimeId);
   if (!runtimeStatus?.available || status.hasRequiredKey !== true) throw new Error(`Runtime unavailable or provider key not configured: ${runtimeId}`);
   if (runtimeId === 'pi' && status.provider !== 'deepseek') throw new Error(`Pi selected unexpected provider ${status.provider ?? '(none)'}`);
-  if (runtimeId === 'pi' && status.model !== 'deepseek-v4-pro') throw new Error(`Pi selected unexpected model ${status.model ?? '(none)'}`);
+  // DeepSeek's default is its floating alias, so this stays stable across
+  // DeepSeek releases (see PI_PROVIDERS.floatingModel).
+  if (runtimeId === 'pi' && status.model !== 'deepseek-chat') throw new Error(`Pi selected unexpected model ${status.model ?? '(none)'}`);
   evidence.runtime = { id: runtimeId, provider: status.provider ?? null, model: status.model ?? null, hasRequiredKey: status.hasRequiredKey === true };
 
   const workspaceId = `pages-maintenance-${randomUUID()}`;

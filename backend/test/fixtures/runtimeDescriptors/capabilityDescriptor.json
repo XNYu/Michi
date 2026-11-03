@@ -560,14 +560,14 @@
       "notes": "Agent.abort()"
     },
     "compact": {
-      "availability": "invisible",
-      "confidence": "unverifiable",
-      "notes": "pi-agent-core exposes no compaction API"
+      "availability": "native_unwired",
+      "confidence": "unknown",
+      "notes": "SDK auto-compaction is active; manual compact has no host route"
     },
     "retry": {
       "availability": "invisible",
       "confidence": "unverifiable",
-      "notes": "Retry events exist on the unimplemented SDK session layer only"
+      "notes": "SDK automatic retries disabled; Michi owns retry policy"
     },
     "sessionFork": {
       "availability": "michi_simulated",
@@ -575,14 +575,14 @@
       "notes": "Michi node tree is authoritative; Pi JSONL is resume detail"
     },
     "nativeResume": {
-      "availability": "inferred",
-      "confidence": "projected",
-      "notes": "SQLite text replay, not native session file"
+      "availability": "native",
+      "confidence": "native",
+      "notes": "Scoped SDK JSONL restored only when its checkpoint matches authoritative SQLite history"
     },
     "permissions": {
       "availability": "michi_simulated",
       "confidence": "projected",
-      "notes": "michi_policy via beforeToolCall"
+      "notes": "michi_policy through the SDK tool_call lifecycle"
     },
     "sandbox": {
       "availability": "michi_simulated",

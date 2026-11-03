@@ -1,5 +1,5 @@
 import {
-  Archive, Bell, CalendarClock, CircleUser, Cpu, ExternalLink, HardDriveDownload, Keyboard, Palette, Server,
+  Archive, Bell, CalendarClock, CircleUser, Cpu, ExternalLink, HardDriveDownload, Keyboard, Palette, RefreshCw, Server,
   Sparkles, Trash2, type LucideIcon,
 } from 'lucide-react';
 import type { PageId } from '../../../state/commands';
@@ -12,13 +12,13 @@ import { SETTINGS_AREA_SECTIONS, type SettingsAreaSection } from '../../../state
  */
 export type SettingsPage =
   | 'account' | 'runtime' | 'meta-agent' | 'machines' | 'appearance'
-  | 'notifications' | 'links' | 'backup' | 'scheduled' | 'shortcuts';
+  | 'notifications' | 'links' | 'backup' | 'scheduled' | 'shortcuts' | 'update';
 
 export interface SettingsPageInfo {
   label: string;
   icon: LucideIcon;
   section: SettingsAreaSection;
-  /** Only where it applies: shortcuts need a keyboard, a phone shows the account above its list. */
+  /** Only where it applies: shortcuts need a keyboard; a phone updates the machine it opened. */
   only?: 'window' | 'phone';
 }
 
@@ -33,6 +33,8 @@ export const SETTINGS_PAGES: Readonly<Record<SettingsPage, SettingsPageInfo>> = 
   backup: { label: 'Backup & restore', icon: HardDriveDownload, section: 'data' },
   scheduled: { label: 'Scheduled jobs', icon: CalendarClock, section: 'general' },
   shortcuts: { label: 'Keyboard shortcuts', icon: Keyboard, section: 'general', only: 'window' },
+  /** The machine serving the phone updates itself to the latest main branch (UpdatePane). */
+  update: { label: 'Update', icon: RefreshCw, section: 'general', only: 'phone' },
   account: { label: 'Account', icon: CircleUser, section: 'general' },
 };
 
@@ -51,7 +53,7 @@ export const SETTINGS_GROUPS: ReadonlyArray<{ title: string; items: readonly Set
   { title: 'Connections', items: [{ kind: 'page', page: 'machines' }] },
   { title: 'App', items: [{ kind: 'page', page: 'appearance' }, { kind: 'page', page: 'notifications' }, { kind: 'page', page: 'links' }] },
   { title: 'Data', items: [...SETTINGS_PLACES.map((place) => ({ kind: 'place' as const, place })), { kind: 'page', page: 'backup' }] },
-  { title: 'About', items: [{ kind: 'page', page: 'scheduled' }, { kind: 'page', page: 'shortcuts' }, { kind: 'page', page: 'account' }] },
+  { title: 'About', items: [{ kind: 'page', page: 'update' }, { kind: 'page', page: 'scheduled' }, { kind: 'page', page: 'shortcuts' }, { kind: 'page', page: 'account' }] },
 ];
 
 export function isSettingsPage(value: unknown): value is SettingsPage {

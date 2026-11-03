@@ -41,8 +41,8 @@ const vendorDir = join(dist, 'vendor', 'michi-shared');
 /** What happens to a file under src/ that is not TypeScript: copied to the same path in dist/, or left out. */
 function assetPolicy(file) {
   if (ASSETS.includes(file)) return 'copy';
-  // Michi's own Crew guides: its UI, installer and validation runs, not this package's API.
-  if (/^adapters\/crew\/[^/]+\.md$/.test(file)) return 'leave out';
+  // Michi's own Crew and Antigravity guides: its UI, installer and validation runs, not this package's API.
+  if (/^adapters\/(crew|antigravity)\/[^/]+\.md$/.test(file)) return 'leave out';
   return undefined;
 }
 

@@ -1,7 +1,8 @@
 /** Never includes CLI output or credential material. */
 export class KiroSignedOutError extends Error {
-  constructor() {
-    super('Kiro is not signed in. Run kiro-cli login, then try again. Background starts are paused until sign-in changes.');
+  /** `message`: a launch-override agent's own explanation, with how to sign in. */
+  constructor(message = 'Kiro is not signed in. Run kiro-cli login, then try again. Background starts are paused until sign-in changes.') {
+    super(message);
     this.name = 'KiroSignedOutError';
   }
 }

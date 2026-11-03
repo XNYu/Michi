@@ -39,6 +39,16 @@ describe('AgentRunCard', () => {
     expect(screen.getByText('Snapshot Implementer')).not.toBeNull();
   });
 
+  it('reveals the handoff when a live run settles, reading its new status once', () => {
+    const { rerender } = render(<AgentRunCard run={run(AgentRunStatus.Running)} now={3000} onOpen={() => {}} />);
+    expect(screen.queryByTestId('compact-handoff')).toBeNull();
+    rerender(<AgentRunCard run={run(AgentRunStatus.Completed)} now={3000} onOpen={() => {}} />);
+    expect(screen.getByTestId('compact-handoff').textContent).toBe('completed conclusion');
+    // The old status word goes at once (the new one fades in): never both.
+    expect(screen.getByText(AgentRunStatus.Completed)).not.toBeNull();
+    expect(screen.queryByText(AgentRunStatus.Running)).toBeNull();
+  });
+
   it('shows recovery subtly and opens with a composite identity', () => {
     const onOpen = vi.fn();
     const attempts: AgentRunAttemptDtoV1[] = [0, 1].map((attemptIndex) => ({

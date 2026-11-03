@@ -4,13 +4,14 @@ The interactive Assistant uses the selected runtime's native tools, configured M
 
 Applies to: native Pages and the local Meta agent in this backend source. Source checked: 2026-10-29. Runtime support below is a source contract, not live provider or installed-app acceptance. See `pages-and-components` for editing and `page-component-design` for component styling.
 
-## Three kinds of work
+## Kinds of work
 
 | Path | What it reads | What it changes |
 | --- | --- | --- |
 | Pages Assistant | Accessible Michi work requested in the conversation, using Michi integration tools plus the selected runtime tools | Requested pages/rows; protected content becomes a suggestion; new ordinary conversations require the start-conversation approval flow |
 | Initial workspace-home generation | Eligible conversations in that workspace within the configured initial look-back | Only its assigned workspace home, citing messages actually read |
 | Automatic conversation maintenance | Newly completed, readable conversation turns in an enrolled workspace | Eligible pages/databases through verified write/proposal receipts, or explicit no-change decisions |
+| Watch check (see **Workspace instructions and watches**) | Outside sources through read-only tools, on the watch's interval, and the workspace's eligible pages/databases | The same eligible resources, with one final write or no-change decision per resource per check |
 
 Pages Home also has a separate summary pass. It reads workspace home pages, not their original conversations, and writes only its assigned Home. It removes conversation-source claims from those summary writes rather than pretending it read the underlying messages. Home's computed Waiting/Stalled/Done sections and progress cards are separate from a durable task database: a completed reply/run does not by itself mean a business task is done.
 
@@ -50,7 +51,7 @@ Page-tree exclusion records the completion interval it missed. Re-enabling makes
 
 Saving **Layout preferences** alone does not enqueue a model turn or rearrange content. Each maintenance/initial-generation read uses the target page's own preferences and rules; global Home preferences do not propagate to workspace or child pages. A page's preferences take precedence over the default block choices in the initial-generation, Home summary and maintenance prompts; only program-applied section limits override them.
 
-Initial generation has no fixed block set. It opens a workspace home with a short status callout (at most two sentences), then picks two to five blocks to fit what it read, such as next steps with owners, a dated timeline, an open comparison or conflict, checks with states, milestones or reference facts. It titles each block in the page's language, and adds metrics only for numbers the work itself produced, never counts of conversations or messages. Later maintenance keeps blocks in shape instead of only appending to them. When a block's content no longer fits its type, maintenance replaces the block with one of a fitting type. It replaces only blocks no person edited; a block a person edited is updated in place as a suggestion. An initial generation that already succeeded does not run again, so new preferences apply through later maintenance.
+Initial generation has no fixed block set or template. It opens a workspace home with a short callout (at most two sentences): how far the work got, or, where the conversations are thinking rather than building, what the person is still torn about. It then picks two to five blocks by the shape of what it read, such as an open conflict or comparison, a diagram of how concepts relate, a before/after for an overturned view, a grid or tabs for themes developing side by side, a toggle for long reasoning, or, for work that is moving, next steps with owners, checks with states, milestones or reference facts. A thinking page centres on the person's own thinking, not a digest of the assistant's answers: a view or change of mind counts as the person's only when they said it, and the assistant's proposals stay marked as proposals, with whether the person answered. Next steps hold only steps someone decided to take, and every such step; when one has a deadline or holds up other work, next steps come right after the callout. It titles each block in the page's language, and adds metrics only for numbers the work itself produced, never counts of conversations or messages. Later maintenance keeps blocks in shape instead of only appending to them, and lets the page's structure follow the conversations: a lone new idea lands small, a list that grew long or split into themes is restructured, a settled question replaces its open conflict or comparison with what was decided, and a challenged claim becomes an open conflict or a recorded change of view. When a block's content no longer fits its type, maintenance replaces the block with one of a fitting type. It replaces only blocks no person edited; a block a person edited is updated in place as a suggestion. An initial generation that already succeeded does not run again, so new preferences apply through later maintenance.
 
 ## Evidence, ownership and progress
 
@@ -79,6 +80,18 @@ Once the task database is routed for a source, maintenance finds tasks with `mai
 - Do not route the task database for a turn that works on no goal.
 
 On the workspace's board the cards an update added or changed read **New** or **Updated**, its suggestions wait on their cards, and a line above the board says what it did, with Undo while any of it was written. Undo puts back the whole update, including a suggestion from it the person already accepted. All tasks shows none of these marks.
+
+## Workspace instructions and watches
+
+The **Conversation maintenance** panel of an enabled workspace also holds two per-workspace settings. Neither changes the runtime, which stays in **Settings → Meta agent**, and editing either does not stop a run in progress.
+
+**Instructions for this workspace** is up to 4,000 characters of text the Meta agent follows in every run that writes this workspace: conversation maintenance, its first-time generation and each watch. The Spaces Home summary spans all workspaces and does not receive them. They never widen the maintenance tools or relax their rules. A page's own **Layout preferences** still govern that page's organization.
+
+A **watch** is a timed check of outside sources such as tickets or tasks: a name, what to check and where to record it, and an interval from 15 minutes to 7 days. A workspace has at most 10. The workspace's single maintenance execution runs a due watch as its own run, ahead of conversation work. The interval counts from when a check starts, so a failed check is retried at the next interval, not in a loop. **Check now** makes a watch due at once; it runs when the workspace's maintenance is free. Watches run only while workspace maintenance is enabled and not paused, and global maintenance pause stops them too.
+
+A check reads outside sources through the same gateway as other maintenance: read-only external MCP tools run without approval, and any other tool returns an approval request in **Settings → Meta agent → Tool approvals** without executing. A check has no source conversation and does not route: `maintenance_read_source` returns the watch and the previous successful check's report (the end of its reply), and `maintenance_list_resources` lists every eligible page and database of the workspace, with excluded page trees and the saved Home Page left out as usual. The check must read a resource from its first range before writing it. It makes at most one final write or no-change decision per resource, against the revision it read, and an exact retry replays that decision. Human-edited blocks and cells become suggestions, as in other maintenance writes. A page a conversation is editing is recorded as waiting and read again by the next check.
+
+A check succeeds only when its tools recorded at least one decision; a reply that recorded none fails the run, whatever it says. Its writes stay whatever the turn did. Each check's result appears on the watch and in the maintenance execution's run history. After 3 failed checks in a row a watch turns itself off and shows why; turning it back on clears that. Cancelled or interrupted checks do not count toward that limit. A check that fails still counts as a failed run of the workspace's maintenance execution.
 
 ## Diagnose an update that seems missing
 

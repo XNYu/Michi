@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AnimatePresence, useIsPresent } from 'motion/react';
 import { PopoverSurface, MenuItem as MenuRow } from './ui/Popover';
 import { useMenuConfirm } from './ui/useMenuConfirm';
 
@@ -120,6 +121,34 @@ const DETAIL_DELAY_MS = 250;
 /** Below this many rows a touch menu is scanned, not filtered. */
 const TOUCH_FILTER_MIN_ITEMS = 8;
 
+const openKeys = new WeakMap<object, number>();
+let openKeySeq = 0;
+/**
+ * The AnimatePresence key for one opening of a menu, from the anchor object
+ * its opener creates each time. A menu reopened during its fade-out then
+ * mounts afresh (focus, search, page) beside the fading one instead of
+ * reviving it with what it last showed.
+ */
+export function menuOpenKey(anchor: object): number {
+  let key = openKeys.get(anchor);
+  if (key === undefined) {
+    key = ++openKeySeq;
+    openKeys.set(anchor, key);
+  }
+  return key;
+}
+
+/**
+ * AnimatePresence for the menu of one row in a long list: mounted the first
+ * time the menu opens and kept for its fade-outs, so rows that never open one
+ * carry none of its hooks and effects.
+ */
+export function MenuPresence({ children }: { children: React.ReactNode }) {
+  const [used, setUsed] = useState(false);
+  if (!used && children) setUsed(true);
+  return used ? <AnimatePresence>{children}</AnimatePresence> : null;
+}
+
 /**
  * Shell-neutral right-click menu. Positions itself at the cursor, flips
  * when it would overflow the viewport, closes on any outside click or
@@ -145,6 +174,9 @@ export default function ContextMenu({
 }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  // Inside the caller's <AnimatePresence> a closed menu fades out for a moment
+  // (PopoverSurface); meanwhile it takes no clicks, keys or confirmations.
+  const present = useIsPresent();
   // On a touch screen a focused field raises the keyboard over the list (and
   // iOS zooms into it), so a short list shows no filter and none takes focus.
   const [touch] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none) and (pointer: coarse)').matches);
@@ -242,7 +274,13 @@ export default function ContextMenu({
     return () => { ro.disconnect(); window.removeEventListener('resize', reposition); };
   }, [x, y, anchorBottom, preferBelow]);
 
+  // A blink still running when the menu closes another way never fires.
   useEffect(() => {
+    if (!present) cancel();
+  }, [present, cancel]);
+
+  useEffect(() => {
+    if (!present) return;
     const onDocDown = (e: MouseEvent) => {
       if (!ref.current) return;
       if (e.target instanceof Node && ref.current.contains(e.target)) return;
@@ -286,7 +324,7 @@ export default function ContextMenu({
       document.removeEventListener('mousedown', onDocDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [showSearch, fireWithBlink, dismiss]);
+  }, [present, showSearch, fireWithBlink, dismiss]);
 
   const run = (item: MenuItem) => fireWithBlink(item);
 
@@ -556,7 +594,7 @@ export default function ContextMenu({
         </ul>
       )}
     </PopoverSurface>
-    {detail && detailItem?.sublabel && (
+    {present && detail && detailItem?.sublabel && (
       <MenuDetailCard
         menuRef={ref}
         rowTop={detail.rowTop}

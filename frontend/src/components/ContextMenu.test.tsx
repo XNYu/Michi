@@ -1,7 +1,8 @@
 import React from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { AnimatePresence } from 'motion/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import ContextMenu from './ContextMenu';
+import ContextMenu, { MenuPresence, menuOpenKey } from './ContextMenu';
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -25,6 +26,59 @@ describe('ContextMenu confirmation', () => {
     if (dismiss === 'filter') fireEvent.change(screen.getByRole('textbox'), { target: { value: 'new query' } });
     act(() => { vi.advanceTimersByTime(200); });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it('fades out inside AnimatePresence without taking keys, clicks or a pending confirmation', async () => {
+    vi.useFakeTimers();
+    const run = vi.fn();
+    const onClose = vi.fn();
+    const menu = (shown: boolean) => <AnimatePresence>{shown && <ContextMenu key="menu" x={20} y={40} onClose={onClose}
+      sections={[{ items: [{ id: 'open', label: 'Open', keys: 'O', run }] }]} />}</AnimatePresence>;
+    const view = render(menu(true));
+    act(() => { vi.advanceTimersByTime(20); });
+    fireEvent.click(screen.getByText('Open'));
+    // Closed by its caller mid-blink: the fading menu is no layer and never fires.
+    view.rerender(menu(false));
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.keyDown(window, { key: 'o' });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.mouseDown(document.body);
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(run).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    vi.useRealTimers();
+    await waitFor(() => expect(screen.queryByText('Open')).toBeNull());
+  });
+
+  it('mounts afresh when its opener reopens it during the fade-out', async () => {
+    const menu = (anchor: { x: number; y: number } | null) => <AnimatePresence>{anchor && <ContextMenu key={menuOpenKey(anchor)} {...anchor} searchable onClose={() => {}}
+      sections={[{ items: [{ id: 'a', label: 'Alpha', run: () => {} }, { id: 'b', label: 'Beta', run: () => {} }] }]} />}</AnimatePresence>;
+    const view = render(menu({ x: 20, y: 40 }));
+    const first = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.change(first, { target: { value: 'be' } });
+    view.rerender(menu(null));
+    // Same trigger, same place: a new anchor object, so a new menu.
+    view.rerender(menu({ x: 20, y: 40 }));
+    const second = screen.getByRole('textbox') as HTMLInputElement;
+    expect(second).not.toBe(first);
+    expect(second.value).toBe('');
+    expect(document.activeElement).toBe(second);
+    await waitFor(() => expect(first.isConnected).toBe(false));
+    expect(second.isConnected).toBe(true);
+  });
+
+  it('MenuPresence, mounted when its row first opens the menu, plays each fade-out', async () => {
+    const menu = (shown: boolean) => <MenuPresence>{shown && <ContextMenu key="menu" x={20} y={40} onClose={() => {}}
+      sections={[{ items: [{ id: 'open', label: 'Open', run: () => {} }] }]} />}</MenuPresence>;
+    const view = render(menu(false));
+    for (let round = 0; round < 2; round++) {
+      view.rerender(menu(true));
+      expect(screen.getByRole('menu')).toBeTruthy();
+      view.rerender(menu(false));
+      expect(screen.queryByRole('menu')).toBeNull();
+      expect(screen.getByText('Open').closest('[aria-hidden="true"]')).not.toBeNull();
+      await waitFor(() => expect(screen.queryByText('Open')).toBeNull());
+    }
   });
 
   it('honors reduced motion and keeps disabled items inert', () => {

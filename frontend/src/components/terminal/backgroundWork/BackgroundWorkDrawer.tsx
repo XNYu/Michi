@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { workflowProgress } from 'michi-shared';
 import { DrawerShell, type DrawerShellProps } from '../../ui/DrawerShell';
 import {
@@ -46,7 +46,8 @@ import type { BackgroundWorkFocus, OpenBackgroundWorkDetail } from './background
  * subagent detail (task, activity, result) or workflow run (steps, messages,
  * result, controls, approvals). Opened only by a user click (pane-title
  * badge, in-chat card); live while open. Which items it lists is
- * `selectBackgroundWork`.
+ * `selectBackgroundWork`; finished work it lists while other work runs
+ * folds behind one line (`foldedItems`).
  */
 
 type Scope = 'conversation' | 'thread';
@@ -98,6 +99,8 @@ interface StickyItems {
   /** The request's requestSeq. */
   token: number;
   items: Map<string, ListedItem>;
+  /** Item keys `foldedItems` folded when they were first listed. */
+  folded: Set<string>;
 }
 
 interface WorkGroupValue {
@@ -106,6 +109,34 @@ interface WorkGroupValue {
   loading: boolean;
   current: boolean;
   work: BackgroundWork;
+  /** Item keys behind the section's fold line (foldedItems). */
+  folded: ReadonlySet<string>;
+}
+
+/**
+ * Which listed items fold behind their section's "N finished" line: the
+ * ones already finished when the drawer first lists them under the current
+ * request while other items in their section run. Decided once per item,
+ * like the sticky items: one the drawer listed unfolded stays in view (an
+ * agent that finishes while the user watches does not slide out of
+ * sight), and a new running item does not fold what was already showing.
+ * Opening again decides afresh.
+ */
+function foldedItems(nodeId: string, work: BackgroundWork, sticky: StickyItems | undefined): ReadonlySet<string> {
+  const folded = new Set<string>();
+  const decide = (key: string, active: boolean, sectionRunning: boolean) => {
+    const fold = sticky?.items.has(key) ? sticky.folded.has(key) : !active && sectionRunning;
+    if (fold) folded.add(key);
+  };
+  const subagentsRunning = work.subagents.some((item) => item.active);
+  for (const item of work.subagents) {
+    decide(itemKey(nodeId, { kind: 'subagent', sessionId: item.subagent.sessionId }), item.active, subagentsRunning);
+  }
+  const workflowsRunning = work.workflows.some((item) => item.active);
+  for (const item of work.workflows) {
+    decide(itemKey(nodeId, { kind: 'workflow', runKey: item.runKey }), item.active, workflowsRunning);
+  }
+  return folded;
 }
 
 function runningCount(work: BackgroundWork): number {
@@ -280,16 +311,109 @@ function SectionLabel({ label, total, running }: { label: string; total: number;
   );
 }
 
-function WorkGroup({ group, showHeader, expandedKey, onToggle }: {
+/** A fold of one row is no shorter than the row: one stays inline. */
+const FOLD_MIN = 2;
+
+function FoldLine({ count, failed, noun, open, controls, onClick }: {
+  count: number;
+  failed: number;
+  noun: string;
+  open: boolean;
+  controls: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid="background-work-fold"
+      aria-expanded={open}
+      aria-controls={open ? controls : undefined}
+      aria-label={`${count} finished ${noun}${failed > 0 ? `, ${failed} failed` : ''}`}
+      onClick={onClick}
+      className="t-hover-bg-alt"
+      style={rowButton}
+    >
+      <span aria-hidden style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{open ? '▾' : '▸'}</span>
+      <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>{count} finished</span>
+      {failed > 0 && <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)' }}>· {failed} failed</span>}
+    </button>
+  );
+}
+
+/**
+ * One section of a conversation's work: its running items, then finished
+ * ones, those `foldedItems` picked behind one line. The fold opens on a
+ * click, or by itself while it holds the expanded item (a focused
+ * finished agent, or one the user expanded before it finished), and then
+ * stays open so collapsing that row does not close it under the user.
+ */
+function WorkSection<T extends { active: boolean }>({ label, noun, items, keyOf, isFailed, renderItem, folded, foldKey, foldOpen, onSetFold, expandedKey, onToggle }: {
+  label: string;
+  /** The fold line's noun: "subagents", "workflows". */
+  noun: string;
+  items: readonly T[];
+  keyOf: (item: T) => string;
+  isFailed: (item: T) => boolean;
+  renderItem: (item: T, key: string) => React.ReactNode;
+  folded: ReadonlySet<string>;
+  foldKey: string;
+  foldOpen: boolean;
+  onSetFold: (key: string, open: boolean) => void;
+  expandedKey: string | null;
+  onToggle: (key: string) => void;
+}) {
+  const listId = useId();
+  const keyed = items.map((item) => ({ item, key: keyOf(item) }));
+  const tucked = keyed.filter(({ item, key }) => !item.active && folded.has(key));
+  const folds = tucked.length >= FOLD_MIN;
+  const inline = folds ? keyed.filter((entry) => !tucked.includes(entry)) : keyed;
+  const holdsExpanded = folds && expandedKey !== null && tucked.some(({ key }) => key === expandedKey);
+  useEffect(() => {
+    if (holdsExpanded && !foldOpen) onSetFold(foldKey, true);
+  }, [holdsExpanded, foldOpen, foldKey, onSetFold]);
+  const open = foldOpen || holdsExpanded;
+  const running = items.filter((item) => item.active).length;
+  return (
+    <>
+      <SectionLabel label={label} total={items.length} running={running} />
+      {inline.map(({ item, key }) => renderItem(item, key))}
+      {folds && (
+        <>
+          <FoldLine
+            count={tucked.length}
+            failed={tucked.filter(({ item }) => isFailed(item)).length}
+            noun={noun}
+            open={open}
+            controls={listId}
+            onClick={() => {
+              if (!open) {
+                onSetFold(foldKey, true);
+                return;
+              }
+              // Closing hides the row it holds: collapse that too.
+              if (holdsExpanded && expandedKey) onToggle(expandedKey);
+              onSetFold(foldKey, false);
+            }}
+          />
+          {open && <div id={listId}>{tucked.map(({ item, key }) => renderItem(item, key))}</div>}
+        </>
+      )}
+    </>
+  );
+}
+
+function WorkGroup({ group, showHeader, expandedKey, onToggle, openFolds, onSetFold }: {
   group: WorkGroupValue;
   showHeader: boolean;
   expandedKey: string | null;
   onToggle: (key: string) => void;
+  openFolds: ReadonlySet<string>;
+  onSetFold: (key: string, open: boolean) => void;
 }) {
-  const { node, work, loading } = group;
-  const subagentsRunning = work.subagents.filter((item) => item.active).length;
-  const workflowsRunning = work.workflows.filter((item) => item.active).length;
+  const { node, work, loading, folded } = group;
   const empty = work.subagents.length === 0 && work.workflows.length === 0;
+  const subagentsFold = JSON.stringify([node.nodeId, 'subagents']);
+  const workflowsFold = JSON.stringify([node.nodeId, 'workflows']);
   return (
     <section data-testid="background-work-group" data-node-id={node.nodeId} aria-label={showHeader ? group.title : undefined} style={{ paddingBottom: 6 }}>
       {showHeader && (
@@ -302,28 +426,44 @@ function WorkGroup({ group, showHeader, expandedKey, onToggle }: {
         <div role="status" className="term-hydrating" style={{ padding: '4px 14px', fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>loading…</div>
       )}
       {work.subagents.length > 0 && (
-        <>
-          <SectionLabel label="subagents" total={work.subagents.length} running={subagentsRunning} />
-          {work.subagents.map((item) => {
-            const key = itemKey(node.nodeId, { kind: 'subagent', sessionId: item.subagent.sessionId });
-            return (
-              <SubagentWorkRow key={key} subagent={item.subagent} active={item.active} rowKey={key} expanded={expandedKey === key} onToggle={onToggle} />
-            );
-          })}
-        </>
+        <WorkSection
+          label="subagents"
+          noun="subagents"
+          items={work.subagents}
+          keyOf={(item) => itemKey(node.nodeId, { kind: 'subagent', sessionId: item.subagent.sessionId })}
+          isFailed={(item) => subagentTone(item.subagent, item.active) === 'failed'}
+          renderItem={(item, key) => (
+            <SubagentWorkRow key={key} subagent={item.subagent} active={item.active} rowKey={key} expanded={expandedKey === key} onToggle={onToggle} />
+          )}
+          folded={folded}
+          foldKey={subagentsFold}
+          foldOpen={openFolds.has(subagentsFold)}
+          onSetFold={onSetFold}
+          expandedKey={expandedKey}
+          onToggle={onToggle}
+        />
       )}
       {work.workflows.length > 0 && (
-        <>
-          <SectionLabel label="workflows" total={work.workflows.length} running={workflowsRunning} />
-          {work.workflows.map((item) => {
-            const key = itemKey(node.nodeId, { kind: 'workflow', runKey: item.runKey });
-            return <WorkflowWorkRow key={key} runKey={item.runKey} rowKey={key} expanded={expandedKey === key} onToggle={onToggle} />;
-          })}
-        </>
+        <WorkSection
+          label="workflows"
+          noun="workflows"
+          items={work.workflows}
+          keyOf={(item) => itemKey(node.nodeId, { kind: 'workflow', runKey: item.runKey })}
+          isFailed={(item) => item.run.value.status === 'failed'}
+          renderItem={(item, key) => <WorkflowWorkRow key={key} runKey={item.runKey} rowKey={key} expanded={expandedKey === key} onToggle={onToggle} />}
+          folded={folded}
+          foldKey={workflowsFold}
+          foldOpen={openFolds.has(workflowsFold)}
+          onSetFold={onSetFold}
+          expandedKey={expandedKey}
+          onToggle={onToggle}
+        />
       )}
     </section>
   );
 }
+
+const NO_FOLDS: ReadonlySet<string> = new Set();
 
 const SCOPES: Array<{ value: Scope; label: string }> = [
   { value: 'conversation', label: 'This conversation' },
@@ -373,13 +513,23 @@ export default function BackgroundWorkDrawer({ open, onClose, motion, onPresence
   const focusKey = request.focus ? itemKey(request.nodeId, request.focus) : null;
   const [scope, setScope] = useState<Scope>('conversation');
   const [expandedKey, setExpandedKey] = useState<string | null>(focusKey);
+  // Fold lines the user (or an expanded item, see WorkSection) opened.
+  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(NO_FOLDS);
   const [appliedSeq, setAppliedSeq] = useState(requestSeq);
   if (appliedSeq !== requestSeq) {
     // A new open request: back to its conversation, its focus expanded.
     setAppliedSeq(requestSeq);
     setScope('conversation');
     setExpandedKey(focusKey);
+    setOpenFolds(NO_FOLDS);
   }
+  const onSetFold = useCallback((key: string, value: boolean) => setOpenFolds((current) => {
+    if (current.has(key) === value) return current;
+    const next = new Set(current);
+    if (value) next.add(key);
+    else next.delete(key);
+    return next;
+  }), []);
 
   // The history rule applies when the drawer opens: what it has listed since
   // the current request stays listed while it stays open, so an item the
@@ -388,8 +538,8 @@ export default function BackgroundWorkDrawer({ open, onClose, motion, onPresence
   // only to the conversations listed). A ref, not state: recording what was
   // listed must not re-render.
   const stickyToken = requestSeq;
-  const sticky = useRef<StickyItems>({ token: stickyToken, items: new Map() });
-  if (sticky.current.token !== stickyToken) sticky.current = { token: stickyToken, items: new Map() };
+  const sticky = useRef<StickyItems>({ token: stickyToken, items: new Map(), folded: new Set() });
+  if (sticky.current.token !== stickyToken) sticky.current = { token: stickyToken, items: new Map(), folded: new Set() };
 
   const requestNodeId = request.nodeId;
   // The thread of the requested conversation, whichever thread is active.
@@ -424,31 +574,36 @@ export default function BackgroundWorkDrawer({ open, onClose, motion, onPresence
 
   const requestFocus = request.focus;
   const groups = useMemo<WorkGroupValue[]>(() => {
-    const kept: ListedItem[] = sticky.current.token === stickyToken ? [...sticky.current.items.values()] : [];
+    const listed = sticky.current.token === stickyToken ? sticky.current : undefined;
+    const kept: ListedItem[] = listed ? [...listed.items.values()] : [];
     if (requestFocus) kept.push({ nodeId: requestNodeId, focus: requestFocus });
     const expanded = expandedKey ? parseItemKey(expandedKey) : null;
     if (expanded) kept.push(expanded);
     const keep = keepByNode(kept);
-    return nodes.map((node) => ({
-      node,
-      title: node.title || chatLabel(node),
-      loading: node.messagesLoaded === false,
-      current: node.nodeId === requestNodeId,
-      work: selectBackgroundWork(node, runs, keep.get(node.nodeId), liveness(node.projectId, node.nodeId)),
-    }));
+    return nodes.map((node) => {
+      const work = selectBackgroundWork(node, runs, keep.get(node.nodeId), liveness(node.projectId, node.nodeId));
+      return {
+        node,
+        title: node.title || chatLabel(node),
+        loading: node.messagesLoaded === false,
+        current: node.nodeId === requestNodeId,
+        work,
+        folded: foldedItems(node.nodeId, work, listed),
+      };
+    });
   }, [nodes, runs, liveness, requestFocus, requestNodeId, expandedKey, stickyToken]);
   useEffect(() => {
     const current = sticky.current;
     if (current.token !== stickyToken) return;
-    for (const { node, work } of groups) {
-      for (const item of work.subagents) {
-        const focus: BackgroundWorkFocus = { kind: 'subagent', sessionId: item.subagent.sessionId };
-        current.items.set(itemKey(node.nodeId, focus), { nodeId: node.nodeId, focus });
-      }
-      for (const item of work.workflows) {
-        const focus: BackgroundWorkFocus = { kind: 'workflow', runKey: item.runKey };
-        current.items.set(itemKey(node.nodeId, focus), { nodeId: node.nodeId, focus });
-      }
+    const record = (nodeId: string, focus: BackgroundWorkFocus, folded: ReadonlySet<string>) => {
+      const key = itemKey(nodeId, focus);
+      if (current.items.has(key)) return;
+      current.items.set(key, { nodeId, focus });
+      if (folded.has(key)) current.folded.add(key);
+    };
+    for (const { node, work, folded } of groups) {
+      for (const item of work.subagents) record(node.nodeId, { kind: 'subagent', sessionId: item.subagent.sessionId }, folded);
+      for (const item of work.workflows) record(node.nodeId, { kind: 'workflow', runKey: item.runKey }, folded);
     }
   }, [groups, stickyToken]);
   const shown = scope === 'thread'
@@ -504,7 +659,7 @@ export default function BackgroundWorkDrawer({ open, onClose, motion, onPresence
             </span>
           </div>
         ) : shown.map((group) => (
-          <WorkGroup key={group.node.nodeId} group={group} showHeader={scope === 'thread'} expandedKey={expandedKey} onToggle={onToggle} />
+          <WorkGroup key={group.node.nodeId} group={group} showHeader={scope === 'thread'} expandedKey={expandedKey} onToggle={onToggle} openFolds={openFolds} onSetFold={onSetFold} />
         ))}
       </div>
     </DrawerShell>

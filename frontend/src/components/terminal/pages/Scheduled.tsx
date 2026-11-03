@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarClock, Clock3, Ellipsis, Folder, Layers, Loader2, Play, Plus, Search, Sparkles, Square, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { AnimatePresence } from 'motion/react';
 import type { MetaAgentOverview, ScheduledJobDto, ScheduledJobRunDto } from 'michi-shared';
 import { useChatActions, useChatProjects } from '../../../state/chatStore';
 import type { PageId } from '../../../state/commands';
@@ -30,6 +31,7 @@ import { openScheduledHome, requestScheduledJobDetail, useScheduledRoute } from 
 import { RUN_STATUS_LABELS, defaultScheduleDraft, describeSchedule, relativePastTime, relativeTime } from '../scheduled/scheduleModel';
 import { openMetaAgentDetail } from '../scheduled/metaAgent/metaAgentNav';
 import { pauseMetaAgentMaintenance, useMetaAgentOverview } from '../scheduled/metaAgent/useMetaAgentOverview';
+import { RunSwap, SwapGlyph } from './ScheduledRunSwap';
 // Shared row, group, search and icon-button primitives.
 import './Trash.css';
 import './Scheduled.css';
@@ -310,27 +312,33 @@ export default function TerminalScheduled({ onNav }: { onNav?: (page: PageId) =>
             onDelete: () => { void removeJob(menuJob); },
           }} />
         )}
-        {detailJob && !editor && (
-          <ScheduledJobDetail job={detailJob} now={now} busy={busyJobs.has(detailJob.id)} runBlocked={runsBlocked}
-            workspaceName={projectById.get(detailJob.workspaceId)?.name ?? 'Unavailable workspace'}
-            onClose={() => openScheduledHome()}
-            onEdit={() => setEditor({ job: detailJob })}
-            onRunNow={() => { void runNow(detailJob); }}
-            onCancelRun={() => { void stop(detailJob); }}
-            onDelete={() => { void removeJob(detailJob); }}
-            onOpenRun={(run) => { void openRun(run); }} />
-        )}
-        {editor && (
-          <ScheduledJobEditor job={editor.job} initial={editor.initial} projects={editorProjects(localProjects, editor.job, projectById)}
-            defaultWorkspaceId={defaultWorkspaceId}
-            onClose={() => setEditor(null)}
-            onSaved={(saved) => {
-              upsert(saved);
-              setEditor(null);
-              toast.success(editor.job ? 'Job saved' : `Scheduled “${saved.name}”`);
-              void refresh();
-            }} />
-        )}
+        {/* Closing fades each dialog out with the props it last had open;
+            Edit hands the detail over to the editor in one cross-fade. */}
+        <AnimatePresence>
+          {detailJob && !editor && (
+            <ScheduledJobDetail key="detail" job={detailJob} now={now} busy={busyJobs.has(detailJob.id)} runBlocked={runsBlocked}
+              workspaceName={projectById.get(detailJob.workspaceId)?.name ?? 'Unavailable workspace'}
+              onClose={() => openScheduledHome()}
+              onEdit={() => setEditor({ job: detailJob })}
+              onRunNow={() => { void runNow(detailJob); }}
+              onCancelRun={() => { void stop(detailJob); }}
+              onDelete={() => { void removeJob(detailJob); }}
+              onOpenRun={(run) => { void openRun(run); }} />
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {editor && (
+            <ScheduledJobEditor key="editor" job={editor.job} initial={editor.initial} projects={editorProjects(localProjects, editor.job, projectById)}
+              defaultWorkspaceId={defaultWorkspaceId}
+              onClose={() => setEditor(null)}
+              onSaved={(saved) => {
+                upsert(saved);
+                setEditor(null);
+                toast.success(editor.job ? 'Job saved' : `Scheduled “${saved.name}”`);
+                void refresh();
+              }} />
+          )}
+        </AnimatePresence>
       </div>
     </ScheduledAgentChat>
   );
@@ -363,7 +371,9 @@ function JobRow({ job, now, query, busy, runBlocked, menuOpen, onOpen, onRunNow,
     <article className="trash-row sched-row" data-paused={!active || undefined}>
       <button type="button" className="trash-row-open" aria-label={`Open ${job.name}`} onClick={onOpen}>
         <span className="trash-row-icon">
-          {running ? <Loader2 size={16} className="sched-spin" aria-hidden="true" /> : <Clock3 size={16} aria-hidden="true" />}
+          <RunSwap id={running ? 'running' : 'idle'} scale>
+            {running ? <Loader2 size={16} className="sched-spin" aria-hidden="true" /> : <Clock3 size={16} aria-hidden="true" />}
+          </RunSwap>
         </span>
         <span className="trash-row-content">
           <span className="trash-row-title"><TrashHighlight text={job.name} query={query} /></span>
@@ -377,10 +387,14 @@ function JobRow({ job, now, query, busy, runBlocked, menuOpen, onOpen, onRunNow,
         {running || job.lastStatus ? (
           <>
             {/* lastRunAt is stamped when a run starts, so an active run owns it. */}
-            {running
-              ? <span className="sched-last-status"><StatusDot status="running" />{RUN_STATUS_LABELS.running}</span>
-              : job.lastStatus && <span className="sched-last-status"><StatusDot status={job.lastStatus} />{RUN_STATUS_LABELS[job.lastStatus]}</span>}
-            {job.lastRunAt && <span className="sched-last-time">{relativePastTime(job.lastRunAt, now)}</span>}
+            {(running || job.lastStatus) && (() => {
+              const status = running ? 'running' : job.lastStatus!;
+              return <RunSwap id={status} className="sched-last-status"><SwapGlyph><StatusDot status={status} /></SwapGlyph>{RUN_STATUS_LABELS[status]}</RunSwap>;
+            })()}
+            {job.lastRunAt && (() => {
+              const time = relativePastTime(job.lastRunAt, now);
+              return <RunSwap id={time} className="sched-last-time">{time}</RunSwap>;
+            })()}
           </>
         ) : <span className="sched-last-time">Never run</span>}
       </div>
@@ -414,7 +428,9 @@ function SystemTaskRow({ overview, now, query, busy, onOpen, onToggle }: {
     <article className="trash-row sched-row" data-paused={!active || undefined} data-system="">
       <button type="button" className="trash-row-open" aria-label={`Open ${SYSTEM_TASK_NAME}`} onClick={onOpen}>
         <span className="trash-row-icon">
-          {lastRun?.state === 'running' ? <Loader2 size={16} className="sched-spin" aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+          <RunSwap id={lastRun?.state === 'running' ? 'running' : 'idle'} scale>
+            {lastRun?.state === 'running' ? <Loader2 size={16} className="sched-spin" aria-hidden="true" /> : <Sparkles size={16} aria-hidden="true" />}
+          </RunSwap>
         </span>
         <span className="trash-row-content">
           <span className="trash-row-title"><TrashHighlight text={SYSTEM_TASK_NAME} query={query} /> <span className="area-side__tag">System</span></span>

@@ -6,7 +6,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import TerminalTopbar from './Topbar';
-import { ChatProvider } from '../../state/chatStore';
+import { ChatProvider, useChatProjects } from '../../state/chatStore';
 import { PrefsProvider } from '../../state/prefs';
 import type { ChatNodeState, Project, Tree } from '../../state/chatTypes';
 
@@ -32,8 +32,16 @@ vi.mock('../../lib/electronBridge', () => ({
 }));
 
 beforeEach(() => {
-  if (typeof window !== 'undefined') window.localStorage.clear();
+  if (typeof window !== 'undefined') {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  }
 });
+
+/** Open panes in the p1::t1 slot, so Dashboard shows them instead of Home. */
+function openPanes(ids: string[]) {
+  sessionStorage.setItem('michi:panes:open', JSON.stringify({ 'p1::t1': ids }));
+}
 
 const NOW = 1_000_000;
 const BEFORE = NOW - 10_000;
@@ -92,6 +100,11 @@ function Wrap({ children }: { children: React.ReactNode }) {
   );
 }
 
+function HydratedProbe() {
+  const { activeProject } = useChatProjects();
+  return activeProject?.activeTreeId ? <span data-testid={`hydrated-${activeProject.activeTreeId}`} /> : null;
+}
+
 const baseProps = {
   page: 'dashboard' as const,
   sidebarCollapsed: false,
@@ -106,6 +119,7 @@ describe('Topbar thread-view toggles', () => {
       [{ id: 't1', rootNodeId: 'n1', createdAt: BEFORE, lastActiveAt: BEFORE }],
       't1',
     );
+    openPanes(['n1']);
     render(
       <Wrap>
         <TerminalTopbar {...baseProps} onNav={vi.fn()} />
@@ -117,6 +131,29 @@ describe('Topbar thread-view toggles', () => {
     // A read digest (or no digest) renders no dot — the Map toggle never has one.
     const mapBtn = screen.getByLabelText('Map');
     expect(mapBtn.querySelector('span[aria-hidden]')).toBeNull();
+  });
+
+  it.each([
+    ['the Home page', 'home' as const],
+    ['a dashboard with no pane left', 'dashboard' as const],
+  ])('leaves the conversation controls off %s', async (_label, page) => {
+    seed(
+      { n1: makeChatNode('n1') },
+      [{ id: 't1', rootNodeId: 'n1', createdAt: BEFORE, lastActiveAt: BEFORE }],
+      't1',
+    );
+    openPanes([]);
+    render(
+      <Wrap>
+        <HydratedProbe />
+        <TerminalTopbar {...baseProps} page={page} onNav={vi.fn()} />
+      </Wrap>,
+    );
+    // Before hydration there is no thread, so the controls are absent anyway.
+    await screen.findByTestId('hydrated-t1');
+    for (const label of ['Overview', 'Map', 'Digest', 'Artifacts']) {
+      expect(screen.queryByLabelText(label)).toBeNull();
+    }
   });
 
   it('renders the ‹ back crumb with the active thread title on the Map page', async () => {

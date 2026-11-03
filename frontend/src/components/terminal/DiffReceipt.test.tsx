@@ -100,6 +100,31 @@ describe('DiffReceipt', () => {
     }
   });
 
+  it('renders settled when the transcript opens, and grows in when the turn ends on screen', () => {
+    const m = msg([tool('write', { path: 'src/a.ts', content: 'x' })]);
+    const { container, unmount } = render(<DiffReceipt message={m} workspaceId="ws1" />);
+    expect(container.firstElementChild?.getAttribute('data-testid')).toBe('diff-receipt');
+    unmount();
+
+    const fresh = render(<DiffReceipt message={m} workspaceId="ws1" enter />);
+    const grow = fresh.container.firstElementChild as HTMLElement;
+    expect(grow.style.display).toBe('flow-root');
+    expect(grow.firstElementChild?.getAttribute('data-testid')).toBe('diff-receipt');
+  });
+
+  it('opens and closes the file list as a disclosure; a closing list is out of reach', async () => {
+    const m = msg([tool('write', { path: 'src/a.ts', content: 'x' })]);
+    render(<DiffReceipt message={m} workspaceId="ws1" />);
+    const header = screen.getByTestId('diff-receipt-header');
+    fireEvent.click(header);
+    const row = screen.getByTestId('diff-receipt-file');
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(header);
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    if (row.isConnected) expect(row.closest('[aria-hidden="true"]')).not.toBeNull();
+    await waitFor(() => expect(screen.queryByTestId('diff-receipt-file')).toBeNull());
+  });
+
   it('shows an error message when the diff endpoint 404s', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
     const m = msg([tool('write', { path: 'src/a.ts', content: 'x' })]);

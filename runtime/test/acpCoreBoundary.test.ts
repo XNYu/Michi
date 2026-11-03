@@ -19,7 +19,7 @@ const SRC_DIR = path.join(CORE_DIR, "..", "..");
 /** Relative imports may reach the core itself and the package's core and contract. */
 const ALLOWED_DIRS = [CORE_DIR, path.join(SRC_DIR, "core"), path.join(SRC_DIR, "contract")];
 const BUILTINS = new Set(builtinModules);
-const AGENT_TEXT = /kiro|crew/i;
+const AGENT_TEXT = /kiro|crew|antigravity|agy/i;
 const ENGINE_TEXT = /^v[23]$/;
 
 interface Finding { file: string; line: number; text: string }

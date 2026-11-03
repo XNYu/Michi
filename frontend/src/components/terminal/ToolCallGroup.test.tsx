@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, waitFor, within } from '@testing-library/react';
 import { ToolCallGroup } from './ToolCallGroup';
 import type { ToolCallState } from '../../state/chatTypes';
 import { AgentBlockStyleOverride } from '../../state/prefs';
@@ -105,6 +105,120 @@ describe('ToolCallGroup — expanded state', () => {
     expect(row.textContent).toContain('Explore Michi project structure');
     expect(row.textContent).toContain('working');
     expect(container.textContent).not.toContain('subagent_type');
+  });
+});
+
+describe('ToolCallGroup — motion structure', () => {
+  const styles = ['plain', 'card', 'terminal'] as const;
+  const withStyle = (style: (typeof styles)[number], ui: React.ReactElement) => (
+    <AgentBlockStyleOverride.Provider value={style}>{ui}</AgentBlockStyleOverride.Provider>
+  );
+  const listed: ToolCallState = {
+    id: '1',
+    title: 'Bash ls',
+    status: 'completed',
+    kind: 'bash',
+    inputJson: JSON.stringify({ __tool_use_purpose: 'List the files', command: 'ls' }),
+    output: 'file-a file-b',
+  };
+
+  it.each(styles)('%s: a second tool grows a header above the same row, its open payload kept', (style) => {
+    const { container, getByText, rerender } = render(withStyle(style, <ToolCallGroup tools={[listed]} defaultExpanded />));
+    expect(container.querySelector('[data-toolgroup-header]')).toBeNull();
+    const root = container.firstElementChild;
+    const row = getByText('List the files');
+    fireEvent.click(row);
+    expect(container.textContent).toContain('file-a file-b');
+
+    rerender(withStyle(style, <ToolCallGroup tools={[listed, tool('2', 'Read b', 'running', 'read')]} defaultExpanded />));
+    expect(container.querySelector('[data-toolgroup-header]')).not.toBeNull();
+    // No structure swap: the container and the first row are the same nodes.
+    expect(container.firstElementChild).toBe(root);
+    expect(getByText('List the files')).toBe(row);
+    expect(container.textContent).toContain('file-a file-b');
+  });
+
+  it('auto-collapse keeps the header; the outgoing label and rows leave out of the a11y tree', async () => {
+    const running = [tool('1', 'Read a', 'running', 'read'), tool('2', 'Read b', 'running', 'read')];
+    const { container, getByText, queryByText, rerender } = render(<ToolCallGroup tools={running} defaultExpanded />);
+    const header = container.querySelector('button[data-toolgroup-header]') as HTMLElement;
+    expect(within(header).getByText('running tools').closest('[aria-hidden="true"]')).toBeNull();
+
+    rerender(<ToolCallGroup tools={[tool('1', 'Read a', 'completed', 'read'), tool('2', 'Read b', 'completed', 'read')]} defaultExpanded />);
+    expect(container.querySelector('button[data-toolgroup-header]')).toBe(header);
+    expect(header.textContent).toContain('▸');
+    // While they animate out, the old label and the rows are hidden and inert.
+    expect(getByText('running tools').closest('[aria-hidden="true"]')).not.toBeNull();
+    const leavingRow = getByText('Read a');
+    expect(leavingRow.closest('[inert]')).not.toBeNull();
+    expect(leavingRow.closest('[aria-hidden="true"]')).not.toBeNull();
+    await waitFor(() => {
+      expect(queryByText('running tools')).toBeNull();
+      expect(queryByText('Read a')).toBeNull();
+    });
+    // Reopening shows the rows settled and live again.
+    fireEvent.click(header);
+    expect(getByText('Read a').closest('[inert]')).toBeNull();
+  });
+
+  it.each(styles)('%s: a row that fails while shown flashes once; one failed on mount does not', (style) => {
+    const live = render(withStyle(style, <ToolCallGroup tools={[tool('1', 'Bash npm test', 'running', 'bash')]} defaultExpanded />));
+    expect(live.container.querySelector('[data-fail-flash]')).toBeNull();
+    live.rerender(withStyle(style, <ToolCallGroup tools={[tool('1', 'Bash npm test', 'failed', 'bash')]} defaultExpanded />));
+    expect(live.container.querySelectorAll('[data-fail-flash]')).toHaveLength(1);
+    live.unmount();
+
+    const hydrated = render(withStyle(style, <ToolCallGroup tools={[tool('1', 'Bash npm test', 'failed', 'bash')]} defaultExpanded={false} />));
+    expect(hydrated.container.querySelector('[data-fail-flash]')).toBeNull();
+  });
+});
+
+/**
+ * TPane leaves follow mode only when the transcript height changes within the
+ * two frames after a click (TPane userClickLayoutRef). A toggled body must so
+ * commit a height different from the one before the click, in the click's own
+ * commit, not a frame later when its tween first moves.
+ */
+describe('ToolCallGroup — user toggles change height in the click commit', () => {
+  const styles = ['plain', 'card', 'terminal'] as const;
+  const withStyle = (style: (typeof styles)[number], ui: React.ReactElement) => (
+    <AgentBlockStyleOverride.Provider value={style}>{ui}</AgentBlockStyleOverride.Provider>
+  );
+  const purposeTool = (id: string, purpose: string): ToolCallState => ({
+    id,
+    title: 'Bash ls',
+    status: 'completed',
+    kind: 'bash',
+    inputJson: JSON.stringify({ __tool_use_purpose: purpose, command: 'ls' }),
+    output: `${purpose} output`,
+  });
+  /** Laid-out height of every element (jsdom has no layout). */
+  const layoutHeight = (px: number) => vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(px);
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(styles)('%s: a payload opens from 1px and closes from 1px under its height', (style) => {
+    const { getByText, queryByText } = render(withStyle(style, <ToolCallGroup tools={[purposeTool('1', 'List the files')]} defaultExpanded />));
+    expect(queryByText('List the files output')).toBeNull();
+    fireEvent.click(getByText('List the files'));
+    const payload = getByText('List the files output').closest('[data-reveal="disclosure"]') as HTMLElement;
+    expect(payload.style.height).toBe('1px');
+
+    layoutHeight(40);
+    fireEvent.click(getByText('List the files'));
+    expect(payload.style.height).toBe('39px');
+  });
+
+  it.each(styles)('%s: a group body opens from 1px and closes from 1px under its height', (style) => {
+    const tools = [purposeTool('1', 'List the files'), purposeTool('2', 'Count the files')];
+    const { container, getByText } = render(withStyle(style, <ToolCallGroup tools={tools} defaultExpanded={false} />));
+    const header = container.querySelector('button[data-toolgroup-header]') as HTMLElement;
+    fireEvent.click(header);
+    const body = getByText('List the files').closest('[data-reveal="group"]') as HTMLElement;
+    expect(body.style.height).toBe('1px');
+
+    layoutHeight(120);
+    fireEvent.click(header);
+    expect(body.style.height).toBe('119px');
   });
 });
 

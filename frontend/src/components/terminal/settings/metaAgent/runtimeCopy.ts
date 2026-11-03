@@ -18,9 +18,6 @@ const RESTRICTIONS: Record<MetaAgentRuntimeId, string> = {
   crew: 'the Meta agent can’t use Kiro Crew yet',
 };
 
-/** What Pi is, for someone choosing a runtime. */
-export const PI_EXPLAINED = 'Pi runs inside Michi and calls an AI provider directly with your own key, so there is nothing to install.';
-
 export interface RuntimeUnavailableText {
   /** One plain sentence, e.g. "Codex isn’t installed on this computer." */
   text: string;

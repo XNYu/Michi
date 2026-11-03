@@ -13,6 +13,9 @@ export function RemoteAuthenticationDialog() {
     <span>{issue.target.host}: sign-in needs attention.</span>
     <Button size="sm" variant="ghost" onClick={() => requestRemoteAuthentication(issue, true)}>{remoteSignInLabel()}</Button>
   </div>)}</>;
+  // No fade-out: closing ends the sign-in terminal session at once (the
+  // terminal is destroyed and a late reconnect never runs), so the dialog
+  // unmounts with it instead of lingering as a live ghost.
   return <ModalShell open onClose={closeRemoteAuthentication} title={remoteSignInLabel()} width={680} maxHeight="85vh" captureEscape>
     <Suspense fallback={<p role="status">Opening authentication terminal…</p>}>
       <AuthenticationTerminal key={request.key} request={request} />

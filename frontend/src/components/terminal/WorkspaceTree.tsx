@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { shallowArrayEqual, useChatActions, useChatNodesSnapshot, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { isWorkspaceExpanded, sortTrees, sortLiveProjects, workspaceHasUnread, type NodePinnedAt } from '../../state/sidebarSelectors';
@@ -459,14 +460,17 @@ export default function WorkspaceTree({
           All caught up ✓
         </div>
       )}
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          sections={menuSections}
-          onClose={closeMenu}
-        />
-      )}
+      <AnimatePresence>
+        {menu && (
+          <ContextMenu
+            key={`${menu.x}:${menu.y}`}
+            x={menu.x}
+            y={menu.y}
+            sections={menuSections}
+            onClose={closeMenu}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

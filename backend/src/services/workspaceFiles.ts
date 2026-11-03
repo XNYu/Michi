@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { Request } from 'express';
 import { PathSandboxError } from '../agents/tools/pathSandbox';
 import { deriveSandboxCwd, NotFoundError } from './workspaceSandbox';
@@ -8,6 +10,7 @@ import { getWorkspace } from './dbRepository';
 
 export const WORKSPACE_FILE_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 const SHARED_UPLOAD_ROOT = '/shared/michi/files';
+const execFileAsync = promisify(execFile);
 
 export function desktopUploadRoot(): string {
   try {
@@ -102,4 +105,57 @@ export function resolveWorkspaceRegularFile(relativePath: string, root: string):
   const stat = fs.statSync(realPath);
   if (!stat.isFile()) throw new PathSandboxError(relativePath, root);
   return { realPath, stat };
+}
+
+const SUFFIX_WALK_SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'vendor', '__pycache__']);
+const SUFFIX_WALK_MAX_ENTRIES = 20_000;
+const SUFFIX_WALK_MAX_DEPTH = 12;
+
+/** Workspace files relative to root: git's tracked and unignored files, else a bounded walk. */
+async function listWorkspaceFilesForSuffix(root: string): Promise<string[]> {
+  try {
+    // Only root is passed to git; fsmonitor is disabled so repository config cannot run a command.
+    const { stdout } = await execFileAsync('git', [
+      '-c', 'core.fsmonitor=false', '-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard',
+    ], { timeout: 5_000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } });
+    return stdout.split('\0').filter(Boolean);
+  } catch { /* not a git work tree, or git is unavailable */ }
+  const files: string[] = [];
+  let seen = 0;
+  const walk = async (dir: string, rel: string, depth: number): Promise<void> => {
+    if (depth > SUFFIX_WALK_MAX_DEPTH) return;
+    let entries: fs.Dirent[];
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (++seen > SUFFIX_WALK_MAX_ENTRIES) return;
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isFile()) files.push(childRel);
+      else if (entry.isDirectory() && !entry.name.startsWith('.') && !SUFFIX_WALK_SKIP_DIRS.has(entry.name)) {
+        await walk(path.join(dir, entry.name), childRel, depth + 1);
+      }
+    }
+  };
+  await walk(root, '', 0);
+  return files;
+}
+
+/**
+ * Chat answers often cite a file by its basename or trailing path
+ * (`runtimeCopy.ts`, `settings/runtimeCopy.ts`). Return the one workspace file
+ * whose relative path ends with that suffix; none or several return null.
+ * Callers must still resolve the result with resolveWorkspaceRegularFile.
+ */
+export async function findWorkspaceFileBySuffix(root: string, suffix: string): Promise<string | null> {
+  const normalized = suffix.replace(/^(?:\.\/)+/, '');
+  const segments = normalized.split('/');
+  if (!normalized || normalized.includes('\\') || normalized.includes('\0')
+    || segments.some((segment) => !segment || segment === '.' || segment === '..')) return null;
+  const tail = `/${normalized}`;
+  let match: string | null = null;
+  for (const file of await listWorkspaceFilesForSuffix(root)) {
+    if (file !== normalized && !file.endsWith(tail)) continue;
+    if (match !== null) return null;
+    match = file;
+  }
+  return match;
 }

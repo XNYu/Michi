@@ -1,5 +1,7 @@
 import type { DurableUserInput, UsageCharge } from 'michi-shared';
-import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, PresenceContext, animate, motion, useIsPresent, useReducedMotionConfig, type Variants } from 'motion/react';
+import { DUR, EASE, SPRING, TRANSITION } from '../../motion/tokens';
 import { AssistantBlock, ChatMessage, ToolCallState, SubagentInfo, UserInputRequest } from '../../state/chatTypes';
 import { turnErrorAction } from '../../state/turnErrorRecovery';
 import { isRunningStatus, isHiddenInternalTool, formatDurationMs, toolSpanMs, summarizeWork } from './toolCallGrouping';
@@ -27,7 +29,8 @@ import {
 } from '../../state/streamingProjection';
 import { hasAssistantBlocks } from '../../state/assistantBlocks';
 import type { ChildAnchor } from '../../state/branchAnchors';
-import { BranchAnchorRow } from './BranchAnchorRow';
+import { ANCHOR_GROW_FROM, ANCHOR_GROW_STYLE, ANCHOR_GROW_TO, BranchAnchorRow } from './BranchAnchorRow';
+import { isFresh } from '../../motion/useFresh';
 import { BranchQuoteMarks } from './BranchQuoteMarks';
 import { ImageBlockView } from './ImageBlockView';
 import { SteeringReports } from './SteeringReports';
@@ -36,6 +39,7 @@ import UserInputBanner, { ResolvedUserInput } from './UserInputBanner';
 import { useChatActions } from '../../state/chatStore';
 import { BranchIcon, CheckIcon, CopyIcon, EditIcon, RetryIcon } from './icons';
 import { useMetaChatDecorations } from '../../state/metaChat/metaChatDecorations';
+import { playFlight } from './messageFlight';
 
 const StreamingMarkdownContent = React.lazy(() => import('./StreamingMarkdownContent'));
 
@@ -56,7 +60,7 @@ function InlineUserInputSegment({ requestId, interaction }: { requestId: number;
   const current = ctx?.userInput;
   const matchesCurrent = current?.requestId === requestId && (!interaction || !current.interactionId || current.interactionId === interaction.interactionId);
   const ui: UserInputRequest | undefined = interaction
-    ? { ...interaction, resolved: interaction.status !== 'pending', interrupted: interaction.status === 'interrupted' }
+    ? { ...interaction, resolved: interaction.status !== 'pending', interrupted: interaction.status === 'interrupted', receivedAt: matchesCurrent ? current?.receivedAt : undefined }
     : matchesCurrent ? current : undefined;
   if (!ui) return null;
   if (ui.resolved) return <ResolvedUserInput userInput={ui} />;
@@ -284,6 +288,342 @@ const THOUGHT_TAIL_MAX_HEIGHT = 10 * 11 * 1.5;
 
 type ThoughtMode = 'tail' | 'expanded' | 'collapsed';
 
+/* ── Motion (motion.dev) ──
+   Only what arrives while a message is on screen animates: everything a
+   MessageBlock renders on its first commit (hydration, lazy loads, remounts)
+   is settled. Streamed Markdown never animates and loops stay in CSS. */
+
+interface MessageMotionScope {
+  /** True once the message has committed; blocks mounting later are new. */
+  mounted: { current: boolean };
+  /** The pending dots' height while they show, so the block replacing them
+   *  grows from there. Cleared once they hide. */
+  pendingHeight: { current: number | null };
+}
+
+const MessageMotionContext = createContext<MessageMotionScope | null>(null);
+
+/** Where a block grows from (px) when it arrives live, or null to render it
+ *  settled. Decided on the block's first render. */
+function useBlockEntrance(live: boolean | undefined): number | null {
+  const scope = useContext(MessageMotionContext);
+  const [from] = useState(() => (live && scope?.mounted.current ? scope.pendingHeight.current ?? 0 : null));
+  return from;
+}
+
+const ICON_SWAP: Variants = {
+  enter: { opacity: 0, scale: 0.5 },
+  shown: { opacity: 1, scale: 1, transition: SPRING.snappy },
+  leave: { opacity: 0, scale: 0.5, transition: { duration: 0.1 } },
+};
+
+const LABEL_SWAP: Variants = {
+  enter: { opacity: 0, y: 4 },
+  shown: { opacity: 1, y: 0, transition: { duration: 0.18, delay: 0.03, ease: EASE.out } },
+  leave: { opacity: 0, y: -4, transition: { duration: 0.12, ease: EASE.out } },
+};
+
+/** One state of a SwapSlot. A leaving state is no longer announced or clickable. */
+function SwapItem({ variants, as, style, children }: {
+  variants: Variants;
+  as: 'span' | 'div';
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}) {
+  const present = useIsPresent();
+  const itemStyle: React.CSSProperties = {
+    gridArea: '1 / 1',
+    minWidth: 0,
+    pointerEvents: present ? undefined : 'none',
+    ...style,
+  };
+  return as === 'div' ? (
+    <motion.div variants={variants} initial="enter" animate="shown" exit="leave" aria-hidden={present ? undefined : true} style={itemStyle}>
+      {children}
+    </motion.div>
+  ) : (
+    <motion.span variants={variants} initial="enter" animate="shown" exit="leave" aria-hidden={present ? undefined : true} style={itemStyle}>
+      {children}
+    </motion.span>
+  );
+}
+
+/**
+ * Shows one of several states in a single grid cell, so a new `swapKey`
+ * cross-fades in place: the old state leaves while the new one arrives.
+ * Present on the first render, a state appears settled.
+ */
+function SwapSlot({ swapKey, variants, as = 'span', style, children }: {
+  swapKey: string;
+  variants: Variants;
+  as?: 'span' | 'div';
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}) {
+  const content = (
+    <AnimatePresence initial={false}>
+      <SwapItem key={swapKey} variants={variants} as={as}>{children}</SwapItem>
+    </AnimatePresence>
+  );
+  return as === 'div'
+    ? <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', ...style }}>{content}</div>
+    : <span style={{ display: 'inline-grid', ...style }}>{content}</span>;
+}
+
+/** Disclosure chevron: one ▸ that turns to point down while open. */
+function Chevron({ open, style }: { open: boolean; style?: React.CSSProperties }) {
+  return (
+    <motion.span
+      aria-hidden
+      initial={false}
+      animate={{ rotate: open ? 90 : 0 }}
+      transition={SPRING.snappy}
+      style={{ display: 'inline-block', fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0, ...style }}
+    >
+      ▸
+    </motion.span>
+  );
+}
+
+/** Why a thought body hides: the block finishing, or the user collapsing it. */
+type ThoughtBodyExit = 'finish' | 'collapse';
+
+const THOUGHT_BODY_REVEAL: Variants = {
+  // Clip only while the height moves: a settled body (also one present at
+  // mount, which skips straight to here) keeps its focus ring.
+  open: { height: 'auto', opacity: 1, transition: TRANSITION.expand, transitionEnd: { overflow: 'visible' } },
+  closed: (exit: ThoughtBodyExit) => ({
+    height: 0,
+    opacity: 0,
+    overflow: 'hidden',
+    transition: exit === 'finish' ? { duration: 0.22, ease: EASE.drawer } : TRANSITION.collapse,
+  }),
+};
+
+// From 1px, not 0: a click that opens the body changes the transcript height
+// in the click's own frame, which is how TPane leaves follow mode.
+const THOUGHT_BODY_FROM = { height: 1, opacity: 0, overflow: 'hidden' } as const;
+
+/** A thought block's body: opens and closes by height, reversing in place
+ *  when toggled mid-way. Rendered settled when present with its block. While
+ *  it leaves it is out of the accessibility tree and inert. */
+function ThoughtBodyReveal({ children }: { children: React.ReactNode }) {
+  const present = useIsPresent();
+  return (
+    <motion.div
+      variants={THOUGHT_BODY_REVEAL}
+      initial={THOUGHT_BODY_FROM}
+      animate="open"
+      exit="closed"
+      aria-hidden={present ? undefined : true}
+      inert={!present}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+const BLOCK_GROW = { duration: 0.2, ease: EASE.out } as const;
+const BLOCK_FADE = { duration: 0.12, ease: 'linear' } as const;
+
+/**
+ * Grows `ref` from `from` px to its natural height (200ms ease-out), then
+ * releases it. The natural height is measured every frame, so content
+ * streaming in meanwhile is neither clipped nor snapped to, and a block that
+ * finishes (shrinks) mid-grow is followed down. Hand-written, so it skips
+ * itself under reduced motion; the fade stays on the motion root.
+ */
+function useGrowFrom(ref: React.RefObject<HTMLElement | null>, from: number | null, ready: boolean) {
+  const reduce = useReducedMotionConfig();
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (from === null || !ready || reduce || !el) return;
+    let done = false;
+    const release = () => {
+      done = true;
+      el.style.height = '';
+      el.style.overflow = '';
+    };
+    el.style.overflow = 'hidden';
+    el.style.height = `${from}px`;
+    const controls = animate(0, 1, {
+      ...BLOCK_GROW,
+      onUpdate: (progress) => {
+        // A skipped animation can report its last frame after completing.
+        if (done) return;
+        if (progress >= 1) return release();
+        el.style.height = '';
+        const to = el.offsetHeight;
+        el.style.height = `${from + (to - from) * progress}px`;
+      },
+      onComplete: release,
+    });
+    return () => {
+      controls.stop();
+      release();
+    };
+  }, [ref, from, ready, reduce]);
+}
+
+interface ThoughtHeaderBase {
+  streaming: boolean;
+  phase?: StreamPhase;
+  /** The body is expanded: the chevron points down. */
+  open: boolean;
+  /** Stable across streamed chunks, so the memoized header skips them. */
+  onToggle: () => void;
+}
+
+// Headers re-render on state changes only (live ↔ done, phase, open), never
+// per streamed thought chunk. Done-state text is passed only once finished.
+
+const CardThoughtHeader = React.memo(function CardThoughtHeader({
+  streaming, phase, open, onToggle, startedAt, clockKey, workText, workFailed, durText, base, suffix,
+}: ThoughtHeaderBase & {
+  startedAt?: number;
+  clockKey?: string;
+  /** Finished with tools: what it did, failures, duration at the right. */
+  workText?: string;
+  workFailed?: number;
+  durText?: string;
+  /** Finished otherwise: "Thought for 4s" and its "· 3 steps" suffix. */
+  base?: string;
+  suffix?: string;
+}) {
+  // Finishing swaps the header in place: spinner → sparkle by scale, the live
+  // label up and out as the summary rises in.
+  return (
+    <div
+      onClick={onToggle}
+      className="t-hover-fg"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '7px 11px',
+        cursor: 'pointer',
+        userSelect: 'none',
+        color: 'var(--term-muted)',
+      }}
+    >
+      <SwapSlot swapKey={streaming ? 'spinner' : 'sparkle'} variants={ICON_SWAP} style={{ flexShrink: 0, placeItems: 'center' }}>
+        {streaming ? <CardSpinner /> : <SparkleIcon size={13} color="var(--term-muted)" />}
+      </SwapSlot>
+      <SwapSlot as="div" swapKey={streaming ? 'live' : 'done'} variants={LABEL_SWAP} style={{ flex: 1, minWidth: 0 }}>
+        {streaming ? (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="term-shimmer" style={{ fontSize: 'var(--fs-md)', fontWeight: 500 }}>
+              {phase === 'working' ? 'Working…' : 'Thinking…'}
+            </span>
+            <LiveTimerLabel active={streaming} startedAt={startedAt} clockKey={clockKey} />
+          </span>
+        ) : workText ? (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <span
+              title={workText}
+              style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            >
+              {workText}
+            </span>
+            {!!workFailed && (
+              <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-danger)', flexShrink: 0 }}>
+                · {workFailed} failed
+              </span>
+            )}
+            <span style={{ marginLeft: 'auto', paddingLeft: 4, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+              {durText}
+            </span>
+            <Chevron open={open} />
+          </span>
+        ) : (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)' }}>{base}</span>
+            {suffix && <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{suffix}</span>}
+            <Chevron open={open} style={{ marginLeft: 'auto' }} />
+          </span>
+        )}
+      </SwapSlot>
+    </div>
+  );
+});
+
+const TerminalThoughtHeader = React.memo(function TerminalThoughtHeader({
+  streaming, phase, open, onToggle, hasTools, rightMeta,
+}: ThoughtHeaderBase & { hasTools?: boolean; rightMeta?: string }) {
+  return (
+    <SwapSlot as="div" swapKey={streaming ? 'live' : 'done'} variants={LABEL_SWAP}>
+      {streaming ? (
+        <div
+          onClick={onToggle}
+          style={{ display: 'flex', alignItems: 'baseline', gap: 7, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
+        >
+          <span aria-hidden style={{ fontFamily: 'var(--font-mono)', color: 'var(--term-accent)', fontSize: 'var(--fs-sm)', flexShrink: 0 }}>❯</span>
+          <span className="term-shimmer">{phase === 'working' ? 'working' : 'thinking'}</span>
+          <span aria-hidden className="agent-caret" />
+        </div>
+      ) : (
+        <div
+          onClick={onToggle}
+          className="t-hover-fg"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
+        >
+          <Chevron open={open} />
+          <span style={{ fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps-wide)', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
+            {hasTools ? 'working' : 'thinking'}
+          </span>
+          <span aria-hidden style={{ flex: 1, borderTop: '1px dotted var(--term-line)', transform: 'translateY(1px)' }} />
+          {rightMeta && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>{rightMeta}</span>
+          )}
+        </div>
+      )}
+    </SwapSlot>
+  );
+});
+
+const PlainThoughtHeader = React.memo(function PlainThoughtHeader({
+  streaming, phase, open, onToggle, doneLabel,
+}: ThoughtHeaderBase & { doneLabel?: string }) {
+  // The live dot shows while streaming unless the body is open; otherwise the
+  // chevron, which turns rather than swapping glyphs.
+  const liveDot = streaming && !open;
+  return (
+    <div
+      onClick={onToggle}
+      style={{
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 7,
+        fontSize: 'var(--fs-sm)',
+        color: 'var(--term-muted)',
+        fontFamily: 'var(--ui-font)',
+        userSelect: 'none',
+      }}
+      className="t-hover-fg"
+    >
+      <SwapSlot
+        swapKey={liveDot ? 'dot' : 'chevron'}
+        variants={ICON_SWAP}
+        style={{ width: 8, flexShrink: 0, alignSelf: liveDot ? 'center' : undefined }}
+      >
+        {liveDot ? (
+          <span aria-hidden style={{ display: 'inline-flex' }}>
+            <span className="term-dot-i term-dot-i--run" />
+          </span>
+        ) : (
+          <Chevron open={open} />
+        )}
+      </SwapSlot>
+      <SwapSlot swapKey={streaming ? 'live' : 'done'} variants={LABEL_SWAP}>
+        {streaming
+          ? <span className="term-shimmer">{phase === 'working' ? 'working' : 'thinking'}</span>
+          : <span>{doneLabel}</span>}
+      </SwapSlot>
+    </div>
+  );
+});
+
 /** Step-list renderer for Codex reasoning summaries (split by \n). */
 /** Strip lightweight Markdown formatting (bold, italic, code) so step text renders as plain text. */
 function stripInlineMarkdown(s: string): string {
@@ -399,6 +739,13 @@ export function TermThoughtBlock({
   const [expandedScrollable, setExpandedScrollable] = useState(false);
   const liveElapsed = useThinkingTimer(streaming);
   const variant = useAgentBlockStyle();
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const hasContent = !!(text || children || segments?.length);
+  // A block that starts streaming while its message is on screen grows in
+  // (from the pending dots it replaces); one already there renders settled.
+  const enterFrom = useBlockEntrance(streaming);
+  useGrowFrom(rootRef, enterFrom, hasContent);
 
   // Once streaming flips false, drop any sticky 'tail' override so the block
   // auto-collapses to 0 rows. 'expanded' is preserved (user is reading).
@@ -407,6 +754,27 @@ export function TermThoughtBlock({
   }, [streaming, userMode]);
 
   const mode: ThoughtMode = userMode ?? (streaming ? 'tail' : 'collapsed');
+  const showBody = mode === 'tail' || mode === 'expanded';
+  // The mode the body last showed in. A hiding tail is the block finishing;
+  // a hiding expanded body is the user collapsing it.
+  const shownModeRef = useRef<ThoughtMode>(mode);
+  useLayoutEffect(() => {
+    if (showBody) shownModeRef.current = mode;
+  });
+  const bodyExit: ThoughtBodyExit = shownModeRef.current === 'tail' ? 'finish' : 'collapse';
+
+  // Stable while chunks stream (mode and streaming change rarely), so the
+  // memoized headers skip them.
+  const handleToggle = useCallback(() => {
+    if (mode === 'expanded') {
+      // Expanded → tail (still streaming) or collapsed (done).
+      setUserMode(streaming ? 'tail' : 'collapsed');
+    } else {
+      // Tail or collapsed → expanded.
+      expandedStickyRef.current = true;
+      setUserMode('expanded');
+    }
+  }, [mode, streaming]);
 
   useLayoutEffect(() => {
     const el = expandedRef.current;
@@ -420,8 +788,8 @@ export function TermThoughtBlock({
   }, [mode, text, segments, children, variant]);
 
   // Pin tail-mode scroll to the bottom as new tokens arrive. `segments`
-  // changes identity when cluster content grows (new tool rows), keeping the
-  // tail pinned during tool activity too.
+  // changes identity when cluster content grows (new tool rows), and the
+  // plain variant passes its tool groups as `children`.
   useEffect(() => {
     if (mode === 'tail' && tailRef.current) {
       tailRef.current.scrollTop = tailRef.current.scrollHeight;
@@ -429,20 +797,24 @@ export function TermThoughtBlock({
     if (mode === 'expanded' && streaming && expandedStickyRef.current && expandedRef.current) {
       expandedRef.current.scrollTop = expandedRef.current.scrollHeight;
     }
-  }, [text, mode, streaming, segments]);
+  }, [text, mode, streaming, segments, children]);
 
-  if (!text && !children && !segments?.length) return null;
+  // Tool rows and their headers grow in over several frames after the render
+  // that added them, so a pin taken then lands short and the live row stays
+  // below the tail. Re-pin whenever the content itself resizes.
+  useEffect(() => {
+    const content = contentRef.current;
+    const viewport = mode === 'tail' ? tailRef.current : mode === 'expanded' && streaming ? expandedRef.current : null;
+    if (!content || !viewport || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (mode === 'expanded' && !expandedStickyRef.current) return;
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [mode, streaming, hasContent]);
 
-  const handleToggle = () => {
-    if (mode === 'expanded') {
-      // Expanded → tail (still streaming) or collapsed (done).
-      setUserMode(streaming ? 'tail' : 'collapsed');
-    } else {
-      // Tail or collapsed → expanded.
-      expandedStickyRef.current = true;
-      setUserMode('expanded');
-    }
-  };
+  if (!hasContent) return null;
 
   // Pure reasoning → "thought for 12s". Any tool activity → "worked for".
   // Duration is the durable activity window when the blocks carry it;
@@ -527,12 +899,34 @@ export function TermThoughtBlock({
         ...(!tail ? { maxHeight: 'min(60vh, 480px)', overflowY: 'auto' } : null),
       }}
     >
-      {bodyContent}
+      {/* Measured by the tail pin: its height tracks the content, uncapped. */}
+      <div ref={contentRef}>{bodyContent}</div>
     </div>
   );
 
   const bodyRef = mode === 'tail' ? tailRef : expandedRef;
-  const showBody = mode === 'tail' || mode === 'expanded';
+  const open = mode === 'expanded';
+  const live = !!streaming;
+
+  // Arrival: the whole block grows by height (useGrowFrom) and fades in. The
+  // tail body inside it never animates per streamed chunk; it only opens and
+  // closes as a whole. A settled block keeps a plain root (enterFrom never
+  // changes, so neither does the element type).
+  const root = (children: React.ReactNode, extra?: React.CSSProperties) => {
+    const style: React.CSSProperties = { marginBottom: 8, fontSize: 'var(--fs-sm)', ...extra };
+    return enterFrom === null ? (
+      <div data-agent-block style={style}>{children}</div>
+    ) : (
+      <motion.div ref={rootRef} data-agent-block initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={BLOCK_FADE} style={style}>
+        {children}
+      </motion.div>
+    );
+  };
+  const bodySlot = (chrome?: React.CSSProperties) => (
+    <AnimatePresence initial={false} custom={bodyExit}>
+      {showBody && <ThoughtBodyReveal key="body">{body(bodyRef, mode === 'tail', chrome)}</ThoughtBodyReveal>}
+    </AnimatePresence>
+  );
 
   // ── 1b · card chrome: hairline square-corner card, spinner/sparkle header,
   //    hairline-divided serif body. ──
@@ -550,65 +944,22 @@ export function TermThoughtBlock({
     const work = !streaming && hasTools
       ? summarizeWork(tools ?? segments?.flatMap((s) => (s.kind === 'tools' ? s.tools : [])) ?? [], subagents)
       : null;
-    return (
-      <div data-agent-block style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
+    return root(
         <div style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
-          <div
-            onClick={handleToggle}
-            className="t-hover-fg"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '7px 11px',
-              cursor: 'pointer',
-              userSelect: 'none',
-              color: 'var(--term-muted)',
-            }}
-          >
-            {streaming ? (
-              <>
-                <CardSpinner />
-                <span className="term-shimmer" style={{ fontSize: 'var(--fs-md)', fontWeight: 500 }}>
-                  {phase === 'working' ? 'Working…' : 'Thinking…'}
-                </span>
-                <LiveTimerLabel active={streaming} startedAt={startedAt} clockKey={clockKey} />
-              </>
-            ) : work?.text ? (
-              <>
-                <span style={{ display: 'inline-flex', flexShrink: 0 }}>
-                  <SparkleIcon size={13} color="var(--term-muted)" />
-                </span>
-                <span
-                  title={work.text}
-                  style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                >
-                  {work.text}
-                </span>
-                {work.failed > 0 && (
-                  <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-danger)', flexShrink: 0 }}>
-                    · {work.failed} failed
-                  </span>
-                )}
-                <span style={{ marginLeft: 'auto', paddingLeft: 4, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                  {dur != null ? formatDurationMs(dur) : ''}
-                </span>
-                <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>
-                  {mode === 'expanded' ? '▾' : '▸'}
-                </span>
-              </>
-            ) : (
-              <>
-                <SparkleIcon size={13} color="var(--term-muted)" />
-                <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)' }}>{cardBase}</span>
-                {cardSuffix && <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{cardSuffix}</span>}
-                <span aria-hidden style={{ marginLeft: 'auto', fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)' }}>
-                  {mode === 'expanded' ? '▾' : '▸'}
-                </span>
-              </>
-            )}
-          </div>
-          {showBody && body(bodyRef, mode === 'tail', {
+          <CardThoughtHeader
+            streaming={live}
+            phase={phase}
+            open={open}
+            onToggle={handleToggle}
+            startedAt={startedAt}
+            clockKey={clockKey}
+            workText={work?.text || undefined}
+            workFailed={work?.failed}
+            durText={work?.text && dur != null ? formatDurationMs(dur) : undefined}
+            base={live ? undefined : cardBase}
+            suffix={live ? undefined : cardSuffix}
+          />
+          {bodySlot({
             borderTop: '1px solid var(--term-line)',
             padding: '9px 12px',
             color: 'var(--term-mid)',
@@ -618,8 +969,8 @@ export function TermThoughtBlock({
             ['--message-body-size' as never]: 'calc(var(--message-body-size-base, 15px) * 0.8)',
             ['--message-body-leading' as never]: '1.6',
           })}
-        </div>
-      </div>
+        </div>,
+      { fontFamily: 'var(--ui-font)' },
     );
   }
 
@@ -634,36 +985,17 @@ export function TermThoughtBlock({
           ? `${codexStepCount} ${codexStepCount === 1 ? 'step' : 'steps'}`
           : null,
     ].filter(Boolean).join(' · ');
-    return (
-      <div data-agent-block style={{ marginBottom: 8, fontSize: 'var(--fs-sm)', fontFamily: 'var(--ui-font)' }}>
-        {streaming ? (
-          <div
-            onClick={handleToggle}
-            style={{ display: 'flex', alignItems: 'baseline', gap: 7, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
-          >
-            <span aria-hidden style={{ fontFamily: 'var(--font-mono)', color: 'var(--term-accent)', fontSize: 'var(--fs-sm)', flexShrink: 0 }}>❯</span>
-            <span className="term-shimmer">{phase === 'working' ? 'working' : 'thinking'}</span>
-            <span aria-hidden className="agent-caret" />
-          </div>
-        ) : (
-          <div
-            onClick={handleToggle}
-            className="t-hover-fg"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none', color: 'var(--term-muted)' }}
-          >
-            <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>
-              {mode === 'expanded' ? '▾' : '▸'}
-            </span>
-            <span style={{ fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps-wide)', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
-              {hasTools ? 'working' : 'thinking'}
-            </span>
-            <span aria-hidden style={{ flex: 1, borderTop: '1px dotted var(--term-line)', transform: 'translateY(1px)' }} />
-            {rightMeta && (
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>{rightMeta}</span>
-            )}
-          </div>
-        )}
-        {showBody && body(bodyRef, mode === 'tail', {
+    return root(
+      <>
+        <TerminalThoughtHeader
+          streaming={live}
+          phase={phase}
+          open={open}
+          onToggle={handleToggle}
+          hasTools={live ? undefined : hasTools}
+          rightMeta={live ? undefined : rightMeta}
+        />
+        {bodySlot({
           marginTop: 5,
           marginLeft: 3,
           paddingLeft: 11,
@@ -673,49 +1005,22 @@ export function TermThoughtBlock({
           ['--message-body-size' as never]: 'calc(var(--message-body-size-base, 15px) * 0.8)',
           ['--message-body-leading' as never]: '1.55',
         })}
-      </div>
+      </>,
+      { fontFamily: 'var(--ui-font)' },
     );
   }
 
-  return (
-    <div data-agent-block style={{ marginBottom: 8, fontSize: 'var(--fs-sm)' }}>
-      <div
-        onClick={handleToggle}
-        style={{
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'baseline',
-          gap: 7,
-          fontSize: 'var(--fs-sm)',
-          color: 'var(--term-muted)',
-          fontFamily: 'var(--ui-font)',
-          userSelect: 'none',
-        }}
-        className="t-hover-fg"
-      >
-        {streaming ? (
-          <>
-            {mode === 'expanded' ? (
-              <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>▾</span>
-            ) : (
-              <span aria-hidden style={{ width: 8, display: 'inline-flex', flexShrink: 0, alignSelf: 'center' }}>
-                <span className="term-dot-i term-dot-i--run" />
-              </span>
-            )}
-            <span className="term-shimmer">{phase === 'working' ? 'working' : 'thinking'}</span>
-          </>
-        ) : (
-          <>
-            <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', width: 8, flexShrink: 0 }}>
-              {mode === 'expanded' ? '▾' : '▸'}
-            </span>
-            <span>{doneLabel}</span>
-          </>
-        )}
-      </div>
-      {mode === 'tail' && body(tailRef, true)}
-      {mode === 'expanded' && body(expandedRef, false)}
-    </div>
+  return root(
+    <>
+      <PlainThoughtHeader
+        streaming={live}
+        phase={phase}
+        open={open}
+        onToggle={handleToggle}
+        doneLabel={live ? undefined : doneLabel}
+      />
+      {bodySlot()}
+    </>,
   );
 }
 
@@ -725,18 +1030,55 @@ function ThinkingIndicator() {
   // thought/tools have arrived yet. Replaces the older "Thinking…" copy
   // which overclaimed what was actually happening (mostly network wait,
   // not reasoning). Reuses the existing bounce-dot @keyframes in index.css.
+  // Entrance and exit belong to PendingIndicatorSlot.
   return (
-    <div
-      style={{ padding: '6px 0', animation: 'fadeIn var(--t-decay) ease' }}
-      aria-label="loading"
-      role="status"
-    >
+    <div style={{ padding: '6px 0' }} aria-label="loading" role="status">
       <span className="typing-dot" />
       <span className="typing-dot" style={{ animationDelay: '.15s' }} />
       <span className="typing-dot" style={{ animationDelay: '.3s' }} />
     </div>
   );
 }
+
+function PendingDots({ ref }: { ref?: React.Ref<HTMLDivElement> }) {
+  const present = useIsPresent();
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1, transition: { duration: 0.12 } }}
+      exit={{ opacity: 0, transition: { duration: 0.08 } }}
+      // Leaving dots are no longer a status.
+      aria-hidden={present ? undefined : true}
+    >
+      <ThinkingIndicator />
+    </motion.div>
+  );
+}
+
+/**
+ * Where the pending dots sit. When the first content replaces them they fade
+ * out in place (popped out of the flow, so nothing jumps) while the arriving
+ * block grows from their height. Placed before the message's content.
+ * Memoized: streamed chunks re-render its parent, not it.
+ */
+const PendingIndicatorSlot = React.memo(function PendingIndicatorSlot({ show }: { show: boolean }) {
+  const scope = useContext(MessageMotionContext);
+  const dotsRef = useRef<HTMLDivElement>(null);
+  // Record the dots' height when they show; clear it in the commit that hides
+  // them, after the block replacing them has rendered.
+  useLayoutEffect(() => {
+    if (scope) scope.pendingHeight.current = show ? dotsRef.current?.offsetHeight ?? null : null;
+  }, [scope, show]);
+  return (
+    // The positioned parent popLayout needs for the leaving dots.
+    <div style={{ position: 'relative' }}>
+      <AnimatePresence initial={false} mode="popLayout">
+        {show && <PendingDots key="pending" ref={dotsRef} />}
+      </AnimatePresence>
+    </div>
+  );
+});
 
 /**
  * Wrap `@name` tokens inside `text` in `<span class="mention-chip">` tags
@@ -1324,6 +1666,7 @@ function BlockAssistantBody({
   }, [onSmoothingChange, tailAnswerRunId]);
   return (
     <>
+      {m.streaming && <PendingIndicatorSlot show={runs.length === 0 && !hidePendingIndicator} />}
       {clusters.map((cluster, clusterIndex) => {
         const following = clusters[clusterIndex + 1];
         const nextBlock = following
@@ -1418,7 +1761,6 @@ function BlockAssistantBody({
           />
         );
       })}
-      {m.streaming && runs.length === 0 && !hidePendingIndicator && <ThinkingIndicator />}
     </>
   );
 }
@@ -1451,6 +1793,61 @@ function CollapsibleUserText({
   const [overflowing, setOverflowing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [clampHeight, setClampHeight] = useState<number | null>(null);
+  // The clamp style is on. Expanding drops it at once; collapsing keeps it
+  // off until the height has come down to it.
+  const [clamping, setClamping] = useState(true);
+  const reduceMotion = useReducedMotionConfig() ?? false;
+  /** The height a toggle starts from, measured on the click. */
+  const toggleFromRef = useRef<number | null>(null);
+  const heightMotionRef = useRef<{ stop: () => void } | null>(null);
+
+  const toggle = () => {
+    const el = contentRef.current;
+    heightMotionRef.current?.stop();
+    heightMotionRef.current = null;
+    const from = el && clampHeight != null && !reduceMotion ? el.getBoundingClientRect().height : null;
+    toggleFromRef.current = from;
+    const next = !expanded;
+    setExpanded(next);
+    if (next || from === null) setClamping(!next);
+  };
+
+  // Show more 260ms / Show less 160ms. Hand-written (skipped under reduced
+  // motion). The first frame lands in the click's own commit, 1px past the
+  // start, so the transcript height changes there and TPane leaves follow
+  // mode, as it did when the clamp just snapped.
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    const from = toggleFromRef.current;
+    toggleFromRef.current = null;
+    if (!el || from === null || clampHeight == null) return;
+    const to = expanded ? el.scrollHeight : clampHeight;
+    const start = expanded ? from + 1 : Math.max(clampHeight, from - 1);
+    el.style.overflow = 'hidden';
+    el.style.height = `${start}px`;
+    // Written by hand, with a guard: an element animation can write its last
+    // frame after onComplete, which would leave a fixed height behind.
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      heightMotionRef.current = null;
+      el.style.height = '';
+      el.style.overflow = '';
+      if (!expanded) setClamping(true);
+    };
+    heightMotionRef.current = animate(start, to, {
+      duration: expanded ? DUR.expand : DUR.collapse,
+      ease: EASE.drawer,
+      onUpdate: (h) => {
+        if (!done) el.style.height = `${h}px`;
+      },
+      onComplete: finish,
+    });
+    // clampHeight is read, not watched: a re-measure must not restart this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
+  useEffect(() => () => heightMotionRef.current?.stop(), []);
 
   useEffect(() => {
     const el = contentRef.current;
@@ -1486,7 +1883,7 @@ function CollapsibleUserText({
         ref={contentRef}
         id={contentId}
         style={
-          collapsed && clampHeight != null
+          collapsed && clamping && clampHeight != null
             ? { position: 'relative', maxHeight: clampHeight, overflow: 'hidden' }
             : { position: 'relative' }
         }
@@ -1512,7 +1909,7 @@ function CollapsibleUserText({
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            setExpanded((v) => !v);
+            toggle();
           }}
           className="t-hover-fg t-user-text-toggle"
           aria-expanded={expanded}
@@ -1771,6 +2168,52 @@ interface MessageBlockProps {
   /** Frames the message, with this mark above it; the hover actions stay
    *  below the frame. Pass a stable element: it takes part in memoization. */
   highlight?: React.ReactNode;
+  /** Play the entrance on mount: the message was just created (PaneMessageList
+   *  decides). Read on the first render only, so it is not memoized. */
+  fresh?: boolean;
+  /** Viewport box this user bubble flies in from (a queued block, a picked
+   *  follow-up; messageFlight) instead of rising. Read on mount only. */
+  flightFrom?: DOMRectReadOnly;
+}
+
+/**
+ * "Branches N" under a reply. A branch made just now (its edge is under a
+ * second old) grows in: the whole section when it appears with it, otherwise
+ * the new row. Branches there on mount (hydration, remounts) render settled.
+ */
+function BranchAnchorsSection({ anchors, onOpenBranch }: {
+  anchors: ChildAnchor[];
+  onOpenBranch?: (childNodeId: string) => void;
+}) {
+  const [grows] = useState(() => anchors.some((a) => isFresh(a.createdAt)));
+  // Rows mounting after the section's first commit decide their own entrance.
+  const mountedRef = useRef(false);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+  }, []);
+  const section = (
+    <section className="t-branch-anchors" aria-label="Branches from this reply">
+      <h3 className="t-branch-anchors-heading">Branches <span>{anchors.length}</span></h3>
+      {anchors.map((a, i) => (
+        <BranchAnchorRow
+          key={`anchor-${a.childNodeId}`}
+          title={a.title}
+          messageCount={a.messageCount ?? 0}
+          createdAt={a.createdAt}
+          status={a.status}
+          onOpen={() => onOpenBranch?.(a.childNodeId)}
+          enter={mountedRef.current && isFresh(a.createdAt)}
+          last={i === anchors.length - 1}
+        />
+      ))}
+    </section>
+  );
+  if (!grows) return section;
+  return (
+    <motion.div initial={ANCHOR_GROW_FROM} animate={ANCHOR_GROW_TO} style={ANCHOR_GROW_STYLE}>
+      {section}
+    </motion.div>
+  );
 }
 
 /** A highlighted message's frame, its mark first; any other message as it is. */
@@ -1778,6 +2221,19 @@ function MessageHighlight({ mark, children }: { mark: React.ReactNode; children:
   if (mark == null || mark === false) return <>{children}</>;
   return <div className="terminal-message-highlight">{mark}{children}</div>;
 }
+
+// A sent bubble rises from the composer, from its bottom-right corner; the
+// reply placeholder only fades in under it.
+const USER_ENTRANCE = {
+  initial: { opacity: 0, y: 12, scale: 0.97 },
+  animate: { opacity: 1, y: 0, scale: 1 },
+  transition: SPRING.snappy,
+};
+const ASSISTANT_ENTRANCE = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  transition: { duration: 0.12, ease: 'linear' },
+} as const;
 
 function MessageBlockInner({
   m,
@@ -1813,12 +2269,32 @@ function MessageBlockInner({
   hideActions,
   hidePendingIndicator,
   highlight,
+  fresh,
+  flightFrom,
 }: MessageBlockProps) {
   const [hover, setHover] = useState(false);
   const [editText, setEditText] = useState(m.text);
   const editAreaRef = useRef<HTMLTextAreaElement>(null);
+  const bubbleRef = useRef<HTMLDivElement>(null);
   const isUser = m.role === 'user';
   const decorations = useMetaChatDecorations();
+  const reduceMotion = useReducedMotionConfig() ?? false;
+  // Decided once: hydrated, lazily loaded and remounted messages render
+  // settled. A bubble with somewhere to fly in from does that instead of
+  // rising (one entrance, not two).
+  const [flight] = useState(() => (isUser ? flightFrom ?? null : null));
+  const [entrance] = useState(() => (fresh && !flight ? (isUser ? USER_ENTRANCE : ASSISTANT_ENTRANCE) : null));
+  const [motionScope] = useState<MessageMotionScope>(() => ({ mounted: { current: false }, pendingHeight: { current: null } }));
+  useLayoutEffect(() => {
+    motionScope.mounted.current = true;
+  }, [motionScope]);
+  useLayoutEffect(() => {
+    const el = bubbleRef.current;
+    if (!flight || !el) return;
+    return playFlight(el, flight, reduceMotion);
+    // Mount only: the flight is decided once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (editing) {
@@ -1835,15 +2311,8 @@ function MessageBlockInner({
   // Assistant-only inline vertical padding. The user bubble's padding lives in
   // index.css (paper-card recipe) and scales via the [data-density] attribute.
   const dPadV = density === 'dense' ? 4 : density === 'compact' ? 5 : 6;
-  return (
-    <div
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        marginBottom: dMarginBottom,
-        animation: 'fadeIn var(--t-enter) ease-out both',
-      }}
-    >
+  const contents = (
+    <>
       <BranchQuoteMarks anchors={quoteAnchors} onOpenBranch={onOpenBranch}>
       <MessageHighlight mark={highlight}>
       {!isUser && (
@@ -1899,6 +2368,7 @@ function MessageBlockInner({
         ) : (
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <div
+            ref={bubbleRef}
             className="terminal-message terminal-message-user"
             data-density={density}
             onClick={onMentionClick ? (e) => {
@@ -2013,8 +2483,8 @@ function MessageBlockInner({
           {!hasAssistantBlocks(m) && showThoughts && m.thought && (
             <TermThoughtBlock text={m.thought} streaming={m.streaming} runtimeId={runtimeId} />
           )}
-          {m.streaming && !hidePendingIndicator && !hasAssistantBlocks(m) && !m.text && !m.thought && m.toolCalls.length === 0 && (
-            <ThinkingIndicator />
+          {m.streaming && !hasAssistantBlocks(m) && (
+            <PendingIndicatorSlot show={!hidePendingIndicator && !m.text && !m.thought && m.toolCalls.length === 0} />
           )}
           {hasAssistantBlocks(m) ? (
             <BlockAssistantBody
@@ -2050,19 +2520,7 @@ function MessageBlockInner({
         />
       )}
       {turnAnchors && turnAnchors.length > 0 && (
-        <section className="t-branch-anchors" aria-label="Branches from this reply">
-          <h3 className="t-branch-anchors-heading">Branches <span>{turnAnchors.length}</span></h3>
-          {turnAnchors.map((a) => (
-            <BranchAnchorRow
-              key={`anchor-${a.childNodeId}`}
-              title={a.title}
-              messageCount={a.messageCount ?? 0}
-              createdAt={a.createdAt}
-              status={a.status}
-              onOpen={() => onOpenBranch?.(a.childNodeId)}
-            />
-          ))}
-        </section>
+        <BranchAnchorsSection anchors={turnAnchors} onOpenBranch={onOpenBranch} />
       )}
       </MessageHighlight>
       </BranchQuoteMarks>
@@ -2092,7 +2550,34 @@ function MessageBlockInner({
         )
       )}
       {decorations?.afterMessage?.(m)}
-    </div>
+    </>
+  );
+  const onMouseEnter = () => setHover(true);
+  const onMouseLeave = () => setHover(false);
+  // `entrance` never changes, so neither does the root's element type: a
+  // settled message keeps a plain div. The null PresenceContext lets the
+  // message decide its own entrances: inside an AnimatePresence child that
+  // was there on first render, motion would otherwise skip the entrance of
+  // everything mounting later (this bubble, arriving thought blocks).
+  return (
+    <PresenceContext.Provider value={null}>
+    <MessageMotionContext.Provider value={motionScope}>
+      {entrance ? (
+        <motion.div
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
+          {...entrance}
+          style={{ marginBottom: dMarginBottom, ...(isUser ? { originX: 1, originY: 1 } : null) }}
+        >
+          {contents}
+        </motion.div>
+      ) : (
+        <div onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} style={{ marginBottom: dMarginBottom }}>
+          {contents}
+        </div>
+      )}
+    </MessageMotionContext.Provider>
+    </PresenceContext.Provider>
   );
 }
 
@@ -2168,6 +2653,8 @@ const MessageBlock = React.memo(MessageBlockInner, (prev, next) =>
   prev.onVisibleSmoothingChange === next.onVisibleSmoothingChange &&
   !!prev.hidePendingIndicator === !!next.hidePendingIndicator &&
   prev.highlight === next.highlight,
+  // `fresh` is left out on purpose: it is read on mount only and turns false
+  // a second later, which must not re-render every recent message.
 );
 
 export { MessageBlock };

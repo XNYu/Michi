@@ -22,8 +22,11 @@ export async function fetchArtifactContent(
   const url = `${workspaceBackendApiBase(workspaceId)}/artifacts/${encodeURIComponent(serverEntityId(workspaceId))}/read?path=${encodeURIComponent(filePath)}${preview ? '&preview=1' : ''}`;
   const res = await backendFetch(url);
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: `status ${res.status}` }));
-    throw new Error(body.error || `Failed to load artifact: ${res.status}`);
+    // Missing and out-of-workspace files are bodyless 404s.
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error || (res.status === 404
+      ? `File not found in this workspace: ${filePath}`
+      : `Failed to load file (status ${res.status})`));
   }
   return res.json() as Promise<ArtifactReadResult>;
 }

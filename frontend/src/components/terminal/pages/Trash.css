@@ -69,8 +69,12 @@ button.trash-group-heading { cursor: pointer; }
 .trash-menu .ui-menu-item:focus-visible { background: color-mix(in srgb, var(--term-fg) 5%, transparent); outline-offset: -2px; }
 .terminal-trash button:focus-visible, .terminal-trash select:focus-visible, .trash-preview button:focus-visible, .trash-menu button:focus-visible { outline: 2px solid var(--term-accent); outline-offset: 2px; }
 .trash-loading, .trash-preview-loading { display: grid; gap: 14px; padding: 16px 8px; }
-.trash-loading span, .trash-preview-loading span { display: block; height: 48px; border-radius: var(--ui-radius); background: color-mix(in srgb, var(--term-fg) 6%, transparent); }
+/* Faint bars, so the softer skeleton pulse (index.css) rather than the message skeleton's .3 low. */
+.trash-loading span, .trash-preview-loading span { display: block; height: 48px; border-radius: var(--ui-radius); background: color-mix(in srgb, var(--term-fg) 6%, transparent); animation: t-skeleton-pulse-soft var(--t-loop) ease-in-out infinite; }
 .trash-preview-loading span { height: 32px; }
+@media (prefers-reduced-motion: reduce) {
+  .trash-loading span, .trash-preview-loading span { animation: none; }
+}
 .trash-preview { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; color: var(--term-fg); font-family: var(--ui-font); }
 .trash-preview-scroll { min-height: 0; max-height: calc(100dvh - 240px); overflow-y: auto; padding: 22px 24px; }
 .trash-preview-eyebrow { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; color: var(--term-muted); font-size: var(--fs-sm); }

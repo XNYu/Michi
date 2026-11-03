@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { MichiPageBlock } from 'michi-shared';
 import { MichiBlock } from './MichiBlock';
@@ -17,6 +17,11 @@ function draw(block: MichiPageBlock) {
 }
 const sample = (kind: (typeof CHART_KINDS)[number]) => chartSample(kind) as unknown as MichiPageBlock;
 
+// These cases assert rendered chart shapes, not module loading time. Compile
+// the shared lazy chunk before their short DOM waits, even on a cold test run.
+beforeAll(async () => {
+  await import('./vendor-blocks/src/desk/blocks/catalog/chart/kinds');
+});
 afterEach(cleanup);
 
 describe('Desk-drawn chart block', () => {

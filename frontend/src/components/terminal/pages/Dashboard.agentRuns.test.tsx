@@ -201,3 +201,37 @@ describe('Dashboard Agent Run panes', () => {
   });
 
 });
+
+describe('Dashboard page target reveal', () => {
+  function revealBlock() {
+    const owner = document.createElement('div');
+    Object.assign(owner.dataset, { nativePagePane: '', pageId: 'page-1', workspaceId: 'workspace-1', backendConnectionId: 'backend-a' });
+    const block = document.createElement('div');
+    block.dataset.blockId = 'block-1';
+    block.scrollIntoView = vi.fn();
+    owner.appendChild(block);
+    document.body.appendChild(owner);
+    act(() => {
+      window.dispatchEvent(new CustomEvent('michi:scroll-to-page-target', { detail: {
+        pageId: 'page-1', workspaceId: 'workspace-1', backendConnectionId: 'backend-a',
+        resourceKind: 'page', resourceId: 'page-1', targetId: 'block-1',
+      } }));
+    });
+    owner.remove();
+    return block.scrollIntoView as ReturnType<typeof vi.fn>;
+  }
+
+  beforeEach(() => { HTMLElement.prototype.scrollTo = vi.fn(); });
+
+  it('scrolls a page target into view smoothly, and jumps when the OS reduces motion', () => {
+    render(<TerminalDashboard />);
+    expect(revealBlock()).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'smooth' }));
+    const matchMedia = window.matchMedia;
+    window.matchMedia = vi.fn((query: string) => ({ matches: query.includes('reduce'), media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })) as unknown as typeof window.matchMedia;
+    try {
+      expect(revealBlock()).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }));
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+  });
+});

@@ -3,13 +3,14 @@ import { evaluateProviderReadiness } from './providerReadiness';
 import { getProviderApiKey, listProviderKeyPresence } from './secrets';
 import { hasBedrockCredentials } from './bedrockCredentials';
 
-/** Keep a usable current choice; otherwise use the first configured runtime.
+/** Keep a usable current choice. Legacy deployments may opt into a fallback.
  * Missing CLIs and unconfigured API providers must not make remote boot depend
  * on Kiro, or mistake Pi's built-in adapter for configured credentials. */
 export async function findRemoteRuntimeDefault(
-  runtimes: readonly AgentRuntime[], currentId: string,
+  runtimes: readonly AgentRuntime[], currentId: string, allowFallback = false,
 ): Promise<AgentRuntime | undefined> {
-  const candidates = [...runtimes.filter(runtime => runtime.id === currentId), ...runtimes.filter(runtime => runtime.id !== currentId)];
+  const candidates = runtimes.filter(runtime => runtime.id === currentId);
+  if (allowFallback) candidates.push(...runtimes.filter(runtime => runtime.id !== currentId));
   for (const runtime of candidates) {
     try {
       if (runtime.checkAvailability?.().available === false) continue;

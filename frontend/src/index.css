@@ -1091,14 +1091,17 @@ body {
   --term-pane-shadow: none;
   --term-pane-header-bg: var(--term-alt);
   --term-hover-bg: var(--term-alt);
-  /* Motion timing tokens — the only definition (tokens.ts no longer emits
-     them). Every transition and one-shot animation uses one of the first
-     five; every looping animation one of the three loop rhythms. Keep
-     duration and easing as SEPARATE tokens — the call sites pair them.
+  /* Motion timing tokens. motion/tokens.ts (DUR) mirrors the one-shot ones
+     for motion components; tokens.css.test.js keeps the two in step. Every
+     transition and one-shot animation uses one of the first six; every
+     looping animation one of the three loop rhythms. Keep duration and
+     easing as SEPARATE tokens — the call sites pair them.
        quick      hover and colour changes
        soft       state changes: carets, fades, borders; menus popping in
        enter      drawers, modals, scrims and overlays arriving
-       decay      slow fades and the phosphor-decay delete
+       exit       the same surfaces leaving: exits run a little faster
+                  than their entrances
+       decay      slow fades
        slow       highlights that linger: find/message flash, new-pane glow
        loop-fast  spinners, cursor blink, flowing edges
        loop       pulses, breathing dots, skeletons
@@ -1106,6 +1109,7 @@ body {
   --t-quick: 60ms;
   --t-soft: 100ms;
   --t-enter: 180ms;
+  --t-exit: 110ms;
   --t-decay: 360ms;
   --t-slow: 600ms;
   --t-loop-fast: 1s;
@@ -1476,18 +1480,6 @@ html[data-vibrancy="on"],
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-@keyframes scaleIn {
-  from { opacity: 0; transform: scale(.96); }
-  to   { opacity: 1; transform: scale(1); }
-}
-@keyframes slideInRight {
-  from { opacity: 0; transform: translateX(100%); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-@keyframes slideInLeft {
-  from { opacity: 0; transform: translateX(-100%); }
-  to   { opacity: 1; transform: translateX(0); }
-}
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 35%, transparent); }
   50%      { box-shadow: 0 0 0 6px color-mix(in oklab, var(--accent) 6%, transparent); }
@@ -1539,18 +1531,6 @@ html[data-vibrancy="on"],
 .stream-token-reveal {
   animation: t-stream-token-reveal var(--stream-token-reveal-duration, var(--t-decay)) ease-out both;
 }
-@keyframes sd-fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes sd-blurIn {
-  from { opacity: 0; filter: blur(4px); }
-  to { opacity: 1; filter: blur(0); }
-}
-@keyframes sd-slideUp {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 /* ── Background pane entrance indicators ─────────────────────────
    Layer 1: caption cell entrance — accent bg highlight fade-out.
    Layer 1b: sidebar bar pulse (2 cycles then stop).
@@ -1571,20 +1551,14 @@ html[data-vibrancy="on"],
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.3; }
 }
+/* The "+N" badge sits in the Topbar's flex row (align-items: center), so it
+   only scales: a translate here would stay applied under `forwards`. */
 @keyframes overflow-badge-enter {
-  0%   { opacity: 0; transform: translateY(-50%) scale(0.6); }
-  100% { opacity: 1; transform: translateY(-50%) scale(1); }
-}
-[data-sd-animate] {
-  animation: var(--sd-animation, sd-fadeIn) var(--sd-duration, var(--t-soft))
-    var(--sd-easing, ease) var(--sd-delay, 0ms) both;
+  0%   { opacity: 0; transform: scale(0.6); }
+  100% { opacity: 1; transform: scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
   .stream-token-reveal {
-    animation: none;
-    opacity: 1;
-  }
-  [data-sd-animate] {
     animation: none;
     opacity: 1;
   }
@@ -1647,15 +1621,6 @@ html[data-vibrancy="on"],
   0% { background-position: 120% 0; }
   100% { background-position: -20% 0; }
 }
-/* Expanded tool-rows entrance — a soft fade/slide on mount. Collapse is
-   intentionally instant (mount/unmount), per "collapse fast, expand soft". */
-.tool-rows-in {
-  animation: toolRowsIn var(--t-soft) cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-@keyframes toolRowsIn {
-  from { opacity: 0; transform: translateY(-2px); }
-  to { opacity: 1; transform: none; }
-}
 /* Agent-block variant parts (AgentBlockVariants.tsx). Card variant (1b):
    10px accent-arc spinner. Terminal variant (1d): blinking block caret after
    the streaming "thinking" label, breathing ❯ glyph on running rows, and an
@@ -1699,39 +1664,9 @@ html[data-vibrancy="on"],
     -webkit-text-fill-color: currentColor;
     color: var(--term-accent);
   }
-  .tool-rows-in { animation: none; }
   .agent-spinner { animation: none; }
   .agent-caret { animation: none; }
   .agent-glyph-run { animation: none; }
-}
-
-@keyframes tMapNodeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* Spawn reveal — used when a new TPane is mounted by spawn_branches /
-   fanout / manual open. A brief inset box-shadow flash gives a CRT-style
-   "border drawn in" feel before fading to no outline. Stagger via
-   inline animation-delay = i * 80ms in the Dashboard mount loop. */
-@keyframes tSpawn {
-  0%   { opacity: 0; box-shadow: inset 0 0 0 0 var(--term-fg), inset 0 0 0 0 transparent; }
-  35%  { opacity: 1; box-shadow: inset 0 0 0 1px var(--term-fg), 0 0 8px -2px var(--term-fg); }
-  100% { opacity: 1; box-shadow: inset 0 0 0 0 transparent, 0 0 0 0 transparent; }
-}
-
-/* Phosphor decay — apply via .t-decay-out then call the real delete after
-   ~340ms. Mid-keyframe, the element flashes a tighter ring before going
-   dark and collapsing. CRT power-off feel. */
-@keyframes tDecay {
-  0%   { opacity: 1; transform: scale(1);    box-shadow: 0 0 0 0 transparent; filter: brightness(1); }
-  35%  { opacity: 1; transform: scale(1);    box-shadow: inset 0 0 0 1px var(--term-fg), 0 0 6px -2px var(--term-fg); filter: brightness(1.4); }
-  70%  { opacity: 0.5; transform: scale(0.99); filter: brightness(0.4); }
-  100% { opacity: 0; transform: scale(0.985); filter: brightness(0); }
-}
-.t-decay-out {
-  animation: tDecay var(--t-decay) ease-out forwards;
-  pointer-events: none;
 }
 
 /* Hide scrollbars (used in terminal sidebar tree). */
@@ -2098,6 +2033,14 @@ html[data-vibrancy="on"],
   0%, 100% { opacity: 0.3; }
   50%      { opacity: 0.6; }
 }
+/* The softer skeleton pulse, for faint or --term-alt bars that would vanish at
+   the message skeleton's .3 low: follow-ups below, and the page, Scheduled and
+   Trash loading bars (michiPage.css, Scheduled.css, Trash.css). Pair it with
+   var(--t-loop) ease-in-out infinite and a reduced-motion `animation: none`. */
+@keyframes t-skeleton-pulse-soft {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.9; }
+}
 
 /* Follow-ups skeleton shown during kiro's `set_follow_ups` tool call
    (between end-of-text and arrival of the actual follow-up list). A slow
@@ -2109,14 +2052,10 @@ html[data-vibrancy="on"],
   margin: 14px 16px;
   border-radius: var(--ui-radius-sm);
   background: var(--term-alt);
-  animation: t-followup-skeleton-pulse var(--t-loop) ease-in-out infinite;
+  animation: t-skeleton-pulse-soft var(--t-loop) ease-in-out infinite;
 }
 .t-followup-skeleton:nth-child(2) { width: 86%; }
 .t-followup-skeleton:nth-child(3) { width: 66%; }
-@keyframes t-followup-skeleton-pulse {
-  0%, 100% { opacity: 0.55; }
-  50%      { opacity: 0.9; }
-}
 @media (prefers-reduced-motion: reduce) {
   .t-followup-skeleton { animation: none; }
 }
@@ -3593,11 +3532,6 @@ html[data-vibrancy="on"],
     0 0 0 0.5px color-mix(in srgb, var(--term-fg) 16%, transparent),
     0 1px 2px rgba(0, 0, 0, 0.05),
     0 2px 4px rgba(0, 0, 0, 0.03);
-  animation: ask-card-in var(--t-decay) cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-@keyframes ask-card-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
 }
 .ask-card-head {
   display: flex;
@@ -3666,7 +3600,6 @@ html[data-vibrancy="on"],
 }
 .ask-question:not([data-active="true"]) { pointer-events: none; }
 @media (prefers-reduced-motion: reduce) {
-  .ask-card { animation: none; }
   .ask-viewport[data-animate="true"],
   .ask-track[data-animate="true"],
   .ask-track[data-animate="true"] .ask-question { transition: none; }
@@ -3910,7 +3843,6 @@ html[data-vibrancy="on"],
   outline-offset: 1px;
 }
 /* Resolved read-only state */
-.ask-card.ask-resolved { animation: none; }
 .ask-card-body {
   padding: 0;
   display: flex;
@@ -4200,14 +4132,14 @@ html[data-vibrancy="on"],
 }
 
 /* ── Shared drawer / modal scrim + panel classes ─────────────────────────────
-   The React shells (DrawerShell / ModalShell) apply these; they own layering,
-   the scrim, and the enter animation so every side drawer and centered modal
-   is identical by construction. The panel material itself comes from the
-   existing .term-glass primitive (blur + wash + cast). */
+   The React shells (DrawerShell / ModalShell / BottomSheet) apply these; they
+   own layering and the scrim so every side drawer and centered modal is
+   identical by construction. The shells animate the scrim and panels
+   themselves (motion, or DrawerShell.css's slide). The panel material itself
+   comes from the existing .term-glass primitive (blur + wash + cast). */
 .ui-scrim {
   position: fixed;
   inset: 0;
-  animation: fadeIn var(--t-enter) ease-out both;
 }
 .ui-scrim--drawer {
   background: var(--scrim-drawer);
@@ -4251,11 +4183,10 @@ html[data-vibrancy="on"],
   flex-direction: column;
   z-index: var(--z-drawer);
   border-left: 1px solid var(--term-line);
-  animation: slideInRight var(--t-enter) ease-out both;
   -webkit-app-region: no-drag;
 }
 /* Centered modal card. Material is .term-glass (applied by ModalShell); this
-   class owns sizing + enter animation. */
+   class owns sizing. */
 .ui-modal-panel {
   position: relative;
   display: flex;
@@ -4264,7 +4195,6 @@ html[data-vibrancy="on"],
   border: 1px solid var(--term-line-s);
   border-radius: var(--ui-radius);
   font-family: var(--ui-font);
-  animation: scaleIn var(--t-enter) cubic-bezier(.2, .8, .2, 1) both;
   -webkit-app-region: no-drag;
 }
 /* Shared header band for drawers + modals: '▸ TITLE' mono tag + × close. */
@@ -4308,9 +4238,6 @@ html[data-vibrancy="on"],
   background: var(--term-hover-bg, var(--term-alt));
   color: var(--term-fg);
 }
-@media (prefers-reduced-motion: reduce) {
-  .ui-scrim, .ui-drawer-panel, .ui-modal-panel { animation: none; }
-}
 
 /* ── Toasts (sonner) ──────────────────────────────────────────────────────────
    Sonner ships its own palette, radius, system font and a z-index of 999999999.
@@ -4340,6 +4267,62 @@ html[data-vibrancy="on"],
   --border-radius: var(--ui-radius);
   font-family: var(--ui-font);
   z-index: var(--z-toast);
+}
+
+/* Clickable notice card from services/notifications.ts (sonner custom toast,
+   so none of sonner's own surface styling applies). */
+.app-toast-card {
+  cursor: pointer;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px 16px;
+  border-radius: var(--ui-radius);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.app-toast-card__title { font-weight: 500; }
+.app-toast-card__body { margin-top: 2px; color: var(--color-fg-muted); }
+
+/* Desktop top-right toasts dock to the window's right edge as a tab beneath
+   the topbar icon cluster, sized to their content, and slide in/out
+   horizontally. Sonner anchors only *styled* toasts (fixed --width); custom
+   toasts shrink-wrap at the toaster's left edge, ~200px in from the corner,
+   so pin every toast to the right. Its stock top-right motion is a vertical
+   drop; only the enter and front-exit states are re-pointed to translateX —
+   stacking/expanding keeps sonner's vertical lift. Above 600px only: sonner's
+   phone layout is full-width. Removal unmounts 200ms after data-removed, so
+   the exit fits inside that window. */
+@media (min-width: 601px) {
+  [data-sonner-toaster][data-x-position='right'] [data-sonner-toast] {
+    right: 0;
+    left: auto;
+    width: max-content;
+    max-width: var(--width);
+    transition:
+      transform var(--t-enter) cubic-bezier(0, 0, .2, 1),
+      opacity var(--t-enter) var(--t-ease),
+      height var(--t-enter) var(--t-ease),
+      box-shadow var(--t-soft) var(--t-ease);
+  }
+  [data-sonner-toaster][data-x-position='right'] [data-sonner-toast][data-mounted='false'],
+  [data-sonner-toaster][data-x-position='right'] [data-sonner-toast][data-removed='true'][data-front='true'][data-swipe-out='false'] {
+    --y: translateX(100%);
+  }
+  [data-sonner-toaster][data-x-position='right'] [data-sonner-toast][data-removed='true'] {
+    transition-duration: var(--t-exit);
+    transition-timing-function: cubic-bezier(.4, 0, 1, 1);
+  }
+  /* Tab shape: square, borderless edge against the window side. */
+  [data-sonner-toaster][data-x-position='right'] [data-sonner-toast][data-styled='true'],
+  [data-sonner-toaster][data-x-position='right'] .app-toast-card {
+    border-right-width: 0;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
 }
 
 /* ── Performance gates ─────────────────────────────────────────────────────────
@@ -4449,6 +4432,13 @@ html[data-page-hidden] .typing-dot {
 
 @keyframes map-edge-draw { from { stroke-dashoffset: 620; } to { stroke-dashoffset: 0; } }
 .map-edge--draw { stroke-dasharray: 620; animation: map-edge-draw var(--t-slow) ease-out both; }
+
+/* Reduced motion: new cards and edges are simply there, and the live glows
+   hold still (the in-app toggle's global rule below covers the rest). */
+@media (prefers-reduced-motion: reduce) {
+  .map-card--in, .map-card--breathe, .map-card__live-dot, .map-card__unread-dot, .map-edge--flow { animation: none; }
+  .map-edge--draw { animation: none; stroke-dasharray: none; }
+}
 
 /* Hovering a card lights its whole ancestor chain (the branch's path back to
    the root); the dimming of the rest is what makes the lit path legible. */

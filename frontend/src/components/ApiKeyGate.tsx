@@ -31,7 +31,6 @@ import { usePrefs } from '../state/prefs';
 export default function ApiKeyGate() {
   const { prefs } = usePrefs();
   const [status, setStatus] = useState<AgentStatus | null>(null);
-  const [loading, setLoading] = useState(true);
   const [backendUnreachable, setBackendUnreachable] = useState(false);
   const [key, setKey] = useState('');
   const [selectedProvider, setSelectedProvider] = useState<string>('');
@@ -44,9 +43,10 @@ export default function ApiKeyGate() {
 
   // Backoff schedule for cold backend startup. Caps at ~5s between retries
   // so the user sees a "loading" state instead of a stuck blank screen.
-  const load = async () => {
+  // `reopen` undoes a dismissal together with the status it fetched: the
+  // status on hand may belong to the runtime the user just switched away from.
+  const load = async ({ reopen = false }: { reopen?: boolean } = {}) => {
     const requestId = ++loadRequestIdRef.current;
-    setLoading(true);
     setBackendUnreachable(false);
     const delays = [0, 250, 500, 1000, 2000, 5000, 5000];
     for (let i = 0; i < delays.length; i++) {
@@ -56,7 +56,7 @@ export default function ApiKeyGate() {
         const s = await fetchAgentStatus();
         if (requestId !== loadRequestIdRef.current) return;
         setStatus(s);
-        setLoading(false);
+        if (reopen) setDismissed(false);
         return;
       } catch {
         // Try again
@@ -64,7 +64,6 @@ export default function ApiKeyGate() {
     }
     if (requestId !== loadRequestIdRef.current) return;
     setBackendUnreachable(true);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -77,8 +76,7 @@ export default function ApiKeyGate() {
     const handler = (e: Event) => {
       const silent = (e as CustomEvent).detail?.silent === true;
       if (silent) setDismissed(true);
-      else setDismissed(false);
-      void load();
+      void load({ reopen: !silent });
     };
     window.addEventListener('michi:reload-agent-status', handler);
     return () => {
@@ -127,16 +125,22 @@ export default function ApiKeyGate() {
   }
 
   // Not ready yet, runtime doesn't need an API key, dismissed, or
-  // onboarding still owns the flow — render nothing.
+  // onboarding still owns the flow — show nothing. The shell stays mounted so
+  // it fades out what it last showed and can take the scrim over from the
+  // first-run Setup card. A reload keeps deciding from the status it has, so
+  // the window neither drops out while a saved key is checked nor waits for a
+  // fetch when Setup hands over to it; a dismissed window reopens only with
+  // the status the reload brings back.
   // Show when the *active* provider needs a key, even if hasRequiredKey is
   // true because some other provider (e.g. DeepSeek) already has one.
-  if (loading || !status) return null;
-  if (prefs.onboardingCompletedAt == null) return null;
-  if (!status.capabilities.apiKeys) return null;
-  if (dismissed) return null;
+  const closed = <ModalShell open={false} onClose={() => setDismissed(true)}>{null}</ModalShell>;
+  if (!status) return closed;
+  if (prefs.onboardingCompletedAt == null) return closed;
+  if (!status.capabilities.apiKeys) return closed;
+  if (dismissed) return closed;
   const activeProvider = (status.providers ?? []).find((p) => p.id === status.provider);
   const activeNeedsKey = !!activeProvider && shouldPromptForProviderKey(activeProvider);
-  if (status.hasRequiredKey && !activeNeedsKey) return null;
+  if (status.hasRequiredKey && !activeNeedsKey) return closed;
 
   const providers = (status.providers ?? []).filter(providerRequiresUserKey);
   const selectedProviderInfo =

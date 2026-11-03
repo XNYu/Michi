@@ -7,6 +7,10 @@ export interface FollowUpRowProps {
   onContinue: (question: string) => void;
   onBranch: (question: string) => void;
   disabled?: boolean;
+  /** The row element: where a picked follow-up's bubble flies in from. */
+  rowRef?: React.Ref<HTMLDivElement>;
+  /** Picked and sent: its text goes on as the new bubble, so the row hides. */
+  picked?: boolean;
 }
 
 export function FollowUpRow({
@@ -15,6 +19,8 @@ export function FollowUpRow({
   onContinue,
   onBranch,
   disabled = false,
+  rowRef,
+  picked = false,
 }: FollowUpRowProps): React.JSX.Element {
   const ariaContinue = `Continue follow-up in current pane: ${question}. Press B to branch into a new pane.`;
   const ariaBranch = `Branch follow-up into new pane: ${question}`;
@@ -42,9 +48,10 @@ export function FollowUpRow({
 
   return (
     <div
+      ref={rowRef}
       className="t-followup-row"
       role="group"
-      style={{ '--followup-delay': `${index * 90}ms` } as React.CSSProperties}
+      style={{ '--followup-delay': `${index * 90}ms`, ...(picked ? { visibility: 'hidden' } : null) } as React.CSSProperties}
       data-disabled={disabled ? 'true' : undefined}
     >
       <button

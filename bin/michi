@@ -103,7 +103,12 @@ remote_update() {
   log="$REMOTE_ROOT/update.$attempt.log"
   (umask 077 && : >"$log")
   echo "🐰 Building $ref ${revision:0:8} (log: $log)"
-  if ! (git clone --no-checkout --single-branch --branch "$ref" -- "$url" "$repo" \
+  # scripts/build-edition.cjs selects the internal edition from a Git remote
+  # named amazon. Name the new checkout's remote like the running one's, so an
+  # update keeps the build's edition.
+  remote_name=origin
+  if git -C "$old_repo" remote get-url amazon >/dev/null 2>&1; then remote_name=amazon; fi
+  if ! (git clone --no-checkout --single-branch --branch "$ref" --origin "$remote_name" -- "$url" "$repo" \
     && git -C "$repo" checkout --detach "$revision") >>"$log" 2>&1; then
     tail -n 20 "$log"
     remote_fail "Could not fetch $ref; Michi keeps running $old_repo"

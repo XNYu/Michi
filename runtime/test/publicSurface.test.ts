@@ -6,6 +6,7 @@ import * as claude from '../src/adapters/claude/index';
 import * as codex from '../src/adapters/codex/index';
 import * as kiro from '../src/adapters/kiro/index';
 import * as crew from '../src/adapters/crew/index';
+import * as antigravity from '../src/adapters/antigravity/index';
 import * as acp from '../src/adapters/acp/index';
 import type {
   ClaudeAdapterOptions, ClaudeAdapterOptionsInput, ClaudeCliFlags, ClaudeHostText, ClaudeLimits, ClaudeModelCatalogOptions,
@@ -19,6 +20,9 @@ import type {
   KiroSessionMemory,
 } from '../src/adapters/kiro/index';
 import type { CrewAdapterOptions, CrewAppLocation, CrewLaunchResolution, CrewRuntimeOptions } from '../src/adapters/crew/index';
+import type {
+  AntigravityAdapterOptions, AntigravityLaunchResolution, AntigravityRuntimeOptions,
+} from '../src/adapters/antigravity/index';
 import type {
   ACPErrorDetails, AcpAgentCapabilities, AcpAuthMethod, AcpCancelOptions, AcpCancelSettlement, AcpClientInfo, AcpConfigOption,
   AcpConfigValue, AcpCoreOptions, AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest, AcpInitializeResult,
@@ -55,6 +59,7 @@ export type PublicTypeExports = [
   KiroAcpAgentTurnHandler, KiroAcpAgentTurnUpdate, KiroAcpClientOptions, KiroAcpInitializeResult, KiroAcpMcpServer,
   KiroAcpSessionOptions, KiroAcpWorkflowRouter,
   CrewAdapterOptions, CrewAppLocation, CrewLaunchResolution, CrewRuntimeOptions,
+  AntigravityAdapterOptions, AntigravityLaunchResolution, AntigravityRuntimeOptions,
   ACPErrorDetails, AcpAgentCapabilities, AcpAuthMethod, AcpCancelOptions, AcpCancelSettlement, AcpClientInfo, AcpConfigOption,
   AcpConfigValue, AcpCoreOptions, AcpHandlerContext, AcpIncomingMessage, AcpIncomingNotification, AcpIncomingRequest, AcpInitializeResult,
   AcpMcpAttach, AcpMcpCapabilities, AcpMcpServer, AcpPendingRequest, AcpPermissionRequest, AcpProfile, AcpPromptBlock,
@@ -135,6 +140,13 @@ describe('public surface', () => {
     assert.deepEqual(valueNames(crew), [
       'CREW_DESCRIPTOR_OVERRIDE', 'CREW_KIRO_FLAVOR', 'CREW_STATIC_DESCRIPTOR', 'DEFAULT_CREW_APP', 'createCrewRuntime',
       'crewAvailability', 'resolveCrewAcpLaunch',
+    ]);
+  });
+
+  it('./adapters/antigravity exports createAntigravityRuntime, the pieces it passes KiroRuntime and its launch lookup', () => {
+    assert.deepEqual(valueNames(antigravity), [
+      'ANTIGRAVITY_DESCRIPTOR_OVERRIDE', 'ANTIGRAVITY_HARNESS', 'ANTIGRAVITY_KIRO_FLAVOR', 'ANTIGRAVITY_STATIC_DESCRIPTOR',
+      'antigravityAvailability', 'createAntigravityRuntime', 'resolveAntigravityLaunch',
     ]);
   });
 

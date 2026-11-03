@@ -10,6 +10,7 @@ import {
   type Point,
   type Size,
 } from './mapCamera';
+import { prefersReducedMotion } from '../../../hooks/useReducedMotion';
 
 // Imperative pan/zoom camera for the Map graph view.
 //
@@ -133,9 +134,8 @@ export function useMapCamera({
   );
 
   const animateTo = useCallback((target: Camera) => {
-    const reduceMotion = typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduceMotion) {
+    // The OS setting or the in-app Reduce motion preference: either jumps the camera.
+    if (prefersReducedMotion(document.documentElement.dataset.reduceMotion === 'on')) {
       tweenRef.current = null;
       camRef.current = target;
     } else {

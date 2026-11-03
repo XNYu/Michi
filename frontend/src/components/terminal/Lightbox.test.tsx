@@ -1,6 +1,7 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MotionGlobalConfig } from 'motion/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DrawerShell } from '../ui/DrawerShell';
 import { Lightbox } from './Lightbox';
 
@@ -35,5 +36,55 @@ describe('Lightbox focus', () => {
     fireEvent.keyDown(close, { key: 'Escape' });
     expect(closeImage).toHaveBeenCalledOnce();
     expect(closeDrawer).not.toHaveBeenCalled();
+  });
+});
+
+describe('Lightbox exit', () => {
+  beforeEach(() => { MotionGlobalConfig.skipAnimations = true; });
+  afterEach(() => { MotionGlobalConfig.skipAnimations = true; });
+
+  function Thumbnail({ onClose }: { onClose?: () => void }) {
+    const [zoom, setZoom] = React.useState(false);
+    return <>
+      <button type="button" onClick={() => setZoom(true)}>View image</button>
+      {zoom && <Lightbox src="image.png" onClose={() => { onClose?.(); setZoom(false); }} />}
+    </>;
+  }
+
+  it('closes at once and fades out as an inert copy, so tapping the same image again reopens it', async () => {
+    MotionGlobalConfig.skipAnimations = false;
+    const onClose = vi.fn();
+    const pageEscape = vi.fn();
+    window.addEventListener('keydown', pageEscape);
+    try {
+      render(<Thumbnail onClose={onClose} />);
+      const opener = screen.getByRole('button', { name: 'View image' });
+      opener.focus();
+      fireEvent.click(opener);
+      fireEvent.click(screen.getByRole('button', { name: 'Close image viewer' }));
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(document.activeElement).toBe(opener);
+      expect(screen.queryByRole('dialog')).toBeNull();
+      await act(async () => { await Promise.resolve(); });
+      const copy = document.querySelector('[aria-label="Image viewer"]');
+      expect(copy?.hasAttribute('inert')).toBe(true);
+      expect(copy?.getAttribute('aria-hidden')).toBe('true');
+      // Neither a dialog nor an Esc layer any more.
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(pageEscape).toHaveBeenCalledOnce();
+      fireEvent.click(opener);
+      expect(screen.getByRole('dialog', { name: 'Image viewer' })).toBeTruthy();
+      await waitFor(() => expect(document.querySelectorAll('[aria-label="Image viewer"]')).toHaveLength(1));
+    } finally {
+      window.removeEventListener('keydown', pageEscape);
+    }
+  });
+
+  it('leaves no copy behind when animations are skipped', async () => {
+    render(<Thumbnail />);
+    fireEvent.click(screen.getByRole('button', { name: 'View image' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close image viewer' }));
+    await act(async () => { await Promise.resolve(); });
+    expect(document.querySelector('[aria-label="Image viewer"]')).toBeNull();
   });
 });

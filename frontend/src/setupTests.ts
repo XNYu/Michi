@@ -1,4 +1,9 @@
 // Vitest setup hook.
+import { MotionGlobalConfig } from 'motion/react';
+
+// motion (motion.dev) animations finish instantly in tests, so AnimatePresence
+// exits resolve on the next frame instead of after their real duration.
+MotionGlobalConfig.skipAnimations = true;
 
 // A synchronous React effect loop starves Vitest's timeout timer. Fail at
 // React's diagnostic instead of leaving a worker spinning indefinitely.

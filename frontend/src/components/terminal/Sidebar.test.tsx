@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import TerminalSidebar from './Sidebar';
 import { ChatProvider } from '../../state/chatStore';
 import { PrefsProvider } from '../../state/prefs';
@@ -56,6 +56,69 @@ describe('TerminalSidebar BottomNav', () => {
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('slides the narrow drawer out as a ghost that is no longer a layer', async () => {
+    const onClose = vi.fn();
+    const ui = (open: boolean) => wrap(
+      <TerminalSidebar activePage="dashboard" onNav={() => {}} narrowMode narrowOverlayOpen={open} onCloseOverlay={onClose} />,
+    );
+    const { container, rerender } = render(ui(false));
+    expect(container.querySelector('aside')).toBeNull();
+
+    rerender(ui(true));
+    const aside = container.querySelector('aside') as HTMLElement;
+    expect(aside.dataset.escapeLayer).toBe('shell');
+    expect(aside.getAttribute('aria-hidden')).toBeNull();
+    const scrim = aside.previousElementSibling as HTMLElement;
+    fireEvent.mouseDown(scrim);
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    rerender(ui(false));
+    // While it leaves: no Esc layer, out of the accessibility tree, inert, and
+    // its scrim no longer closes anything.
+    // (Exits resolve a frame later even with skipAnimations, setupTests.ts.)
+    const ghost = container.querySelector('aside') as HTMLElement;
+    expect(ghost).toBe(aside);
+    expect(ghost.dataset.escapeLayer).toBeUndefined();
+    expect(ghost.getAttribute('aria-hidden')).toBe('true');
+    expect(ghost.hasAttribute('inert')).toBe(true);
+    expect(document.querySelector('[data-escape-layer]')).toBeNull();
+    fireEvent.mouseDown(ghost.previousElementSibling as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(container.querySelector('aside')).toBeNull());
+    expect(container.childElementCount).toBe(0);
+  });
+
+  it('closes the narrow drawer at once when a destination inside it is chosen', async () => {
+    // The shell closes the drawer from the same click (handleNavWithClose).
+    function Shell() {
+      const [open, setOpen] = React.useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen((value) => !value)}>Toggle drawer</button>
+          <TerminalSidebar activePage="dashboard" onNav={() => setOpen(false)} narrowMode narrowOverlayOpen={open} onCloseOverlay={() => setOpen(false)} />
+        </>
+      );
+    }
+    const { container } = render(wrap(<Shell />));
+    expect(container.querySelector('aside')).not.toBeNull();
+
+    // A tap on a destination: no ghost, so the page it opens is the only copy.
+    fireEvent.click(screen.getByText('Workspaces'));
+    expect(container.querySelector('aside')).toBeNull();
+
+    // Reopen, then choose with the keyboard.
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle drawer' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Home' }), { key: 'Enter' });
+    expect(container.querySelector('aside')).toBeNull();
+
+    // A dismissal from outside the drawer still slides it out.
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle drawer' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle drawer' }));
+    expect(container.querySelector('aside')?.getAttribute('aria-hidden')).toBe('true');
+    await waitFor(() => expect(container.querySelector('aside')).toBeNull());
   });
 
   it('quiets sidebar scrollbars until the pointer enters, then lingers for 2s', () => {

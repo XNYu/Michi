@@ -496,7 +496,7 @@ export class AcpClient {
                             _meta,
                         },
                     });
-                } else if (!this.routeUnqueuedPermission(sessionId, requestId, toolCall, options)) {
+                } else if (!this.routeUnqueuedPermission(sessionId, requestId, toolCall, options, _meta)) {
                     this.cancelPermission(requestId);
                 }
             } else {
@@ -940,7 +940,7 @@ export class AcpClient {
                     // Yield any buffered usage_summary BEFORE turn_end, because
                     // consumers stop reading at turn_end.
                     const buffered = this.lastMetadata.get(sessionId);
-                    const summary = this.profile.usageSummary?.(buffered);
+                    const summary = this.profile.usageSummary?.(buffered, promptResult);
                     if (summary) {
                         yield summary;
                     } else if (buffered?.meteringUsage) {
@@ -1280,7 +1280,7 @@ export class AcpClient {
     }
 
     /** A permission request for a session with no queue: true if taken, else it is cancelled. */
-    protected routeUnqueuedPermission(_sessionId: unknown, _requestId: number, _toolCall: unknown, _options: unknown): boolean {
+    protected routeUnqueuedPermission(_sessionId: unknown, _requestId: number, _toolCall: unknown, _options: unknown, _meta?: unknown): boolean {
         return false;
     }
 

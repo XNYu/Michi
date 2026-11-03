@@ -326,7 +326,19 @@ export default function TerminalTopbar({
   // with the active thread (not just the workspace) and offers a ‹ back crumb
   // to the conversation, so the fullscreen page can't read as global.
   const threadPage = page === 'branches' || page === 'map' || page === 'digest';
-  const showWorkspaceControls = page !== 'scheduled' && page !== 'spaces' && page !== 'space';
+  // Dashboard reuses Home once the shared presentation layer has finished
+  // removing the last pane; this mirrors Dashboard's condition (no presented
+  // chat pane and no browser pane).
+  const dashboardShowsHome = page === 'dashboard'
+    && activeProject != null
+    && activeProject.activeTreeId !== null
+    && openPanes.length === 0
+    && !activePanes.some((id) => activeItems[id]?.kind === 'browser');
+  // Home starts conversations; it shows none. The pane, browser, thread-view
+  // and Artifacts controls act on the conversations on screen, so they wait
+  // until one is.
+  const showsHome = page === 'home' || dashboardShowsHome;
+  const showWorkspaceControls = page !== 'scheduled' && page !== 'spaces' && page !== 'space' && !showsHome;
   // Michi pages are global, not thread-scoped: All threads is a bare label, a
   // workspace document gets a ‹ back crumb plus the Michi project's title
   // (MichiProjectCrumb, the only part of the topbar that follows Michi data).
@@ -366,13 +378,8 @@ export default function TerminalTopbar({
     (!!activeProject && threadPage);
   // Without a docked sidebar, the topbar follows the page background. Docked
   // layouts override this fallback with the shared outer-frame material.
-  // Dashboard reuses Home once the shared presentation layer has finished
-  // removing the last pane. Match that rendered surface here; using the raw
-  // route kept the pane surface white above Home's gray canvas.
-  const dashboardShowsHome = page === 'dashboard'
-    && activeProject != null
-    && activeProject.activeTreeId !== null
-    && openPanes.length === 0;
+  // Match the surface Dashboard renders; using the raw route kept the pane
+  // surface white above Home's gray canvas.
   const topbarBg = pageBackground(dashboardShowsHome ? 'home' : page);
   const pageLabel =
     page === 'branches' ? 'OVERVIEW'

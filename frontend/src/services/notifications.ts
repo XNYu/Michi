@@ -21,6 +21,7 @@ export function notify({ title, body, onClick }: NotifyOptions): void {
           {
             role: 'button',
             tabIndex: 0,
+            className: 'app-toast-card',
             onClick: () => { toast.dismiss(id); onClick(); },
             onKeyDown: (e: ReactKeyboardEvent) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -29,26 +30,10 @@ export function notify({ title, body, onClick }: NotifyOptions): void {
                 onClick();
               }
             },
-            style: {
-              cursor: 'pointer',
-              width: '100%',
-              padding: '13px 16px',
-              borderRadius: 'var(--ui-radius)',
-              border: '1px solid var(--color-line)',
-              background: 'var(--color-surface)',
-              color: 'var(--color-fg)',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-              fontSize: '13px',
-              lineHeight: 1.4,
-            },
           },
-          createElement('div', { style: { fontWeight: 500 } }, title),
+          createElement('div', { className: 'app-toast-card__title' }, title),
           body
-            ? createElement(
-                'div',
-                { style: { marginTop: '2px', color: 'var(--color-fg-muted)' } },
-                body,
-              )
+            ? createElement('div', { className: 'app-toast-card__body' }, body)
             : null,
         ),
       { duration: 4000 },

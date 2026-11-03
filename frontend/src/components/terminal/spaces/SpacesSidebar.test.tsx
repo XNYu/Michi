@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 vi.mock('./AssistantHistory', () => ({ AssistantHistory: () => <nav aria-label="Assistant conversations" /> }));
 
 const data = vi.hoisted(() => ({
@@ -192,6 +192,8 @@ describe('SpacesSidebar', () => {
     expect(await screen.findByRole('dialog', { name: 'Rename page' })).toBeTruthy();
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('Risks');
     fireEvent.click(screen.getByText('Cancel'));
+    // The first menu fades out (a frame here) before the right-click opens another.
+    await waitFor(() => expect(screen.queryAllByText('Rename')).toHaveLength(0));
     fireEvent.contextMenu(screen.getByRole('button', { name: 'Risks' }));
     expect(screen.getByText('Rename')).toBeTruthy();
     expect(props.onOpenPage).not.toHaveBeenCalled();

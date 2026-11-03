@@ -2,6 +2,7 @@ import { artifactTypeForPath as typeForPath, artifactHasImagePreview } from 'mic
 import { artifactImageUrl, downloadArtifactFile } from '../../services/api/artifacts';
 import { openPreferredUrl } from '../../services/openUrl';
 import React, { useCallback, useMemo, useState, useRef } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { useChatStore } from '../../state/chatStore';
 import type { ArtifactEntry } from '../../state/chatTypes';
 import { sanitizeContextName } from '../../lib/sanitizeContextName';
@@ -516,8 +517,9 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
         <Lightbox src={lightbox.src} filename={lightbox.name} onClose={() => setLightbox(null)} />
       )}
 
-      {ctxMenu && (
+      <AnimatePresence>{ctxMenu && (
         <ContextMenu
+          key={`${ctxMenu.x}:${ctxMenu.y}`}
           x={ctxMenu.x}
           y={ctxMenu.y}
           onClose={() => setCtxMenu(null)}
@@ -552,7 +554,7 @@ export default function ArtifactsDrawer({ open, onClose, motion, onPresenceChang
             ],
           }]}
         />
-      )}
+      )}</AnimatePresence>
       </>
     </DrawerShell>
   );

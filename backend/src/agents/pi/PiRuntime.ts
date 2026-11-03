@@ -1,7 +1,7 @@
 import { assertReleaseOwnership } from '../runs/runtimeRunAdapter';
 import { randomUUID } from "crypto";
 import type { RuntimeDescriptor } from "michi-runtime/internal/contract/descriptor";
-import { PI_RUNTIME_DESCRIPTOR } from "./piDescriptor";
+import { PI_RUNTIME_DESCRIPTOR, PI_CORE_RUNTIME_DESCRIPTOR } from "./piDescriptor";
 import type {
     AgentCapabilities,
     AgentProviderInfo,
@@ -18,8 +18,9 @@ import type { AgentToolBridge } from "../toolBridge";
 import { sameOwner } from "../types";
 import { chatOwner, isRunOwner } from "../ownerMapping";
 import { PendingSessionAcquisitions } from "../sessionAcquisition";
-import { PiSession } from "./PiSession";
-import { createPiSession, shouldNavigatePiTreeOnMichiBranch } from "./PiSdkSession";
+import { PiSession, type PiSessionDeps } from "./PiSession";
+import { isMetaAgentProfile } from "../metaAgentGuard";
+import { createPiSession, selectPiSessionKind, shouldNavigatePiTreeOnMichiBranch } from "./PiSdkSession";
 import * as sessionRegistry from "../sessionRegistry";
 import { buildPreamble, buildFormatReminder } from "../preamble";
 import { isAssistantProfile } from "../../assistant/policy";
@@ -28,6 +29,7 @@ import { renderBranchContext } from "../../services/branchBoundary";
 import {
     listPiModels,
     listProviderInfos,
+    selectDefaultModelId,
     verifyPiProviderKey,
 } from "./piProviders";
 import { getRuntimeDeps } from "../runtimeDeps";
@@ -39,17 +41,25 @@ import { rowsToAgentMessages } from "./historyAdapter";
  * Capabilities:
  *   - providerModels=true (a single binary catalog of providers/models is
  *     advertised; the active one is read from agentConfig)
-     *   - reasoning=true / apiKeys=true / saveContext=true / spawnBranches=true
-     *     (saveContext covers both save_artifact and update_artifact tools)
- *   - modes=false / permissions=false / warmSessions=false
+ *   - reasoning=true / apiKeys=true / saveContext=true / spawnBranches=true
+ *     (saveContext covers both save_artifact and update_artifact tools)
+ *   - modes=false / permissions=true / warmSessions=false
  *
- * Pi sessions are in-memory only. There is no persistent ACP process or MCP
- * slot pool — newSession() and loadSession() both produce a fresh PiSession
- * (loadSession just reuses the caller's id rather than minting a new one).
+ * Pi uses a scoped SDK transcript per Michi session. SQLite remains the
+ * authoritative host history; a native checkpoint must match before recovery.
+ * MICHI_PI_SESSION_SDK=0 selects the agent-core rollback engine.
  *
  * Provider env bindings are registered with secrets.ts by runtimeFactories,
  * not by this class — keeps registration symmetric across runtimes.
  */
+export interface PiRuntimeSdkOptions {
+    /** Trusted host factories only; resolved separately for every owner scope. */
+    extensionFactories?: (scope: {
+        sessionId: string; owner: RuntimeSessionOwner; ownerUserId: string | null;
+        workspaceId: string | null;
+    }) => PiSessionDeps['sdkExtensionFactories'];
+}
+
 export class PiRuntime implements AgentRuntimeWithProviders {
     public readonly id = "pi" as const;
     public readonly label = "Pi (multi-provider)";
@@ -64,19 +74,24 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         warmSessions: false,
         saveContext: true,
         spawnBranches: true,
-        // Pi rehydrates from SQLite messages — "exact" resume produces a
-        // session indistinguishable from "compatible" replay, so it has no
-        // native-resume advantage and shouldn't pay the extra round-trip.
+        // Public bindings use Michi ids and loadSession. Native restoration is
+        // an internal checkpointed optimization, not a separate resume-token API.
         nativeResume: false,
     };
     public get descriptor(): RuntimeDescriptor {
-        return PI_RUNTIME_DESCRIPTOR;
+        return selectPiSessionKind() === 'sdk' ? PI_RUNTIME_DESCRIPTOR : PI_CORE_RUNTIME_DESCRIPTOR;
     }
 
     private readonly acquisitions = new PendingSessionAcquisitions<AgentSession>();
     private sessions = new Map<string, AgentSession & { destroy(): void; dispose?(): Promise<void> }>();
 
-    constructor(private readonly bridge: AgentToolBridge) {}
+    constructor(private readonly bridge: AgentToolBridge, private readonly sdkOptions: PiRuntimeSdkOptions = {}) {}
+
+    private extensionsFor(id: string, owner: RuntimeSessionOwner, opts: NewAgentSessionOptions | LoadAgentSessionOptions): PiSessionDeps['sdkExtensionFactories'] {
+        if (isMetaAgentProfile(opts.toolProfile)) return [];
+        return this.sdkOptions.extensionFactories?.({ sessionId: id, owner,
+            ownerUserId: opts.ownerUserId ?? null, workspaceId: opts.workspaceId ?? null });
+    }
 
     async warm(_cwd: string): Promise<void> {
         // No-op — Pi has no expensive process to spawn.
@@ -149,6 +164,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
         void shouldNavigatePiTreeOnMichiBranch();
         const sessionDeps = {
             bridge: this.bridge,
+            sdkExtensionFactories: this.extensionsFor(id, owner, opts),
             cwd: opts.cwd,
             enableFollowUps,
             preamble: effectivePreamble,
@@ -164,10 +180,9 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             requestedModel: opts.model ?? null,
             requestedReasoning: opts.reasoning ?? null,
             initialMessages,
+            restoreNative: opts.replayHistory !== undefined,
         };
-        const session = isRunOwner(owner)
-            ? new PiSession(id, sessionDeps)
-            : await createPiSession(id, sessionDeps);
+        const session = await createPiSession(id, sessionDeps);
         this.sessions.set(id, session as AgentSession & { destroy(): void; dispose?(): Promise<void> });
         sessionRegistry.registerSession(session, opts.ownerUserId ?? null, owner);
         return session;
@@ -250,6 +265,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
 
         const sessionDeps = {
             bridge: this.bridge,
+            sdkExtensionFactories: this.extensionsFor(opts.sessionId, owner, { ...opts, workspaceId }),
             cwd: opts.cwd,
             enableFollowUps,
             preamble: effectivePreamble,
@@ -265,9 +281,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             requestedModel: opts.model ?? null,
             requestedReasoning: opts.reasoning ?? null,
         };
-        const session = isRunOwner(owner)
-            ? new PiSession(opts.sessionId, sessionDeps)
-            : await createPiSession(opts.sessionId, sessionDeps);
+        const session = await createPiSession(opts.sessionId, { ...sessionDeps, restoreNative: true });
         this.sessions.set(opts.sessionId, session as AgentSession & { destroy(): void; dispose?(): Promise<void> });
         sessionRegistry.registerSession(session, opts.ownerUserId ?? null, owner);
         return session;
@@ -299,7 +313,9 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             label: p.name,
             keyLabel: p.apiKeyLabel,
             envVars: p.envVars,
-            defaultModel: p.defaultModel,
+            // The UI selects this entry in the model picker, so it has to name
+            // the model users actually get (the floating alias when there is one).
+            defaultModel: selectDefaultModelId(p),
             keyUrl: p.keyUrl,
             supportsReasoning: p.supportsReasoning,
             requiresUserKey: p.requiresUserKey,

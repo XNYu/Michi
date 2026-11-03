@@ -1,9 +1,26 @@
 import { serverEntityId } from '../../config/backendIdentity';
-import React, { useState, useRef, useEffect } from 'react';
-import type { ChatNodeState } from '../../state/chatTypes';
+import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
+import { AnimatePresence, motion, useIsPresent, type TargetAndTransition } from 'motion/react';
+import type { ChatNodeState, PendingQueuedMessage } from '../../state/chatTypes';
 import { useChatProjects } from '../../state/chatStore';
+import { parseChatCommand } from '../../state/chatCommands';
 import { workspaceBackendApiBase } from '../../config/backendConnections';
+import { EASE } from '../../motion/tokens';
 import { AssistantAttachmentsPreBlock } from './assistant/AssistantAttachments';
+import { launchFlight, markRestored, registerQueuedSource, wasRestored } from './messageFlight';
+
+/** A queued block leaving folds away (its text flies on as the bubble). */
+const QUEUED_EXIT: TargetAndTransition = {
+  opacity: 0,
+  height: 0,
+  marginTop: 0,
+  paddingTop: 0,
+  paddingBottom: 0,
+  overflow: 'hidden',
+  transition: { duration: 0.2, ease: EASE.drawer, opacity: { duration: 0.08, ease: 'linear' } },
+};
+
+const NO_QUEUE: readonly PendingQueuedMessage[] = [];
 
 export interface PanePendingAttachment {
   id: string;
@@ -65,50 +82,69 @@ export function PaneComposerPreBlocks({
 }: PaneComposerPreBlocksProps) {
   const { activeProject } = useChatProjects();
   const workspaceId = activeProject?.id;
+  const queued = node.pendingQueued ?? NO_QUEUE;
+  const nodeId = node.nodeId;
+
+  // This pane's queued blocks: the launch reads them; steered messages find
+  // them through the registry.
+  const blocksRef = useRef(new Map<string, HTMLElement>());
+  const registerBlock = useCallback((queueId: string, el: HTMLElement) => {
+    blocksRef.current.set(queueId, el);
+    const unregister = registerQueuedSource(nodeId, queueId, el);
+    return () => {
+      unregister();
+      if (blocksRef.current.get(queueId) === el) blocksRef.current.delete(queueId);
+    };
+  }, [nodeId]);
+
+  // An entry that leaves the queue is sent (the turn's end drains it, or
+  // "Send now"), unless the user took it back into the composer (×, in any
+  // surface showing it), it is being steered (that message links to its
+  // block itself) or it is a command (no bubble). A drain launches once:
+  // a batch merges into one bubble, which flies from its first block, still
+  // on screen here, leaving.
+  const runtimeId = node.runtimeId;
+  const engine = node.sessionState?.nativeEngine;
+  const previousRef = useRef<{ nodeId: string; entries: readonly PendingQueuedMessage[] }>({ nodeId, entries: queued });
+  useLayoutEffect(() => {
+    const previous = previousRef.current;
+    previousRef.current = { nodeId, entries: queued };
+    if (previous.nodeId !== nodeId) return;
+    const sent = previous.entries.find((entry) =>
+      !queued.some((q) => q.id === entry.id)
+      && !entry.steering
+      && !wasRestored(nodeId, entry.id)
+      && !parseChatCommand(entry.value, runtimeId, engine));
+    if (sent) launchFlight(nodeId, blocksRef.current.get(sent.id));
+  }, [nodeId, queued, runtimeId, engine]);
+  const restore = useCallback((queueId: string) => {
+    markRestored(nodeId, queueId);
+    onRestoreQueued(queueId);
+  }, [nodeId, onRestoreQueued]);
+
   return (
     <>
       <AssistantAttachmentsPreBlock nodeId={node.nodeId} />
 
-      {(node.pendingQueued ?? []).map((q, i) => {
-        const isErrored = !!node.queueErrored;
-        const tone = isErrored ? 'tone-danger' : 'tone-select';
-        const captionSuffix = i === 0
-          ? (isErrored ? ' · paused, review and send manually' : ' · sends when stream ends')
-          : '';
-        return (
-          <div key={q.id} className={`t-pre-block ${tone}`}>
-            <div className="t-pre-block-col">
-              <div className="t-pre-block-cap">
-                queued <b>{i + 1}</b>{captionSuffix}
-              </div>
-              <div className="t-pre-block-body">
-                {q.value.replace(/\s+/g, ' ').trim()}
-              </div>
-            </div>
-            <div className="t-pre-block-actions">
-              {canSteerQueued && !isErrored && (
-                <button
-                  type="button"
-                  className="t-pre-block-steer"
-                  disabled={steeringQueueId !== null || (node.pendingQueued ?? []).some((entry) => entry.steering)}
-                  onClick={() => onSteerQueued(q.id)}
-                >
-                  {steeringQueueId === q.id || q.steering ? 'Steering…' : 'Steer now'}
-                </button>
-              )}
-              <button
-                type="button"
-                aria-label="Dequeue message"
-                disabled={steeringQueueId === q.id || q.steering}
-                className="t-pre-block-x"
-                onClick={() => onRestoreQueued(q.id)}
-              >
-                ×
-              </button>
-            </div>
-          </div>
-        );
-      })}
+      <AnimatePresence initial={false}>
+        {queued.map((q, i) => {
+          const isErrored = !!node.queueErrored;
+          return (
+            <QueuedBlock
+              key={q.id}
+              register={registerBlock}
+              entry={q}
+              index={i}
+              errored={isErrored}
+              steerable={canSteerQueued && !isErrored}
+              steerDisabled={steeringQueueId !== null || queued.some((entry) => entry.steering)}
+              steering={steeringQueueId === q.id || !!q.steering}
+              onSteer={onSteerQueued}
+              onRestore={restore}
+            />
+          );
+        })}
+      </AnimatePresence>
 
       {(node.pendingComments ?? []).map((c, i) => (
         <EditableCommentChip
@@ -192,6 +228,66 @@ export function PaneComposerPreBlocks({
         </div>
       )}
     </>
+  );
+}
+
+/** One queued message. While it leaves it is out of the a11y tree and inert. */
+function QueuedBlock({ register: registerBlock, entry, index, errored, steerable, steerDisabled, steering, onSteer, onRestore }: {
+  register: (queueId: string, el: HTMLElement) => () => void;
+  entry: PendingQueuedMessage;
+  index: number;
+  errored: boolean;
+  steerable: boolean;
+  steerDisabled: boolean;
+  steering: boolean;
+  onSteer: (queueId: string) => void;
+  onRestore: (queueId: string) => void;
+}) {
+  const present = useIsPresent();
+  const queueId = entry.id;
+  // Stays registered while it leaves: a steered message finds it then.
+  const register = useCallback((el: HTMLDivElement | null) => (el ? registerBlock(queueId, el) : undefined), [registerBlock, queueId]);
+  const captionSuffix = index === 0
+    ? (errored ? ' · paused, review and send manually' : ' · sends when stream ends')
+    : '';
+  return (
+    <motion.div
+      ref={register}
+      exit={QUEUED_EXIT}
+      className={`t-pre-block ${errored ? 'tone-danger' : 'tone-select'}`}
+      aria-hidden={present ? undefined : true}
+      inert={!present}
+    >
+      <div className="t-pre-block-col">
+        <div className="t-pre-block-cap">
+          queued <b>{index + 1}</b>{captionSuffix}
+        </div>
+        <div className="t-pre-block-body">
+          {entry.value.replace(/\s+/g, ' ').trim()}
+        </div>
+      </div>
+      <div className="t-pre-block-actions">
+        {steerable && (
+          <button
+            type="button"
+            className="t-pre-block-steer"
+            disabled={steerDisabled}
+            onClick={() => onSteer(queueId)}
+          >
+            {steering ? 'Steering…' : 'Steer now'}
+          </button>
+        )}
+        <button
+          type="button"
+          aria-label="Dequeue message"
+          disabled={steering}
+          className="t-pre-block-x"
+          onClick={() => onRestore(queueId)}
+        >
+          ×
+        </button>
+      </div>
+    </motion.div>
   );
 }
 

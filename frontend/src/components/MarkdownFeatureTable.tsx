@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { ModalShell } from './ui/ModalShell';
 
 function tableRows(table: HTMLTableElement): string[][] {
@@ -194,14 +195,17 @@ export default function MarkdownFeatureTable({
         </table>
       </div>
 
-      {fullscreen && tableRef.current && (
-        <TableLightbox
-          sourceTable={tableRef.current}
-          onClose={() => setFullscreen(false)}
-          onCopy={() => void copy()}
-          onDownload={download}
-        />
-      )}
+      <AnimatePresence>
+        {fullscreen && tableRef.current && (
+          <TableLightbox
+            key="fullscreen"
+            sourceTable={tableRef.current}
+            onClose={() => setFullscreen(false)}
+            onCopy={() => void copy()}
+            onDownload={download}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -91,6 +91,8 @@ for (const palette of ['bone', 'monokai']) test(`native hover actions and assist
   await expect(panel.getByText(/Targeting:/)).toBeVisible();
   const editor = panel.locator('.terminal-composer [contenteditable="true"]');
   await editor.fill('Keep this unsent question');
+  // The window grows back out of the pill: measure its box once it has settled.
+  await expect(panel).toHaveCSS('transform', 'none');
   const floatBox = await panel.boundingBox();
   await panel.getByRole('button', { name: 'Full screen', exact: true }).click();
   await expect(panel).toHaveAttribute('data-form', 'full');

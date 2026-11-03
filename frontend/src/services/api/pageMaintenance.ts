@@ -93,6 +93,7 @@ function mapWorkspaceIdentity(value: PageMaintenanceWorkspace, connectionId: str
     ...value,
     config,
     job,
+    ...(value.watches ? { watches: value.watches.map((watch) => ({ ...watch, id: fromServer(watch.id) })) } : {}),
     status: value.status ? { ...value.status, lastRun } : null,
     excludedSpaceIds: (value.excludedSpaceIds ?? []).map(fromServer),
     catchUpSuggestions: (value.catchUpSuggestions ?? []).map((suggestion) => ({
@@ -133,6 +134,48 @@ export async function setPageMaintenanceSpaceExcluded(
     { method: 'PATCH', body: { expectedRevision: revision, excluded }, signal: options.signal },
   );
   return mapWorkspaceIdentity(answer, options.backendConnectionId);
+}
+
+export interface MaintenanceWatchInput {
+  title: string;
+  instructions: string;
+  intervalMinutes: number;
+  enabled?: boolean;
+}
+
+function maintenanceUrl(options: PageMaintenanceIdentity, rest = ''): string {
+  return `${base(options.backendConnectionId)}/workspaces/${pathId(options.workspaceId, options.backendConnectionId)}/maintenance${rest}`;
+}
+
+function watchUrl(watchId: string, options: PageMaintenanceIdentity, rest = ''): string {
+  return maintenanceUrl(options, `/watches/${pathId(watchId, options.backendConnectionId)}${rest}`);
+}
+
+async function workspaceRequest(url: string, options: PageMaintenanceIdentity, init: { method: string; body?: unknown }): Promise<PageMaintenanceWorkspace> {
+  const answer = await request<PageMaintenanceWorkspace>(url, { ...init, signal: options.signal });
+  return mapWorkspaceIdentity(answer, options.backendConnectionId);
+}
+
+/** expectedRevision 0 saves the first instructions. */
+export function saveMaintenanceInstructions(text: string, expectedRevision: number, options: PageMaintenanceIdentity): Promise<PageMaintenanceWorkspace> {
+  return workspaceRequest(maintenanceUrl(options, '/instructions'), options, { method: 'PUT', body: { expectedRevision, text } });
+}
+
+export function createMaintenanceWatch(input: MaintenanceWatchInput, options: PageMaintenanceIdentity): Promise<PageMaintenanceWorkspace> {
+  return workspaceRequest(maintenanceUrl(options, '/watches'), options, { method: 'POST', body: input });
+}
+
+export function updateMaintenanceWatch(watchId: string, patch: Partial<MaintenanceWatchInput> & { expectedRevision: number }, options: PageMaintenanceIdentity): Promise<PageMaintenanceWorkspace> {
+  return workspaceRequest(watchUrl(watchId, options), options, { method: 'PATCH', body: patch });
+}
+
+export function deleteMaintenanceWatch(watchId: string, options: PageMaintenanceIdentity): Promise<PageMaintenanceWorkspace> {
+  return workspaceRequest(watchUrl(watchId, options), options, { method: 'DELETE' });
+}
+
+/** Makes the watch due now; it runs as soon as the workspace's maintenance is free. */
+export function runMaintenanceWatch(watchId: string, options: PageMaintenanceIdentity): Promise<PageMaintenanceWorkspace> {
+  return workspaceRequest(watchUrl(watchId, options, '/run'), options, { method: 'POST', body: {} });
 }
 
 export async function runPageMaintenanceNow(options: PageMaintenanceIdentity): Promise<{ run: unknown }> {

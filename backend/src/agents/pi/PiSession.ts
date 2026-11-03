@@ -115,6 +115,10 @@ export interface PiSessionDeps {
      *   - getHistory() reflects these messages so ancestor preamble stitching works
      */
     initialMessages?: MinimalAgentMessage[];
+    /** Explicit host-owned extensions only; never discovered from user paths. */
+    sdkExtensionFactories?: Array<(pi: any) => void | Promise<void>>;
+    /** Allow native recovery only with the host-provided history replay. */
+    restoreNative?: boolean;
 }
 
 /**
@@ -202,6 +206,7 @@ export class PiSession implements AgentSession {
      */
     private readonly seenPaths: Set<string> = new Set();
     private agent: any | undefined;
+    private hostTools: any[] = [];
     private destroyed = false;
     /**
      * Lazily created on first turn when piMcpServers config is non-empty.
@@ -374,8 +379,11 @@ export class PiSession implements AgentSession {
                 this.history.push({ role: "assistant", content: buf.join("") });
             }
             this.pendingAssistantBuf = undefined;
+            await this.onTurnSettled();
         }
     }
+
+    protected async onTurnSettled(): Promise<void> {}
 
     private async *runTurn(rawText: string, signal: AbortSignal, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
         // Runtime ownership is required for durable Agent Runs even on local
@@ -438,7 +446,21 @@ export class PiSession implements AgentSession {
             modelIds.map((modelId) => resolvePiModel(provider, modelId)),
         ), signal);
         const model = modelAttempts[0];
-        this.currentModelId = this.agent?.state?.model?.id ?? (model as any).id ?? requestedModel ?? null;
+        this.currentModelId = (model as any).id ?? requestedModel ?? null;
+        const thinkingLevel = (() => {
+            if (getProviderInfo(provider)?.supportsReasoning === false) return 'off';
+            const requested = this.requestedReasoning ?? deps.agentConfig.resolveReasoning(this.runtimeId, ownerUserId);
+            const defaultLevel = isGeminiArgon(model) || (model.provider === 'openrouter' && isOpenRouterArgon(model.id)) ? 'medium' : 'off';
+            return piMod.clampThinkingLevel(model, requested ?? defaultLevel);
+        })();
+        const turnStreamFn = (_m: any, c: any, o: any) => {
+            // SDK preflight/summary auth is not the credential authority. In
+            // particular, never forward its host-managed placeholder as an AWS
+            // bearer token or inherit a prior provider's headers/environment.
+            const { apiKey: _sdkKey, headers: _sdkHeaders, env: _sdkEnv, ...options } = o ?? {};
+            return streamSimpleWithFallback(piMod, upstreamProvider, modelAttempts, c,
+                { ...options, ...(apiKey ? { apiKey } : {}), ...bedrockStreamOpts }, bedrockAuthRetry);
+        };
 
         // Reset the per-turn image budget before each LLM-driven loop.
         this.imageQuota.usedBytes = 0;
@@ -449,10 +471,13 @@ export class PiSession implements AgentSession {
         signal.throwIfAborted();
         for (const warning of this.mcpWarnings.splice(0)) yield warning;
         if (this.agent) {
-            this.agent.state.tools = [
-                ...this.agent.state.tools.filter((tool: { name: string }) => !tool.name.startsWith('mcp__')),
+            const tools = [
+                ...this.hostTools.filter((tool: { name: string }) => !tool.name.startsWith('mcp__')),
                 ...mcpTools.filter((tool) => this.isToolAllowed(tool.name)),
             ];
+            this.hostTools = tools;
+            if (this.agent.updateTools) await this.agent.updateTools(tools);
+            else this.agent.state.tools = tools;
         }
 
         // Lazily build the Agent on the first turn (and reuse on subsequent turns).
@@ -535,27 +560,16 @@ export class PiSession implements AgentSession {
             const systemPrompt = [this.preamble, workspaceInstructions]
                 .filter(Boolean)
                 .join("\n\n");
-            this.agent = new piAgentCore.Agent({
+            this.hostTools = tools;
+            this.agent = await this.createHarness(piAgentCore, {
                 initialState: {
                     systemPrompt,
                     model,
                     tools,
-                    thinkingLevel: (() => {
-                        if (getProviderInfo(provider)?.supportsReasoning === false) return 'off';
-                        const r = this.requestedReasoning ?? deps.agentConfig.resolveReasoning(this.runtimeId, ownerUserId);
-                        const defaultLevel = isGeminiArgon(model) || (model.provider === 'openrouter' && isOpenRouterArgon(model.id)) ? 'medium' : 'off';
-                        return piMod.clampThinkingLevel(model, r ?? defaultLevel);
-                    })(),
-                    messages: [],
+                    thinkingLevel,
+                    messages: this.collectSeed(),
                 },
-                streamFn: (_m: any, c: any, o: any) => streamSimpleWithFallback(
-                    piMod,
-                    upstreamProvider,
-                    modelAttempts,
-                    c,
-                    { ...o, ...(apiKey ? { apiKey } : {}), ...bedrockStreamOpts },
-                    bedrockAuthRetry,
-                ),
+                streamFn: turnStreamFn,
                 beforeToolCall: async (
                     bcCtx: { toolCall: { name: string }; args: unknown },
                     signal?: AbortSignal,
@@ -608,13 +622,14 @@ export class PiSession implements AgentSession {
                 },
                 afterToolCall: piToolResultErrorOverride,
             });
-
-            // Seed prior history (rehydrate).
-            const seedMessages = this.collectSeed();
-            if (seedMessages.length > 0) {
-                this.agent.state.messages = seedMessages;
-            }
         }
+
+        // Model configuration and credentials can change between turns. Never
+        // retain the first prompt's credential/model closure in a live session.
+        this.agent.state.model = model;
+        this.agent.state.thinkingLevel = thinkingLevel;
+        this.agent.streamFunction = turnStreamFn;
+        if (this.agent.configureAuth) await this.agent.configureAuth(model.provider, apiKey);
 
         const promptText = this.firstUserPrimed || !this.firstUserGlue
             ? rawText
@@ -747,6 +762,11 @@ export class PiSession implements AgentSession {
                 }
             }
         }
+    }
+
+    /** Full SDK sessions override this seam; tools and host policy stay shared. */
+    protected async createHarness(core: any, options: any): Promise<any> {
+        return new core.Agent(options);
     }
 
     private isToolAllowed(toolName: string): boolean {
@@ -921,7 +941,7 @@ export class PiSession implements AgentSession {
         if (this.destroyed) return { accepted: false, reason: "destroyed" };
         if (!this.agent || !this.turnAbort) return { accepted: false, reason: "not_in_turn" };
         try {
-            this.agent.steer({
+            await this.agent.steer({
                 role: "user",
                 content: [{ type: "text", text: trimmed }],
                 timestamp: Date.now(),
@@ -973,6 +993,7 @@ export class PiSession implements AgentSession {
                 this.disposeMcpManager(),
             ]), 5_000, 'Pi resources did not stop in time');
         } catch { throw this.markUnavailable('Pi resources could not be stopped within 5 seconds.'); }
+        await withDeadline(Promise.resolve(this.agent?.dispose?.()), 5_000, 'Pi SDK shutdown timed out');
         this.agent = undefined;
     }
 

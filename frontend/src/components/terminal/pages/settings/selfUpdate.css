@@ -1,0 +1,9 @@
+/* Settings › Update (phone). Rows and notes come from SettingsSection. */
+.self-update__build code,
+.self-update__commits code { font-family: var(--font-mono); font-size: var(--fs-sm); }
+.self-update__commits { display: grid; gap: 6px; margin: 4px 0 0; padding: 0; list-style: none; }
+.self-update__commits li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: baseline; color: var(--term-fg); font-size: var(--fs-md); line-height: 1.45; }
+.self-update__commits code { color: var(--term-muted); }
+.self-update__commits span { overflow-wrap: anywhere; }
+.self-update__detail { overflow-wrap: anywhere; font-size: var(--fs-sm); }
+.self-update__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

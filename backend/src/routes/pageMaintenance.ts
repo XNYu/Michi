@@ -5,6 +5,7 @@ import { getAiGlobalContext } from '../services/dbRepository';
 import { queueMaintenanceCatchup, queueMaintenanceReconsider, setInitialSpaceMaintenanceExcluded, setSpaceMaintenanceExcluded } from '../services/pages/maintenanceRepository';
 import { getMaintenanceWorkspaceView } from '../services/pages/maintenanceRouting';
 import { MaintenanceRuntimeUnavailableError, PageMaintenanceConfigService } from '../services/pages/maintenanceConfig';
+import { createWatch, deleteWatch, requestWatchRun, saveWorkspaceInstructions, updateWatch } from '../services/metaAgent/watches';
 import type { ScheduledJobScheduler } from '../services/scheduledJobs/scheduler';
 import { JobValidationError, ScheduledJobConflictError, ScheduledJobNotFoundError } from '../services/scheduledJobs/scheduler';
 
@@ -152,6 +153,67 @@ export function setupPageMaintenanceRoutes(deps: { scheduler: ScheduledJobSchedu
     const queued = queueMaintenanceCatchup({ workspaceId, ownerUserId, spaceId,
       expectedConfigRevision: revision(data.expectedRevision), after: data.after as number, through: data.through as number, now: now() });
     res.status(202).json(queued);
+  }));
+
+  /** Owner, writable workspace and AI navigation, as for the other maintenance controls. */
+  const writableWorkspace = (req: Request): { workspaceId: string; ownerUserId: string } => {
+    const workspaceId = id(req.params.workspaceId, 'workspaceId');
+    const ownerUserId = owner(req);
+    if (!ownerUserId) throw new PageWriteError(404, 'not_found', 'Workspace not found');
+    requirePagesWorkspace(workspaceId, ownerUserId, true);
+    requireMaintenanceNavigation(workspaceId, ownerUserId);
+    return { workspaceId, ownerUserId };
+  };
+  const view = (workspaceId: string, ownerUserId: string) => getMaintenanceWorkspaceView({ workspaceId, ownerUserId, scheduler: scheduler(), now: now() });
+
+  router.put('/workspaces/:workspaceId/maintenance/instructions', route((req, res) => {
+    const { workspaceId, ownerUserId } = writableWorkspace(req);
+    const data = checkBody(req, ['expectedRevision', 'text']);
+    if (!Number.isSafeInteger(data.expectedRevision) || (data.expectedRevision as number) < 0) throw new PageWriteError(400, 'invalid', 'expectedRevision must be a non-negative integer');
+    saveWorkspaceInstructions({ workspaceId, ownerUserId, text: data.text, expectedRevision: data.expectedRevision as number, now: now() });
+    res.json(view(workspaceId, ownerUserId));
+  }));
+
+  router.post('/workspaces/:workspaceId/maintenance/watches', route((req, res) => {
+    const { workspaceId, ownerUserId } = writableWorkspace(req);
+    const data = checkBody(req, ['title', 'instructions', 'intervalMinutes', 'enabled']);
+    if (!configs().get(workspaceId, ownerUserId)) throw new PageWriteError(409, 'stale_revision', 'Enable updates for this workspace before adding a watch');
+    createWatch({ workspaceId, ownerUserId, title: data.title, instructions: data.instructions, intervalMinutes: data.intervalMinutes,
+      enabled: data.enabled, now: now() });
+    scheduler().wakeJobs([]);
+    res.status(201).json(view(workspaceId, ownerUserId));
+  }));
+
+  router.patch('/workspaces/:workspaceId/maintenance/watches/:watchId', route((req, res) => {
+    const { workspaceId, ownerUserId } = writableWorkspace(req);
+    const watchId = id(req.params.watchId, 'watchId');
+    const data = checkBody(req, ['expectedRevision', 'title', 'instructions', 'intervalMinutes', 'enabled']);
+    updateWatch({ workspaceId, ownerUserId, watchId, expectedRevision: revision(data.expectedRevision), title: data.title,
+      instructions: data.instructions, intervalMinutes: data.intervalMinutes, enabled: data.enabled, now: now() });
+    scheduler().wakeJobs([]);
+    res.json(view(workspaceId, ownerUserId));
+  }));
+
+  router.delete('/workspaces/:workspaceId/maintenance/watches/:watchId', route((req, res) => {
+    const { workspaceId, ownerUserId } = writableWorkspace(req);
+    deleteWatch({ workspaceId, ownerUserId, watchId: id(req.params.watchId, 'watchId') });
+    res.json(view(workspaceId, ownerUserId));
+  }));
+
+  /** Makes the watch due now; a busy maintenance execution runs it as soon as its current run ends. */
+  router.post('/workspaces/:workspaceId/maintenance/watches/:watchId/run', route((req, res) => {
+    checkBody(req, []);
+    const { workspaceId, ownerUserId } = writableWorkspace(req);
+    const config = configs().get(workspaceId, ownerUserId);
+    if (!config) throw new PageWriteError(404, 'not_found', 'Maintenance is not configured');
+    if (!config.enabled || config.paused) throw new PageWriteError(409, 'stale_revision', 'Maintenance is paused');
+    requestWatchRun({ workspaceId, ownerUserId, watchId: id(req.params.watchId, 'watchId'), now: now() });
+    const result = scheduler().startNow(config.jobId);
+    if (!('run' in result) && result.refused !== 'running' && result.refused !== 'capacity') {
+      throw new PageWriteError(409, 'stale_revision', result.message);
+    }
+    if (!('run' in result)) scheduler().wakeJobs([config.jobId]);
+    res.status(202).json(view(workspaceId, ownerUserId));
   }));
 
   router.use(errors);

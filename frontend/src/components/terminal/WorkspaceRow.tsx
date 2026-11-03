@@ -8,7 +8,7 @@ import ThreadRow, { CARD_FILL } from './ThreadRow';
 import { rowGeom, spinePadding, branchBlockGap, WORKSPACE_ICON_GAP, WORKSPACE_ICON_SIZE, type RowGeom } from './sidebarRowStyle';
 import { FolderIcon, FolderOpenIcon } from './icons';
 import BranchRow from './BranchRow';
-import ContextMenu, { type MenuSection } from '../ContextMenu';
+import ContextMenu, { MenuPresence, type MenuSection } from '../ContextMenu';
 import { HoverTip } from '../ui/Popover';
 import { buildTree } from '../../state/tree';
 import {
@@ -628,14 +628,17 @@ export default function WorkspaceRow({
           />
         )}
       </Row>
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          sections={sections}
-          onClose={() => setMenu(null)}
-        />
-      )}
+      <MenuPresence>
+        {menu && (
+          <ContextMenu
+            key={`${menu.x}:${menu.y}`}
+            x={menu.x}
+            y={menu.y}
+            sections={sections}
+            onClose={() => setMenu(null)}
+          />
+        )}
+      </MenuPresence>
 
       {(workspaceExpanded || forceExpand) && (
         <div style={{ marginTop: 4, marginBottom: 4 }}>

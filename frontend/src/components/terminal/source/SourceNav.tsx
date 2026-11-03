@@ -1,4 +1,5 @@
 import React from 'react';
+import { AnimatePresence } from 'motion/react';
 import { ChevronLeft, Layers, X } from 'lucide-react';
 import { Button } from '../../ui/controls';
 import {
@@ -10,17 +11,21 @@ import './source.css';
 /** The shell's one source popover, opened by any "Source" link through openSourcePopover. */
 export function SourcePopoverHost() {
   const { popover } = useSourceNav();
-  if (!popover) return null;
-  const key = `${popover.target.backendConnectionId}:${popover.target.nodeId}:${popover.target.messageId ?? ''}`;
+  const key = popover && `${popover.target.backendConnectionId}:${popover.target.nodeId}:${popover.target.messageId ?? ''}`;
+  // A closed popover fades out with what it last showed.
   return (
-    <SourcePopover
-      key={key}
-      popover={popover}
-      onClose={closeSourcePopover}
-      onGo={(focus, preview) => {
-        void openPopoverSource(focus, preview ? { nodeId: preview.nodeId, workspaceId: preview.workspaceId, messageId: preview.message?.id ?? null } : null);
-      }}
-    />
+    <AnimatePresence>
+      {popover && key && (
+        <SourcePopover
+          key={key}
+          popover={popover}
+          onClose={closeSourcePopover}
+          onGo={(focus, preview) => {
+            void openPopoverSource(focus, preview ? { nodeId: preview.nodeId, workspaceId: preview.workspaceId, messageId: preview.message?.id ?? null } : null);
+          }}
+        />
+      )}
+    </AnimatePresence>
   );
 }
 

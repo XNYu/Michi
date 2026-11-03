@@ -34,6 +34,41 @@ export interface KiroFlavor {
          * the last user message on v3 and the newest rewind log index on v2.
          */
         forkAnchor?(client: AcpClient, sid: string): Promise<KiroForkAnchor>;
+        /**
+         * An error the agent gives for a native session it no longer has,
+         * besides the ones Kiro's isNativeSessionUnavailable knows. Absent: none.
+         */
+        isUnavailable?(error: unknown): boolean;
+    };
+    /**
+     * Image attachments: 'always' sends ACP image blocks (kiro-cli advertises
+     * image prompts); 'resourceLink' sends each image as an ACP
+     * `resource_link` to its file and names it in the text, for an agent that
+     * drops image blocks but reads image files itself (agy 1.4.12 accepts an
+     * image block and silently discards it). Absent: 'always'.
+     */
+    readonly promptImages?: 'always' | 'resourceLink';
+    /**
+     * Sessions opened ahead of a chat. false: never (a session's metadata is
+     * the chat's own). Absent: true.
+     */
+    readonly warmSessions?: boolean;
+    /** How the agent names and titles its tool calls. Absent: Kiro's titles and `_meta` names. */
+    readonly tools?: {
+        /** Display title of a tool_call / tool_call_update; undefined keeps the update's title. */
+        title?(update: AcpUpdate): string | undefined;
+        /** The tool's name for approvals, grants and brokers; undefined falls back to Kiro's lookup. */
+        name?(toolCall: Record<string, any> | undefined): string | undefined;
+    };
+    /**
+     * How a launch-override agent reports that it is signed out. Absent: no
+     * signed-out detection for a launch override (kiro-cli's own is used
+     * only without one).
+     */
+    readonly signIn?: {
+        matches(error: { code?: number; message?: string; data?: unknown } | string): boolean;
+        /** The user-facing explanation, with how to sign in. */
+        readonly message: string;
     };
     /**
      * Local v3 chats may share one MCP catalog whose calls name their session

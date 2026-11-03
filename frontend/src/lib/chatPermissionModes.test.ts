@@ -3,17 +3,19 @@ import { approveForMeRuntimeIds, chatPermissionChoiceForRuntime, chatPermissionM
 import { chatPermissionChoice, chatPermissionChoiceParts, isChatPermissionSettings } from 'michi-shared';
 
 describe('supportsChatYolo', () => {
-  it('treats Kiro Crew like Kiro and Pi', () => {
+  it('treats Kiro Crew and Antigravity like Kiro and Pi', () => {
     expect(supportsChatYolo('kiro')).toBe(false);
     expect(supportsChatYolo('crew')).toBe(false);
     expect(supportsChatYolo('pi')).toBe(false);
+    expect(supportsChatYolo('antigravity')).toBe(false);
     expect(supportsChatYolo('claude')).toBe(true);
     expect(supportsChatYolo('codex')).toBe(true);
   });
 
-  it('presents legacy YOLO as Trust on Kiro Crew', () => {
+  it('presents legacy YOLO as Trust on Kiro Crew and Antigravity', () => {
     expect(chatPermissionModeForRuntime('yolo', 'crew')).toBe('trust');
     expect(chatPermissionModeForRuntime('ask', 'crew')).toBe('ask');
+    expect(chatPermissionModeForRuntime('yolo', 'antigravity')).toBe('trust');
     expect(chatPermissionModeForRuntime('yolo', 'claude')).toBe('yolo');
   });
 });

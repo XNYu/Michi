@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { PaneComposerActions } from './PaneComposerActions';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { PaneComposerActions, composerGlyph } from './PaneComposerActions';
 import { FollowUpRow } from '../FollowUpRow';
 
 function renderActions(
@@ -75,5 +75,38 @@ describe('PaneComposerActions', () => {
     }
     expect(composerIcon.innerHTML).toBe(followUpIcon.innerHTML);
     expect(composerIcon.getAttribute('width')).toBe('16');
+  });
+
+  it('names one glyph per send state, so only a change of state swaps it', () => {
+    expect(composerGlyph('send', false, false)).toBe('send');
+    expect(composerGlyph('send', true, false)).toBe('send-next');
+    expect(composerGlyph('stop', true, false)).toBe('stop');
+    expect(composerGlyph('retry', false, false)).toBe('retry');
+    expect(composerGlyph('retry', false, true)).toBe('resume');
+  });
+
+  it('cross-fades the glyph on Send → Stop inside the same button, and not on mount', async () => {
+    const base: React.ComponentProps<typeof PaneComposerActions> = {
+      draftHasText: true, sendMode: 'send', streaming: false, sendDisabled: false,
+      onBranch: vi.fn(), onSend: vi.fn(), onStop: vi.fn(), onRetry: vi.fn(),
+    };
+    const glyphs = (button: HTMLElement) => Array.from(button.querySelectorAll<HTMLElement>('[data-glyph]'));
+    const { rerender } = render(<PaneComposerActions {...base} />);
+    const button = screen.getByRole('button', { name: 'Send (Enter)' });
+    // Mounting shows the glyph as it is: no entrance from half size.
+    expect(glyphs(button).map((g) => g.dataset.glyph)).toEqual(['send']);
+    expect(glyphs(button)[0].style.opacity).not.toBe('0');
+
+    rerender(<PaneComposerActions {...base} draftHasText={false} sendMode="stop" streaming />);
+    const stop = screen.getByRole('button', { name: 'Stop stream' });
+    expect(stop).toBe(button);
+    expect(glyphs(stop).map((g) => g.dataset.glyph)).toContain('stop');
+    await waitFor(() => expect(glyphs(stop).map((g) => g.dataset.glyph)).toEqual(['stop']));
+    for (const glyph of glyphs(stop)) expect(glyph.getAttribute('aria-hidden')).toBe('true');
+
+    // Typing during the reply turns Stop into Send next (dashed shaft).
+    rerender(<PaneComposerActions {...base} sendMode="send" streaming />);
+    await waitFor(() => expect(glyphs(button).map((g) => g.dataset.glyph)).toEqual(['send-next']));
+    expect(button.querySelector('path[stroke-dasharray]')).toBeTruthy();
   });
 });

@@ -8,6 +8,7 @@ import { BrowserSettingsPane } from '../pages/settings/BrowserSettingsPane';
 import { BackgroundPane } from '../pages/settings/BackgroundPane';
 import { ShortcutsPane } from '../pages/settings/ShortcutsPane';
 import { AccountPane } from '../pages/settings/AccountPane';
+import { UpdatePane } from '../pages/settings/UpdatePane';
 import type { SettingsPage } from './settingsPages';
 
 /** One of the pages the older General section held together, on its own. */
@@ -27,6 +28,7 @@ export default function GeneralTopicPage({ page, workspaceReady, onNav }: {
     case 'links': return <BrowserSettingsPane />;
     case 'scheduled': return <BackgroundPane onOpenScheduled={() => onNav('scheduled')} />;
     case 'shortcuts': return <ShortcutsPane />;
+    case 'update': return <UpdatePane />;
     case 'account': return session?.user ? <AccountPane user={session.user} /> : <p className="settings-section__status">Not signed in.</p>;
     default: return null;
   }

@@ -6,6 +6,7 @@ import { getMaintenanceConfig, listEligibleMaintenanceManifest, listMaintenanceB
   listMaintenanceExcludedSpaces, type MaintenanceManifest } from './maintenanceRepository';
 import { maintenanceRuntimeAvailability } from '../../agents/maintenancePolicy';
 import { resolveMetaAgentRuntime } from '../metaAgent/settings';
+import { getWorkspaceInstructions, listWatches } from '../metaAgent/watches';
 
 export type MaintenanceWorkspaceView = MaintenanceWorkspaceResponse;
 
@@ -36,5 +37,7 @@ export function getMaintenanceWorkspaceView(input: {
     } : null,
     backlog, job, scheduler: !job || unavailable ? 'unavailable' : (config?.paused || maintenanceCoordinatorState(input.ownerUserId).paused) ? 'paused' : 'available', excludedSpaceIds,
     catchUpSuggestions, runtime,
+    instructions: getWorkspaceInstructions(input.workspaceId, input.ownerUserId),
+    watches: listWatches(input.workspaceId, input.ownerUserId),
   };
 }

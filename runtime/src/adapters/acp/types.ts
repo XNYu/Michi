@@ -227,9 +227,11 @@ export interface AcpProfile {
     permissionResultMeta?(request: AcpPermissionRequest, optionId: string): Record<string, unknown>;
     /**
      * The usage_summary a prompt yields before its turn_end, from the metadata
-     * buffered for the session. Undefined: the default (a `meteringUsage` summary, if any).
+     * buffered for the session and the session/prompt result (whose standard
+     * `usage` carries token counts). Undefined: the default (a `meteringUsage`
+     * summary, if any).
      */
-    usageSummary?(buffered: Record<string, any> | undefined): AcpUpdate | undefined;
+    usageSummary?(buffered: Record<string, any> | undefined, promptResult?: Record<string, any>): AcpUpdate | undefined;
     /** Transform permission options before they reach the session queue / UI. */
     mapPermissionOptions?(options: unknown[]): unknown[];
     /**

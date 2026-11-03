@@ -95,9 +95,14 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
   const [remoteRuntimes, setRemoteRuntimes] = useState<string[] | null>(null);
   const [remoteWarnings, setRemoteWarnings] = useState<string[]>([]);
   const fallbackInputRef = useRef<HTMLInputElement>(null);
+  // Counts closings. The closed dialog keeps what it showed alive while it
+  // fades out, so a remote connection finishing then must not land in the
+  // next opening.
+  const closings = useRef(0);
 
   useEffect(() => {
     if (!open) {
+      closings.current += 1;
       setName('');
       setFolders([]);
       setError(null);
@@ -115,7 +120,9 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
     }
   }, [open]);
 
-  if (!open) return null;
+  // Closed, the shell stays mounted so it can fade out what it last showed
+  // (ModalShell holds that); there is nothing new to build.
+  if (!open) return <ModalShell open={false} onClose={onClose}>{null}</ModalShell>;
 
   const addFolder = async () => {
     if (folders.length >= MAX_FOLDERS) {
@@ -237,6 +244,9 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
     e.target.value = '';
   };
 
+  const opening = closings.current;
+  const stillOpen = () => closings.current === opening;
+
   const trimmedName = name.trim();
   const isRemote = connectionId !== LOCAL_BACKEND_CONNECTION_ID;
   const remotePath = remoteCwd.trim();
@@ -316,6 +326,9 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
       </div>
 
       {addingRemote && <RemoteDesktopConnect onConnected={(connection, _home, warnings, runtimes, diagnostic) => {
+        // Closed while connecting: dropped, as when closing unmounted the form
+        // and aborted the request.
+        if (!stillOpen()) return;
         const remotes = [...getKnownBackendConnections().filter(c => c.id !== LOCAL_BACKEND_CONNECTION_ID && c.id !== connection.id), connection];
         setKnownBackendConnections(remotes);
         setConnections(getKnownBackendConnections());
@@ -349,7 +362,7 @@ export default function NewWorkspaceDialog({ open, onClose, onCreate, onSkip }: 
               onClick={() => setBrowsingRemote(value => !value)}>Browse</Button>}
           </div>
           {browsingRemote && <RemoteFolderPicker key={connectionId} connectionId={connectionId}
-            onSelect={path => { setRemoteCwd(path); setBrowsingRemote(false); setError(null); }} />}
+            onSelect={path => { if (!stillOpen()) return; setRemoteCwd(path); setBrowsingRemote(false); setError(null); }} />}
         </div>
       ) : <div style={{ borderBottom: '1px solid var(--term-line)', background: 'var(--term-surface)' }}>
         <div style={{ padding: '10px 14px 6px', display: 'flex', alignItems: 'center', gap: 10 }}>

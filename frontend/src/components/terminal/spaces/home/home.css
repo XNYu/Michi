@@ -195,11 +195,14 @@
 .spaces-home .michi-home-agenda > .michi-home-agenda__glyph,
 .spaces-home .michi-home-agenda > .michi-home-caption { display: none; }
 .spaces-home .michi-home-agenda__entry:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A block revealed from the Home is often still arriving on a smooth scroll, so
+   its flash runs twice the page's own (michi-doc-flash, --t-slow) plus a beat,
+   ≈1.4s, and holds the tint for the first 30%. */
 @keyframes spaces-home-flash {
   0%, 30% { background: var(--term-accent-f); }
   100% { background: transparent; }
 }
-.michi-doc-block[data-home-flash] { animation: spaces-home-flash 1.4s ease-out; }
+.michi-doc-block[data-home-flash] { animation: spaces-home-flash calc(var(--t-slow) * 2 + var(--t-enter)) ease-out; }
 
 /* Not written yet */
 .spaces-home-placeholder {
@@ -252,6 +255,8 @@
 /* Phones give the page the screen: the left gutter only holds each block's
    select / add / ⋮⋮ margin, which moves above the block's first line instead. */
 @media (max-width: 700px) {
+  /* The page only scrolls down: anything a little too wide must not let a touch drag it sideways. */
+  .area-settings.spaces-home { overflow-x: hidden; overscroll-behavior-x: none; }
   .area-settings.spaces-home .spaces-home__doc { padding: 24px 16px 120px; }
   .spaces-home__title-row { flex-wrap: wrap; row-gap: 4px; }
   .spaces-home__doc .michi-doc-block__margin {

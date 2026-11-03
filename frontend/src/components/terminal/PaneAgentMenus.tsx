@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
+import { AnimatePresence } from 'motion/react';
 import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentReasoning, AgentStatus, SessionMode } from '../../services/api';
 import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
-import ContextMenu, { type MenuSection } from '../ContextMenu';
+import ContextMenu, { menuOpenKey, type MenuSection } from '../ContextMenu';
 import type { PaneMenuAnchor } from './PaneComposerToolbarLeft';
 import { ComposerModelPicker } from './ComposerModelPicker';
 
@@ -132,11 +133,13 @@ export function PaneAgentMenus({
 
   return (
     <>
-      {agentMenu && (
+      <AnimatePresence>{agentMenu && (
         <ContextMenu
+          key={menuOpenKey(agentMenu)}
           x={agentMenu.x}
           y={agentMenu.y}
           anchorBottom={agentMenu.anchorBottom}
+          preferBelow={agentMenu.preferBelow}
           trigger={agentMenu.trigger}
           menuKind="agents"
           searchable
@@ -165,10 +168,11 @@ export function PaneAgentMenus({
           ]}
           onClose={onCloseAgentMenu}
         />
-      )}
+      )}</AnimatePresence>
 
-      {modelMenu && !disabled && (
+      <AnimatePresence>{modelMenu && !disabled && (
         <ComposerModelPicker
+          key={menuOpenKey(modelMenu)}
           anchor={modelMenu}
           agentStatus={agentStatus}
           resolvedBinding={resolvedBinding}
@@ -185,7 +189,7 @@ export function PaneAgentMenus({
           onSaveReasoning={onSaveReasoning}
           onClose={onCloseModelMenu}
         />
-      )}
+      )}</AnimatePresence>
     </>
   );
 }

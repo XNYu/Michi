@@ -80,6 +80,10 @@ describe('ConnectionsPane', () => {
     const projects = [project('Local project'), project('remote-project', desktop.id), project('stale-local', desktop.id),
       project('old-project', desktop.id, { archivedAt: 1 }), project('collision'), project('other-project', other.id)];
     render(<ConnectionsPane projects={projects} onOpenWorkspace={open} />);
+    const buildSummary = await screen.findByText('4 workspaces');
+    expect(buildSummary.closest('details')?.open).toBe(false);
+    fireEvent.click(buildSummary);
+    fireEvent.click(await screen.findByText('1 workspace'));
     const list = await screen.findByRole('list', { name: 'Workspaces on Build box' });
     expect(within(list).getAllByRole('listitem')).toHaveLength(4);
     expect(within(list).getByText('/srv/current')).toBeTruthy();
@@ -105,6 +109,7 @@ describe('ConnectionsPane', () => {
     const open = vi.fn();
     const projects = [project('same'), project('same', other.id)];
     const { rerender } = render(<ConnectionsPane projects={projects} onOpenWorkspace={open} />);
+    for (const summary of await screen.findAllByText('1 workspace')) fireEvent.click(summary);
     const desktopList = await screen.findByRole('list', { name: 'Workspaces on Build box' });
     const otherList = await screen.findByRole('list', { name: 'Workspaces on Other machine' });
     expect(within(desktopList).getByText('Build box shared workspace')).toBeTruthy();

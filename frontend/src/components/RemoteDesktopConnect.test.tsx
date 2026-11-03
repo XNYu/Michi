@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RemoteDesktopConnect } from './RemoteDesktopConnect';
 import { REMOTE_DIAGNOSTIC_AGENT_EVENT, type DiagnosticAgentRequest } from '../services/remoteDiagnosticAgent';
@@ -27,6 +28,34 @@ it('connects with only a host and requests installation explicitly', async () =>
   await vi.waitFor(() => expect(connected).toHaveBeenCalledWith({ id: 'remote-c', name: 'build+' }, '/home/u', [], ['kiro'], undefined));
   expect(mocks.connect.mock.calls[1].slice(0, 2)).toEqual(['build+', true]);
   expect(screen.queryByPlaceholderText('MICHI_REMOTE_TOKEN')).toBeNull();
+});
+
+it('abandons the connection as soon as its closing dialog starts to fade out', async () => {
+  let signal!: AbortSignal;
+  let fail!: (error: Error) => void;
+  mocks.connect.mockImplementationOnce((_host: string, _install: boolean, _progress: unknown, abort: AbortSignal) => {
+    signal = abort;
+    return new Promise((_resolve, reject) => { fail = reject; });
+  });
+  const connected = vi.fn();
+  const dialog = (open: boolean) => <AnimatePresence>{open && <motion.div key="dialog" exit={{ opacity: 0 }}><RemoteDesktopConnect onConnected={connected} /></motion.div>}</AnimatePresence>;
+  const view = render(dialog(true));
+  fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'build+' } });
+  fireEvent.click(screen.getByRole('button', { name: /^Connect$/ }));
+  expect(signal.aborted).toBe(false);
+  view.rerender(dialog(false));
+  // Still on screen while it fades, but the request is already over.
+  expect(screen.getByLabelText('Remote SSH host')).toBeTruthy();
+  expect(signal.aborted).toBe(true);
+  // An SSH sign-in failure arriving now asks for nothing.
+  await act(async () => {
+    fail(Object.assign(new Error('Permission denied'), { diagnostic: {
+      id: 'attempt-auth', host: 'build+', startedAt: '2026-10-16T12:00:00Z', stage: 'ssh', code: 'ssh_auth',
+      message: 'Permission denied', log: 'Permission denied (publickey)', truncated: false,
+    } }));
+  });
+  expect(connected).not.toHaveBeenCalled();
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 it('browses directories then selects the canonical remote path', async () => {

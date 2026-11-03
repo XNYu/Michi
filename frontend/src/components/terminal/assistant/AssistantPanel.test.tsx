@@ -1,7 +1,8 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AssistantPanelHost } from './AssistantPanel';
+import { AssistantPanelHost, assistantPanelTakesEscape } from './AssistantPanel';
+import { isInAssistantPanel } from '../escapeLayers';
 import { AssistantApiError, MICHI_ASSISTANT_RESET_EVENT } from '../../../services/api/assistant';
 import { openMichiAssistant } from '../../../state/content/assistantBridge';
 import {
@@ -355,6 +356,84 @@ describe('AssistantPanelHost', () => {
     } finally {
       field.remove();
     }
+  });
+
+  describe('while it plays its exit', () => {
+    const leaving = () => document.querySelector<HTMLElement>('.assistant-panel');
+
+    it('is no longer a layer: no Esc, ⌘W, focus or pointer, then it goes', async () => {
+      const field = document.createElement('input');
+      document.body.appendChild(field);
+      try {
+        field.focus();
+        await openPanel();
+        const composer = screen.getByTestId('composer');
+        await waitFor(() => expect(document.activeElement).toBe(composer));
+        fireEvent.keyDown(composer, { key: 'Escape' });
+        const ghost = leaving();
+        expect(ghost).toBeTruthy();
+        expect(ghost!.hasAttribute('data-assistant-panel')).toBe(false);
+        expect(ghost!.getAttribute('aria-hidden')).toBe('true');
+        expect(ghost!.hasAttribute('inert')).toBe(true);
+        expect(ghost!.style.pointerEvents).toBe('none');
+        expect(isInAssistantPanel(composer)).toBe(false);
+        // Focus went back at once, not after the exit.
+        expect(document.activeElement).toBe(field);
+        expect(assistantPanelTakesEscape(new KeyboardEvent('keydown', { key: 'Escape' }))).toBe(false);
+        await waitFor(() => expect(leaving()).toBeNull());
+      } finally {
+        field.remove();
+      }
+    });
+
+    it('comes back as the same panel on a second ⌘J, live again and focused', async () => {
+      await openPanel();
+      const panel = leaving();
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('composer')));
+      act(() => { toggleAssistantPanel(); });
+      act(() => { toggleAssistantPanel(); });
+      expect(leaving()).toBe(panel);
+      expect(panel!.hasAttribute('data-assistant-panel')).toBe(true);
+      expect(panel!.hasAttribute('inert')).toBe(false);
+      expect(panel!.hasAttribute('aria-hidden')).toBe(false);
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('composer')));
+    });
+
+    it('no longer follows the page', async () => {
+      const view = await openPanel('threads');
+      expect(getAssistantComposer('n1').page).toEqual({ kind: 'threads' });
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      view.rerender(<AssistantPanelHost page="home" />);
+      expect(leaving()).toBeTruthy();
+      expect(getAssistantComposer('n1').page).toEqual({ kind: 'threads' });
+    });
+  });
+
+  describe('handed to its pane in the grid, it goes in the same commit (the pane restores the scroll it saves)', () => {
+    it('on Open as pane', async () => {
+      await openPanel('dashboard');
+      fireEvent.click(screen.getByRole('button', { name: 'Open as pane' }));
+      expect(document.querySelector('.assistant-panel')).toBeNull();
+      expect(screen.queryByTestId('tpane')).toBeNull();
+      expect(getAssistantComposer('n1').page).toBeNull();
+    });
+
+    it('when the assistant’s pane is in the grid already', async () => {
+      const view = await openPanel('dashboard');
+      chat.openPanes = ['n1'];
+      view.rerender(<AssistantPanelHost page="dashboard" />);
+      expect(document.querySelector('.assistant-panel')).toBeNull();
+      expect(screen.queryByTestId('tpane')).toBeNull();
+    });
+
+    it('while a dismissed panel is still on its way out', async () => {
+      const view = await openPanel('dashboard');
+      fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+      expect(document.querySelector('.assistant-panel')).toBeTruthy();
+      chat.openPanes = ['n1'];
+      view.rerender(<AssistantPanelHost page="dashboard" />);
+      expect(document.querySelector('.assistant-panel')).toBeNull();
+    });
   });
 
   it('opens as a pane and closes the panel', async () => {

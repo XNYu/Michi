@@ -18,8 +18,18 @@ function runtime(id: string, available = true): AgentRuntime {
   };
 }
 
-for (const id of ['codex', 'claude']) {
-}
+test('no selection never starts a runtime, regardless of installation order', async () => {
+  assert.equal(await findRemoteRuntimeDefault([runtime('kiro'), runtime('codex')], ''), undefined);
+  assert.equal(await findRemoteRuntimeDefault([runtime('codex'), runtime('kiro')], ''), undefined);
+});
+
+test('keeps the explicit choice and never silently substitutes another runtime', async () => {
+  const codex = runtime('codex');
+  assert.equal(await findRemoteRuntimeDefault([runtime('kiro'), codex], 'codex'), codex);
+  assert.equal(await findRemoteRuntimeDefault([runtime('kiro', false), codex], 'kiro'), undefined);
+  assert.equal(await findRemoteRuntimeDefault([codex], 'missing'), undefined);
+  assert.equal(await findRemoteRuntimeDefault([codex], 'missing', true), codex);
+});
 
 test('a built-in API adapter requires configured provider credentials', async () => {
   const providerId = 'remote-default-test-provider';
@@ -34,11 +44,11 @@ test('a built-in API adapter requires configured provider credentials', async ()
   setProviderEnvBindings([{ provider: providerId, envVars: [envName] }]);
   try {
     delete process.env[envName];
-    assert.equal(await findRemoteRuntimeDefault([pi, codex], 'pi'), codex);
+    assert.equal(await findRemoteRuntimeDefault([pi, codex], 'pi'), undefined);
     assert.equal(await findRemoteRuntimeDefault([pi], 'pi'), undefined);
     process.env[envName] = 'test-only-placeholder';
     assert.equal(await findRemoteRuntimeDefault([pi, codex], 'pi'), pi);
-    assert.equal(await findRemoteRuntimeDefault([runtime('kiro', false), pi], 'kiro'), pi);
+    assert.equal(await findRemoteRuntimeDefault([runtime('kiro', false), pi], 'kiro'), undefined);
   } finally {
     setProviderEnvBindings([]);
     if (old === undefined) delete process.env[envName]; else process.env[envName] = old;

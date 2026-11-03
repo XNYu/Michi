@@ -128,4 +128,22 @@ describe('useMapCamera', () => {
     expect(parseTransform(getByTestId('world'))).toEqual({ x: 5, y: 5, k: 0.9 });
     expect(getByTestId('pill').textContent).toBe('90|auto');
   });
+
+  it('jumps instead of gliding while the in-app Reduce motion is on', () => {
+    const { getByTestId } = render(<Harness autoTarget={{ x: 0, y: 0, k: 1 }} />);
+    act(() => { controller!.zoomIn(); });
+    flushFrames(16);
+    // Mid-glide after one frame.
+    expect(parseTransform(getByTestId('world')).k).toBeLessThan(1.2);
+    flushFrames();
+
+    document.documentElement.dataset.reduceMotion = 'on';
+    try {
+      act(() => { controller!.zoomIn(); });
+      flushFrames(16);
+      expect(parseTransform(getByTestId('world')).k).toBeCloseTo(1.44);
+    } finally {
+      delete document.documentElement.dataset.reduceMotion;
+    }
+  });
 });

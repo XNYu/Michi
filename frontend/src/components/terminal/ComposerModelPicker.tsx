@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useIsPresent } from 'motion/react';
 import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentReasoning, AgentStatus } from '../../services/api';
 import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
-import { PopoverSurface } from '../ui/Popover';
+import { measureSurface, PopoverSurface } from '../ui/Popover';
 import { useMenuConfirm } from '../ui/useMenuConfirm';
 import { ChevronLeftIcon, ChevronRightIcon, RetryIcon } from './icons';
 import { REASONING_LABELS, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
@@ -119,28 +120,33 @@ export function ComposerModelPicker({
       const aboveSpace = aboveEdge === undefined ? 0 : aboveEdge - viewportTop - 8;
       const belowSpace = viewportTop + height - belowEdge - 8;
       const frame = getComputedStyle(surface);
+      // The surface grows in (scale .97→1); a pass during that measures the
+      // box it settles to, not the scaled one on screen.
+      const rect = measureSurface(surface);
       // The exported cap belongs to the scrolling list, not its search/back chrome.
       const listHeight = parseFloat(frame.getPropertyValue('--m-maxHeight')) || 240;
       const content = contentRef.current;
       // Measured down to the list's top edge: the search page reserves height
       // under its list, and counting that as chrome would grow it each pass.
       const chromeHeight = content
-        ? content.getBoundingClientRect().top - surface.getBoundingClientRect().top
+        ? (content.getBoundingClientRect().top - rect.box.top) / rect.scaleY
           + (parseFloat(frame.paddingBottom) || 0) + (parseFloat(frame.borderBottomWidth) || 0)
         : 0;
-      // The summary page picks the side: above when all of it fits there,
-      // else below when it fits there, else the roomier side. Its sub-pages
-      // keep that side so moving between them never flips the surface.
+      // The summary page picks the side: the preferred one (above, or below
+      // with preferBelow) when all of it fits there, else the other when it
+      // fits there, else the roomier side. Its sub-pages keep that side so
+      // moving between them never flips the surface.
       let above: boolean;
       if (page === 'overview' || side.current === null) {
         const wanted = chromeHeight + (searchable || !content ? listHeight : Math.min(listHeight, content.scrollHeight));
-        above = aboveSpace >= wanted || (belowSpace < wanted && aboveSpace > belowSpace);
+        above = anchor.preferBelow
+          ? belowSpace < wanted && aboveSpace > belowSpace
+          : aboveSpace >= wanted || (belowSpace < wanted && aboveSpace > belowSpace);
         side.current = above ? 'above' : 'below';
       } else {
         above = side.current === 'above';
       }
       const maxHeight = Math.max(80, Math.min(listHeight + chromeHeight, above ? aboveSpace : belowSpace, height - 16));
-      const rect = surface.getBoundingClientRect();
       const top = above && aboveEdge !== undefined ? aboveEdge - Math.min(rect.height, maxHeight) : belowEdge;
       const next = {
         left: Math.max(viewportLeft + 8, Math.min(anchor.align === 'end' ? (trigger?.right ?? anchor.x) - rect.width : trigger?.left ?? anchor.x, viewportLeft + width - rect.width - 8)),
@@ -166,8 +172,16 @@ export function ComposerModelPicker({
     };
   }, [anchor, page, searchable]);
 
+  // Inside the caller's <AnimatePresence> a closed picker fades out for a
+  // moment (PopoverSurface); meanwhile it takes no clicks, keys or selections.
+  const present = useIsPresent();
+  useEffect(() => {
+    if (!present) cancel();
+  }, [present, cancel]);
+
   useEffect(() => {
     mountedRef.current = true;
+    if (!present) return () => { mountedRef.current = false; };
     const outside = (event: PointerEvent) => {
       if (!(event.target instanceof Node)) return;
       if (surfaceRef.current?.contains(event.target) || anchor.trigger?.contains(event.target)) return;
@@ -188,7 +202,7 @@ export function ComposerModelPicker({
       document.removeEventListener('pointerdown', outside, true);
       window.removeEventListener('keydown', keyboard, true);
     };
-  }, [anchor.trigger, dismiss, cancel]);
+  }, [present, anchor.trigger, dismiss, cancel]);
 
   useLayoutEffect(() => { cancel(); }, [resolvedBinding.runtime, resolvedBinding.provider, resolvedBinding.model, cancel]);
 

@@ -1,5 +1,7 @@
 import React from 'react';
 import { ChevronDown, LoaderCircle } from 'lucide-react';
+import { animate } from 'motion/react';
+import { FLIGHT_MS, claimFlight, launchFlight } from './messageFlight';
 import type { ChatNodeState } from '../../state/chatTypes';
 import type { Prefs } from '../../state/prefs';
 import { visibleMessageText } from '../../state/assistantBlocks';
@@ -27,6 +29,20 @@ import { selectParentRunCards } from './agentRuns/agentRunSelectors';
 import { agentResourceKey, type AgentResourceIdentity } from '../../state/agentIdentity';
 import { useSourceReference } from '../../state/sourceNav/sourceNav';
 import { SourceReferenceMark } from './source/SourceReferenceMark';
+import { isFresh } from '../../motion/useFresh';
+
+// The un-dim keeps the transition too, so leaving edit mode fades back in.
+const FRAME_STYLE: React.CSSProperties = { transition: 'opacity var(--t-enter)' };
+const DIMMED_FRAME_STYLE: React.CSSProperties = { ...FRAME_STYLE, opacity: 0.38, filter: 'saturate(0.5)' };
+
+/**
+ * Whether a message plays its entrance: it was created while this list was
+ * on screen, moments ago. Hydrated, lazily loaded and older history predate
+ * the list, and a remounted list starts with everything settled.
+ */
+export function isFreshMessage(createdAt: number | undefined, listMountedAt: number, now = Date.now()): boolean {
+  return createdAt !== undefined && createdAt >= listMountedAt && isFresh(createdAt, now);
+}
 
 function useOptionalAgentRunUi() {
   const domain = useOptionalAgentDomain();
@@ -147,6 +163,24 @@ function PaneMessageListInner({
   const handleTailSmoothingChange = React.useCallback((isSmoothing: boolean) => {
     setTailAnswerSmoothing(isSmoothing);
   }, []);
+  const [listMountedAt] = React.useState(() => Date.now());
+  /** The list's own box: which surface (pane) its bubbles fly within. */
+  const listRootRef = React.useRef<HTMLDivElement>(null);
+  // Replies this list watched stream: the diff receipt their turn's end
+  // brings grows in, once. One that comes with the history (opened, lazily
+  // loaded, remounted by a retry or edit) renders settled.
+  const streamedHereRef = React.useRef(new Set<string>());
+  const tailMessage = node.messages[node.messages.length - 1];
+  const tailReplyKey = tailMessage?.role === 'assistant' ? tailMessage.clientKey ?? tailMessage.id : null;
+  React.useLayoutEffect(() => {
+    if (!tailReplyKey) return;
+    if (node.status === 'streaming') streamedHereRef.current.add(tailReplyKey);
+    // The turn ended and its receipt, if any, has mounted.
+    else streamedHereRef.current.delete(tailReplyKey);
+  }, [node.status, tailReplyKey]);
+  // Kept across turns: the section unmounts while a turn runs.
+  const [followUpsCollapsed, setFollowUpsCollapsed] = React.useState(false);
+  const toggleFollowUps = React.useCallback(() => setFollowUpsCollapsed((value) => !value), []);
   // Suppress follow-ups while the turn is still running. node.status is
   // persisted in the DB and survives hydration, unlike message-level
   // m.streaming which mapMessageRow() resets to false on load.
@@ -164,6 +198,24 @@ function PaneMessageListInner({
         // while a hidden metadata tail drains and after the final done event.
         !!node.followUpsGenerating && !node.visibleResponseComplete,
       );
+
+  // A send clears the follow-ups: the section stays, as it last was, while
+  // it fades out (120ms) and the picked one, if any, flies on as the new
+  // bubble. Any other removal (a loading state replaced, the answer still
+  // typing) is immediate, as it always was.
+  const showSection = prefs.enableFollowUps && (followUpsLoading(node) || showFollowUps);
+  const lastShownRef = React.useRef<ChatNodeState | null>(null);
+  React.useLayoutEffect(() => {
+    if (showSection) lastShownRef.current = node;
+  });
+  const [wasShown, setWasShown] = React.useState(showSection);
+  const [leavingNode, setLeavingNode] = React.useState<ChatNodeState | null>(null);
+  if (wasShown !== showSection) {
+    setWasShown(showSection);
+    setLeavingNode(!showSection && sentFromHere(lastShownRef.current, node) ? lastShownRef.current : null);
+  }
+  const followUpsLeft = React.useCallback(() => setLeavingNode(null), []);
+  const followUpsNode = showSection ? node : leavingNode;
 
   countRender('PaneMessageList', node.nodeId, {
     status: node.status,
@@ -187,7 +239,7 @@ function PaneMessageListInner({
   return (
     <NodeUserInputContext.Provider value={userInputCtx}>
     <BackgroundWorkNodeContext.Provider value={nodeId}>
-    <div style={contentStyle}>
+    <div ref={listRootRef} style={contentStyle}>
       {node.historyBefore && onLoadOlder && (
         <button type="button" disabled={loadingOlder} onClick={onLoadOlder}
           className="mb-4 w-full rounded border border-line px-3 py-2 text-sm text-muted hover:bg-surface disabled:opacity-50">
@@ -239,9 +291,19 @@ function PaneMessageListInner({
         // Messages saved before rosters were persisted fall back to the live
         // node roster, which only ever belongs to the tail turn.
         const roster = messageSubagentRoster(node, m, tailAssistantId);
+        const rowKey = m.clientKey ?? m.id;
+        const fresh = isFreshMessage(m.createdAt, listMountedAt);
+        // A new user bubble that came from a queued block or a picked
+        // follow-up in this pane flies in from it (messageFlight). A claim
+        // holds for FLIGHT_MS: a later mount of the same message settles.
+        const flightFrom = isUser && (fresh || m.queueId)
+          ? claimFlight(listRootRef.current, node.nodeId, rowKey, m.queueId)
+          : undefined;
 
         return (
-          <React.Fragment key={m.id}>
+          // clientKey survives realign-assistant-id, so the rename does not
+          // remount the row (and replay its entrance or drop its state).
+          <React.Fragment key={rowKey}>
             {i === inheritedCount && inheritedCount > 0 && (
               <div
                 className="t-inherited-divider"
@@ -260,10 +322,12 @@ function PaneMessageListInner({
               data-streaming-tail={isStreamingTail ? 'true' : undefined}
               data-source-referenced={sourceReference?.messageId === m.id ? 'true' : undefined}
               className="terminal-message-frame"
-              style={isDownstream ? { opacity: 0.38, filter: 'saturate(0.5)', transition: 'opacity var(--t-enter)' } : undefined}
+              style={isDownstream ? DIMMED_FRAME_STYLE : FRAME_STYLE}
             >
               <MessageBlock
                 m={m}
+                fresh={fresh}
+                flightFrom={flightFrom}
                 highlight={sourceReference?.messageId === m.id ? referenceMark : undefined}
                 workspaceId={node.projectId}
                 backendConnectionId={backendConnectionId}
@@ -348,7 +412,7 @@ function PaneMessageListInner({
               {!isUser &&
                 node.status !== 'streaming' &&
                 i === node.messages.length - 1 && (
-                  <DiffReceipt message={m} workspaceId={node.projectId} />
+                  <DiffReceipt message={m} workspaceId={node.projectId} enter={streamedHereRef.current.has(rowKey)} />
                 )}
               {/* Agents no delegation chip claims (Crew runs, legacy rosters)
                   render inline within the turn that spawned them. */}
@@ -403,14 +467,18 @@ function PaneMessageListInner({
       <StreamActivityIndicator node={node} showThoughts={prefs.showThoughts} />
       <McpServerError node={node} />
       <RuntimeWarningBanner node={node} />
-      <FollowUpsSection
-        node={node}
-        prefs={prefs}
-        onContinueFollowUp={onContinueFollowUp}
-        onBranchFollowUp={onBranchFollowUp}
-        disabled={followUpsDisabled}
-        showFollowUps={showFollowUps}
-      />
+      {followUpsNode && (
+        <FollowUpsSection
+          node={followUpsNode}
+          leaving={!showSection}
+          onLeft={followUpsLeft}
+          collapsed={followUpsCollapsed}
+          onToggleCollapsed={toggleFollowUps}
+          onContinueFollowUp={onContinueFollowUp}
+          onBranchFollowUp={onBranchFollowUp}
+          disabled={followUpsDisabled}
+        />
+      )}
       {/* Keep real content before the spacer so tail-follow never counts the
           reserved reply space as part of an error or status banner's offset. */}
       <TailSpacer node={node} viewportHeight={viewportHeight} bottomClearance={bottomClearance} />
@@ -627,30 +695,83 @@ function McpServerError({ node }: { node: ChatNodeState }) {
   );
 }
 
+function followUpsLoading(node: ChatNodeState): boolean {
+  return node.status === 'streaming' && !!node.followUpsGenerating && node.followUps.length === 0;
+}
+
+function lastUserKey(node: ChatNodeState): string | undefined {
+  const message = node.messages.findLast((m) => m.role === 'user');
+  return message ? message.clientKey ?? message.id : undefined;
+}
+
+/**
+ * The follow-ups the section last showed went because a message was just
+ * sent (user-send clears them and starts the turn under a new user
+ * message). A loading state, a turn without a new message, or follow-ups
+ * that ran out are not sends.
+ */
+function sentFromHere(shown: ChatNodeState | null, node: ChatNodeState): boolean {
+  if (!shown || shown.followUps.length === 0) return false;
+  if (node.status !== 'streaming' || node.followUps.length > 0 || node.followUpsGenerating) return false;
+  const sent = node.messages.findLast((m) => m.role === 'user');
+  return !!sent && isFresh(sent.createdAt) && lastUserKey(node) !== lastUserKey(shown);
+}
+
 function FollowUpsSection({
   node,
-  prefs,
+  leaving,
+  onLeft,
+  collapsed,
+  onToggleCollapsed,
   onContinueFollowUp,
   onBranchFollowUp,
   disabled,
-  showFollowUps,
 }: {
   node: ChatNodeState;
-  prefs: Prefs;
+  /** A send cleared it: fade out (120ms), then onLeft. */
+  leaving: boolean;
+  onLeft: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   onContinueFollowUp: (question: string) => void;
   onBranchFollowUp: (question: string) => void;
   disabled: boolean;
-  showFollowUps: boolean;
 }) {
-  const [collapsed, setCollapsed] = React.useState(false);
   const contentId = React.useId();
-  if (!prefs.enableFollowUps) return null;
-
-  const loading = node.status === 'streaming' && !!node.followUpsGenerating && node.followUps.length === 0;
-  if (!loading && !showFollowUps) return null;
+  const present = !leaving;
+  const sectionRef = React.useRef<HTMLElement>(null);
+  React.useLayoutEffect(() => {
+    const el = sectionRef.current;
+    if (!leaving || !el) return;
+    const controls = animate(el, { opacity: 0 }, { duration: 0.12, ease: 'linear', onComplete: onLeft });
+    return () => {
+      controls.stop();
+      // Shown again (the send was refused and its follow-ups came back).
+      el.style.opacity = '';
+    };
+  }, [leaving, onLeft]);
+  const nodeId = node.nodeId;
+  const rowsRef = React.useRef<Array<HTMLDivElement | null>>([]);
+  // The follow-up the user just sent. Its row hides once the section leaves
+  // (its text flies on as the bubble); a send that never left keeps it.
+  const [picked, setPicked] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (picked === null) return;
+    const timer = setTimeout(() => setPicked(null), FLIGHT_MS);
+    return () => clearTimeout(timer);
+  }, [picked]);
+  const loading = followUpsLoading(node);
 
   return (
-    <section className="t-followups" aria-label="Suggested follow-ups" aria-busy={loading}>
+    <section
+      ref={sectionRef}
+      className="t-followups"
+      aria-label="Suggested follow-ups"
+      aria-busy={loading}
+      // A leaving section is no longer part of the page.
+      aria-hidden={present ? undefined : true}
+      inert={!present}
+    >
       <header className="t-followups-heading">
         <h3>Explore further</h3>
         <button
@@ -660,7 +781,7 @@ function FollowUpsSection({
           title={collapsed ? 'Expand follow-ups' : 'Collapse follow-ups'}
           aria-expanded={!collapsed}
           aria-controls={contentId}
-          onClick={() => setCollapsed(value => !value)}
+          onClick={onToggleCollapsed}
         >
           <ChevronDown size={15} aria-hidden />
         </button>
@@ -668,7 +789,7 @@ function FollowUpsSection({
       <div id={contentId} hidden={collapsed}>
         {loading ? (
           <>
-            <div className="t-followups-loading" role="status"><LoaderCircle size={14} aria-hidden />Preparing next steps...</div>
+            <div className="t-followups-loading" role="status"><LoaderCircle size={14} aria-hidden className="motion-safe:animate-spin" />Preparing next steps...</div>
             <div aria-hidden>{[0, 1, 2].map(i => <div key={i} className="t-followup-skeleton" />)}</div>
           </>
         ) : node.followUps.slice(0, 3).map((q, i) => (
@@ -677,8 +798,15 @@ function FollowUpsSection({
             index={i}
             question={q}
             disabled={disabled || (node.status === 'streaming' && !node.visibleResponseComplete)}
-            onContinue={onContinueFollowUp}
+            onContinue={(question) => {
+              // Record the box the user clicked before the send moves it.
+              launchFlight(nodeId, rowsRef.current[i]);
+              setPicked(i);
+              onContinueFollowUp(question);
+            }}
             onBranch={onBranchFollowUp}
+            rowRef={(el) => { rowsRef.current[i] = el; }}
+            picked={!present && picked === i}
           />
         ))}
       </div>

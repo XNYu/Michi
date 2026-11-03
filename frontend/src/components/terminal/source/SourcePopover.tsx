@@ -1,6 +1,7 @@
 import React from 'react';
+import { useIsPresent } from 'motion/react';
 import { ChevronRight, MessageSquare, X } from 'lucide-react';
-import { PopoverSurface } from '../../ui/Popover';
+import { measureSurface, PopoverSurface } from '../../ui/Popover';
 import { Button } from '../../ui/controls';
 import { useAnchoredPosition } from '../../ui/useAnchoredPosition';
 import { formatMichiAge } from '../content/michiFormat';
@@ -14,7 +15,7 @@ const PAD = 8;
 /** The popover starts a little left of the link, so the link reads as its source. */
 const LEAD = 40;
 
-const RUNTIME_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex', kiro: 'Kiro', pi: 'Pi', crew: 'Crew' };
+const RUNTIME_LABELS: Record<string, string> = { claude: 'Claude', codex: 'Codex', kiro: 'Kiro', pi: 'Pi', crew: 'Crew', antigravity: 'Antigravity' };
 
 export function runtimeLabel(runtimeId: string | null | undefined): string | null {
   if (!runtimeId) return null;
@@ -45,6 +46,11 @@ export function SourcePopover({ popover, onClose, onGo }: SourcePopoverProps) {
   const [loaded, setLoaded] = React.useState<Loaded>({ status: 'loading' });
   const onCloseRef = React.useRef(onClose);
   onCloseRef.current = onClose;
+  // Inside the host's <AnimatePresence> a closed popover fades out for a moment
+  // (PopoverSurface); meanwhile it stays put and takes no keys or clicks.
+  const present = useIsPresent();
+  const presentRef = React.useRef(present);
+  presentRef.current = present;
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -59,7 +65,9 @@ export function SourcePopover({ popover, onClose, onGo }: SourcePopoverProps) {
     anchor,
     surfaceRef,
     measure: () => {
-      const box = surfaceRef.current?.getBoundingClientRect();
+      if (!presentRef.current) return;
+      // The box it settles to: it grows in (scale .97→1).
+      const box = surfaceRef.current ? measureSurface(surfaceRef.current) : null;
       const width = box?.width || WIDTH;
       const height = box?.height || 0;
       if (!anchor) { setPosition({ left: Math.max(PAD, (window.innerWidth - width) / 2), top: 96 }); return; }
@@ -75,6 +83,7 @@ export function SourcePopover({ popover, onClose, onGo }: SourcePopoverProps) {
   });
 
   React.useEffect(() => {
+    if (!present) return;
     focusRef.current?.focus({ preventScroll: true });
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
@@ -94,7 +103,7 @@ export function SourcePopover({ popover, onClose, onGo }: SourcePopoverProps) {
       document.removeEventListener('keydown', onKey, true);
       document.removeEventListener('pointerdown', onPointer, true);
     };
-  }, [anchor]);
+  }, [anchor, present]);
 
   const preview = loaded.status === 'ready' ? loaded.preview : null;
   const gone = loaded.status === 'missing' || preview?.state === 'deleted';

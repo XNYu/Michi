@@ -1,6 +1,6 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { DOCK_ROOM_VAR } from './selectionDockRoom';
 import SelectionActions, { dockClearance, placeDock, placeTouchPopup, stickyPlacement, findMessageIdForRange, type SelectionActionsProps } from './SelectionActions';
 
@@ -148,7 +148,7 @@ describe('SelectionActions', () => {
     expect(screen.queryByRole('button', { name: 'Quote' })).toBeNull();
   });
 
-  it.each(['comment', 'branch'] as const)('restores an opted-in %s draft and its captured context after outside click and remount', (mode) => {
+  it.each(['comment', 'branch'] as const)('restores an opted-in %s draft and its captured context after outside click and remount', async (mode) => {
     const key = `restore-${mode}`;
     const token = { snapshot: { text: 'version one' }, target: 'original thread' };
     const callback = vi.fn();
@@ -161,6 +161,7 @@ describe('SelectionActions', () => {
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole('textbox')).toBeNull();
     expect(screen.getByRole('button', { name: `Resume selection ${mode}` })).toBeTruthy();
+    await finishExits();
     // While hidden, selecting another passage must not overwrite the saved draft.
     selectContextSource();
     expect(screen.getByRole('button', { name: `Resume selection ${mode}` })).toBeTruthy();
@@ -204,7 +205,40 @@ describe('SelectionActions', () => {
     expect(screen.queryByRole('textbox')).toBeNull();
   });
 
-  it('opens a comment composer when the Comment button is clicked and fires onComment on Enter', () => {
+  it('plays the entrance for a new selection but shows a draft restored with its view settled', () => {
+    const props = { onQuote: vi.fn(), onBranch: vi.fn(), onComment: vi.fn(), selectionDraftKey: 'entrance/file' };
+    const first = render(<ContextHarness {...props} />);
+    selectContextSource();
+    const popup = () => document.body.querySelector('.sel-actions-popup') as HTMLElement;
+    expect(popup().style.opacity).toBe('0');
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'kept' } });
+    first.unmount();
+    render(<ContextHarness {...props} />);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('kept');
+    expect(popup().style.opacity).toBe('1');
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel/ }));
+  });
+
+  it('keeps the morphing surface round with the current Corner radius', async () => {
+    const root = document.documentElement.style;
+    root.setProperty('--ui-radius', '6px');
+    try {
+      render(<ContextHarness onQuote={vi.fn()} onBranch={vi.fn()} onComment={vi.fn()} />);
+      selectContextSource();
+      const popup = document.body.querySelector('.sel-actions-popup') as HTMLElement;
+      expect(popup.style.borderRadius).toBe('6px');
+      root.setProperty('--ui-radius', '10px');
+      fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+      // motion writes a changed style value on its next frame.
+      vi.useRealTimers();
+      await waitFor(() => expect(popup.style.borderRadius).toBe('10px'));
+    } finally {
+      root.removeProperty('--ui-radius');
+    }
+  });
+
+  it('opens a comment composer when the Comment button is clicked and fires onComment on Enter', async () => {
     const onBranch = vi.fn();
     const onQuote = vi.fn();
     const onComment = vi.fn();
@@ -245,11 +279,17 @@ describe('SelectionActions', () => {
     // Advance past the 80ms content-stability debounce
     act(() => { vi.advanceTimersByTime(80); });
 
+    const bar = document.body.querySelector('.sel-actions-popup');
     const commentButton = screen.getByRole('button', { name: /Comment/i });
     fireEvent.mouseDown(commentButton);
     fireEvent.click(commentButton);
 
     expect(screen.getByText('Comment')).toBeTruthy();
+    // The composer reshapes the bar's own surface instead of mounting a new
+    // one, which would replay the entrance.
+    const composer = document.body.querySelector('.sel-actions-popup');
+    expect(composer).toBe(bar);
+    expect(composer?.classList.contains('sel-actions-term-composer')).toBe(true);
 
     const textarea = screen.getByPlaceholderText(/your reply/i) as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: 'my reply body' } });
@@ -258,7 +298,14 @@ describe('SelectionActions', () => {
     expect(onComment).toHaveBeenCalledWith('selected source text', 'my reply body', expect.anything());
     expect(onBranch).not.toHaveBeenCalled();
     expect(onQuote).not.toHaveBeenCalled();
-    // Bar closes after submit.
+    // It closes after submit: it fades out as a ghost that is no longer a
+    // layer (no Esc routing, no focus, hidden from assistive tech), then goes.
+    expect(screen.queryByRole('textbox')).toBeNull();
+    const ghost = document.body.querySelector('.sel-actions-popup') as HTMLElement;
+    expect(ghost.getAttribute('aria-hidden')).toBe('true');
+    expect(ghost.hasAttribute('inert')).toBe(true);
+    expect(ghost.hasAttribute('data-escape-layer')).toBe(false);
+    await finishExits();
     expect(screen.queryByText('Comment')).toBeNull();
   });
 
@@ -310,7 +357,7 @@ describe('SelectionActions', () => {
     expect(screen.getByText('Comment')).toBeTruthy();
   });
 
-  it('fires onBranch when the footer Branch button is clicked in branch mode', () => {
+  it('fires onBranch when the footer Branch button is clicked in branch mode', async () => {
     const onBranch = vi.fn();
     const onQuote = vi.fn();
     const onComment = vi.fn();
@@ -363,6 +410,8 @@ describe('SelectionActions', () => {
     fireEvent.click(branchSubmitBtn);
 
     expect(onBranch).toHaveBeenCalledWith('selected source text', 'why does this work?', undefined, expect.anything());
+    expect(screen.queryByRole('button', { name: /^Branch/ })).toBeNull();
+    await finishExits();
     expect(screen.queryByText('Branch from selection')).toBeNull();
   });
 
@@ -418,7 +467,7 @@ describe('SelectionActions', () => {
 
     // The bar is now rendered. Instrument the popup's getBoundingClientRect so
     // we can count remeasures triggered purely by scroll.
-    const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
+    const bar = document.body.querySelector('.sel-actions-popup') as HTMLElement;
     expect(bar).toBeTruthy();
     bar.getBoundingClientRect = () => {
       popupMeasures += 1;
@@ -485,7 +534,7 @@ describe('SelectionActions', () => {
     select(5);
     act(() => { vi.advanceTimersByTime(80); });
 
-    const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
+    const bar = document.body.querySelector('.sel-actions-popup') as HTMLElement;
     expect(bar).toBeTruthy();
     const settled = { left: bar.style.left, top: bar.style.top };
     // Union 300..460 → centre 380 → left 240; firstVisible.top 200 − 16px gap − 36px bar → top 148.
@@ -553,7 +602,7 @@ describe('SelectionActions', () => {
     });
     act(() => { vi.advanceTimersByTime(80); });
 
-    const bar = document.body.querySelector('.sel-actions-enter') as HTMLElement;
+    const bar = document.body.querySelector('.sel-actions-popup') as HTMLElement;
     expect(bar.style.top).toBe('148px');
 
     // Scroll by 3px — under the dead-zone, but the bar is glued to the text.
@@ -601,7 +650,7 @@ describe('SelectionActions', () => {
         vi.advanceTimersByTime(80);
       });
     };
-    const bar = () => document.body.querySelector('.sel-actions-enter') as HTMLElement;
+    const bar = () => document.body.querySelector('.sel-actions-popup') as HTMLElement;
 
     // Pane 0..1000 × 0..600, fallback bar 280 × 36, selection 300..460 ×
     // 200..240. The platform menu may open on either side, even with room
@@ -624,9 +673,13 @@ describe('SelectionActions', () => {
     // A mouse selection floats above it as before.
     lineRects = [rect(300, 500, 120, 18), rect(300, 522, 160, 18)];
     act(() => { window.getSelection()?.removeAllRanges(); document.dispatchEvent(new Event('selectionchange')); });
-    expect(bar()).toBeNull();
+    expect(bar().getAttribute('aria-hidden')).toBe('true');
+    // A selection made while the bar is still leaving brings the same surface back.
     select(11, 'mouse');
     expect(bar().style.top).toBe('448px');
+    expect(bar().hasAttribute('aria-hidden')).toBe(false);
+    expect(bar().getAttribute('data-escape-layer')).toBe('over');
+    expect(document.body.querySelectorAll('.sel-actions-popup')).toHaveLength(1);
   });
 });
 
@@ -694,9 +747,9 @@ describe('SelectionActions on a phone', () => {
       vi.advanceTimersByTime(80);
     });
   };
-  const bar = () => document.body.querySelector('.sel-actions-enter') as HTMLElement | null;
+  const bar = () => document.body.querySelector('.sel-actions-popup') as HTMLElement | null;
 
-  it('docks the bar of a touch selection over the composer', () => {
+  it('docks the bar of a touch selection over the composer', async () => {
     render(<Harness />);
     select('touch');
     expect(bar()!.classList.contains('is-dock')).toBe(true);
@@ -705,16 +758,25 @@ describe('SelectionActions on a phone', () => {
     expect(bar()!.style.width).toBe('366px');
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
-    expect(bar()).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear selection' })).toBeNull();
     expect(window.getSelection()?.isCollapsed).toBe(true);
+    await finishExits();
+    expect(bar()).toBeNull();
   });
 
   it('opens the Branch sheet from the docked bar', () => {
-    render(<Harness />);
-    select('touch');
-    fireEvent.click(screen.getByRole('button', { name: 'Branch' }));
-    expect(bar()!.classList.contains('is-sheet')).toBe(true);
-    expect(bar()!.classList.contains('is-dock')).toBe(false);
+    document.documentElement.style.setProperty('--ui-radius', '6px');
+    try {
+      render(<Harness />);
+      select('touch');
+      fireEvent.click(screen.getByRole('button', { name: 'Branch' }));
+      expect(bar()!.classList.contains('is-sheet')).toBe(true);
+      expect(bar()!.classList.contains('is-dock')).toBe(false);
+      // The sheet swaps in place and keeps its own top-only corners from CSS.
+      expect(bar()!.style.borderRadius).toBe('');
+    } finally {
+      document.documentElement.style.removeProperty('--ui-radius');
+    }
   });
 
   it('keeps a mouse selection beside the text', () => {
@@ -739,6 +801,20 @@ describe('SelectionActions on a phone', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
     expect(scroller.style.getPropertyValue(DOCK_ROOM_VAR)).toBe('');
+  });
+
+  it('jumps instead of smooth-scrolling for the docked bar when motion is reduced', () => {
+    line = rect(50, 670, 290, 20);
+    const scrollBy = vi.fn();
+    document.documentElement.dataset.reduceMotion = 'on';
+    try {
+      render(<Harness scrollBy={scrollBy} />);
+      select('touch');
+      act(() => { vi.advanceTimersByTime(350); });
+      expect(scrollBy).toHaveBeenCalledWith({ top: 42, behavior: 'auto' });
+    } finally {
+      delete document.documentElement.dataset.reduceMotion;
+    }
   });
 
   it('does not scroll a selection already clear of the docked bar', () => {
@@ -776,6 +852,16 @@ function pointerDown(pointerType: string) {
   const event = new Event('pointerdown', { bubbles: true });
   Object.defineProperty(event, 'pointerType', { value: pointerType });
   document.body.dispatchEvent(event);
+}
+
+/**
+ * A closed popup fades out as a ghost first; let that exit finish. motion
+ * drives exits from the real animation frame, which fake timers don't reach.
+ */
+async function finishExits() {
+  vi.useRealTimers();
+  await waitFor(() => expect(document.body.querySelector('.sel-actions-popup[aria-hidden]')).toBeNull());
+  vi.useFakeTimers();
 }
 
 describe('placeTouchPopup', () => {

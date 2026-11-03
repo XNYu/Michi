@@ -176,6 +176,9 @@ npm run test:runtime
   (createCrewRuntime) pins the v2 engine independently of MICHI_KIRO_ENGINE.
   Preserve Crew's own capabilities and approval/setup requirements; see
   runtime/src/adapters/crew/README.md and runtime/src/adapters/crew/crewRuntime.ts.
+  The public Antigravity factory keeps its existing backend adapter. The
+  runtime package also provides a separate `createAntigravityRuntime` preset
+  for `agy acp`; it is not the registered public backend adapter.
   CLI requirements depend on the selected runtime.
 - backend/src/agents/chatHub.ts owns durable turns and subscriber replay;
   sessionRegistry.ts tracks live sessions. services/chatManager.ts is a

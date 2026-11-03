@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion, useIsPresent, type MotionStyle } from 'motion/react';
 import { usePhoneLayout } from '../hooks/usePhoneLayout';
 import { useKeyboardInset } from '../hooks/useKeyboardInset';
+import { prefersReducedMotion } from '../hooks/useReducedMotion';
+import { DUR, EASE } from '../motion/tokens';
 import { DOCK_ROOM_VAR } from './selectionDockRoom';
 
 interface ViewRect {
@@ -209,11 +212,15 @@ export default function SelectionActions({
   const stickyPlacementRef = useRef<
     { mode: ComposerMode; left: number; top: number; above: boolean } | null
   >(null);
+  // A draft restored with the view that owns it is already there: it shows
+  // settled instead of playing the entrance of a new selection.
+  const settleNextRef = useRef(false);
 
   useEffect(() => {
     if (!selectionDraftKey || !containerRef.current) return;
     const draft = readDraft(selectionDraftKey);
     if (!draft) return;
+    settleNextRef.current = true;
     setAnchor(restoreDraftAnchor(draft, containerRef.current));
     setComposerMode(draft.mode);
     setPrompt(draft.prompt);
@@ -486,6 +493,8 @@ export default function SelectionActions({
   const popupVisible = anchor !== null;
   useLayoutEffect(() => {
     if (!popupVisible) stickyPlacementRef.current = null;
+    // A restored popup has mounted settled, or has gone: the next one is new.
+    settleNextRef.current = false;
   }, [popupVisible]);
   // A phone writes the prompt in a sheet along the bottom edge, which the
   // keyboard pushes up, instead of a floating box beside the selection.
@@ -511,7 +520,8 @@ export default function SelectionActions({
       const room = parseFloat(scroller.style.getPropertyValue(DOCK_ROOM_VAR)) || 0;
       const shortfall = scroller.scrollTop + shift - (scroller.scrollHeight - scroller.clientHeight);
       if (shortfall > 0) scroller.style.setProperty(DOCK_ROOM_VAR, `${Math.ceil(room + shortfall)}px`);
-      scroller.scrollBy?.({ top: shift, behavior: 'smooth' });
+      const reduced = prefersReducedMotion(document.documentElement.dataset.reduceMotion === 'on');
+      scroller.scrollBy?.({ top: shift, behavior: reduced ? 'auto' : 'smooth' });
     }, DOCK_SETTLE_MS);
     return () => clearTimeout(timer);
   }, [dockRange, containerRef]);
@@ -541,10 +551,11 @@ export default function SelectionActions({
     const el = popupRef.current;
     if (!el) return;
     // Use offsetWidth/offsetHeight instead of getBoundingClientRect() because
-    // the latter reports the *transformed* size. When the entry animation
-    // applies scale(0.92), getBoundingClientRect() returns ~92% of the true
-    // layout dimensions; this stale measurement then corrects on the next
-    // trigger (first keystroke), causing a visible position jump.
+    // the latter reports the *transformed* size. While the entrance scales the
+    // popup, or the bar → composer morph projects it from the bar's box,
+    // getBoundingClientRect() returns a fraction of the true layout size; that
+    // stale measurement then corrects on the next trigger (first keystroke),
+    // causing a visible position jump.
     const measure = () => {
       const w = el.offsetWidth;
       const h = el.offsetHeight;
@@ -563,7 +574,16 @@ export default function SelectionActions({
     return () => observer.disconnect();
   }, [anchor?.text, anchor?.context, composerMode, prompt, renderSelectionContext]);
 
-  if (!anchor) return hiddenDraft ? (
+  // One shape for every state, so the popup's presence (and its exit) lives
+  // across the render that clears the selection.
+  const layer = (notice: React.ReactNode, highlight: React.ReactNode, popup: React.ReactNode) => (
+    <>
+      {notice}
+      {createPortal(<>{highlight}<AnimatePresence>{popup}</AnimatePresence></>, document.body)}
+    </>
+  );
+
+  if (!anchor) return layer(hiddenDraft ? (
     <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted">
       <button type="button" className="text-fg underline" onClick={() => {
         if (!containerRef.current) return;
@@ -575,7 +595,7 @@ export default function SelectionActions({
       }}>Resume selection {hiddenDraft.mode}</button>
       <button type="button" onClick={close}>Discard draft</button>
     </div>
-  ) : null;
+  ) : null, null, null);
 
   const styles = getStyles();
   const composerOpen = composerMode !== 'closed';
@@ -625,36 +645,39 @@ export default function SelectionActions({
       ? 'ask something about this selection…'
       : 'your reply to this passage…';
 
-  const originY = placement.above ? 'top' : 'bottom';
   const sheet = phone && composerOpen;
+  // Grows from the edge that faces the selection (a dock or sheet: the bottom).
+  const originY = dock || sheet || placement.above ? 1 : 0;
 
-  return createPortal(
-    <>
-      {composerOpen && anchor.range && anchor.highlightRects.length > 0
-        && containerRef.current?.contains(anchor.range.commonAncestorContainer)
-        && anchor.range.toString().trim() === anchor.text && (
-        <div className={styles.highlightLayer} aria-hidden="true">
-          {anchor.highlightRects.map((rect, i) => (
-            <span
-              key={`${i}-${rect.left}-${rect.top}`}
-              className={styles.highlightMark}
-              style={{
-                left: rect.left,
-                top: rect.top,
-                width: rect.width,
-                height: rect.height,
-              }}
-            />
-          ))}
-        </div>
-      )}
-      <div
+  const highlight = composerOpen && anchor.range && anchor.highlightRects.length > 0
+    && containerRef.current?.contains(anchor.range.commonAncestorContainer)
+    && anchor.range.toString().trim() === anchor.text && (
+    <div className={styles.highlightLayer} aria-hidden="true">
+      {anchor.highlightRects.map((rect, i) => (
+        <span
+          key={`${i}-${rect.left}-${rect.top}`}
+          className={styles.highlightMark}
+          style={{
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+          }}
+        />
+      ))}
+    </div>
+  );
+
+  return layer(null, highlight, (
+      <SelectionPopup
+        key="selection-popup"
         ref={popupRef}
-        // Closes on any Esc while up, over every surface ("over"): the ⌘J
-        // panel's Esc always yields to it.
-        data-escape-layer="over"
-        key={composerOpen ? `composer-${composerMode}` : 'bar'}
-        className={`${composerOpen ? styles.composerWrap : styles.barWrap}${sheet ? ' is-sheet' : ''}${dock ? ' is-dock' : ''}${renderSelectionContext ? ' sel-actions-with-context' : ''} sel-actions-enter`}
+        contentKey={composerOpen ? `composer-${composerMode}` : 'bar'}
+        // A phone's docked bar and keyboard sheet swap in place.
+        morph={!phone}
+        originY={originY}
+        settled={settleNextRef.current}
+        className={`${composerOpen ? styles.composerWrap : styles.barWrap}${sheet ? ' is-sheet' : ''}${dock ? ' is-dock' : ''}${renderSelectionContext ? ' sel-actions-with-context' : ''} sel-actions-popup`}
         style={{
           position: 'fixed',
           left: sheet ? 0 : dock ? dock.left : placement.left,
@@ -665,10 +688,8 @@ export default function SelectionActions({
           width: dock ? dock.width : sheet ? undefined : composerOpen ? COMPOSER_WIDTH : renderSelectionContext ? FILE_BAR_WIDTH : undefined,
           minHeight: dock ? dock.height : undefined,
           zIndex: 'var(--z-selection)',
-          transformOrigin: dock ? 'center bottom' : `left ${originY}`,
           WebkitAppRegion: 'no-drag',
         } as React.CSSProperties}
-        onMouseDown={(e) => e.stopPropagation()}
       >
         {composerOpen ? (
           <>
@@ -788,10 +809,82 @@ export default function SelectionActions({
             )}
           </>
         )}
-      </div>
-    </>,
-    document.body,
+      </SelectionPopup>
+  ));
+}
+
+/**
+ * The surface the bar and the composer share. Appearing, it grows from the
+ * edge facing the selection; opening the composer reshapes the same surface
+ * (a layout morph, with the new content fading in) instead of replaying the
+ * entrance; leaving, it fades out as a ghost that is no longer a layer: no Esc
+ * routing, no focus, no hits.
+ */
+function SelectionPopup({ ref, contentKey, morph, originY, settled, className, style, children }: {
+  ref: React.Ref<HTMLDivElement>;
+  /** What the surface shows; a change morphs it to the new content's box. */
+  contentKey: string;
+  morph: boolean;
+  originY: 0 | 1;
+  /** Mount as already there (a restored draft). Read on mount only. */
+  settled: boolean;
+  className: string;
+  style: React.CSSProperties;
+  children: React.ReactNode;
+}) {
+  const present = useIsPresent();
+  const [firstContent] = useState(contentKey);
+  // Transforms grow the scrollable overflow; nothing may scroll mid-morph.
+  const [morphing, setMorphing] = useState(false);
+  // The morph scales the surface; a corner radius it knows in pixels it keeps
+  // round. Read every render from the Corner radius pref's inline token on
+  // <html> (no style recalc), so a pref change is followed; a phone's dock and
+  // sheet keep their own radii from CSS.
+  const radius = morph ? uiRadiusPx() : undefined;
+  const layoutTransition = { duration: DUR.enter, ease: EASE.drawer };
+  return (
+    <motion.div
+      ref={ref}
+      // Closes on any Esc while up, over every surface ("over"): the ⌘J
+      // panel's Esc always yields to it.
+      data-escape-layer={present ? 'over' : undefined}
+      aria-hidden={present ? undefined : true}
+      inert={!present}
+      data-morphing={morphing ? '' : undefined}
+      className={className}
+      style={{ ...style, borderRadius: radius, originX: 0.5, originY, pointerEvents: present ? undefined : 'none' } as MotionStyle}
+      initial={settled ? false : { opacity: 0, scale: 0.96, y: originY === 1 ? 4 : -4 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, transition: { duration: 0.08, ease: EASE.out } }}
+      transition={{ duration: 0.12, ease: EASE.out, layout: layoutTransition }}
+      // Measured only when the content changes: scroll-follow and selection
+      // edits move it 1:1, and typing never animates it.
+      layout={morph}
+      layoutDependency={contentKey}
+      onLayoutAnimationStart={() => setMorphing(true)}
+      onLayoutAnimationComplete={() => setMorphing(false)}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <motion.div
+        key={contentKey}
+        className="sel-actions-term-content"
+        // Undoes the surface's scale while it morphs, so text never stretches.
+        layout={morph}
+        layoutDependency={contentKey}
+        initial={contentKey === firstContent ? false : { opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ opacity: { duration: 0.12, delay: 0.04, ease: 'linear' }, layout: layoutTransition }}
+      >
+        {children}
+      </motion.div>
+    </motion.div>
   );
+}
+
+/** --ui-radius as prefs wrote it on <html>, in px; undefined leaves it to CSS. */
+function uiRadiusPx(): number | undefined {
+  const px = parseFloat(document.documentElement.style.getPropertyValue('--ui-radius'));
+  return Number.isFinite(px) ? px : undefined;
 }
 
 function sameSelection(anchor: Anchor, text: string, range: Range): boolean {
@@ -1113,13 +1206,11 @@ function getStyles(): Styles {
 // ---------- Terminal stylesheet (injected once) ----------
 
 const TERMINAL_CSS = `
-@keyframes sel-enter {
-  from { opacity: 0; transform: scale(0.92); }
-  to   { opacity: 1; transform: scale(1); }
+/* The popup's content box (SelectionPopup): the bar keeps its column. */
+.sel-actions-term-bar > .sel-actions-term-content {
+  display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0;
 }
-.sel-actions-enter {
-  animation: sel-enter var(--t-enter) cubic-bezier(0.2, 0, 0, 1) both;
-}
+.sel-actions-popup[data-morphing] { overflow: hidden; }
 .sel-actions-term-highlight-layer {
   position: fixed;
   inset: 0;

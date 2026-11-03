@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
+import { AnimatePresence, motion, useIsPresent } from 'motion/react';
 import { useChatActions, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { navigateToNode } from '../../state/navigateToNode';
 import {
@@ -10,6 +11,15 @@ import type { PageId } from '../../state/commands';
 import { isSystemWorkspace } from '../../state/assistant/systemWorkspace';
 import { openAssistantPanel } from '../../state/assistant/assistantStore';
 import { revealScheduleAssistant } from '../../state/assistant/scheduleAssistantStore';
+import { DUR, EASE } from '../../motion/tokens';
+
+/**
+ * The bar sits in the shell's flow, so it opens and closes its height instead
+ * of shoving the whole body down in one frame. Asks already pending when the
+ * shell mounts show at once.
+ */
+const BAR_IN = { duration: DUR.enter, ease: EASE.drawer };
+const BAR_OUT = { duration: 0.14, ease: EASE.drawer };
 
 /**
  * Global "the agent is asking you something" reminder.
@@ -64,19 +74,45 @@ export default function AskUserAlertBar({ onNav }: { onNav?: (page: PageId) => v
     });
   }, [navDeps, onNav, projects]);
 
-  if (pending.length === 0) return null;
-
   // Oldest unanswered ask is the click target; answering it promotes the next
   // one, so repeated clicks walk the queue without any local cursor state.
-  const next = pending[0];
-  const extra = pending.length - 1;
-  const label = next.title || 'Untitled thread';
+  return (
+    <AnimatePresence initial={false}>
+      {pending.length > 0 && (
+        <motion.div
+          key="ask-alert"
+          style={{ overflow: 'hidden', flexShrink: 0 }}
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1, transition: BAR_IN }}
+          exit={{ height: 0, opacity: 0, transition: BAR_OUT }}
+        >
+          <AskAlertRow next={pending[0]} extra={pending.length - 1} reveal={reveal} />
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
 
+function AskAlertRow({ next, extra, reveal }: {
+  next: PendingAskUser;
+  extra: number;
+  reveal: (target: PendingAskUser) => void;
+}) {
+  // While closing, the row keeps its last content but is no longer an alert
+  // or a target: the ask it points to has been answered.
+  const present = useIsPresent();
+  const label = next.title || 'Untitled thread';
   return (
     // role="alert" (not "button") so assistive tech announces the question the
     // moment the bar appears; the nested button carries the keyboard/AT action,
     // while the whole row stays clickable for the mouse.
-    <div role="alert" className="ask-alert-bar" onClick={() => reveal(next)}>
+    <div
+      role={present ? 'alert' : undefined}
+      aria-hidden={present ? undefined : true}
+      inert={!present}
+      className="ask-alert-bar"
+      onClick={present ? () => reveal(next) : undefined}
+    >
       <span className="ask-alert-badge">? ASK</span>
       <span className="ask-alert-text">
         <strong>{label}</strong>
@@ -93,7 +129,7 @@ export default function AskUserAlertBar({ onNav }: { onNav?: (page: PageId) => v
         aria-label={`Open ${label} and answer the agent's question`}
         onClick={(e) => {
           e.stopPropagation();
-          reveal(next);
+          if (present) reveal(next);
         }}
       >
         Answer →

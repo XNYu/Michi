@@ -27,6 +27,7 @@ import {
   onMetaAgentGuardRetry, recordMetaAgentGuardCheck,
 } from '../metaAgent/guardStatus';
 import { failHomeRun, planHomeRun, settleHomeRun, sweepMetaAgentHome, type HomeRunPlan } from '../metaAgent/firstRun';
+import { failWatchRun, planWatchRun, settleWatchRun, withWorkspaceInstructions, type WatchRunPlan } from '../metaAgent/watches';
 import { registerScheduledWorkspacePurge } from './workspacePurge';
 import { LOCAL_AGENT_OWNER_ID } from '../agentOwner';
 import { log } from '../logger';
@@ -146,6 +147,7 @@ interface ActiveRun {
   runtimeProfile?: ScheduledRunRuntimeProfile;
   attentionRequested?: boolean;
   homeRun?: Extract<HomeRunPlan, { id: string }>;
+  watchRun?: WatchRunPlan;
 }
 
 const NOTIFICATION_REPLAY_WINDOW_MS = 24 * 3_600_000;
@@ -760,6 +762,9 @@ export class ScheduledJobScheduler {
           jobId: job.id, runId: run.id, now: this.clock() });
         if (plan?.kind === 'refuse') throw new Error(plan.error);
         if (plan) active.homeRun = plan;
+        // A due watch check runs before conversation work; its interval counts from this start.
+        else active.watchRun = planWatchRun({ workspaceId: job.workspaceId, ownerUserId: job.ownerUserId ?? LOCAL_AGENT_OWNER_ID,
+          jobId: job.id, runId: run.id, now: this.clock() }) ?? undefined;
       }
       if (managedMaintenance) {
         // Resolved once per run: a settings change applies from the next run, never to this one.
@@ -769,7 +774,7 @@ export class ScheduledJobScheduler {
         active.runtimeProfile = profile;
         active.maintenanceConfigRevision = managedMaintenance.revision;
       }
-      const cursor = active.homeRun ? null : managedMaintenance?.completionCursor ?? job.conversationCursor;
+      const cursor = active.homeRun || active.watchRun ? null : managedMaintenance?.completionCursor ?? job.conversationCursor;
       if (cursor != null) {
         const ownerUserId = job.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
         if (managedMaintenance) {
@@ -841,19 +846,27 @@ export class ScheduledJobScheduler {
         }
       }
       const homeRun = active.homeRun;
-      const handle = await this.deps.executor.start(homeRun ? { ...job, prompt: homeRun.prompt } : job, run, {
+      const watchRun = active.watchRun;
+      const ownerUserId = job.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
+      // The workspace's instructions join every run that writes this workspace; the Spaces Home summary spans all of them.
+      const prompt = watchRun ? watchRun.prompt
+        : homeRun?.kind === 'home-summary' ? homeRun.prompt
+          : managedMaintenance ? withWorkspaceInstructions(homeRun?.prompt ?? job.prompt, job.workspaceId, ownerUserId)
+            : job.prompt;
+      const boundRun = homeRun ?? watchRun;
+      const handle = await this.deps.executor.start(prompt === job.prompt ? job : { ...job, prompt }, run, {
         onAttention: (kind) => this.onAttention(job, active, kind),
         signal: active.controller.signal,
         isCurrent: () => !active.finalized && !active.controller.signal.aborted
           && this.repo.ownsRun(run.id, active.lease, this.clock()),
         conversationBatch: active.conversationBatch,
         ...(active.runtimeProfile ? { runtimeProfile: active.runtimeProfile } : {}),
-        ...(homeRun && active.maintenanceConfigRevision !== undefined ? { maintenanceContext: {
-          workspaceId: job.workspaceId, ownerUserId: job.ownerUserId ?? LOCAL_AGENT_OWNER_ID, jobId: job.id,
+        ...(boundRun && active.maintenanceConfigRevision !== undefined ? { maintenanceContext: {
+          workspaceId: job.workspaceId, ownerUserId, jobId: job.id,
           runId: run.id, claimedBy: this.instanceId, configRevision: active.maintenanceConfigRevision,
-          planId: homeRun.id, sources: [],
+          planId: boundRun.id, sources: [],
         } } : {}),
-        ...(!homeRun && active.maintenancePlan && active.maintenanceConfigRevision !== undefined ? { maintenanceContext: {
+        ...(!boundRun && active.maintenancePlan && active.maintenanceConfigRevision !== undefined ? { maintenanceContext: {
           workspaceId: job.workspaceId, ownerUserId: job.ownerUserId ?? LOCAL_AGENT_OWNER_ID, jobId: job.id,
           runId: run.id, claimedBy: this.instanceId, configRevision: active.maintenanceConfigRevision,
           planId: active.maintenancePlan.id,
@@ -897,6 +910,13 @@ export class ScheduledJobScheduler {
         error = settled.error;
         summary = settled.summary ?? summary;
       }
+      if (active.watchRun) {
+        const settled = settleWatchRun({ id: active.watchRun.id, ownerUserId: job.ownerUserId ?? LOCAL_AGENT_OWNER_ID,
+          status, error, turnId: handle.turnId, now: this.clock() });
+        status = settled.status;
+        error = settled.error;
+        summary = settled.summary ?? summary;
+      }
       const page = active.conversationBatch;
       let consumed = false;
       if (page && status === 'succeeded') {
@@ -924,6 +944,7 @@ export class ScheduledJobScheduler {
       const message = error instanceof Error ? error.message : String(error);
       this.recordMetaAgentCheck(job, active, error ?? message);
       if (active.homeRun) failHomeRun(active.homeRun.id, job.ownerUserId ?? LOCAL_AGENT_OWNER_ID, message, this.clock(), error);
+      if (active.watchRun) failWatchRun(active.watchRun.id, job.ownerUserId ?? LOCAL_AGENT_OWNER_ID, message, this.clock());
       if (!active.finalized) {
         log.warn('scheduler', 'scheduled run could not start', { jobId: job.id, runId: run.id, error: message });
         const status = active.timedOut ? 'timed_out' : active.cancelRequested ? 'cancelled' : 'failed';

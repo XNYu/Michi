@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 import { build, context } from "esbuild";
 import { michiBuildInfo } from "../../scripts/build-info.mjs";
+import { BuildReadiness } from "./buildReadiness.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = resolve(root, "dist");
@@ -50,6 +51,10 @@ mkdirSync(dist, { recursive: true });
 // live at dist/db/... . Without this, runMigrations' readdirSync hits ENOENT
 // and (per its catch) silently no-ops — every schema change stays unapplied.
 function copyAssets() {
+  const piRoot = dirname(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-coding-agent'))));
+  copyTree(join(piRoot, 'package.json'), join(dist, 'pi-sdk/package.json'));
+  copyTree(resolve(root, 'src/agents/pi/PI-LICENSE.txt'), join(dist, 'pi-sdk/LICENSE.txt'));
+
   // Keep the SDK's native ESM entry and sibling modules beside the CJS bundle.
   // Claude itself remains the user's installed CLI, selected by the runtime.
   const sdkRoot = dirname(createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk'));
@@ -116,8 +121,11 @@ const atomicCrewRelay = { name: "atomic-crew-relay", setup(pluginBuild) {
 // One row per bundle, in build order. Output file names are loaded by name
 // elsewhere, so do not rename them. Fields: entry (relative to backend/),
 // outfile, extra define/external, atomicWrite (write through atomicCrewRelay),
-// restartOnRebuild (--watch restarts the server child after this bundle).
+// restartKey (--watch waits for server + SDK, then restarts the child).
 const bundles = [
+  // Native ESM preserves SDK/provider import.meta-based resource loading.
+  { entry: "src/agents/pi/piSdkBundle.ts", outfile: resolve(dist, "pi-sdk/sdk.mjs"),
+    restartKey: "sdk", format: "esm", banner: { js: 'import { createRequire as michiCreateRequire } from "node:module"; const require = michiCreateRequire(import.meta.url);' } },
   // Meta agent metrics worker thread, loaded by name like the database worker.
   { entry: "src/services/metaAgentMetricsWorker.ts", outfile: resolve(dist, "metaAgentMetricsWorker.js") },
   // Database worker thread, loaded by `new Worker('dist/dbWorkerThread.js')`.
@@ -134,7 +142,7 @@ const bundles = [
     external: [
       "@anthropic-ai/claude-agent-sdk", // source execution; bundles load dist/claude-sdk
     ],
-    restartOnRebuild: true,
+    restartKey: "server",
   },
 ];
 
@@ -142,6 +150,8 @@ function bundleOptions(entry, extraPlugins = []) {
   const plugins = [...(entry.atomicWrite ? [atomicCrewRelay] : []), ...extraPlugins];
   return {
     ...baseOptions,
+    ...(entry.format ? { format: entry.format } : {}),
+    ...(entry.banner ? { banner: entry.banner } : {}),
     entryPoints: [resolve(root, entry.entry)],
     outfile: entry.outfile,
     define: { ...baseOptions.define, ...entry.define },
@@ -169,6 +179,7 @@ if (WATCH) {
     console.warn("[backend] runtime boundary check could not run:", err);
   }
 
+  const readiness = new BuildReadiness(['sdk', 'server']);
   let child = null;
   let shuttingDown = false;
 
@@ -205,9 +216,9 @@ if (WATCH) {
   });
 
   const startServer = async () => {
-    if (shuttingDown) return;
+    if (shuttingDown || !readiness.ready) return;
     await stopChild();
-    if (shuttingDown) return;
+    if (shuttingDown || !readiness.ready) return;
     const c = spawn(process.execPath, [outfile], {
       stdio: "inherit",
       // MICHI_DEV_RENDERER: trust `npm run dev`'s Vite renderer on loopback
@@ -226,26 +237,28 @@ if (WATCH) {
 
   // Serialize restarts so two fast saves can't spawn two servers racing the port.
   let chain = Promise.resolve();
-  const runOnRebuild = {
+  const runOnRebuild = (key) => ({
     name: "run-on-rebuild",
     setup(pluginBuild) {
+      pluginBuild.onStart(() => { readiness.started(key); });
       pluginBuild.onEnd((result) => {
         if (result.errors.length > 0) {
           console.error(`[backend] build failed (${result.errors.length} error(s)); keeping previous server`);
           return;
         }
+        readiness.succeeded(key);
         copyAssets();
-        if (stagedOutfile !== outfile) copyTree(stagedOutfile, outfile);
+        if (key === 'server' && stagedOutfile !== outfile) copyTree(stagedOutfile, outfile);
         chain = chain.then(startServer).catch((err) => console.error("[backend] restart failed:", err));
       });
     },
-  };
-  // Every bundle rebuilds on source change; only the server's rebuild restarts
-  // the child. The others are picked up when next loaded: the server's Worker
+  });
+  // SDK changes require a process restart because native ESM imports are cached.
+  // Remaining bundles are picked up when next loaded: the server's Worker
   // constructor, the next Crew adapter spawn, crewMcpHost's relay reload.
   const contexts = [];
   for (const entry of bundles) {
-    const ctx = await context(bundleOptions(entry, entry.restartOnRebuild ? [runOnRebuild] : []));
+    const ctx = await context(bundleOptions(entry, entry.restartKey ? [runOnRebuild(entry.restartKey)] : []));
     await ctx.watch();
     contexts.push(ctx);
   }

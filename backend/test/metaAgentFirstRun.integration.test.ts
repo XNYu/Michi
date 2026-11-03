@@ -237,7 +237,13 @@ test('first run writes each workspace home newest first, then the Spaces Home an
       assert.match(run.job.prompt, /Layout preferences for this page only\. They come before the block choices in step 3/);
       // Blocks follow what was read, not a fixed template, and never count the page's own inputs.
       assert.match(run.job.prompt, /chosen by the shape of what you read/);
-      assert.match(run.job.prompt, /Never count conversations, messages or turns/);
+      assert.match(run.job.prompt, /never count conversations, messages or turns/i);
+      // A thinking page mirrors the person, not the assistant: views are theirs only when they said them.
+      assert.match(run.job.prompt, /center the page on the person's own thinking/);
+      assert.match(run.job.prompt, /mark the assistant's proposals as proposals, saying whether the person answered them/);
+      // Exploration does not become to-dos, but every decided step does, deadlines first.
+      assert.match(run.job.prompt, /write next-steps only for steps someone decided to take/);
+      assert.match(run.job.prompt, /When such a step has a deadline or holds up other work, put next-steps right after the callout/);
       assert.doesNotMatch(run.job.prompt, /title "Next steps"|title "Progress"|2 to 4 real counts/);
       assert.doesNotMatch(run.job.prompt, /Compare decisions across workspaces/);
       // The workspace home lists its conversations itself, so the agent writes no second list of them.

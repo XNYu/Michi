@@ -7,11 +7,14 @@ const piAiModule = require("../src/agents/pi/piAi") as {
 };
 const originalLoadPiAi = piAiModule.loadPiAi;
 const openRouterModels = require("../src/agents/pi/openrouterModels") as typeof import("../src/agents/pi/openrouterModels");
+const discovery = require("../src/agents/pi/providerModelDiscovery") as typeof import("../src/agents/pi/providerModelDiscovery");
 
 afterEach(() => {
   global.fetch = originalFetch;
   piAiModule.loadPiAi = originalLoadPiAi;
   openRouterModels.invalidateOpenRouterCache();
+  discovery.resetModelDiscoveryForTests();
+  delete process.env.MICHI_MODEL_DISCOVERY;
 });
 
 test('Pi model catalogs preserve SDK model-specific effort capabilities', async () => {
@@ -90,3 +93,113 @@ test("Cerebras model catalog returns qwen-3.8-27b and gpt-oss-120b, excluding de
   const attemptIds = getModelAttemptIds("cerebras", "gemma-4-31b");
   assert.deepEqual(attemptIds, ["gpt-oss-120b"]);
 });
+
+test("DeepSeek's default is its floating alias and survives an offline catalog", async () => {
+  global.fetch = async () => { throw new Error("offline"); };
+  const { getProviderInfo, listPiModels, resolvePiModel, resolveProviderModel, selectDefaultModelId } =
+    require("../src/agents/pi/piProviders") as typeof import("../src/agents/pi/piProviders");
+
+  assert.equal(selectDefaultModelId(getProviderInfo("deepseek")!), "deepseek-chat");
+
+  const models = await listPiModels("deepseek");
+  assert.equal(models[0].model_id, "deepseek-chat", "the default must be in the catalog or /agent/models sanitizes it away");
+  assert.ok(models.some((m) => m.model_id === "deepseek-v4-pro"), "the pinned entry stays selectable");
+
+  assert.equal(await resolveProviderModel("deepseek"), "deepseek-chat");
+  assert.equal(await resolveProviderModel("deepseek", "deepseek-v4-pro"), "deepseek-v4-pro", "an explicit pin wins");
+
+  const alias = await resolvePiModel("deepseek", "deepseek-chat");
+  assert.equal(alias.id, "deepseek-chat");
+  assert.equal(alias.api, "openai-completions");
+  assert.equal(alias.baseUrl, "https://api.deepseek.com");
+  assert.equal(alias.contextWindow, 1_000_000, "descriptor comes from the pinned template");
+});
+
+test("a model released after pi-ai published its catalog is listed, selectable and resolvable", async () => {
+  global.fetch = async (url: unknown) => {
+    assert.equal(String(url), "https://api.deepseek.com/models");
+    return new Response(JSON.stringify({ data: [{ id: "deepseek-v4.1", created: 1_760_000_000 }] }));
+  };
+  const { listPiModels, resolvePiModel, resolveProviderModel } =
+    require("../src/agents/pi/piProviders") as typeof import("../src/agents/pi/piProviders");
+
+  const models = await listPiModels("deepseek");
+  assert.ok(models.some((m) => m.model_id === "deepseek-v4.1"), "live catalog adds the new id");
+  assert.equal(await resolveProviderModel("deepseek", "deepseek-v4.1"), "deepseek-v4.1");
+
+  const resolved = await resolvePiModel("deepseek", "deepseek-v4.1");
+  assert.equal(resolved.id, "deepseek-v4.1");
+  assert.equal(resolved.baseUrl, "https://api.deepseek.com");
+});
+
+test("discovery speaks each provider dialect, caches the answer and names the secret in a header", async () => {
+  const seen: Array<{ url: string; headers: Record<string, string> }> = [];
+  global.fetch = async (url: unknown, init: any) => {
+    seen.push({ url: String(url), headers: init?.headers ?? {} });
+    return new Response(JSON.stringify({
+      models: [
+        { name: "models/gemini-3.9-pro", displayName: "Gemini 3.9 Pro", inputTokenLimit: 2_000_000, outputTokenLimit: 65_536, supportedGenerationMethods: ["generateContent"] },
+        { name: "models/text-embedding-9", supportedGenerationMethods: ["embedContent"] },
+      ],
+    }));
+  };
+
+  const models = await discovery.discoverProviderModels({
+    provider: "google",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    dialect: "gemini",
+    apiKey: "test-key",
+  });
+
+  assert.deepEqual(models?.map((m) => m.id), ["gemini-3.9-pro"], "non-generating models are dropped");
+  assert.equal(models?.[0].contextWindow, 2_000_000);
+  assert.equal(seen[0].url, "https://generativelanguage.googleapis.com/v1beta/models");
+  assert.equal(seen[0].headers["x-goog-api-key"], "test-key");
+
+  await discovery.discoverProviderModels({
+    provider: "google",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    dialect: "gemini",
+    apiKey: "test-key",
+  });
+  assert.equal(seen.length, 1, "the second read is served from cache");
+});
+
+test("a provider without a live catalog leaves the static list alone", async () => {
+  global.fetch = async () => new Response("nope", { status: 404 });
+  assert.equal(await discovery.discoverProviderModels({
+    provider: "zai",
+    baseUrl: "https://api.z.ai/api/paas/v4",
+    dialect: "openai",
+  }), null);
+
+  const models = await listPiModelsForTest("deepseek");
+  assert.ok(models.some((m) => m.model_id === "deepseek-v4-pro"));
+  assert.ok(models.some((m) => m.model_id === "deepseek-chat"));
+});
+
+test("a hanging live endpoint cannot block the catalog read", async () => {
+  global.fetch = () => new Promise<Response>(() => { /* never settles */ });
+  const started = Date.now();
+  const models = await listPiModelsForTest("deepseek");
+  assert.ok(Date.now() - started < 5_000, "the read answers within the discovery budget");
+  assert.equal(models[0].model_id, "deepseek-chat");
+  assert.ok(models.some((m) => m.model_id === "deepseek-v4-pro"));
+});
+
+test("MICHI_MODEL_DISCOVERY=0 keeps the catalog static and offline", async () => {
+  process.env.MICHI_MODEL_DISCOVERY = "0";
+  let calls = 0;
+  global.fetch = async () => { calls += 1; throw new Error("must not be called"); };
+
+  const models = await listPiModelsForTest("deepseek");
+
+  assert.equal(calls, 0);
+  assert.ok(models.some((m) => m.model_id === "deepseek-chat"));
+  assert.equal(models[0].model_id, "deepseek-chat");
+});
+
+function listPiModelsForTest(provider: string) {
+  const { listPiModels } = require("../src/agents/pi/piProviders") as typeof import("../src/agents/pi/piProviders");
+  return listPiModels(provider);
+}

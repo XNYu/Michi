@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import type { ChatPermissionChoice, ChatPermissionMode } from 'michi-shared';
 import { useCrewIntegration } from './CrewIntegrationStatus';
 import { activeBackendApiBase } from '../../config/backendConnections';
-import ContextMenu from '../ContextMenu';
+import ContextMenu, { menuOpenKey } from '../ContextMenu';
 import { ShieldIcon, ShieldOffIcon } from './icons';
-import type { PaneMenuAnchor } from './PaneComposerToolbarLeft';
+import { composerMenusOpenBelow, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
 import { toast } from 'sonner';
 import { supportsChatYolo } from '../../lib/chatPermissionModes';
 
@@ -75,7 +76,7 @@ export function ComposerPermissionControl({ mode, runtimeIds, approveForMeRuntim
         event.stopPropagation();
         const rect = event.currentTarget.getBoundingClientRect();
         setAnchor(anchor ? null : { x: rect.left, y: rect.bottom + 6, anchorBottom: rect.top - 6, trigger: event.currentTarget,
-          preferBelow: !!event.currentTarget.closest('.composer-tray') });
+          preferBelow: composerMenusOpenBelow(event.currentTarget) });
       }} onKeyDown={(event) => {
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault();
@@ -85,7 +86,7 @@ export function ComposerPermissionControl({ mode, runtimeIds, approveForMeRuntim
       {displayedMode === 'ask' || displayedMode === 'approve' ? <ShieldIcon /> : <ShieldOffIcon />}
       <span className="t-chip-label">{saving ? 'Saving…' : label}</span>
     </button>
-    {anchor && !disabled && <ContextMenu {...anchor} menuKind="agents" width={300}
+    <AnimatePresence>{anchor && !disabled && <ContextMenu key={menuOpenKey(anchor)} {...anchor} menuKind="agents" width={300}
       onClose={() => setAnchor(null)} sections={[{ label: scope === 'global' ? 'Permissions · all chats' : 'Permissions · this chat', items: choices.map((choice) => ({
         id: choice.mode, label: choice.label,
         sublabel: [
@@ -100,6 +101,6 @@ export function ComposerPermissionControl({ mode, runtimeIds, approveForMeRuntim
             .catch((error: unknown) => toast.error(error instanceof Error ? error.message : 'Failed to save permissions'))
             .finally(() => setSaving(false));
         },
-      })) }]} />}
+      })) }]} />}</AnimatePresence>
   </>;
 }

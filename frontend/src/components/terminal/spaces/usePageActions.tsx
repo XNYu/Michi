@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import type { PageSummaryDto } from 'michi-shared';
 import { createPage, deletePage, fetchPage, patchPage, type PageApiIdentity } from '../../../services/api/pages';
 import { notifyPageChanged } from '../../../state/pages/pageEvents';
@@ -106,7 +107,8 @@ export function usePageActions(options: {
     rename: (page: PageSummaryDto) => open('rename', page),
     move: (page: PageSummaryDto) => open('move', page),
     trash: (page: PageSummaryDto) => open('trash', page),
-    dialog: action && <ModalShell open onClose={close} title={TITLES[action.kind]} width={420} dismissible={!busy} captureEscape>
+    // Closing fades the dialog out with the action it last showed.
+    dialog: <AnimatePresence>{action && <ModalShell key="page-action" open onClose={close} title={TITLES[action.kind]} width={420} dismissible={!busy} captureEscape>
       <form className="page-action-form" onSubmit={event => void submit(event)}>
         {action.kind === 'trash'
           ? <p>Move “{action.page.title}” and its child pages to trash?</p>
@@ -125,6 +127,6 @@ export function usePageActions(options: {
           </Button>
         </footer>
       </form>
-    </ModalShell>,
+    </ModalShell>}</AnimatePresence>,
   };
 }

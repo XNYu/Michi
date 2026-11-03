@@ -166,7 +166,18 @@ curl -fsSL https://raw.githubusercontent.com/XNYu/Michi/main/install.sh | bash
 The installer clones the repo into `~/Michi`, installs Node.js 22 locally if
 needed, builds the desktop app, and installs it to `~/Applications/michi.app`.
 
-For local web development, install Node.js 22 or newer, then run:
+On **Windows** (x64), open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/XNYu/Michi/main/install.ps1 | iex
+```
+
+The installer clones the repo into `%USERPROFILE%\Michi`, downloads Node.js 22
+if needed, builds the NSIS installer (`.exe`), and creates a Start Menu
+shortcut. Visual Studio Build Tools are recommended but not required — the
+build falls back to prebuilt native binaries when possible.
+
+For local web development (any platform), install Node.js 22 or newer, then run:
 
 ```bash
 npm install
@@ -197,7 +208,13 @@ interactive, not a throwaway side note.
 
 ## Runtimes & Providers
 
-Michi is runtime-agnostic. Configure any of these from Settings:
+Michi starts without a selected runtime. First-run setup lists available runtimes
+by name, without recommendations, and saves your choice. Kiro is optional; each
+CLI runtime needs only its own installation/sign-in, and Pi uses provider
+credentials without a separate agent CLI. Existing choices and explicit runtime
+environment settings are preserved. Change your choice later in Settings.
+
+Supported runtimes:
 
 | Runtime | Notes |
 |---|---|
@@ -241,8 +258,41 @@ right-click → **Open** the first time.
 
 ### Remote backend
 
-On the remote machine, install, build, generate a token, and launch the Backend
-in the background with one command:
+#### Connect by host (experimental)
+
+In the desktop app, open **New workspace → machine → Connect remote SSH…**, or
+**Settings → Connections → Connect remote SSH**. Enter an SSH alias, a hostname,
+or `user@hostname`, then choose **Connect**. Pasting `ssh HOST` works too.
+
+The remote machine needs Linux, Bash, Python 3, git, curl, and tar, and SSH
+must already work noninteractively. Michi uses your existing SSH config and
+ssh-agent. It does not store SSH passwords or private keys. Host-key checks stay
+strict. When SSH authentication fails, the app opens a sign-in terminal.
+
+From that host, Michi:
+
+- reads the connection token when a healthy backend is already running;
+- starts an installed backend that is stopped, using its saved data directory,
+  token, and port;
+- offers **Install and connect** when no usable build is found. That fetches
+  the public repository's `main` branch, installs the backend, shared, runtime and frontend
+  workspaces, builds on the remote machine, and starts the background launcher;
+- detects installed agent runtimes and preserves your selection, then lets you
+  browse remote folders and create a workspace. Choose the runtime yourself when
+  the remote machine has no saved choice.
+
+**Settings → Connections** lists each machine's workspaces from that machine's
+backend. If a saved SSH service is down, Michi tries to start the existing
+installation again. Connection failures include **Copy diagnostics** and, when a
+local runtime is ready, **Ask local agent**.
+
+Behavior, security limits, and recovery details are in
+[docs/remote-backend.md](docs/remote-backend.md).
+
+#### Manual launch
+
+On the remote machine, you can still install, build, generate a token, and
+launch the Backend in the background yourself:
 
 ```bash
 npm run remote:launch
@@ -410,7 +460,8 @@ MICHI_BIND_HOST=127.0.0.1
 
 # Runtime registry
 MICHI_ENABLED_RUNTIMES=kiro,pi,claude,cursor,grok,antigravity
-MICHI_DEFAULT_RUNTIME=kiro
+# Optional: set this only to explicitly select a runtime at startup
+# MICHI_DEFAULT_RUNTIME=<runtime-id>
 # Kiro engine: v3 (default) or v2
 MICHI_KIRO_ENGINE=v3
 
@@ -418,6 +469,7 @@ MICHI_KIRO_ENGINE=v3
 KIRO_CLI_BIN=/absolute/path/to/kiro-cli
 CLAUDE_CLI_BIN=/absolute/path/to/claude
 CODEX_CLI_BIN=/absolute/path/to/codex
+MICHI_ANTIGRAVITY_BIN=/absolute/path/to/agy
 
 # Optional hosted auth
 MICHI_REQUIRE_AUTH=false
@@ -438,8 +490,43 @@ MICHI_PERF=0
 ```
 
 Pi provider keys can be saved through Settings or supplied as environment
-variables such as `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, and
-`GEMINI_API_KEY`.
+variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`DEEPSEEK_API_KEY`, and `GEMINI_API_KEY`.
+
+Model catalogs come from three sources: the catalog pi-ai ships, the provider's
+own live `/models` endpoint, and — where the provider documents one — a floating
+alias. The alias decides the default, so DeepSeek defaults to `deepseek-chat`
+and keeps following new DeepSeek releases without a code change, while a
+provider without such an alias keeps its pinned default and relies on discovery
+to surface newer ids. Discovery is best effort: it caches for ten minutes, falls
+back to the last good answer, and never blocks a turn. Set
+`MICHI_MODEL_DISCOVERY=0` to keep catalogs fully static and offline.
+
+For Pi with Amazon Bedrock, configure **Settings → Model → Amazon Bedrock** or
+provide AWS credentials such as `AWS_PROFILE`, `AWS_BEARER_TOKEN_BEDROCK`, or
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, with `AWS_REGION`. The SDK default
+chain also supports IAM roles. Local provider keys and saved Bedrock credentials
+are stored in `~/.michi/config.json`; the encrypted per-user vault described
+below applies to hosted API keys.
+
+Pi uses the pinned 1.4.0 session SDK by default, including native tool transcripts
+and automatic context compaction. Michi retains tool permissions, Agent Runs and
+owner/workspace isolation. SDK sessions live under `MICHI_DATA_DIR/pi-sessions`;
+SQLite remains authoritative, and native recovery requires a matching host history
+checkpoint. Each Michi branch owns an independent SDK session. The SDK does not
+load global or project Pi extensions, skills, MCP servers or auth files; Michi's
+explicit MCP/skills configuration remains in effect. `MICHI_PI_SESSION_SDK=0`
+selects the agent-core rollback engine and invalidates its native checkpoint.
+Restart the backend after changing this setting. Third-party plugins are not
+enabled by this integration.
+
+Custom Agents and Agent Runs are experimental and disabled by default. They are
+enabled only by starting the backend with `MICHI_CUSTOM_AGENTS=1`; there is no
+Settings switch or API for it, and a `customAgents.enabled` value saved in
+`config.json` by an earlier build is ignored. With the flag unset, the Agents
+entry, Agent definitions, Runs, and the Agent Run tools are all unavailable;
+saved definitions and Run history stay in the database. The flag is read once
+at startup, so changing it takes a restart.
 
 ### Scheduled jobs and the background service
 
@@ -657,7 +744,7 @@ Express API + ChatHub
         |
         `-- runtime registry
               |-- Kiro         -> kiro-cli over ACP
-              |-- Pi           -> provider APIs through pi-agent-core/pi-ai
+              |-- Pi           -> full Pi session SDK + Michi tools and provider configuration
               |-- Claude       -> Agent SDK + installed Claude CLI warm pool
               |-- Codex        -> codex app-server JSON-RPC
 ```

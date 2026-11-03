@@ -1,9 +1,15 @@
 import React from 'react';
+import { motion, MotionConfigContext, type Transition } from 'motion/react';
+import { DUR, EASE } from '../../motion/tokens';
 import './DrawerShell.css';
 import { useOverlayFocus } from './useOverlayFocus';
 
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 const EXIT_TIMEOUT_MS = 220;
+// The scrim fades in like the shared .ui-scrim (fadeIn at --t-enter) and out
+// a little faster, inside the panel's slide.
+const SCRIM_IN: Transition = { duration: DUR.enter, ease: 'easeOut' };
+const SCRIM_OUT: Transition = { duration: DUR.scrimExit, ease: EASE.out };
 
 function subscribeMotionPreference(notify: () => void) {
   const query = window.matchMedia?.(REDUCED_MOTION);
@@ -47,7 +53,7 @@ export interface DrawerShellProps {
 export function DrawerShell({
   open,
   onClose,
-  motion = 'standard',
+  motion: motionMode = 'standard',
   onPresenceChange,
   title,
   headerActions,
@@ -62,8 +68,10 @@ export function DrawerShell({
   const ariaLabel = rest['aria-label'];
   const panelRef = React.useRef<HTMLDivElement>(null);
   useOverlayFocus({ open, panelRef, trap: modal, initialFocus: 'panel', trackOutsideFocus: !modal });
-  const reduced = React.useSyncExternalStore(subscribeMotionPreference, prefersReducedMotion, () => false);
-  const instant = motion === 'instant' || reduced;
+  const osReduced = React.useSyncExternalStore(subscribeMotionPreference, prefersReducedMotion, () => false);
+  // MotionRoot maps the in-app Reduce motion preference to 'always'.
+  const appReduced = React.useContext(MotionConfigContext).reducedMotion === 'always';
+  const instant = motionMode === 'instant' || osReduced || appReduced;
   const [retained, setRetained] = React.useState(open);
   const present = open || (!instant && retained);
 
@@ -104,11 +112,13 @@ export function DrawerShell({
   return (
     <>
       {modal && (
-        <div
+        <motion.div
           className="ui-scrim ui-scrim--drawer drawer-shell-scrim"
           data-state={open ? 'open' : 'closed'}
-          onMouseDown={onClose}
+          onMouseDown={open ? onClose : undefined}
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          initial={{ opacity: 0 }}
+          animate={open ? { opacity: 1, transition: SCRIM_IN } : { opacity: 0, transition: SCRIM_OUT }}
         />
       )}
       <div

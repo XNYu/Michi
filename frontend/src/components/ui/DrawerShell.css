@@ -30,8 +30,8 @@
   }
 }
 
+/* A closing scrim fades out (DrawerShell.tsx) and lets clicks through. */
 .drawer-shell-scrim[data-state='closed'] {
-  visibility: hidden;
   pointer-events: none;
 }
 

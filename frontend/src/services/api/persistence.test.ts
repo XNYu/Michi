@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchAllWorkspacesMeta, fetchPersistenceCapabilities, fetchTreeMessages, fetchTreeMessagePage, supportsPaneInspection } from './persistence';
+import { fetchAllWorkspacesMeta, fetchNodeWorkspace, fetchPersistenceCapabilities, fetchTreeMessages, fetchTreeMessagePage, supportsPaneInspection } from './persistence';
 import { RemoteServiceRecoveryError } from './remoteRecovery';
 import { fetchStream } from './streamTransport';
 import { backendEntityId } from '../../config/backendIdentity';
@@ -27,6 +27,19 @@ describe('remote history pages', () => {
     vi.stubGlobal('fetch', fetch);
     expect(await fetchTreeMessagePage('ws', 'tree')).toEqual({ messages: [] });
     await expect(fetchTreeMessagePage('ws', 'tree')).rejects.toThrow('Invalid message page');
+  });
+  it('asks the connection that owns a node where it lives, in that connection’s scope', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ workspaceId: 'ws', treeId: 'tree' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'not_found' }), { status: 404 }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await fetchNodeWorkspace(backendEntityId('r', 'n1'))).toEqual({
+      workspaceId: backendEntityId('r', 'ws'), treeId: backendEntityId('r', 'tree'),
+    });
+    expect(new URL(fetch.mock.calls[0][0], 'http://localhost').pathname)
+      .toMatch(/\/backend-connections\/r\/proxy\/nodes\/n1\/workspace$/);
+    expect(await fetchNodeWorkspace('local-node')).toBeNull();
+    expect(new URL(fetch.mock.calls[1][0], 'http://localhost').pathname).not.toContain('backend-connections');
   });
 });
 

@@ -661,6 +661,12 @@ a.michi-doc-link-card:hover { background: var(--term-alt); }
 .space-doc [data-michi-block='markdown'] .prose tbody tr:last-child td { border-bottom: 1px solid var(--term-line); }
 .space-doc [data-michi-block='markdown'] .prose tbody tr:hover { background: transparent; }
 .space-doc [data-michi-block='markdown'] .prose tbody tr:hover td { background: color-mix(in srgb, var(--term-hover-bg, var(--term-alt)) 50%, transparent); }
+/* Phones fit the table to the column: a long word (a branch or package name) breaks inside its cell
+   rather than widening the table past the screen, which made the whole page pan sideways. */
+@media (max-width: 700px) {
+  .space-doc [data-michi-block='markdown'] .prose :is(th, td) { overflow-wrap: anywhere; }
+  .space-doc [data-michi-block='markdown'] .prose th { white-space: normal; line-height: 1.3; }
+}
 
 /* Only the row under the pointer is tinted; the surrounding block stays bare. */
 [data-michi-block='markdown'] .prose li { border-radius: var(--ui-radius); }
@@ -874,7 +880,9 @@ a.michi-doc-link-card:hover { background: var(--term-alt); }
 
 /* ── Loading ─────────────────────────────────────────────────── */
 .michi-doc-skeleton { display: flex; flex-direction: column; gap: 14px; min-height: 360px; }
-.michi-doc-skeleton span { display: block; height: 12px; background: var(--term-alt); }
+/* The bars breathe while the page loads. --term-alt bars take the softer
+   skeleton pulse (index.css): at the message skeleton's .3 they vanish. */
+.michi-doc-skeleton span { display: block; height: 12px; background: var(--term-alt); animation: t-skeleton-pulse-soft var(--t-loop) ease-in-out infinite; }
 
 
 
@@ -1352,6 +1360,7 @@ a.michi-doc-link-card:hover { background: var(--term-alt); }
 @media (prefers-reduced-motion: reduce) {
   .michi-doc-block, .michi-doc-toolbar, .michi-doc-thread, .michi-doc-ghost, .michi-doc-block__margin { transition: none; }
   .michi-doc-block[data-flash] { animation: none; background: var(--term-accent-f); }
+  .michi-doc-skeleton span { animation: none; }
 }
 
 /* ── Page components a native page adds: a plan in days, picks, conflicts, criteria, charts, pictures, reminders ── */

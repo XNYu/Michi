@@ -1,4 +1,5 @@
 import { usePhoneLayout } from '../../../hooks/usePhoneLayout';
+import { prefersReducedMotion } from '../../../hooks/useReducedMotion';
 import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { serverEntityId } from '../../../config/backendIdentity';
 import { useChatActions, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual } from '../../../state/chatStore';
@@ -137,7 +138,7 @@ export default function TerminalDashboard() {
                 .find((element) => element.dataset.databaseId === detail.resourceId)
               : undefined);
           if (target) {
-            target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+            target.scrollIntoView({ behavior: prefersReducedMotion(prefs.reduceMotion) ? 'auto' : 'smooth', block: 'center', inline: 'nearest' });
             if (retryTimer !== null) window.clearInterval(retryTimer);
             retryTimer = null;
             return;
@@ -156,7 +157,7 @@ export default function TerminalDashboard() {
       window.removeEventListener('michi:scroll-to-page-target', revealTarget);
       if (retryTimer !== null) window.clearInterval(retryTimer);
     };
-  }, []);
+  }, [prefs.reduceMotion]);
   const selectPaneWidths = useCallback(
     (nodesMap: Record<string, ChatNodeState>) =>
       openPanes.map((id) => paneItems[id]?.width ?? nodesMap[id]?.paneWidth),
@@ -465,6 +466,7 @@ export default function TerminalDashboard() {
   const previousEntrance = useRef({ scope: '', ids: openPanes });
   const entrances = useRef(new Map<string, Animation>());
   const previousExits = useRef<ReadonlySet<string>>(new Set());
+  const focusBeforeRef = useRef(focusedPane);
   useLayoutEffect(() => {
     const scope = paneScope;
     const previous = previousEntrance.current;
@@ -492,7 +494,12 @@ export default function TerminalDashboard() {
         entrance?.pause();
         continue;
       }
-      const { frames, duration } = paneEntrance(prefs.paneSpawnAnimation);
+      // A branch just made from a pane here is pulled out of its parent; the
+      // content comes in from the side of the pane the user was on.
+      const branch = !reopening && isFreshBranch(activeProject?.edges, id);
+      const anchor = focusBeforeRef.current ? openPanes.indexOf(focusBeforeRef.current) : -1;
+      const side = anchor >= 0 && openPanes.indexOf(id) < anchor ? 'left' : 'right';
+      const { frames, duration } = paneEntrance(prefs.paneSpawnAnimation, { branch, from: side });
       const current = reopening ? getComputedStyle(surface) : null;
       const from = current ? { opacity: current.opacity, transform: current.transform } : frames[0];
       entrances.current.get(id)?.cancel();
@@ -506,7 +513,9 @@ export default function TerminalDashboard() {
       };
     }
     previousExits.current = exitingIds;
-  }, [openPanes, exitingIds, paneScope, prefs.paneSpawnAnimation, phone, prefs.reduceMotion]);
+  }, [openPanes, exitingIds, paneScope, prefs.paneSpawnAnimation, phone, prefs.reduceMotion, activeProject?.edges]);
+  // After the entrance above: it reads the focus of the commit before.
+  useLayoutEffect(() => { focusBeforeRef.current = focusedPane; });
   useLayoutEffect(() => {
     const running = entrances.current;
     return () => { for (const animation of running.values()) animation.cancel(); running.clear(); };

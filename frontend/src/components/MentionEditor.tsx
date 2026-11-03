@@ -14,6 +14,7 @@ import Mention from '@tiptap/extension-mention';
 import type { SuggestionProps, SuggestionKeyDownProps } from '@tiptap/suggestion';
 import { exitSuggestion } from '@tiptap/suggestion';
 import type { EditorState } from '@tiptap/pm/state';
+import type { EditorView } from '@tiptap/pm/view';
 import type { ArtifactEntry, ChatNodeState } from '../state/chatStore';
 import type { AgentCommand, SessionMode } from '../services/api';
 import type { MentionRecord } from './mentions';
@@ -29,6 +30,26 @@ import { useMenuConfirm } from './ui/useMenuConfirm';
 import { docToDraft, draftToDoc } from './mentionDoc';
 import { markComposerEscape } from './composerEscape';
 import { ChatIcon, DocIcon, FileIcon, ImageIcon, LinkIcon } from './terminal/icons';
+
+/**
+ * ProseMirror reads a selection made outside its own commands (by script:
+ * automation, assistive tech, extensions) on the next `selectionchange`
+ * task, but the browser runs input ahead of queued tasks while the main
+ * thread is busy, for instance with an animation frame. A Backspace or
+ * Delete arriving first would act on the old caret and delete nothing.
+ * While ProseMirror still holds a caret and the browser a range inside the
+ * editor, deliver that `selectionchange` now: ProseMirror's own listener
+ * reads the range (however the browser anchors it, the editor root
+ * included) before the key is handled.
+ */
+function adoptPendingDomSelection(view: EditorView): void {
+  if (!view.state.selection.empty) return;
+  const doc = view.dom.ownerDocument;
+  const dom = doc.getSelection();
+  if (!dom || dom.isCollapsed || !dom.anchorNode || !dom.focusNode) return;
+  if (!view.dom.contains(dom.anchorNode) || !view.dom.contains(dom.focusNode)) return;
+  doc.dispatchEvent(new Event('selectionchange'));
+}
 
 /** Line glyph for a mention row: chat bubble for nodes, per-type icon for artifacts. */
 function MentionGlyph({ item }: { item: AtMentionItem }) {
@@ -482,6 +503,7 @@ const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(functi
     editorProps: {
       attributes: { role: 'textbox', 'aria-label': 'Message', 'aria-multiline': 'true' },
       handleKeyDown: (view, event) => {
+        if (event.key === 'Backspace' || event.key === 'Delete') adoptPendingDomSelection(view);
         // The @-mention suggestion owns navigation/accept keys while open.
         if (suggestionOpenRef.current) return false;
 

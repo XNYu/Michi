@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { motion } from 'motion/react';
+import { DUR, EASE } from '../../motion/tokens';
+import { isFresh } from '../../motion/useFresh';
 import { useChatNode, useChatProjects } from '../../state/chatStore';
+import type { ProjectEdge } from '../../state/chatTypes';
 import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
 import { Chevron, CARD_FILL, CARD_FILL_SELECT, PinMark } from './ThreadRow';
@@ -50,6 +54,52 @@ interface Props {
   baseIndent?: number;
 }
 
+/**
+ * When each branch target was made, built once per edges array (a new array
+ * whenever an edge is added), so a mounting row looks itself up instead of
+ * scanning every edge. Freshness is judged at lookup time, never cached.
+ */
+const branchBirths = new WeakMap<readonly ProjectEdge[], Map<string, number>>();
+
+function branchBornAt(edges: readonly ProjectEdge[] | undefined, nodeId: string): number | undefined {
+  if (!edges) return undefined;
+  let births = branchBirths.get(edges);
+  if (!births) {
+    births = new Map();
+    for (const edge of edges) {
+      if ((edge.kind ?? 'branch') !== 'branch' || edge.createdAt === undefined) continue;
+      births.set(edge.target, Math.max(births.get(edge.target) ?? 0, edge.createdAt));
+    }
+    branchBirths.set(edges, births);
+  }
+  return births.get(nodeId);
+}
+
+/**
+ * Opens room for a new row: its height grows from 0 as it fades in. Only the
+ * vertical axis clips while it grows, so the row's full-bleed fill and edge
+ * indicator (negative side margins) stay visible. Settled rows render bare.
+ */
+function GrowIn({ active, grown, onGrown, children }: {
+  active: boolean;
+  grown: boolean;
+  onGrown: () => void;
+  children: React.ReactNode;
+}) {
+  if (!active) return <>{children}</>;
+  return (
+    <motion.div
+      initial={{ height: 0, opacity: 0 }}
+      animate={{ height: 'auto', opacity: 1 }}
+      transition={{ duration: DUR.enter, ease: EASE.out }}
+      onAnimationComplete={onGrown}
+      style={grown ? undefined : { overflowX: 'visible', overflowY: 'clip' }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 export default function BranchRow({
   node,
   depth,
@@ -81,8 +131,18 @@ export default function BranchRow({
   const focused = isFocused(node.nodeId);
   const selected = isSelected(node.nodeId);
   const menuOpen = !!isMenuTarget?.(node.nodeId);
-  const { focusedNodeId } = useChatProjects();
+  const { focusedNodeId, projects } = useChatProjects();
   const unread = !!n && isNodeUnread(n, focusedNodeId);
+  // Decided once, on mount: a row a branch, fan-out or spawn just added grows
+  // in under its parent. Hydrated rows, and rows shown by expanding a thread
+  // (100+ times a day), render settled. Looked up in every workspace, so a
+  // node whose state has not loaded yet still finds its edge.
+  const [entrance] = useState(() => {
+    const fresh = projects?.some((project) => isFresh(branchBornAt(project.edges, node.nodeId)));
+    return fresh ? { rail: openState !== 'none' } : null;
+  });
+  const [grown, setGrown] = useState(false);
+  const [washed, setWashed] = useState(false);
   const geom = rowGeom(prefs.sidebarRowStyle, prefs.sidebarInset);
   const cardPaddingLeft = rowPadding(geom, baseIndent + depth * geom.indentStep).paddingLeft;
 
@@ -130,6 +190,7 @@ export default function BranchRow({
 
   return (
     <>
+      <GrowIn active={!!entrance} grown={grown} onGrown={() => setGrown(true)}>
       <Row
         {...prefetchIntent}
         data-sidebar-row={node.nodeId}
@@ -198,6 +259,23 @@ export default function BranchRow({
           fontFamily: 'var(--ui-font)',
         }}
       >
+        {entrance && !washed && (
+          // The new row's accent wash: 14% over whatever fill the row has, fading out.
+          <motion.span
+            aria-hidden
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 0 }}
+            transition={{ duration: DUR.slow, delay: 0.08, ease: 'easeOut' }}
+            onAnimationComplete={() => setWashed(true)}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              borderRadius: 'inherit',
+              background: 'color-mix(in srgb, var(--term-accent) 14%, transparent)',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
         {geom.chevronLeading && (
           <Chevron
             expanded={expanded}
@@ -289,9 +367,14 @@ export default function BranchRow({
           ariaLabel={`Actions for ${title}`}
         />
         {openState !== 'none' && (
-          <span
+          // A new row's rail draws down from the top once it has room to.
+          <motion.span
             aria-hidden
+            initial={entrance?.rail && !washed ? { scaleY: 0 } : false}
+            animate={{ scaleY: 1 }}
+            transition={{ duration: 0.22, delay: 0.04, ease: EASE.out }}
             style={{
+              originY: 0,
               position: 'absolute',
               // Right edge in every mode — see ThreadRow.
               right: geom.isCard ? 3 : 2,
@@ -322,6 +405,7 @@ export default function BranchRow({
           />
         )}
       </Row>
+      </GrowIn>
       {hasChildren && expanded &&
         node.children.map((child) => (
           <BranchRow

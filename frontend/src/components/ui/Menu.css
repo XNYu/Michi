@@ -126,7 +126,11 @@
 }
 .michi-menu[data-menu='mentions'] { --m-width: 420px; }
 .michi-menu[data-menu='slash'] { --m-width: 480px; --m-maxHeight: 192px; }
+/* The plain fade for the @ / slash autocompletes and hover cards. Other menus
+   grow in from script instead (PopoverSurface's GrowingSurface). Same
+   specificity on purpose: the reduced-motion rule below still wins. */
 .michi-menu[data-menu-animate='true'] { animation: michi-menu-enter var(--m-enterMs) ease-out both; }
+.michi-menu[data-menu-motion='grow'] { animation: none; }
 @keyframes michi-menu-enter { from { opacity: 0; } to { opacity: 1; } }
 
 :is(.michi-menu, .michi-menu-scope) .ui-menu-item {
@@ -141,6 +145,12 @@
 :is(.michi-menu, .michi-menu-scope) .ui-menu-item[data-active='true']:not([data-danger='true']) { color: var(--term-fg); }
 :is(.michi-menu, .michi-menu-scope) .ui-menu-blink { animation-duration: var(--m-clickDelay); }
 .michi-menu-list { list-style: none; padding: 0; margin: 0; min-height: 0; overflow-y: auto; scrollbar-width: thin; overscroll-behavior: contain; }
+/* In a scope (the command palette) the container scrolls and its group lists
+   are plain blocks. As scrollers of their own, a wheel over a group found a
+   list with nothing to scroll that also would not hand the wheel on
+   (overscroll-behavior: contain), so the palette never moved. */
+.michi-menu-scope .michi-menu-list { overflow: visible; overscroll-behavior: auto; }
+.michi-menu-scope[data-menu='palette'] { overscroll-behavior: contain; }
 .michi-menu-divider { height: 1px; margin: 4px var(--m-separatorInset); background: var(--term-line); list-style: none; }
 .michi-menu-section { padding: 6px var(--m-rowX) 4px; color: var(--term-muted); font-size: var(--m-captionSize); list-style: none; }
 .michi-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

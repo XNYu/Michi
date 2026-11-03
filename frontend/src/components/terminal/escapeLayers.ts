@@ -12,19 +12,29 @@ export function isInAssistantPanel(element: Element | null): boolean {
 }
 
 /**
+ * A layer on its way out is gone already: a drawer sliding out, a modal,
+ * panel or menu fading out stays mounted a moment, aria-hidden or inert, and
+ * so does everything inside it (a find bar in the ⌘J panel, a popover in
+ * Settings).
+ */
+const LIVE = ':not([inert], [inert] *, [aria-hidden="true"], [aria-hidden="true"] *)';
+
+function liveLayers(...selectors: string[]): string {
+  return selectors.map((selector) => `${selector}${LIVE}`).join(', ');
+}
+
+/**
  * Menus, lists and modals close on any Esc while they are up, wherever the
  * focus is, and so does the selection toolbar (`data-escape-layer="over"`).
- * A modal drawer sliding out (aria-hidden) is gone already.
  */
-export const MENU_LAYER_SELECTOR = '[role="menu"], [role="listbox"], [role="alertdialog"], [aria-modal="true"]:not([aria-hidden="true"]), [data-escape-layer="over"]';
+export const MENU_LAYER_SELECTOR = liveLayers('[role="menu"]', '[role="listbox"]', '[role="alertdialog"]', '[aria-modal="true"]', '[data-escape-layer="over"]');
 
 /**
  * With focus outside the panel, any other open layer takes Esc first: menus,
- * lists, the peek drawer and every other open dialog (closed drawers stay
- * mounted with aria-hidden while they slide out), and every Esc-closing
+ * lists, the peek drawer and every other open dialog, and every Esc-closing
  * layer (`data-escape-layer`, wherever it is: the page has the focus).
  */
-export const OTHER_LAYER_SELECTOR = '[role="menu"], [role="listbox"], [role="dialog"]:not([aria-hidden="true"]), [role="alertdialog"], [aria-modal="true"]:not([aria-hidden="true"]), [data-escape-layer]';
+export const OTHER_LAYER_SELECTOR = liveLayers('[role="menu"]', '[role="listbox"]', '[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]', '[data-escape-layer]');
 
 /**
  * Whether an Esc is still the page's to act on. Not once something took it

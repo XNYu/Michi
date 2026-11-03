@@ -244,9 +244,28 @@ describe('Progress cards', () => {
     ]} />);
     expect(screen.getAllByRole('article')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: /Dismiss/ }));
+    // Folding away it is already out of reach; then the list lets it go.
     expect(screen.queryByRole('article')).toBeNull();
-    expect(mocks.dismissProgressCard).toHaveBeenCalledWith('n1', 'local');
+    await waitFor(() => expect(mocks.dismissProgressCard).toHaveBeenCalledWith('n1', 'local'));
+    await waitFor(() => expect(document.querySelector('.space-live-card')).toBeNull());
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it('shows a card that arrives while the last one folds away', async () => {
+    const view = render(<SpaceProgressCardList scope={pageScope} cards={[card({ status: 'done', summary: 'one' })]} />);
+    fireEvent.click(screen.getByRole('button', { name: /Dismiss/ }));
+    expect(screen.queryByRole('article')).toBeNull();
+    view.rerender(<SpaceProgressCardList scope={pageScope} cards={[
+      card({ status: 'done', summary: 'one' }),
+      card({ threadNodeId: 'n3', title: 'Next one', status: 'done', summary: 'three' }),
+    ]} />);
+    // The list it lands in is back in reach, and stays drawn once the old card has gone.
+    expect(screen.getByRole('article', { name: 'Chat: Next one' })).toBeTruthy();
+    await waitFor(() => expect(document.querySelectorAll('.space-live-card')).toHaveLength(1));
+    const list = document.querySelector('.space-live-cards') as HTMLElement;
+    expect(list.getAttribute('aria-hidden')).toBeNull();
+    expect(list.style.opacity).not.toBe('0');
+    expect(screen.getByRole('article', { name: 'Chat: Next one' })).toBeTruthy();
   });
 
   it('shows a start right away, before the backend lists its card, on its page and on Home', () => {

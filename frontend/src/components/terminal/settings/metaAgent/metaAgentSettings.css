@@ -145,22 +145,6 @@
 .meta-set__pickers > .meta-set__picker + .meta-set__picker::before { content: '·'; margin-right: 2px; color: var(--term-faint); }
 .meta-set__catalog { font-size: var(--fs-sm); color: var(--term-muted); }
 
-.meta-set__guard {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--term-mid);
-  font-size: var(--fs-lg);
-  line-height: 1.6;
-}
-.meta-set__guard > svg { flex: none; margin-top: 3px; color: var(--term-digest); }
-.meta-set__guard p { margin: 0; }
-.meta-set__guard b { color: var(--term-fg); font-weight: 600; }
-
 /* The runtime cannot run the Meta agent: the first-run card's needs-a-key box. */
 .meta-set__notice {
   display: flex;

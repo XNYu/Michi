@@ -3,6 +3,7 @@ import { log } from '../logger';
 import { conversationCompletionCounter } from '../conversationUpdates';
 import { getMaintenanceConfig, listMaintenanceBacklog, listQueuedMaintenanceRequests, maintenancePlanWaitsOnEditLeases } from '../pages/maintenanceRepository';
 import { homeMaintenancePending } from './firstRun';
+import { watchDue } from './watches';
 import type { ScheduledJobRecord } from '../scheduledJobs/repository';
 import { LOCAL_AGENT_OWNER_ID, workspaceOwnerMatches } from '../agentOwner';
 import { isSystemWorkspaceSettings } from 'michi-shared';
@@ -28,6 +29,8 @@ export function maintenanceHasWork(workspaceId: string, ownerUserId: string, now
     .get(workspaceId) as { owner_user_id: string | null; settings: string | null } | undefined;
   if (!workspace || !workspaceOwnerMatches(workspace.owner_user_id, ownerUserId) || isSystemWorkspaceSettings(workspace.settings)) return false;
   if (homeMaintenancePending(workspaceId, ownerUserId, now)) return true;
+  // A due watch runs ahead of conversation work (scheduler.execute), so a plan waiting on edit leases does not hold it.
+  if (watchDue(workspaceId, ownerUserId, now)) return true;
   if (listQueuedMaintenanceRequests(workspaceId, ownerUserId).length) return true;
   // A run resumes the first unfinished plan before it reads new turns (scheduler.execute). While
   // that plan only waits for conversations editing its pages, a run could do nothing but defer again.

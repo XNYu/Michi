@@ -51,8 +51,8 @@
   {
     "id": "pages-maintenance",
     "title": "Pages automatic updates and the Meta agent",
-    "summary": "Local Meta agent configuration, initial Home generation, conversation maintenance, catch-up, evidence, protected proposals and durable progress.",
-    "keywords": "pages maintenance meta agent automatic updates first run home conversation completion cursor catch-up reconsider paused runtime kiro claude pi codex crew 后台 自动更新 页面维护 初次生成 补读 追赶 maintenance_list_tasks task database tasks 任务库",
+    "summary": "Local Meta agent configuration, initial Home generation, conversation maintenance, workspace instructions, watches, catch-up, evidence, protected proposals and durable progress.",
+    "keywords": "pages maintenance meta agent automatic updates first run home conversation completion cursor catch-up reconsider paused runtime kiro claude pi codex crew 后台 自动更新 页面维护 初次生成 补读 追赶 maintenance_list_tasks task database tasks 任务库 watch watches monitor tickets interval workspace instructions 监控 定时检查 工单 工作区指令",
     "source": "docs/pages-maintenance.md"
   },
   {

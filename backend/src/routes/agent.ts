@@ -154,10 +154,10 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
     });
 
     if (!active) {
-      // No runtime registered yet — frontend hides chips and waits.
+      // No selection yet, or a configured runtime is absent. Keep the catalog available for setup.
       const status: AgentStatus = {
         runtime: cfg.runtime,
-        label: cfg.runtime,
+        label: cfg.runtime || 'Choose a runtime',
         customAgentsEnabled: isCustomAgentsEnabled(),
         capabilities: {
           modes: false, permissions: false, models: false, providerModels: false, reasoning: false, supportedReasoningLevels: [],

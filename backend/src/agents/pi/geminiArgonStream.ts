@@ -70,7 +70,7 @@ export function streamGeminiArgon(
       const call = part.functionCall;
       const id = call.id && !output.content.some((block) => block.type === 'toolCall' && block.id === call.id)
         ? call.id : `${call.name ?? 'tool'}_${randomUUID()}`;
-      const toolCall = { type: 'toolCall' as const, id, name: call.name ?? '', arguments: call.args ?? {}, ...(part.thoughtSignature && { thoughtSignature: part.thoughtSignature }) };
+      const toolCall = { type: 'toolCall' as const, id, name: call.name ?? '', arguments: (call.args ?? {}) as import("@earendil-works/pi-ai").JsonObject, ...(part.thoughtSignature && { thoughtSignature: part.thoughtSignature }) };
       const contentIndex = output.content.push(toolCall) - 1;
       stream.push({ type: 'toolcall_start', contentIndex, partial: output });
       stream.push({ type: 'toolcall_delta', contentIndex, delta: JSON.stringify(toolCall.arguments), partial: output });

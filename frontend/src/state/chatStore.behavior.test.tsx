@@ -38,6 +38,7 @@ vi.mock('../services/api', () => ({
   postArtifactWatchPaths: async () => ({ ok: true }),
   fetchAllWorkspacesMeta: vi.fn(async () => []),
   fetchWorkspace: vi.fn(),
+  fetchNodeWorkspace: vi.fn(async () => null),
   fetchTreeMessages: vi.fn(async () => []),
   listBackendConnections: async () => [],
   // Spied: implementation set in beforeEach.
@@ -116,6 +117,7 @@ describe('auto-branch behavior (real provider)', () => {
     vi.mocked(api.subscribeBackground).mockReset().mockImplementation(() => () => {});
     vi.mocked(api.fetchAllWorkspacesMeta).mockReset().mockResolvedValue([]);
     vi.mocked(api.fetchWorkspace).mockReset();
+    vi.mocked(api.fetchNodeWorkspace).mockReset().mockResolvedValue(null);
     vi.mocked(api.fetchTreeMessages).mockReset().mockResolvedValue([]);
     vi.mocked(api.bindPendingPrimaryAgent).mockReset();
     vi.mocked(executeChatCommand).mockReset().mockResolvedValue({ success: true, message: 'Claude is connected.' });
@@ -597,6 +599,65 @@ describe('auto-branch behavior (real provider)', () => {
     expect(scheduled.status).toBe('idle');
     expect(assistantAnswerRaw(scheduled)).toBe('final answer');
     expect(scheduled.lastAppliedBackgroundSeq).toBe(8);
+  });
+
+  describe('a conversation another device started after this window loaded', () => {
+    const envelope = { chatId: 'phone-node', nodeId: 'phone-node', turnId: 'scheduled-turn', assistantId: 'scheduled-answer' };
+    const frame = (event: Parameters<typeof dispatchChatStreamEvent>[0]) => {
+      const handlersForChat = vi.mocked(api.subscribeBackground).mock.calls.at(-1)![0];
+      dispatchChatStreamEvent(event, handlersForChat(event.data.chatId ?? '', event.data.nodeId));
+    };
+    const start = { event: 'turn_start' as const, data: { ...envelope, seq: 0, userText: 'sent on phone' } };
+    const done = { event: 'done' as const, data: { ...envelope, seq: 8, stopReason: 'end_turn', persisted: true } };
+
+    it('shows up in its workspace and settles on the exact transcript when its turn ends', async () => {
+      const { result } = hydratedCancellationNode('idle');
+      await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+      vi.mocked(api.fetchNodeWorkspace).mockResolvedValue({ workspaceId: 'cancel-ws', treeId: 'scheduled-tree' });
+      vi.mocked(api.fetchWorkspace)
+        .mockResolvedValueOnce(scheduledSnapshot('phone-node', 'streaming', 'partial', 1))
+        .mockResolvedValueOnce(scheduledSnapshot('phone-node', 'idle', 'final phone answer', 8));
+      act(() => { frame(start); frame({ event: 'chunk', data: { ...envelope, seq: 1, text: 'partial' } }); });
+      await waitFor(() => expect(result.current.nodes['phone-node']?.status).toBe('streaming'));
+      expect(api.fetchNodeWorkspace).toHaveBeenCalledTimes(1);
+      const workspace = result.current.store.projects.find(project => project.id === 'cancel-ws');
+      expect(workspace?.chatIds).toContain('phone-node');
+      expect(workspace?.trees.map(tree => tree.id)).toContain('scheduled-tree');
+      act(() => { frame({ event: 'chunk', data: { ...envelope, seq: 2, text: ' more' } }); frame(done); });
+      await waitFor(() => expect(assistantAnswerRaw(result.current.nodes['phone-node'])).toBe('final phone answer'));
+      expect(api.fetchWorkspace).toHaveBeenCalledTimes(2);
+      expect(result.current.nodes['phone-node'].status).toBe('idle');
+      expect(result.current.nodes['phone-node'].lastAppliedBackgroundSeq).toBe(8);
+    });
+
+    it('re-reads it when its turn ends before the install lands', async () => {
+      const { result } = hydratedCancellationNode('idle');
+      await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+      let finishFirst!: (value: unknown) => void;
+      vi.mocked(api.fetchNodeWorkspace).mockResolvedValue({ workspaceId: 'cancel-ws', treeId: 'scheduled-tree' });
+      vi.mocked(api.fetchWorkspace)
+        .mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve; }))
+        .mockResolvedValueOnce(scheduledSnapshot('phone-node', 'idle', 'final phone answer', 8));
+      act(() => { frame(start); });
+      await waitFor(() => expect(api.fetchWorkspace).toHaveBeenCalledTimes(1));
+      act(() => { frame(done); });
+      await act(async () => { finishFirst(scheduledSnapshot('phone-node', 'streaming', 'partial', 1)); });
+      await waitFor(() => expect(result.current.nodes['phone-node']?.status).toBe('idle'));
+      expect(api.fetchWorkspace).toHaveBeenCalledTimes(2);
+      expect(assistantAnswerRaw(result.current.nodes['phone-node'])).toBe('final phone answer');
+    });
+
+    it('leaves a chat the backend cannot place alone for a while', async () => {
+      const { result } = hydratedCancellationNode('idle');
+      await waitFor(() => expect(result.current.node?.messages).toHaveLength(2));
+      act(() => { frame(start); frame({ event: 'chunk', data: { ...envelope, seq: 1, text: 'x' } }); });
+      await act(async () => {});
+      act(() => { frame({ event: 'chunk', data: { ...envelope, seq: 2, text: 'y' } }); frame(done); });
+      await act(async () => {});
+      expect(api.fetchNodeWorkspace).toHaveBeenCalledTimes(1);
+      expect(api.fetchWorkspace).not.toHaveBeenCalled();
+      expect(result.current.nodes['phone-node']).toBeUndefined();
+    });
   });
 
   it('preserves a cold command and its SDK state while a scheduled refresh converges', async () => {

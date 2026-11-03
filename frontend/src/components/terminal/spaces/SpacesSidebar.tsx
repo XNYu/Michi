@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { ChevronRight, EyeOff, FileText, Home, Kanban, Plus, Settings2, Sparkles, Table2 } from 'lucide-react';
 import type { FirstRunProgressDto, PageSummaryDto, SpaceSummaryDto, WorkspaceHomeSummaryDto } from 'michi-shared';
 import type { Project } from '../../../state/chatTypes';
@@ -18,7 +19,7 @@ import { clearHeldWorkspaceHome } from '../../../state/pages/workspaceHomeNav';
 import { spacesSupportsConnection } from '../../../state/metaAgent/remoteSpaces';
 import type { OpenNativePageRoute } from './SpacesPage';
 import { WorkspaceFirstRunBadge } from './home/MetaAgentSidebarStatus';
-import ContextMenu from '../../ContextMenu';
+import ContextMenu, { MenuPresence } from '../../ContextMenu';
 import { RowKebab } from '../primitives';
 import '../rail/rail.css';
 import './spacesSidebar.css';
@@ -242,7 +243,7 @@ function WorkspaceRow({ workspace, connectionId, spaces, tone, open, run, hidden
       </button>
       <RowKebab open={!!menu} onOpen={setMenu} ariaLabel={`Actions for ${workspace.name}`} />
     </div>
-    {menu && <ContextMenu x={menu.x} y={menu.y} sections={sections} onClose={() => setMenu(null)} />}
+    <MenuPresence>{menu && <ContextMenu key={`${menu.x}:${menu.y}`} x={menu.x} y={menu.y} sections={sections} onClose={() => setMenu(null)} />}</MenuPresence>
     {open && hasChildren && <WorkspacePages workspaceId={workspace.id} connectionId={connectionId} spaces={spaces} current={current} onOpenPage={onOpenPage} onOpenWorkspace={onOpenWorkspace} />}
   </>;
 }
@@ -299,14 +300,14 @@ function WorkspacePages({ workspaceId, connectionId, spaces, current, onOpenPage
   };
   return <>
     {roots.map((space) => row(space, 0, new Set()))}
-    {menu && <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} sections={[
+    <AnimatePresence>{menu && <ContextMenu key={`${menu.x}:${menu.y}`} x={menu.x} y={menu.y} onClose={() => setMenu(null)} sections={[
       { items: [
         { id: 'child', label: 'Add a page inside', disabled: readOnly, run: () => actions.createChild(menu.page.id) },
         { id: 'rename', label: 'Rename', disabled: readOnly, run: () => actions.rename(menu.page) },
         ...(menu.page.parentId ? [{ id: 'move', label: 'Move…', disabled: readOnly, run: () => actions.move(menu.page) }] : []),
       ] },
       { items: [{ id: 'trash', label: menu.page.parentId ? 'Move to trash' : 'Move page to trash', danger: true, disabled: readOnly, run: () => actions.trash(menu.page) }] },
-    ]} />}
+    ]} />}</AnimatePresence>
     {actions.dialog}
   </>;
 }

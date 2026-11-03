@@ -1,8 +1,10 @@
 import { ApprovalCoordinator, chatApprovalOptions } from '../../core/approvals';
-import { acpPermissionToolName, kiroBrokerToolName, KiroToolCallNames } from './kiroToolNames';
+import { acpPermissionToolName, kiroBrokerToolName, KiroToolCallNames, type KiroToolNameResolver } from './kiroToolNames';
 import { isHeadlessOwner, isInteractiveOwner } from './kiroOwner';
 import { interactiveOwner } from '../../contract/types';
 import * as fs from "node:fs";
+import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import {
     extractToolUsePurpose,
@@ -65,6 +67,60 @@ function buildKiroImageBlocks(images: ResolvedAttachment[]): AcpPromptBlock[] {
         }
     }
     return blocks;
+}
+
+/** Local image attachments as ACP resource_link blocks to their files
+ *  (KiroFlavor.promptImages 'resourceLink'); the agent reads them itself. */
+function buildImageLinkBlocks(images: ResolvedAttachment[]): AcpPromptBlock[] {
+    return images.flatMap((attachment) => {
+        const mimeType = imageMimeType(attachment.absPath);
+        if (!mimeType) return [];
+        // AcpPromptBlock names only image and resource; resource_link is a standard ACP block too.
+        const block = {
+            type: "resource_link",
+            uri: pathToFileURL(attachment.absPath).href,
+            name: attachment.name || path.basename(attachment.absPath),
+            mimeType,
+        } as unknown as AcpPromptBlock;
+        return [block];
+    });
+}
+
+/** The prompt note naming linked images, so the model knows to open them. */
+function describeLinkedImages(images: ResolvedAttachment[]): string {
+    const lines = images.filter((attachment) => imageMimeType(attachment.absPath))
+        .map((attachment) => `- ${attachment.name || path.basename(attachment.absPath)} → ${attachment.absPath}`);
+    if (lines.length === 0) return "";
+    return ["", "[Attached images]", "The user attached these images. Read them with your file tool:", ...lines].join("\n");
+}
+
+const ACP_TOKEN_FIELDS = ["totalTokens", "inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens"] as const;
+
+/** Standard ACP token counts of a usage_summary (source 'acp'); absent ones stay absent. */
+function acpTokenUsage(update: AcpUpdate): Partial<Record<typeof ACP_TOKEN_FIELDS[number], number>> {
+    const usage: Partial<Record<typeof ACP_TOKEN_FIELDS[number], number>> = {};
+    for (const field of ACP_TOKEN_FIELDS) {
+        const value = update[field];
+        if (typeof value === "number" && Number.isFinite(value)) usage[field] = value;
+    }
+    return usage;
+}
+
+/**
+ * A standard ACP agent's tool output. rawOutput `{}` says nothing (agy sends
+ * it beside the diff of a completed edit), so the content blocks show; a
+ * string `output` is the text itself, not JSON to quote.
+ */
+function standardToolOutput(rawOutput: unknown, contentOutput: string | undefined): string | undefined {
+    if (typeof rawOutput === "string" && rawOutput) return rawOutput;
+    if (rawOutput && typeof rawOutput === "object") {
+        const output = (rawOutput as { output?: unknown }).output;
+        if (typeof output === "string" && output) return output;
+        if (Object.keys(rawOutput).length > 0) return JSON.stringify(rawOutput);
+    } else if (rawOutput != null && typeof rawOutput !== "string") {
+        return JSON.stringify(rawOutput);
+    }
+    return contentOutput || undefined;
 }
 
 export { KIRO_METADATA_DONE_SENTINEL };
@@ -173,6 +229,10 @@ export class KiroSession implements AgentSession {
     private readonly pendingChatPermissions = new Map<number, {
         toolName?: string; allowOptionId?: string; options: import('michi-shared').PermissionOption[]; signal: AbortSignal;
     }>();
+    /** The tool call of each approval shown and not yet answered, by requestId (see settleDeclinedToolCall). */
+    private readonly permissionToolCalls = new Map<number, string>();
+    /** Tool calls whose approval was declined; their later non-terminal updates stay failed. */
+    private readonly declinedToolCalls = new Set<string>();
     public readonly runtimeProfileHash?: string | null;
     public parentChatId?: string;
     private history: ChatMessage[] = [];
@@ -262,6 +322,43 @@ export class KiroSession implements AgentSession {
         return this.enableFollowUps;
     }
 
+    /** The agent speaks standard ACP only (AcpLaunch.standardAcp). */
+    private get standardAcp(): boolean {
+        return this.runtime.standardAcp === true;
+    }
+
+    /** The agent's own name for a tool call, when the flavor reads one. */
+    private get toolNameResolver(): KiroToolNameResolver | undefined {
+        return this.flavor.tools?.name ? (toolCall) => this.flavor.tools?.name?.(toolCall) : undefined;
+    }
+
+    /** A tool call's display title: the flavor's, else the agent's own. */
+    private toolTitle(update: AcpUpdate | undefined): string | undefined {
+        const mapped = update && this.flavor.tools?.title ? this.flavor.tools.title(update) : undefined;
+        return mapped ?? update?.title;
+    }
+
+    /**
+     * A standard ACP agent (agy 1.4.12) ends its turn when an approval is
+     * declined and never gives that tool call a terminal status, so its
+     * card would stay running: mark it failed.
+     */
+    private settleDeclinedToolCall(toolCallId: unknown): void {
+        if (!this.standardAcp || typeof toolCallId !== 'string' || !toolCallId) return;
+        this.declinedToolCalls.add(toolCallId);
+        this.runtime.getClient?.(this.cwd)?.injectUpdate(this.nativeSessionId, { sessionUpdate: 'tool_call_update', toolCallId, status: 'failed' });
+    }
+
+    private rememberPermissionToolCall(update: AcpUpdate): void {
+        const toolCallId = update.toolCall?.toolCallId;
+        if (typeof toolCallId === 'string' && toolCallId) this.permissionToolCalls.set(update.requestId, toolCallId);
+    }
+
+    private clearPermissions(): void {
+        this.pendingChatPermissions.clear();
+        this.permissionToolCalls.clear();
+    }
+
     get currentModeId(): string | null {
         return this.runtime.getCurrentMode(this.nativeSessionId) ?? null;
     }
@@ -345,6 +442,7 @@ export class KiroSession implements AgentSession {
         // Non-image attachments have no ACP block type, so name them by path
         // instead of dropping them silently; kiro-cli can read them itself.
         const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
+        const linkImages = this.flavor.promptImages === 'resourceLink';
         const turnSuffix = metaAgent || this.toolProfile?.assistant || maintenanceContext ? '' : this.runtime.host.prompt.turnSuffix({
             metadataChannel: this.flavor.prompt.metadataChannel,
             userTurnCount,
@@ -353,14 +451,14 @@ export class KiroSession implements AgentSession {
         });
         const textForModel = (this.runtime.host.profile.maintenancePromptPrefix?.(maintenanceContext) ?? '')
             + (input?.pageContext ? `${input.pageContext}\n\n---\n\n` : '')
-            + text + promptNote + turnSuffix
+            + text + promptNote + (linkImages ? describeLinkedImages(imageAttachments) : '') + turnSuffix
             + (this.runtime.getMcpSessionReminder?.(this.nativeSessionId) ?? '');
 
         const transportText = this.firstMessagePreamble
             ? `${this.firstMessagePreamble}\n${textForModel}`
             : textForModel;
         this.firstMessagePreamble = null;
-        const imageBlocks = buildKiroImageBlocks(imageAttachments);
+        const imageBlocks = linkImages ? buildImageLinkBlocks(imageAttachments) : buildKiroImageBlocks(imageAttachments);
         const buf: string[] = [];
         this.pendingAssistantBuf = buf;
         try {
@@ -383,7 +481,8 @@ export class KiroSession implements AgentSession {
             // A catalog change Kiro published mid-turn cancelled it; say why.
             if (metaAgent) this.runtime.assertMetaAgentReady(this.nativeSessionId);
         } finally {
-            this.pendingChatPermissions.clear();
+            this.clearPermissions();
+            this.declinedToolCalls.clear();
             if (buf.length > 0) {
                 this.history.push({ role: "assistant", content: buf.join("") });
             }
@@ -553,7 +652,7 @@ export class KiroSession implements AgentSession {
      * observable to the wrapper (which then declines to retry).
      */
     private async *runPromptOnce(text: string, imageBlocks: AcpPromptBlock[], signal: AbortSignal): AsyncIterableIterator<NormalizedEvent> {
-        this.pendingChatPermissions.clear();
+        this.clearPermissions();
         if (signal.aborted) {
             yield { kind: "turn_end", stopReason: "cancelled" };
             return;
@@ -584,6 +683,21 @@ export class KiroSession implements AgentSession {
         } finally {
             endMcpTurn?.();
         }
+    }
+
+    /**
+     * Whether this chat would approve, without asking, a tool request from a
+     * workflow it launched: the rule its own requests follow, under the mode
+     * the chat has now (the run outlives the turn that launched it).
+     * Restricted and headless sessions never do.
+     */
+    approvesWorkflowRequest(toolCall: unknown, meta?: unknown): boolean {
+        if (this.runtime.host.profile.isRestricted(this.toolProfile)) return false;
+        const owner = this.owner ?? interactiveOwner(this.id);
+        if (!isInteractiveOwner(owner)) return false;
+        const toolName = acpPermissionToolName(toolCall, meta);
+        const mode = this.runtime.host.permissions.mode(this.owner);
+        return this.approvals.policy(owner, null, toolName ?? '', true, mode) === 'allow';
     }
 
     /**
@@ -642,7 +756,7 @@ export class KiroSession implements AgentSession {
             }
         } finally {
             endMcpTurn?.();
-            this.pendingChatPermissions.clear();
+            this.clearPermissions();
             if (buf.length > 0) this.history.push({ role: 'assistant', content: buf.join('') });
             if (this.agentTurn === turn) this.agentTurn = null;
             // The chat stopped showing it before Kiro ended it (an error, or
@@ -673,7 +787,8 @@ export class KiroSession implements AgentSession {
         const narrationEvents = (items: SubagentActivityPayload[]): NormalizedEvent[] =>
             items.map((activity) => ({ kind: 'subagent_tool_activity' as const, ...activity }));
         // What kiro-cli named this turn's tool calls; v2 permission requests carry no name.
-        const toolCallNames = new KiroToolCallNames();
+        const resolveToolName = this.toolNameResolver;
+        const toolCallNames = new KiroToolCallNames(undefined, resolveToolName);
         const flush = (): NormalizedEvent[] => [
             ...narrationEvents(narration.flushAll()),
             ...steeringEvents(steeringParser.push(completionStripper.flush())),
@@ -736,7 +851,7 @@ export class KiroSession implements AgentSession {
                 yield { kind: 'subagent_tool_activity', ...kiroChildToolActivity(subtaskId, update) };
             } else if (kind === "tool_call" || kind === "tool_call_update") {
                 const rawInput = update.rawInput;
-                const toolTitle = update.title || "";
+                const toolTitle = this.toolTitle(update) || "";
                 const purpose = extractToolUsePurpose(rawInput);
                 const inputStr = rawInput != null
                     ? (typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput))
@@ -745,7 +860,7 @@ export class KiroSession implements AgentSession {
                     .flatMap((block: any) => block?.type === 'content' && block.content?.type === 'text'
                         ? [block.content.text] : block?.type === 'diff' ? [JSON.stringify(block)] : [])
                     .join('\n') : undefined;
-                const rawOutputStr = (update.rawOutput != null
+                const rawOutputStr = this.standardAcp ? standardToolOutput(update.rawOutput, contentOutput) : (update.rawOutput != null
                     ? (typeof update.rawOutput === "string" ? update.rawOutput : JSON.stringify(update.rawOutput))
                     : contentOutput) || undefined;
                 const outputStr = rawOutputStr
@@ -753,11 +868,14 @@ export class KiroSession implements AgentSession {
                     : undefined;
                 const MAX_PAYLOAD = 16 * 1024;
                 const delegation = isKiroDelegation(update);
+                // agy keeps reporting a declined call as in_progress after the decline.
+                const declined = this.standardAcp && this.declinedToolCalls.has(update.toolCallId)
+                    && update.status !== 'completed' && update.status !== 'failed';
                 yield {
                     kind,
                     toolCallId: update.toolCallId || "",
                     title: toolTitle,
-                    status: update.status || "",
+                    status: declined ? 'failed' : update.status || "",
                     // V3 delegation chips carry the explicit subagent kind so
                     // the UI renders them as subagent cards.
                     kindType: delegation ? 'subagent' : update.kind || undefined,
@@ -798,6 +916,7 @@ export class KiroSession implements AgentSession {
                 }
             } else if (kind === "permission_resolved") {
                 this.pendingChatPermissions.delete(update.requestId);
+                this.permissionToolCalls.delete(update.requestId);
                 yield { kind: "permission_resolved" as const, requestId: update.requestId };
             } else if (kind === "permission_request") {
                 if (signal.aborted || this.runtime.host.profile.isRestricted(this.toolProfile)) { this.runtime.cancelPermission(this.nativeSessionId, update.requestId); continue; }
@@ -810,7 +929,7 @@ export class KiroSession implements AgentSession {
                     // paused until we answer.
                     // The title is prose, so the policy needs the canonical
                     // name; an unnamed tool stays "unknown", never its title.
-                    const toolName = kiroBrokerToolName(update.toolCall, update._meta, toolCallNames.get(update.toolCall?.toolCallId));
+                    const toolName = kiroBrokerToolName(update.toolCall, update._meta, toolCallNames.get(update.toolCall?.toolCallId), resolveToolName);
                     const decision = await this.permissionBroker.requestPermission({
                         owner: this.owner,
                         ownerUserId: this.ownerUserId,
@@ -830,19 +949,22 @@ export class KiroSession implements AgentSession {
                             this.runtime.respondToPermission(this.nativeSessionId, update.requestId, allowOption.optionId);
                         } else {
                             this.runtime.cancelPermission(this.nativeSessionId, update.requestId);
+                            this.settleDeclinedToolCall(update.toolCall?.toolCallId);
                         }
                         // allow_always for Runs is Attempt-scoped only — do NOT
                         // write a normal chat Workspace grant.
                     } else if (decision === "deny") {
                         this.runtime.cancelPermission(this.nativeSessionId, update.requestId);
+                        this.settleDeclinedToolCall(update.toolCall?.toolCallId);
                     } else {
                         // "ask" — surface as a Run interaction so the Executor/UI
                         // can handle it. Yield the permission_request event.
+                        this.rememberPermissionToolCall(update);
                         yield {
                             kind: "permission_request" as const,
                             requestId: update.requestId,
                             toolCallId: update.toolCall?.toolCallId,
-                            title: subagentPermissionTitle(update, update.toolCall?.title ?? "Tool call"),
+                            title: subagentPermissionTitle(update, this.toolTitle(update.toolCall) ?? "Tool call"),
                             options: rawOptions,
                             source: "acp_permission",
                         };
@@ -852,7 +974,7 @@ export class KiroSession implements AgentSession {
                         (option: { kind?: string }) => option.kind !== 'allow_always' && option.kind !== 'reject_always',
                     );
                     const allow = options.find((option: { kind?: string }) => option.kind === 'allow_once');
-                    const toolName = acpPermissionToolName(update.toolCall, update._meta);
+                    const toolName = acpPermissionToolName(update.toolCall, update._meta, resolveToolName);
                     const owner = this.owner ?? interactiveOwner(this.id);
                     if (allow && this.approvals.policy(owner, null, toolName ?? '', true, this.turnPermissionMode) === 'allow') {
                         this.runtime.respondToPermission(this.nativeSessionId, update.requestId, allow.optionId);
@@ -863,11 +985,12 @@ export class KiroSession implements AgentSession {
                             .map((option) => ({ ...option, optionId: `michi:${option.optionId}` })));
                     }
                     this.pendingChatPermissions.set(update.requestId, { toolName, allowOptionId: allow?.optionId, options, signal });
+                    this.rememberPermissionToolCall(update);
                     yield {
                         kind: "permission_request" as const,
                         requestId: update.requestId,
                         toolCallId: update.toolCall?.toolCallId,
-                        title: subagentPermissionTitle(update, toolName ? `Approve ${toolName}?` : update.toolCall?.title ?? "Tool call"),
+                        title: subagentPermissionTitle(update, toolName ? `Approve ${toolName}?` : this.toolTitle(update.toolCall) ?? "Tool call"),
                         detail: typeof update.toolCall?.rawInput === 'string' ? update.toolCall.rawInput
                             : update.toolCall?.rawInput != null ? JSON.stringify(update.toolCall.rawInput) : undefined,
                         options,
@@ -929,6 +1052,13 @@ export class KiroSession implements AgentSession {
                 yield { kind: "compaction_start" as const, detail: "clear" };
                 yield { kind: "compaction_end" as const, detail: "clear" };
             } else if (kind === "usage_summary") {
+                if (update.source === 'acp') {
+                    // Token counts only: a standard ACP agent reports no credits, cost or context
+                    // window. They are the agent's own counts, so the source is native, as for Codex.
+                    const tokens = acpTokenUsage(update);
+                    yield { kind: 'usage_summary', source: Object.keys(tokens).length ? 'native' : 'unverifiable', ...tokens };
+                    continue;
+                }
                 if (update.source === 'kiro-v3') {
                     yield {
                         kind: 'usage_summary', source: 'kiro-v3',
@@ -1117,9 +1247,13 @@ export class KiroSession implements AgentSession {
     }
 
     respondToPermission(requestId: number, optionId: string): void {
+        const toolCallId = this.permissionToolCalls.get(requestId);
         if (isHeadlessOwner(this.owner)) {
             const c = this.runtime.getClient(this.cwd);
-            c?.respondToPermissionKind(requestId, optionId === 'allow_once' || optionId === 'allow_always' ? 'allow_once' : 'reject_once');
+            const kind = optionId === 'allow_once' || optionId === 'allow_always' ? 'allow_once' : 'reject_once';
+            c?.respondToPermissionKind(requestId, kind);
+            this.permissionToolCalls.delete(requestId);
+            if (kind === 'reject_once') this.settleDeclinedToolCall(toolCallId);
             return;
         }
         const pending = this.pendingChatPermissions.get(requestId);
@@ -1130,6 +1264,8 @@ export class KiroSession implements AgentSession {
         const owner = this.owner ?? interactiveOwner(this.id);
         const allow = pending.allowOptionId && this.approvals.accept(option.kind, owner, pending.toolName);
         this.runtime.respondToPermission(this.nativeSessionId, requestId, allow ? pending.allowOptionId! : optionId);
+        this.permissionToolCalls.delete(requestId);
+        if (!allow && option.kind?.startsWith('reject')) this.settleDeclinedToolCall(toolCallId);
         if (allow && (option.kind === 'allow_session' || option.kind === 'allow_always')) {
             for (const [id, request] of this.pendingChatPermissions) {
                 if (request.allowOptionId && !request.signal.aborted && this.approvals.covers(option.kind, pending.toolName, request.toolName)) {
@@ -1140,8 +1276,11 @@ export class KiroSession implements AgentSession {
     }
 
     cancelPermission(requestId: number): void {
+        const toolCallId = this.permissionToolCalls.get(requestId);
         this.pendingChatPermissions.delete(requestId);
+        this.permissionToolCalls.delete(requestId);
         this.runtime.cancelPermission(this.nativeSessionId, requestId);
+        this.settleDeclinedToolCall(toolCallId);
     }
 
     respondToUserInput(requestId: number, answers: Array<{ question: string; answer: string }>): void {

@@ -26,6 +26,12 @@
   from { opacity: 0; transform: translateY(9px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* mobile-arrive in reverse, for a panel on its way out (ResponsiveToolbar
+   listens for its animationend by name). */
+@keyframes mobile-leave {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(9px); }
+}
 
 @media (max-width: 700px) {
   .terminal-topbar-controls { width: auto !important; padding-left: 8px !important; gap: 0 !important; }
@@ -65,7 +71,7 @@
   .workspace-toolbar { display: flex; align-items: center; position: relative; -webkit-app-region: no-drag; }
   .workspace-toolbar .workspace-toolbar__trigger { display: inline-flex; min-width: 36px; min-height: 36px; }
   .workspace-toolbar__actions { display: none; }
-  .workspace-toolbar[data-open] .workspace-toolbar__actions {
+  .workspace-toolbar:is([data-open], [data-leaving]) .workspace-toolbar__actions {
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -79,8 +85,9 @@
     border-radius: var(--ui-radius-lg);
     background: var(--term-surface);
     box-shadow: var(--term-float-shadow);
-    animation: mobile-arrive var(--t-enter) var(--t-ease) both;
   }
+  .workspace-toolbar[data-open] .workspace-toolbar__actions { animation: mobile-arrive var(--t-enter) var(--t-ease) both; }
+  .workspace-toolbar[data-leaving] .workspace-toolbar__actions { animation: mobile-leave var(--t-exit) var(--t-ease) both; pointer-events: none; }
   .workspace-toolbar__actions > button { width: 100% !important; height: 40px !important; justify-content: flex-start; gap: 12px; padding: 0 12px !important; font-size: var(--fs-xl); color: var(--term-mid) !important; }
   .workspace-toolbar__actions > button::after { content: attr(aria-label); font-size: var(--fs-md); font-family: var(--ui-font); }
 
@@ -131,10 +138,10 @@
   .terminal-composer .t-action-btn { --composer-send-inset: 4px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .workspace-toolbar[data-open] .workspace-toolbar__actions, .michi-home__hero { animation: none; }
+  .workspace-toolbar:is([data-open], [data-leaving]) .workspace-toolbar__actions, .michi-home__hero { animation: none; }
   .terminal-composer .t-action-btn:active:not(:disabled) { transform: none; }
 }
-html[data-reduce-motion='on'] :is(.workspace-toolbar[data-open] .workspace-toolbar__actions, .michi-home__hero) { animation: none; }
+html[data-reduce-motion='on'] :is(.workspace-toolbar:is([data-open], [data-leaving]) .workspace-toolbar__actions, .michi-home__hero) { animation: none; }
 html[data-reduce-motion='on'] .terminal-composer .t-action-btn:active:not(:disabled) { transform: none; }
 
 /* Keep the full runtime toolbar, including permission/agent controls, inside

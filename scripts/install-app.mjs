@@ -16,6 +16,49 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT_APP = join(repoRoot, 'dist-electron', 'mac-arm64', 'michi.app');
 
+function installWindowsShortcut() {
+  // On Windows, create a Start Menu shortcut to the unpacked exe.
+  const src = join(repoRoot, 'dist-electron', 'win-unpacked', 'michi.exe');
+  if (!existsSync(src)) {
+    // NSIS installer was produced instead of unpacked dir — nothing to shortcut.
+    console.log('install-app: win-unpacked not found (NSIS build); skipping shortcut');
+    return;
+  }
+
+  const startMenu = join(
+    process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'),
+    'Microsoft', 'Windows', 'Start Menu', 'Programs',
+  );
+  const lnk = join(startMenu, 'Michi.lnk');
+
+  // Use PowerShell to create a .lnk — no native Node API for this.
+  const ps = [
+    `$ws = New-Object -ComObject WScript.Shell`,
+    `$sc = $ws.CreateShortcut('${lnk.replace(/'/g, "''")}')`,
+    `$sc.TargetPath = '${src.replace(/'/g, "''")}'`,
+    `$sc.WorkingDirectory = '${repoRoot.replace(/'/g, "''")}'`,
+    `$sc.Description = 'Michi — branching AI workspace'`,
+  ];
+  const iconPath = join(repoRoot, 'assets', 'icons', 'icon.ico');
+  if (existsSync(iconPath)) {
+    ps.push(`$sc.IconLocation = '${iconPath.replace(/'/g, "''")}'`);
+  }
+  ps.push(`$sc.Save()`);
+
+  try {
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps.join('; ')], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    console.log(`install-app: Start Menu shortcut → ${lnk}`);
+  } catch {
+    console.log(`install-app: could not create shortcut (non-fatal)`);
+  }
+
+  console.log(`install-app: portable exe → ${src}`);
+  return;
+}
+
 function quitRunningApp() {
   // cp -R over a live bundle corrupts the running process.
   spawnSync('osascript', ['-e', 'tell application "michi" to quit'], { stdio: 'ignore' });
@@ -53,8 +96,12 @@ export function installApp({
 function main(argv = process.argv.slice(2)) {
   const unknown = argv.filter((arg) => arg !== '--if-newer');
   if (unknown.length > 0) throw new Error(`unknown option: ${unknown[0]}\nUsage: node scripts/install-app.mjs [--if-newer]`);
+  if (platform() === 'win32') {
+    installWindowsShortcut();
+    return;
+  }
   if (platform() !== 'darwin') {
-    console.log('install-app: non-Darwin host, skipping');
+    console.log('install-app: non-Darwin/non-Windows host, skipping');
     return;
   }
   const dstDir = join(homedir(), 'Applications');

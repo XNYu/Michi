@@ -242,7 +242,7 @@ export function deferIfPageLeased(context: MaintenanceExecutionContext, sourceTu
   throw maintenanceBusyError(lease);
 }
 
-function maintenancePagePath(pageId: string, pages: Map<string, { id: string; parentId: string | null; title: string }>): string {
+export function maintenancePagePath(pageId: string, pages: Map<string, { id: string; parentId: string | null; title: string }>): string {
   const parts: string[] = [];
   let current = pages.get(pageId);
   const seen = new Set<string>();

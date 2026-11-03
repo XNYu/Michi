@@ -23,6 +23,7 @@ import {
 import { stripSentinelsStreamingSafe } from './state/assistantParsing';
 import { startupMarkOnce } from './services/startupTrace';
 import AppErrorBoundary from './components/AppErrorBoundary';
+import { MotionRoot } from './motion/MotionRoot';
 import './index.css';
 
 const ExportPanel = React.lazy(() => import('./components/ExportPanel'));
@@ -204,11 +205,12 @@ function ExportPanelManager() {
 function AppToaster() {
   const { prefs } = usePrefs();
   const isDark = DARK_PALETTES.has(prefs.terminalPalette);
-  // Top-right, just below the topbar (which carries the pane captions), so a
+  // Top-right, docked to the window's right edge just below the topbar's icon
+  // cluster (index.css shapes it as a tab that slides in from the right), so a
   // toast never covers the Composer the user is typing in. Phones use the
   // same top inset: sonner's full-width mobile layout would otherwise sit on
   // the Composer.
-  const offset = { top: TOPBAR_HEIGHT + 8, right: 16 };
+  const offset = { top: TOPBAR_HEIGHT + 6, right: 0 };
   return (
     <Toaster
       position="top-right"
@@ -314,6 +316,7 @@ function ChatWorkflowDomainProvider({ children }: { children: React.ReactNode })
 function App() {
   return (
     <PrefsProvider>
+      <MotionRoot>
       <AppToaster />
       <AppErrorBoundary>
         <AuthGate>
@@ -329,6 +332,7 @@ function App() {
           </AgentDomainProvider>
         </AuthGate>
       </AppErrorBoundary>
+      </MotionRoot>
     </PrefsProvider>
   );
 }

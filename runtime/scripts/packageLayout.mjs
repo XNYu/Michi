@@ -10,6 +10,7 @@ export const PUBLIC_ENTRIES = [
   ['./mcp-host', 'mcp-host/index'],
   ['./adapters/kiro', 'adapters/kiro/index'],
   ['./adapters/crew', 'adapters/crew/index'],
+  ['./adapters/antigravity', 'adapters/antigravity/index'],
   ['./adapters/codex', 'adapters/codex/index'],
   ['./adapters/claude', 'adapters/claude/index'],
   ['./adapters/acp', 'adapters/acp/index'],

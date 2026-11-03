@@ -26,7 +26,7 @@ const STATUS: AgentStatus = {
   hasRequiredKey: true,
 };
 
-function renderToolbar(overrides: Partial<ComponentProps<typeof PaneComposerToolbarLeft> & ComponentProps<typeof ComposerModelTrigger>> = {}) {
+function renderToolbar(overrides: Partial<ComponentProps<typeof PaneComposerToolbarLeft> & ComponentProps<typeof ComposerModelTrigger>> = {}, within?: HTMLElement) {
   const props = {
     canAttach: true,
     toolbarTier: 0 as const,
@@ -42,7 +42,8 @@ function renderToolbar(overrides: Partial<ComponentProps<typeof PaneComposerTool
     onOpenModelMenu: vi.fn(),
     ...overrides,
   };
-  return render(<><PaneComposerToolbarLeft {...props} /><ComposerModelTrigger {...props} /></>);
+  const ui = <><PaneComposerToolbarLeft {...props} /><ComposerModelTrigger {...props} /></>;
+  return render(ui, within ? { container: within.appendChild(document.createElement('div')) } : undefined);
 }
 
 describe('ComposerModelTrigger switch hint', () => {
@@ -75,5 +76,29 @@ describe('PaneComposerToolbarLeft', () => {
     const trigger = screen.getByRole('button', { name: /Model settings/ });
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     expect(onOpenModelMenu).toHaveBeenCalledWith(expect.objectContaining({ trigger, keyboard: true }));
+  });
+
+  test('opens the agent and model menus downward on Home, whose composer sits at the top', () => {
+    const onOpenAgentMenu = vi.fn();
+    const onOpenModelMenu = vi.fn();
+    const props = { onOpenAgentMenu, onOpenModelMenu, availableModesCount: 2, currentModeId: 'dev' };
+    const openBoth = () => {
+      fireEvent.click(screen.getByTitle(/^Switch agent/));
+      fireEvent.click(screen.getByRole('button', { name: /Model settings/ }));
+    };
+    renderToolbar(props);
+    openBoth();
+    expect(onOpenAgentMenu).toHaveBeenLastCalledWith(expect.objectContaining({ preferBelow: false }));
+    expect(onOpenModelMenu).toHaveBeenLastCalledWith(expect.objectContaining({ preferBelow: false }));
+    cleanup();
+
+    const home = document.body.appendChild(document.createElement('div'));
+    home.className = 'home-compose';
+    renderToolbar(props, home);
+    openBoth();
+    expect(onOpenAgentMenu).toHaveBeenLastCalledWith(expect.objectContaining({ preferBelow: true }));
+    expect(onOpenModelMenu).toHaveBeenLastCalledWith(expect.objectContaining({ preferBelow: true }));
+    cleanup();
+    home.remove();
   });
 });

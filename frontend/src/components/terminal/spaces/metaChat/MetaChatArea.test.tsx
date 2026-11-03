@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MotionConfig } from 'motion/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { METACHAT_STORAGE_KEY } from '../../../../state/metaChat/metaChatWindowModel';
 import { useMetaChatWindow, type UseMetaChatWindowOptions } from '../../../../state/metaChat/useMetaChatWindow';
@@ -10,6 +11,16 @@ vi.mock('../../../MentionEditor', () => import('../../../../test/mentionEditorSt
 const openSpacesPage = vi.hoisted(() => vi.fn());
 vi.mock('../../../../state/metaChat/spacesPages', () => ({ openSpacesPage }));
 const firstRun = vi.hoisted(() => ({ data: null as unknown }));
+/** Every imperative motion `animate()` call, to read the keyframes a morph starts from. */
+const motionCalls = vi.hoisted(() => ({ animate: [] as unknown[][] }));
+vi.mock('motion/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('motion/react')>();
+  const animate = (...args: unknown[]) => {
+    motionCalls.animate.push(args);
+    return (actual.animate as (...a: unknown[]) => unknown)(...args);
+  };
+  return { ...actual, animate };
+});
 vi.mock('../../../../state/metaAgent/spacesFirstRun', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../state/metaAgent/spacesFirstRun')>()),
   useSpacesFirstRun: () => ({ load: 'ready', data: firstRun.data, error: null, unreachable: false, schedulerOff: false, justFinished: false }),
@@ -72,7 +83,10 @@ const release = () => fireEvent.pointerUp(window);
 async function onTouchPhone(run: () => void | Promise<void>) {
   const width = window.innerWidth;
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 480 });
-  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({ matches: query === '(hover: none) and (pointer: coarse)', media: query }) as MediaQueryList);
+  // motion subscribes to the reduced-motion query the first time it needs it.
+  vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+    matches: query === '(hover: none) and (pointer: coarse)', media: query, addEventListener: () => {}, removeEventListener: () => {},
+  }) as unknown as MediaQueryList);
   try {
     await run();
   } finally {
@@ -219,6 +233,121 @@ describe('MetaChatArea', () => {
     fireEvent.click(launcher);
     expect(area().dataset.form).toBe('dock');
     expect(document.activeElement).toBe(screen.getByLabelText('Message the assistant'));
+  });
+
+  describe('window ⇄ pill morph', () => {
+    /** Layout boxes in the area, as a browser lays them out (jsdom has none, which skips the morph elsewhere). */
+    const pillBox = { x: 936, y: 736, w: 44, h: 44 };
+    beforeEach(() => {
+      Object.assign(pillBox, { w: 44, h: 44 });
+      motionCalls.animate.length = 0;
+      const box = (el: HTMLElement) => (el.classList.contains('meta-chat-panel') ? { x: 598, y: 262, w: 384, h: 520 }
+        : el.classList.contains('meta-chat-pill') ? pillBox : { x: 0, y: 0, w: 0, h: 0 });
+      vi.spyOn(HTMLElement.prototype, 'offsetLeft', 'get').mockImplementation(function (this: HTMLElement) { return box(this).x; });
+      vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) { return box(this).y; });
+      vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) { return box(this).w; });
+      vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return box(this).h; });
+    });
+    const nextFrame = () => act(() => new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); }));
+    const ghostPill = () => document.querySelector('.meta-chat-pill') as HTMLElement | null;
+    /** No transform left (motion's reset writes `none`). */
+    const AT_REST = /^(none)?$/;
+
+    it('shrinks the window into the pill in its last box, as no live layer, then hides it', async () => {
+      render(<Host />);
+      const input = await screen.findByLabelText('Message the assistant');
+      await nextFrame();
+      (input as HTMLElement).focus();
+      fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+      expect(area().dataset.form).toBe('min');
+      // Still on screen, in the box it had, while it goes.
+      expect(panel().hidden).toBe(false);
+      expect(panel().style.position).toBe('absolute');
+      expect(box()).toEqual({ left: '598px', top: '262px', width: '384px', height: '520px' });
+      expect(panel().hasAttribute('inert')).toBe(true);
+      expect(panel().getAttribute('aria-hidden')).toBe('true');
+      expect(document.activeElement).not.toBe(input);
+      expect(screen.getByRole('button', { name: 'Ask assistant' })).toBeTruthy();
+      await waitFor(() => expect(panel().hidden).toBe(true));
+      expect(panel().hasAttribute('inert')).toBe(false);
+      expect(panel().style.transform).toMatch(AT_REST);
+    });
+
+    it('never hides the window for a commit before it shrinks', async () => {
+      render(<Host />);
+      await screen.findByLabelText('Message the assistant');
+      await nextFrame();
+      const observer = new MutationObserver(() => {});
+      observer.observe(panel(), { attributes: true, attributeFilter: ['hidden'] });
+      fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+      expect(observer.takeRecords()).toEqual([]);
+      observer.disconnect();
+      expect(panel().hidden).toBe(false);
+    });
+
+    it('starts a shrink from rest after a restore that swapped at once', async () => {
+      render(<Host />);
+      await screen.findByLabelText('Message the assistant');
+      await nextFrame();
+      fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+      await waitFor(() => expect(panel().hidden).toBe(true));
+      await nextFrame();
+      // A pill it cannot measure: the window comes back without a morph.
+      pillBox.w = 0;
+      fireEvent.click(screen.getByRole('button', { name: 'Ask assistant' }));
+      pillBox.w = 44;
+      expect(panel().hidden).toBe(false);
+      expect(panel().style.transform).toMatch(AT_REST);
+      await waitFor(() => expect(ghostPill()).toBeNull());
+      await nextFrame();
+      motionCalls.animate.length = 0;
+      fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+      const shrink = motionCalls.animate.find(([el, keyframes]) => el === panel() && Array.isArray((keyframes as { x?: unknown }).x));
+      expect(shrink?.[1]).toMatchObject({ x: [0, expect.any(Number)], y: [0, expect.any(Number)], scale: [1, expect.any(Number)], opacity: [1, 0] });
+    });
+
+    it('grows back out of the pill; the leaving pill is no control, then goes', async () => {
+      render(<Host options={{ storage: null, initialState: { minimized: true } }} />);
+      await nextFrame();
+      fireEvent.click(screen.getByRole('button', { name: 'Ask assistant' }));
+      expect(area().dataset.form).toBe('float');
+      expect(panel().hidden).toBe(false);
+      expect(screen.queryByRole('button', { name: 'Ask assistant' })).toBeNull();
+      expect(ghostPill()?.hasAttribute('inert')).toBe(true);
+      await waitFor(() => expect(ghostPill()).toBeNull());
+      await waitFor(() => expect(panel().style.transform).toMatch(AT_REST));
+      expect(panel().hasAttribute('inert')).toBe(false);
+    });
+
+    it('turns around mid-way on a second toggle, the same window live again', async () => {
+      render(<Host />);
+      await screen.findByLabelText('Message the assistant');
+      await nextFrame();
+      fireEvent.keyDown(window, { key: 'j', metaKey: true });
+      expect(panel().hasAttribute('inert')).toBe(true);
+      fireEvent.keyDown(window, { key: 'j', metaKey: true });
+      expect(area().dataset.form).toBe('float');
+      expect(panel().hidden).toBe(false);
+      expect(panel().hasAttribute('inert')).toBe(false);
+      expect(panel().hasAttribute('aria-hidden')).toBe(false);
+      expect(box()).toEqual({ left: '598px', top: '262px', width: '384px', height: '520px' });
+      await waitFor(() => expect(ghostPill()).toBeNull());
+    });
+
+    it('does not morph a window the user never saw', () => {
+      render(<Host />);
+      // Within the first frame: the window was never on screen.
+      fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+      expect(panel().hidden).toBe(true);
+    });
+
+    it('swaps at once with Reduce motion', async () => {
+      render(<MotionConfig reducedMotion="always"><Host /></MotionConfig>);
+      await nextFrame();
+      fireEvent.click(screen.getByRole('button', { name: 'Minimize' }));
+      expect(panel().hidden).toBe(true);
+      expect(panel().hasAttribute('inert')).toBe(false);
+    });
   });
 
   it('a labelled pill reads its label, and starts minimized when asked to, until the user opens it', () => {

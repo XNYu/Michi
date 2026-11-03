@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { PageChangeDto } from 'michi-shared';
 import { PageChangeTargets, pageChangesForTarget } from './PageChangeTargets';
@@ -119,5 +119,57 @@ describe('block change line before and after undo', () => {
     const typed = blockChange('typed', 1, { kind: 'user' }, 'applied', 'mine', null);
     const undone = blockChange('window', 2, window, 'reverted', 'theirs', 'mine');
     expect(lineOf([typed, undone])).toBe('Undone · <time> · Restore');
+  });
+});
+
+describe('an answered suggestion', () => {
+  const props = { target: { kind: 'database' as const, databaseId: 'db-1' }, onAccept: vi.fn(), onDismiss: vi.fn(), onReopen: vi.fn(),
+    onRevert: vi.fn(), onRedo: vi.fn(), onOpenSource: vi.fn(), loading: false, error: null, quiet: true };
+  const pending = rowChange('suggested', 1, 'row-1', chat, 'pending', null);
+
+  it('holds the chosen action while the rest fade, then collapses away, out of reach while it goes', async () => {
+    const view = render(<PageChangeTargets {...props} changes={[pending]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    const card = view.container.querySelector('.page-change-prop')!;
+    expect(card.getAttribute('data-chosen')).toBe('dismiss');
+    expect(screen.getByRole('button', { name: 'Dismiss' }).getAttribute('data-chosen')).toBe('true');
+    // Answered once: no second answer while it resolves.
+    expect((screen.getByRole('button', { name: 'Accept' }) as HTMLButtonElement).disabled).toBe(true);
+    view.rerender(<PageChangeTargets {...props} changes={[{ ...pending, proposalState: 'dismissed' }]} />);
+    const leaving = view.container.querySelector('.page-change-targets');
+    if (leaving) expect(leaving.getAttribute('aria-hidden') ?? leaving.querySelector('[aria-hidden="true"]')).toBeTruthy();
+    await waitFor(() => expect(view.container.querySelector('.page-change-targets')).toBeNull());
+  });
+
+  it('takes its buttons back when the answer is refused', () => {
+    const view = render(<PageChangeTargets {...props} changes={[pending]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+    expect(view.container.querySelector('.page-change-prop')!.getAttribute('data-chosen')).toBe('accept');
+    view.rerender(<PageChangeTargets {...props} error="Could not save" changes={[pending]} />);
+    expect(view.container.querySelector('.page-change-prop')!.getAttribute('data-chosen')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Accept' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('takes its buttons back when the answer settles and the suggestion still waits', async () => {
+    let settle!: () => void;
+    const onAccept = vi.fn(() => new Promise<void>((resolve) => { settle = resolve; }));
+    const view = render(<PageChangeTargets {...props} onAccept={onAccept} changes={[pending]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+    expect((screen.getByRole('button', { name: 'Accept' }) as HTMLButtonElement).disabled).toBe(true);
+    // Michi answered without an error and without resolving it (a stale page, a raced reopen).
+    await act(async () => { settle(); });
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Accept' }) as HTMLButtonElement).disabled).toBe(false));
+    expect(view.container.querySelector('.page-change-prop')!.getAttribute('data-chosen')).toBeNull();
+  });
+
+  it('can be answered again once it is shown again', () => {
+    const open = { ...props, quiet: false, onDismiss: vi.fn(() => new Promise<void>(() => {})) };
+    const view = render(<PageChangeTargets {...open} changes={[pending]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    view.rerender(<PageChangeTargets {...open} changes={[{ ...pending, proposalState: 'dismissed', resolvedAt: 5 }]} />);
+    view.rerender(<PageChangeTargets {...open} changes={[{ ...pending, resolvedAt: null }]} />);
+    expect(view.container.querySelector('.page-change-prop')!.getAttribute('data-chosen')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Accept' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

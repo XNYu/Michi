@@ -29,6 +29,17 @@ import {
   delegationStatus,
   subagentsForTool,
 } from './subagents/subagentPresentation';
+import {
+  DrawnPath,
+  FadeOnChange,
+  FailFlash,
+  GlyphSwap,
+  LabelSwap,
+  Reveal,
+  RevealList,
+  ScrollingRevealList,
+  type RevealRow,
+} from './agentBlockMotion';
 
 /**
  * Alternate chromes for the agent blocks (tool groups + subagents), from the
@@ -48,11 +59,14 @@ import {
  * ToolCallGroup.tsx owns the expand/collapse state machine and dispatches
  * here; MessageBlock.tsx pulls the small shared parts (spinner, sparkle,
  * live timer) for the thinking block chrome.
+ *
+ * Motion (agentBlockMotion.tsx): each group keeps one stable container whose
+ * header, rows and subagent cards are height reveals, so a collapse, an
+ * expand or the second tool arriving animates instead of swapping trees.
  */
 
 const MONO = 'var(--font-mono)';
 const SCROLL_THRESHOLD = 5;
-const SCROLL_MAX_HEIGHT = 400;
 
 /* ── Shared parts ────────────────────────────────────────────────────── */
 
@@ -148,11 +162,12 @@ export function SparkleIcon({ size = 13, color }: { size?: number; color: string
   return <ToolTypeIcon kind="subagent" size={size} color={color} />;
 }
 
+/** The done check; drawn in (pathLength) when a running row completes. */
 function CheckIcon({ color = 'var(--term-muted)' }: { color?: string }) {
   return (
     <span aria-hidden style={{ color, display: 'inline-flex', flexShrink: 0 }}>
       <svg width={10} height={10} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6">
-        <path d="M2.5 7.5l3 3 6-6.5" />
+        <DrawnPath d="M2.5 7.5l3 3 6-6.5" />
       </svg>
     </span>
   );
@@ -200,16 +215,19 @@ function SubagentStatus({ status }: { status: string | undefined }) {
   const failed = isFailedStatus(status);
   const running = isRunningStatus(status);
   const color = failed ? 'var(--term-danger)' : running ? 'var(--term-accent)' : 'var(--term-muted)';
+  const label = subagentStatusLabel(status);
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-      {running ? (
-        <span className="term-dot-i term-dot-i--run" />
-      ) : failed ? (
-        <span aria-hidden style={{ color, fontSize: 'var(--fs-xs)', lineHeight: 1 }}>×</span>
-      ) : (
-        <span className="term-dot-i" />
-      )}
-      <span style={{ fontSize: 'var(--fs-xs)', color }}>{subagentStatusLabel(status)}</span>
+      <GlyphSwap glyph={running ? 'running' : failed ? 'failed' : 'done'}>
+        {running ? (
+          <span aria-hidden className="term-dot-i term-dot-i--run" />
+        ) : failed ? (
+          <span aria-hidden style={{ color, fontSize: 'var(--fs-xs)', lineHeight: 1 }}>×</span>
+        ) : (
+          <span aria-hidden className="term-dot-i" />
+        )}
+      </GlyphSwap>
+      <FadeOnChange k={label} style={{ fontSize: 'var(--fs-xs)', color }}>{label}</FadeOnChange>
     </span>
   );
 }
@@ -228,11 +246,11 @@ function delegationPresentation(t: ToolCallState, info: SubagentToolInfo, linked
   };
 }
 
-/** One summary line per agent a crew delegation spawned. */
+/** One summary line per agent a crew delegation spawned; a joining agent grows in. */
 function CrewRows({ linked, style }: { linked: readonly SubagentInfo[]; style?: React.CSSProperties }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, ...style }}>
-      {linked.map((entry) => <SubagentRow key={entry.sessionId} subagent={entry} />)}
+    <div style={style}>
+      <RevealList gap={4} rows={linked.map((entry) => ({ key: entry.sessionId, node: <SubagentRow subagent={entry} /> }))} />
     </div>
   );
 }
@@ -250,23 +268,6 @@ function usePayloadOpen(failed: boolean, hasPayload: boolean) {
     setOpen((o) => !o);
   };
   return { open, toggle };
-}
-
-/** Keep long expanded lists pinned to the newest row unless the user
- *  scrolled away (same contract as the plain variant). */
-function useStickyList(depLen: number) {
-  const listRef = useRef<HTMLDivElement>(null);
-  const stickyRef = useRef(true);
-  useEffect(() => {
-    const el = listRef.current;
-    if (!el || !stickyRef.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [depLen]);
-  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
-    stickyRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
-  };
-  return { listRef, onScroll };
 }
 
 interface VariantGroupProps {
@@ -287,6 +288,45 @@ function partition(tools: ToolCallState[], subagents?: readonly SubagentInfo[]) 
     else normal.push(t);
   }
   return { normal, subs };
+}
+
+/**
+ * What a variant group shows. A single non-subagent tool is its row alone, so
+ * one click opens the payload. A pure subagent group (the spawn_branches case)
+ * opens as standalone subagent cards: a "1 tool calls" header around them is
+ * noise. Otherwise a header over the rows, which hide while collapsed. Each
+ * part is a Reveal in one stable container, so moving between shapes (a
+ * second tool arriving, the end-of-batch collapse) animates.
+ */
+function groupShape(normal: number, subs: number, expanded: boolean) {
+  const single = normal === 1 && subs === 0;
+  const subCards = normal === 0 && subs > 0 && expanded;
+  return {
+    single,
+    subCards,
+    header: !single && !subCards,
+    rows: single || (expanded && normal > 0),
+    collapsed: !expanded,
+  };
+}
+
+function groupStats(tools: ToolCallState[]) {
+  const running = tools.some((t) => !isTerminalStatus(t.status));
+  return {
+    failed: failedToolCount(tools),
+    running,
+    doneCount: tools.filter((t) => isTerminalStatus(t.status)).length,
+    spanMs: running ? undefined : toolSpanMs(tools),
+  };
+}
+
+type GroupStats = ReturnType<typeof groupStats>;
+
+interface GroupHeaderProps extends GroupStats {
+  tools: ToolCallState[];
+  collapsed: boolean;
+  onToggle: () => void;
+  subagentStatus?: string;
 }
 
 /* ══ 1b · Card variant ═══════════════════════════════════════════════── */
@@ -365,8 +405,10 @@ function CardPayload({ t }: { t: ToolCallState }) {
  * `standalone` marks a row rendered as the whole card (single-tool group).
  * Its title then matches the other card headers (Worked for…, N tools) in
  * size and weight instead of the smaller in-list row style.
+ *
+ * Memoised: a streaming update replaces only the tool that changed.
  */
-function CardToolRow({ t, standalone = false }: { t: ToolCallState; standalone?: boolean }) {
+const CardToolRow = React.memo(function CardToolRow({ t, standalone = false }: { t: ToolCallState; standalone?: boolean }) {
   const titleSize = standalone ? 'var(--fs-md)' : 'var(--fs-sm)';
   const failed = isFailedStatus(t.status);
   const running = isRunningStatus(t.status);
@@ -377,7 +419,8 @@ function CardToolRow({ t, standalone = false }: { t: ToolCallState; standalone?:
   const detail = toolRowDetail(t);
   const iconColor = failed ? 'var(--term-danger)' : running ? 'var(--term-accent)' : 'var(--term-muted)';
   return (
-    <div style={{ borderTop: CARD_BORDER }}>
+    <div style={{ borderTop: CARD_BORDER, position: 'relative' }}>
+      <FailFlash failed={failed} />
       <div
         onClick={hasPayload ? toggle : undefined}
         style={{
@@ -387,6 +430,7 @@ function CardToolRow({ t, standalone = false }: { t: ToolCallState; standalone?:
           padding: '6px 11px',
           cursor: hasPayload ? 'pointer' : 'default',
           background: running ? 'color-mix(in srgb, var(--term-accent) 5%, transparent)' : undefined,
+          transition: 'background-color var(--t-enter) ease-out',
         }}
       >
         <span
@@ -467,25 +511,22 @@ function CardToolRow({ t, standalone = false }: { t: ToolCallState; standalone?:
             </span>
           </>
         )}
-        {failed ? (
-          <FailedBadge label="FAILED" />
-        ) : running ? (
-          <CardSpinner />
-        ) : (
-          <>
-            {durMs != null && (
-              <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
-                {formatDurationMs(durMs)}
-              </span>
-            )}
-            <CheckIcon />
-          </>
-        )}
+        <FadeOnChange
+          k={!failed && !running && durMs != null ? 'duration' : null}
+          style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}
+        >
+          {durMs != null && formatDurationMs(durMs)}
+        </FadeOnChange>
+        <GlyphSwap glyph={failed ? 'failed' : running ? 'running' : 'done'} justify="end">
+          {failed ? <FailedBadge label="FAILED" /> : running ? <CardSpinner /> : <CheckIcon />}
+        </GlyphSwap>
       </div>
-      {open && hasPayload && <CardPayload t={t} />}
+      <Reveal show={open && hasPayload}>
+        <CardPayload t={t} />
+      </Reveal>
     </div>
   );
-}
+});
 
 function CardSubagent({
   t,
@@ -534,11 +575,8 @@ function CardSubagent({
 
 export function CardToolGroup({ tools, expanded, onToggle, subagents, subagentStatus }: VariantGroupProps) {
   const { normal, subs } = partition(tools, subagents);
-  const failed = failedToolCount(tools);
-  const running = tools.some((t) => !isTerminalStatus(t.status));
-  const doneCount = tools.filter((t) => isTerminalStatus(t.status)).length;
-  const spanMs = running ? undefined : toolSpanMs(tools);
-  const { listRef, onScroll } = useStickyList(tools.length);
+  const stats = groupStats(tools);
+  const shape = groupShape(normal.length, subs.length, expanded);
 
   const container: React.CSSProperties = {
     fontFamily: 'var(--ui-font)',
@@ -546,113 +584,36 @@ export function CardToolGroup({ tools, expanded, onToggle, subagents, subagentSt
     marginBottom: 14,
   };
 
-  // Single non-subagent tool: render the row directly inside a minimal card
-  // so the user needs only one click to open the payload.
-  if (normal.length === 1 && subs.length === 0) {
-    return (
-      <div style={container}>
-        <div style={{ border: CARD_BORDER, background: 'var(--term-surface)', overflow: 'hidden' }}>
-          <CardToolRow t={normal[0]} standalone />
-        </div>
-      </div>
-    );
-  }
-
-  // Pure subagent groups (the spawn_branches case) render as standalone
-  // subagent cards — a "1 tool calls" header card around them is noise.
-  if (normal.length === 0 && subs.length > 0) {
-    if (!expanded) {
-      return (
-        <div style={container}>
-          <CollapsedCardRow tools={tools} onToggle={onToggle} failed={failed} running={running} doneCount={doneCount} spanMs={spanMs} subagentStatus={subagentStatus} />
-        </div>
-      );
-    }
-    return (
-      <div style={{ ...container, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {subs.map(({ t, info, linked }) => (
-          <CardSubagent key={t.id} t={t} info={info} linked={linked} />
-        ))}
-      </div>
-    );
-  }
-
-  if (!expanded) {
-    return (
-      <div style={container}>
-        <CollapsedCardRow tools={tools} onToggle={onToggle} failed={failed} running={running} doneCount={doneCount} spanMs={spanMs} subagentStatus={subagentStatus} />
-      </div>
-    );
-  }
-
-  const scroll = tools.length > SCROLL_THRESHOLD;
+  // One card around the header and the rows. A single tool's row is the
+  // whole card; the header grows in above it when a second tool arrives.
+  const rows: RevealRow[] = [
+    ...normal.map((t) => ({ key: t.id, node: <CardToolRow t={t} standalone={shape.single} /> })),
+    ...subs.map(({ t, info, linked }) => ({ key: t.id, node: <CardSubagent t={t} info={info} linked={linked} embedded /> })),
+  ];
   return (
     <div style={container}>
-      <div style={{ border: CARD_BORDER, background: 'var(--term-surface)' }}>
-        <button
-          type="button"
-          data-toolgroup-header
-          onClick={onToggle}
-          className="t-hover-fg"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '7px 11px',
-            width: '100%',
-            background: 'transparent',
-            border: 'none',
-            font: 'inherit',
-            color: 'inherit',
-            cursor: 'pointer',
-            textAlign: 'left',
-          }}
-        >
-          {running && <CardSpinner />}
-          <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-fg)' }}>
-            {tools.length} tool {tools.length === 1 ? 'call' : 'calls'}
-          </span>
-          {failed > 0 && <FailedBadge label={`${failed} FAILED`} />}
-          <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
-            {running ? `${doneCount}/${tools.length}` : spanMs != null ? formatDurationMs(spanMs) : ''}
-          </span>
-          <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▾</span>
-        </button>
-        <div
-          ref={listRef}
-          onScroll={onScroll}
-          className={`tool-rows-in${scroll ? ' term-scrollbar' : ''}`}
-          style={scroll ? { maxHeight: SCROLL_MAX_HEIGHT, overflowY: 'auto' } : undefined}
-        >
-          {normal.map((t) => (
-            <CardToolRow key={t.id} t={t} />
-          ))}
-          {subs.map(({ t, info, linked }) => (
-            <CardSubagent key={t.id} t={t} info={info} linked={linked} embedded />
-          ))}
+      <Reveal show={!shape.subCards} preset="group">
+        <div style={{ border: CARD_BORDER, background: 'var(--term-surface)', overflow: shape.single ? 'hidden' : undefined }}>
+          <Reveal show={shape.header} preset="arrive">
+            <CardGroupHeader tools={tools} collapsed={shape.collapsed} onToggle={onToggle} subagentStatus={subagentStatus} {...stats} />
+          </Reveal>
+          <Reveal show={shape.rows} preset="group">
+            <ScrollingRevealList rows={rows} scroll={!shape.single && tools.length > SCROLL_THRESHOLD} />
+          </Reveal>
         </div>
-      </div>
+      </Reveal>
+      <Reveal show={shape.subCards} preset="group">
+        <RevealList
+          gap={6}
+          rows={subs.map(({ t, info, linked }) => ({ key: t.id, node: <CardSubagent t={t} info={info} linked={linked} /> }))}
+        />
+      </Reveal>
     </div>
   );
 }
 
-function CollapsedCardRow({
-  tools,
-  onToggle,
-  failed,
-  running,
-  doneCount,
-  spanMs,
-  subagentStatus,
-}: {
-  tools: ToolCallState[];
-  onToggle: () => void;
-  failed: number;
-  running: boolean;
-  doneCount: number;
-  spanMs: number | undefined;
-  subagentStatus?: string;
-}) {
+/** The card group's header: expanded ("N tool calls") or the collapsed summary. */
+function CardGroupHeader({ tools, collapsed, onToggle, failed, running, doneCount, spanMs, subagentStatus }: GroupHeaderProps) {
   return (
     <button
       type="button"
@@ -660,27 +621,40 @@ function CollapsedCardRow({
       onClick={onToggle}
       className="t-hover-fg"
       style={{
-        border: CARD_BORDER,
-        background: 'var(--term-surface)',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
         padding: '7px 11px',
         width: '100%',
+        background: 'transparent',
+        border: 'none',
         font: 'inherit',
         color: 'inherit',
         cursor: 'pointer',
         textAlign: 'left',
       }}
     >
-      {running ? <CardSpinner /> : <ToolTypeIcon kind="bash" color="var(--term-muted)" />}
-      <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        <CollapsedToolSummary tools={tools} failed={failed} subagentStatus={subagentStatus} />
-      </span>
+      <FadeOnChange k={running ? 'spinner' : collapsed ? 'icon' : null} variant="scale" style={{ display: 'inline-flex', flexShrink: 0 }}>
+        {running ? <CardSpinner /> : <ToolTypeIcon kind="bash" color="var(--term-muted)" />}
+      </FadeOnChange>
+      <LabelSwap k={collapsed ? 'collapsed' : 'expanded'} layerStyle={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {collapsed ? (
+          <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-mid)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <CollapsedToolSummary tools={tools} failed={failed} subagentStatus={subagentStatus} />
+          </span>
+        ) : (
+          <>
+            <span style={{ fontSize: 'var(--fs-md)', fontWeight: 500, color: 'var(--term-fg)', whiteSpace: 'nowrap' }}>
+              {tools.length} tool {tools.length === 1 ? 'call' : 'calls'}
+            </span>
+            {failed > 0 && <FailedBadge label={`${failed} FAILED`} />}
+          </>
+        )}
+      </LabelSwap>
       <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
         {running ? `${doneCount}/${tools.length}` : spanMs != null ? formatDurationMs(spanMs) : ''}
       </span>
-      <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▸</span>
+      <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>{collapsed ? '▸' : '▾'}</span>
     </button>
   );
 }
@@ -735,7 +709,8 @@ function TermPayload({ t }: { t: ToolCallState }) {
   );
 }
 
-function TermToolRow({ t }: { t: ToolCallState }) {
+/** Memoised: a streaming update replaces only the tool that changed. */
+const TermToolRow = React.memo(function TermToolRow({ t }: { t: ToolCallState }) {
   const failed = isFailedStatus(t.status);
   const running = isRunningStatus(t.status);
   const hasPayload = !!(t.inputJson || t.output);
@@ -745,8 +720,10 @@ function TermToolRow({ t }: { t: ToolCallState }) {
   const detail = toolRowDetail(t);
   const nameColor = failed ? 'var(--term-danger)' : running ? 'var(--term-fg)' : 'var(--term-muted)';
   const detailColor = failed ? 'var(--term-danger)' : running ? 'var(--term-fg)' : 'var(--term-mid)';
+  const glyphStyle: React.CSSProperties = { fontFamily: MONO, fontSize: 'var(--fs-xs)', textAlign: 'center' };
   return (
-    <div>
+    <div style={{ position: 'relative' }}>
+      <FailFlash failed={failed} />
       <div
         onClick={hasPayload ? toggle : undefined}
         className={hasPayload ? 't-hover-fg' : undefined}
@@ -758,13 +735,16 @@ function TermToolRow({ t }: { t: ToolCallState }) {
           cursor: hasPayload ? 'pointer' : 'default',
         }}
       >
-        {failed ? (
-          <span aria-hidden style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-danger)', textAlign: 'center' }}>×</span>
-        ) : running ? (
-          <span aria-hidden className="agent-glyph-run" style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-accent)', textAlign: 'center' }}>❯</span>
-        ) : (
-          <span aria-hidden style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', textAlign: 'center' }}>✓</span>
-        )}
+        {/* ✓ is a text glyph: it cross-scales, there is no stroke to draw. */}
+        <GlyphSwap glyph={failed ? 'failed' : running ? 'running' : 'done'} justify="center">
+          {failed ? (
+            <span aria-hidden style={{ ...glyphStyle, color: 'var(--term-danger)' }}>×</span>
+          ) : running ? (
+            <span aria-hidden className="agent-glyph-run" style={{ ...glyphStyle, color: 'var(--term-accent)' }}>❯</span>
+          ) : (
+            <span aria-hidden style={{ ...glyphStyle, color: 'var(--term-muted)' }}>✓</span>
+          )}
+        </GlyphSwap>
         {purpose ? (
           <span style={{ minWidth: 0 }}>
             <span style={{ fontSize: 'var(--fs-sm)', color: nameColor, display: 'block', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
@@ -797,20 +777,24 @@ function TermToolRow({ t }: { t: ToolCallState }) {
             )}
           </span>
         )}
-        {failed ? (
-          <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-danger)' }}>failed</span>
-        ) : running ? (
-          <span className="term-shimmer term-shimmer--accent" style={{ fontSize: 'var(--fs-xs)' }}>running</span>
-        ) : durMs != null ? (
-          <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{formatDurationMs(durMs)}</span>
-        ) : (
-          <span />
-        )}
+        <span>
+          <FadeOnChange k={failed ? 'failed' : running ? 'running' : durMs != null ? 'duration' : null}>
+            {failed ? (
+              <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-danger)' }}>failed</span>
+            ) : running ? (
+              <span className="term-shimmer term-shimmer--accent" style={{ fontSize: 'var(--fs-xs)' }}>running</span>
+            ) : durMs != null ? (
+              <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{formatDurationMs(durMs)}</span>
+            ) : null}
+          </FadeOnChange>
+        </span>
       </div>
-      {open && hasPayload && <TermPayload t={t} />}
+      <Reveal show={open && hasPayload}>
+        <TermPayload t={t} />
+      </Reveal>
     </div>
   );
-}
+});
 
 function TermSubagent({
   t,
@@ -854,11 +838,8 @@ function TermSubagent({
 
 export function TermToolGroup({ tools, expanded, onToggle, subagents, subagentStatus }: VariantGroupProps) {
   const { normal, subs } = partition(tools, subagents);
-  const failed = failedToolCount(tools);
-  const running = tools.some((t) => !isTerminalStatus(t.status));
-  const doneCount = tools.filter((t) => isTerminalStatus(t.status)).length;
-  const spanMs = running ? undefined : toolSpanMs(tools);
-  const { listRef, onScroll } = useStickyList(tools.length);
+  const stats = groupStats(tools);
+  const shape = groupShape(normal.length, subs.length, expanded);
 
   const container: React.CSSProperties = {
     fontFamily: 'var(--ui-font)',
@@ -866,101 +847,81 @@ export function TermToolGroup({ tools, expanded, onToggle, subagents, subagentSt
     marginBottom: 14,
   };
 
-  // Single non-subagent tool: render the row directly without a group header
-  // so the user needs only one click to open the payload.
-  if (normal.length === 1 && subs.length === 0) {
-    return (
-      <div style={container}>
-        <TermToolRow t={normal[0]} />
-      </div>
-    );
-  }
+  const rows: RevealRow[] = [
+    ...normal.map((t) => ({ key: t.id, node: <TermToolRow t={t} /> })),
+    ...subs.map(({ t, info, linked }) => ({ key: t.id, node: <TermSubagent t={t} info={info} linked={linked} /> })),
+  ];
+  return (
+    <div style={container}>
+      <Reveal show={shape.header} preset="arrive">
+        <TermGroupHeader tools={tools} collapsed={shape.collapsed} onToggle={onToggle} subagentStatus={subagentStatus} {...stats} />
+      </Reveal>
+      <Reveal show={shape.rows} preset="group">
+        <div style={{ paddingTop: shape.single ? 0 : 7 }}>
+          <ScrollingRevealList rows={rows} gap={5} scroll={!shape.single && tools.length > SCROLL_THRESHOLD} />
+        </div>
+      </Reveal>
+      <Reveal show={shape.subCards} preset="group">
+        <RevealList
+          gap={6}
+          rows={subs.map(({ t, info, linked }) => ({ key: t.id, node: <TermSubagent t={t} info={info} linked={linked} /> }))}
+        />
+      </Reveal>
+    </div>
+  );
+}
 
-  const headerBtn: React.CSSProperties = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    width: '100%',
-    background: 'transparent',
-    border: 'none',
-    padding: 0,
-    font: 'inherit',
-    color: 'inherit',
-    cursor: 'pointer',
-    textAlign: 'left',
-  };
+/** The terminal group's header: a "TOOLS" section rule or the collapsed summary. */
+function TermGroupHeader({ tools, collapsed, onToggle, failed, running, doneCount, spanMs, subagentStatus }: GroupHeaderProps) {
+  const align = collapsed ? 'baseline' : 'center';
   const rightMeta = running
     ? `${doneCount}/${tools.length}`
     : `${tools.length}${spanMs != null ? ` · ${formatDurationMs(spanMs)}` : ''}`;
-
-  // Pure subagent groups render as standalone boxes — a "tools" section
-  // header around a single subagent card is noise (mirrors CardToolGroup).
-  if (normal.length === 0 && subs.length > 0 && expanded) {
-    return (
-      <div style={{ ...container, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {subs.map(({ t, info, linked }) => (
-          <TermSubagent key={t.id} t={t} info={info} linked={linked} />
-        ))}
-      </div>
-    );
-  }
-
-  if (!expanded) {
-    return (
-      <div style={container}>
-        <button
-          type="button"
-          data-toolgroup-header
-          onClick={onToggle}
-          className="t-hover-fg"
-          style={{ ...headerBtn, alignItems: 'baseline' }}
-        >
-          <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▸</span>
-          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', minWidth: 0, flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <CollapsedToolSummary tools={tools} failed={failed} subagentStatus={subagentStatus} />
-          </span>
-          <span aria-hidden style={{ flex: 1, borderBottom: '1px dotted var(--term-line)', transform: 'translateY(-3px)' }} />
-          <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
-            {running ? `${doneCount}/${tools.length}` : spanMs != null ? formatDurationMs(spanMs) : ''}
-          </span>
-        </button>
-      </div>
-    );
-  }
-
-  const scroll = tools.length > SCROLL_THRESHOLD;
   return (
-    <div style={container}>
-      <button type="button" data-toolgroup-header onClick={onToggle} className="t-hover-fg" style={headerBtn}>
-        <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>▾</span>
-        <span style={{ fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps-wide)', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
-          tools
-        </span>
-        <span aria-hidden style={{ flex: 1, borderTop: '1px solid var(--term-line)', transform: 'translateY(1px)' }} />
-        <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
-          {rightMeta}
-          {failed > 0 && <span style={{ color: 'var(--term-danger)' }}> · {failed} failed</span>}
-        </span>
-      </button>
-      <div
-        ref={listRef}
-        onScroll={onScroll}
-        className={`tool-rows-in${scroll ? ' term-scrollbar' : ''}`}
-        style={{
-          marginTop: 7,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 5,
-          ...(scroll ? { maxHeight: SCROLL_MAX_HEIGHT, overflowY: 'auto' } : null),
-        }}
-      >
-        {normal.map((t) => (
-          <TermToolRow key={t.id} t={t} />
-        ))}
-        {subs.map(({ t, info, linked }) => (
-          <TermSubagent key={t.id} t={t} info={info} linked={linked} />
-        ))}
-      </div>
-    </div>
+    <button
+      type="button"
+      data-toolgroup-header
+      onClick={onToggle}
+      className="t-hover-fg"
+      style={{
+        display: 'flex',
+        alignItems: align,
+        gap: 8,
+        width: '100%',
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
+        font: 'inherit',
+        color: 'inherit',
+        cursor: 'pointer',
+        textAlign: 'left',
+      }}
+    >
+      <span aria-hidden style={{ fontSize: 'var(--fs-2xs)', color: 'var(--term-faint)', flexShrink: 0 }}>{collapsed ? '▸' : '▾'}</span>
+      <LabelSwap k={collapsed ? 'collapsed' : 'expanded'} style={{ flex: 1 }} layerStyle={{ display: 'flex', alignItems: align, gap: 8 }}>
+        {collapsed ? (
+          <>
+            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', minWidth: 0, flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <CollapsedToolSummary tools={tools} failed={failed} subagentStatus={subagentStatus} />
+            </span>
+            <span aria-hidden style={{ flex: 1, borderBottom: '1px dotted var(--term-line)', transform: 'translateY(-3px)' }} />
+            <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
+              {running ? `${doneCount}/${tools.length}` : spanMs != null ? formatDurationMs(spanMs) : ''}
+            </span>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps-wide)', textTransform: 'uppercase', color: 'var(--term-muted)', fontWeight: 500, flexShrink: 0 }}>
+              tools
+            </span>
+            <span aria-hidden style={{ flex: 1, borderTop: '1px solid var(--term-line)', transform: 'translateY(1px)' }} />
+            <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)', flexShrink: 0 }}>
+              {rightMeta}
+              {failed > 0 && <span style={{ color: 'var(--term-danger)' }}> · {failed} failed</span>}
+            </span>
+          </>
+        )}
+      </LabelSwap>
+    </button>
   );
 }

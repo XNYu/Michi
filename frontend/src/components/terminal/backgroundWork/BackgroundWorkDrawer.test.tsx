@@ -65,7 +65,24 @@ function nodes(): Record<string, ChatNodeState> {
     unloaded: chat('unloaded', 'Not loaded yet', [], { messagesLoaded: false }),
     // Another thread, the active one in some tests.
     'other-root': chat('other-root', 'Other thread', [user('u1'), assistant('o1', { subagents: [subagent({ sessionId: 'other-agent', agentName: 'Elsewhere' })] })], { status: 'streaming' }),
+    busy: busyChat(),
   };
+}
+
+/** One agent still working, three that finished (one failed), all in the latest turn. */
+function busyChat(patch: Partial<SubagentInfo> = {}, extra: ChatMessage[] = []): ChatNodeState {
+  return chat('busy', 'Busy chat', [
+    user('u1'),
+    assistant('b1', {
+      subagents: [
+        subagent({ sessionId: 'run-1', agentName: 'Runner', currentTool: 'Grep', ...patch }),
+        subagent({ sessionId: 'done-1', agentName: 'First', status: 'terminated', outcome: 'completed', result: 'One.' }),
+        subagent({ sessionId: 'done-2', agentName: 'Second', status: 'terminated', outcome: 'failed', error: 'Boom.', prompt: 'Try it.' }),
+        subagent({ sessionId: 'done-3', agentName: 'Third', status: 'terminated', outcome: 'completed', result: 'Three.' }),
+      ],
+    }),
+    ...extra,
+  ], { status: 'streaming' });
 }
 
 function nodeStore(initial: Record<string, ChatNodeState>) {
@@ -84,8 +101,8 @@ function nodeStore(initial: Record<string, ChatNodeState>) {
   };
 }
 
-function setup(request: OpenBackgroundWorkDetail, initialRuns: WorkflowRunDtoV1[] = [run()]) {
-  const store = nodeStore(nodes());
+function setup(request: OpenBackgroundWorkDetail, initialRuns: WorkflowRunDtoV1[] = [run()], initialNodes = nodes()) {
+  const store = nodeStore(initialNodes);
   const handlers: Array<Parameters<WorkflowDomainApi['subscribe']>[1]> = [];
   let latest = initialRuns[0];
   const api: WorkflowDomainApi = {
@@ -396,6 +413,68 @@ describe('BackgroundWorkDrawer', () => {
     expect(screen.getByRole('button', { name: 'This conversation' }).getAttribute('aria-pressed')).toBe('true');
     expect(rowIds()).toEqual(['child-agent']);
     expect(within(subagentRows()[0]).getByTestId('subagent-detail')).toBeTruthy();
+  });
+
+  it('folds finished subagents behind one line while others run', () => {
+    setup({ nodeId: 'busy' }, []);
+    expect(rowIds()).toEqual(['run-1']);
+    const fold = screen.getByTestId('background-work-fold');
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+    expect(fold.getAttribute('aria-label')).toBe('3 finished subagents, 1 failed');
+    expect(fold.textContent).toContain('3 finished');
+    expect(fold.textContent).toContain('1 failed');
+
+    fireEvent.click(fold);
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    expect(rowIds()).toEqual(['run-1', 'done-1', 'done-2', 'done-3']);
+    fireEvent.click(fold);
+    expect(rowIds()).toEqual(['run-1']);
+  });
+
+  it('keeps an agent that finishes while open in view, and folds afresh on the next open', () => {
+    const { store, reopen } = setup({ nodeId: 'busy' }, []);
+    act(() => store.set({ ...nodes(), busy: busyChat({ status: 'terminated', outcome: 'completed', result: 'Ran.' }) }));
+    // It finished while the user watched: still shown, not folded away.
+    expect(rowIds()).toEqual(['run-1']);
+    expect(subagentRows()[0].textContent).toContain('completed');
+    expect(screen.getByTestId('background-work-fold').getAttribute('aria-label')).toBe('3 finished subagents, 1 failed');
+    // Nothing runs on the next open: everything shows, unfolded.
+    reopen({ nodeId: 'busy' }, 2);
+    expect(rowIds()).toEqual(['run-1', 'done-1', 'done-2', 'done-3']);
+    expect(screen.queryByTestId('background-work-fold')).toBeNull();
+  });
+
+  it('does not fold what was showing when new work starts', () => {
+    const settled = busyChat({ status: 'terminated', outcome: 'completed' });
+    const { store } = setup({ nodeId: 'busy' }, [], { ...nodes(), busy: settled });
+    expect(rowIds()).toEqual(['run-1', 'done-1', 'done-2', 'done-3']);
+    act(() => store.set({
+      ...nodes(),
+      busy: busyChat({ status: 'terminated', outcome: 'completed' }, [user('u2'), assistant('b2', { subagents: [subagent({ sessionId: 'fresh', agentName: 'Fresh' })] })]),
+    }));
+    expect(rowIds()).toEqual(['fresh', 'run-1', 'done-1', 'done-2', 'done-3']);
+    expect(screen.queryByTestId('background-work-fold')).toBeNull();
+  });
+
+  it('opens the fold on a focused finished agent and keeps it open until closed', () => {
+    setup({ nodeId: 'busy', focus: { kind: 'subagent', sessionId: 'done-2' } }, []);
+    const fold = screen.getByTestId('background-work-fold');
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    expect(rowIds()).toEqual(['run-1', 'done-1', 'done-2', 'done-3']);
+    const focused = () => subagentRows().find((row) => row.getAttribute('data-subagent-id') === 'done-2')!;
+    expect(within(focused()).getByTestId('subagent-task').textContent).toBe('Try it.');
+
+    // Collapsing the agent leaves the fold open.
+    fireEvent.click(within(focused()).getByRole('button'));
+    expect(screen.queryByTestId('subagent-detail')).toBeNull();
+    expect(rowIds()).toEqual(['run-1', 'done-1', 'done-2', 'done-3']);
+
+    // Closing the fold collapses the agent it hides.
+    fireEvent.click(within(focused()).getByRole('button'));
+    fireEvent.click(fold);
+    expect(rowIds()).toEqual(['run-1']);
+    fireEvent.click(fold);
+    expect(screen.queryByTestId('subagent-detail')).toBeNull();
   });
 
   it('says so when nothing runs', () => {

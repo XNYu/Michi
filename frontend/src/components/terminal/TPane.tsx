@@ -9,6 +9,8 @@ import { chatPermissionChoice } from 'michi-shared';
 import { approveForMeRuntimeIds } from '../../lib/chatPermissionModes';
 import { mergeContextQuote } from '../../state/assistant/assistantContext';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useIsPresent } from 'motion/react';
+import { DUR, EASE } from '../../motion/tokens';
 import { useChatActions, useChatNode, useChatPanes, useChatProjects, useStructuralSelector, shallowArrayEqual, chatLabel } from '../../state/chatStore';
 import type { ChatNodeState, ArtifactEntry, ProjectEdge } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
@@ -76,6 +78,31 @@ const sidebarAnimatingRef = { current: false };
 const animationEndCallbacks = new Set<() => void>();
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 800;
 const USER_SCROLL_INTENT_WINDOW_MS = 1200;
+/** How long a click in the transcript may still turn out to open or close something. */
+const USER_CLICK_LAYOUT_WINDOW_MS = 300;
+
+/** The transcript and the clicked message as they were when a click landed. */
+interface UserClickLayout {
+  scrollHeight: number;
+  block: HTMLElement | null;
+  blockHeight: number;
+}
+
+/**
+ * A click changed the layout when the message it landed in changed height
+ * (or it landed outside one). Output streaming into another message within
+ * the click's window is still output to follow: a Copy during a reply keeps
+ * the pane tailing it.
+ */
+function clickChangedLayout(click: UserClickLayout): boolean {
+  if (!click.block || !click.block.isConnected) return true;
+  return click.block.offsetHeight !== click.blockHeight;
+}
+
+/** A sent message keeps its key when realign-assistant-id renames it. */
+function sentMessageKey(message: { id: string; clientKey?: string }): string {
+  return message.clientKey ?? message.id;
+}
 // Mount-time scroll restore: the target is re-derived from the anchor's live
 // rect and re-applied every time the content's size changes — the container
 // sets overflow-anchor:none, so nothing else compensates when
@@ -204,6 +231,15 @@ const paneScrollCache = (() => {
   };
 })();
 const PANE_PERF_SLOW_COMMIT_MS = 16;
+// The floating composer card is pinned this far above the pane's bottom edge
+// (ComposerShell's `bottom: 12` on the absolute position style).
+const COMPOSER_BOTTOM_INSET = 12;
+// Breathing room between the last line of transcript content and the top edge
+// of the composer card. The transcript reserves the card height plus the inset
+// plus this gap, and tail-following plus the tail spacer use the same sum, so
+// the last line always comes to rest clear of the card instead of hugging it.
+const COMPOSER_TAIL_GAP = 28;
+const COMPOSER_CLEARANCE = COMPOSER_BOTTOM_INSET + COMPOSER_TAIL_GAP;
 const EMPTY_CONTEXTS: ArtifactEntry[] = [];
 const EMPTY_EDGES: readonly ProjectEdge[] = [];
 const EMPTY_SAME_TREE_NODES: ChatNodeState[] = [];
@@ -1042,11 +1078,13 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   // only fire the "scroll user message to top 30%" animation once per send.
   // Initialise to the current latest user message so a freshly-mounted
   // (reopened) pane doesn't mistake existing history for a new send.
+  // Compared by sentMessageKey: realign-assistant-id renames a sent message
+  // to the server's id, which is not a new send.
   const prevSentMsgIdRef = useRef<string | null>((() => {
     const msgs = n?.messages;
     if (!msgs) return null;
     for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === 'user') return msgs[i].id;
+      if (msgs[i].role === 'user') return sentMessageKey(msgs[i]);
     }
     return null;
   })());
@@ -1069,8 +1107,11 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   // see that content, not new output to tail. Follow mode used to pin the
   // grown transcript to its tail, so expanding a message near the 30% anchor
   // threw the viewport to the bottom. The click records the transcript
-  // height for two frames; a pin that finds it changed leaves follow mode.
-  const userClickLayoutRef = useRef<{ scrollHeight: number } | null>(null);
+  // height; the first pin that finds it changed by the clicked message
+  // (clickChangedLayout) leaves follow mode. The record lasts
+  // USER_CLICK_LAYOUT_WINDOW_MS, as an opening animates its height from a
+  // frame or two later (motion), or after an outgoing part has faded.
+  const userClickLayoutRef = useRef<UserClickLayout | null>(null);
   // A new branch is output to tail, even when its insertion follows a click
   // inside the transcript. Keep the existing follow mode instead of treating
   // the new anchor row as a reader expanding a message.
@@ -1298,6 +1339,46 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   }, [messagesLoaded, messagesLen]);
 
   const composerHandle = useRef<ComposerShellHandle>(null);
+  // Whether the composer is in the pane's bottom slot. A permission request
+  // takes its place only after the composer has faded out, and the composer
+  // comes back only after the banner has left (ComposerSlot), so the
+  // transcript's clearance and the composer's observers follow its mount,
+  // not pendingPermission. Until the shell first reports in, the guess is
+  // taken from the first node this pane sees (it can render once before its
+  // node arrives) and then held: a banner that was pending at mount keeps
+  // its 12px clearance while it leaves. Mocked shells that drop the ref keep
+  // the guess.
+  const [composerAttached, setComposerAttached] = useState<boolean | null>(null);
+  const composerGuessRef = useRef<boolean | null>(null);
+  if (composerGuessRef.current === null && n) composerGuessRef.current = !n.pendingPermission;
+  const composerMounted = composerAttached ?? composerGuessRef.current ?? true;
+  const composerHandleRef = useCallback((handle: ComposerShellHandle | null) => {
+    composerHandle.current = handle;
+    setComposerAttached(handle !== null);
+  }, []);
+  // The commit that swaps the leaving banner for the composer still has the
+  // banner's 12px clearance (composerMounted flips in the next, synchronous
+  // render). Anything that reads layout in that commit (the phone composer
+  // snapshots itself) makes the browser clamp scrollTop to the taller, less
+  // padded transcript, and the clearance growing back does not undo it. So
+  // the banner records how far the transcript sat from its end as it
+  // leaves, and the composer's arrival puts it back there.
+  const slotSwapFromEndRef = useRef<number | null>(null);
+  const recordSlotSwap = useCallback(() => {
+    const el = scrollRef.current;
+    slotSwapFromEndRef.current = el ? el.scrollHeight - el.clientHeight - el.scrollTop : null;
+  }, []);
+  useLayoutEffect(() => {
+    const fromEnd = slotSwapFromEndRef.current;
+    slotSwapFromEndRef.current = null;
+    const el = scrollRef.current;
+    if (!composerMounted || fromEnd === null || !el) return;
+    const top = Math.max(0, el.scrollHeight - el.clientHeight - fromEnd);
+    if (Math.abs(top - el.scrollTop) < 1) return;
+    programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
+    el.scrollTop = top;
+    prevScrollTopRef.current = el.scrollTop;
+  }, [composerMounted]);
   const composerRef = useRef<HTMLDivElement | null>(null);
   const composerToolbarRef = useRef<HTMLDivElement>(null);
   // Measured height of the floating composer card. Drives the scroll area's
@@ -1504,7 +1585,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
       ro.disconnect();
       animationEndCallbacks.delete(measure);
     };
-  }, [n?.pendingPermission]);
+  }, [composerMounted]);
 
   // The floating card covers the transcript's bottom, so when it grows (a
   // phone composer opening from its one-row rest, a quote bar, more lines)
@@ -1520,14 +1601,14 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     if (prev === 'guess') return;
     const grew = composerHeight - prev;
     const el = scrollRef.current;
-    if (!el || grew <= 0 || n?.pendingPermission) return;
+    if (!el || grew <= 0 || !composerMounted) return;
     // The bottom padding has already grown by `grew`; measure against the old end.
     const fromOldBottom = el.scrollHeight - grew - el.clientHeight - el.scrollTop;
     if (fromOldBottom > 24) return;
     programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
     el.scrollTop += grew;
     prevScrollTopRef.current = el.scrollTop;
-  }, [composerHeight, n?.pendingPermission]);
+  }, [composerHeight, composerMounted]);
 
   // Width-driven compaction for the composer toolbar. Below ~360px the
   // agent / model chips drop their text labels (glyph-only); below ~260px
@@ -1565,7 +1646,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
       ro.disconnect();
       animationEndCallbacks.delete(measure);
     };
-  }, [n?.pendingPermission]);
+  }, [composerMounted]);
 
   const activeProjectEdges = activeProject?.edges ?? EMPTY_EDGES;
   const mentionContexts = activeProject?.artifacts ?? EMPTY_CONTEXTS;
@@ -1698,8 +1779,8 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
         if (n.messages[i].role === 'user') { latestUser = n.messages[i]; break; }
       }
     }
-    if (latestUser && latestUser.id !== prevSentMsgIdRef.current) {
-      prevSentMsgIdRef.current = latestUser.id;
+    if (latestUser && sentMessageKey(latestUser) !== prevSentMsgIdRef.current) {
+      prevSentMsgIdRef.current = sentMessageKey(latestUser);
       followRef.current = true;
       userMsgPinUntilRef.current = performance.now() + 700;
       programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
@@ -1729,7 +1810,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     const pinFollow = () => {
       if (!followRef.current) return;
       const click = userClickLayoutRef.current;
-      if (click && el.scrollHeight !== click.scrollHeight) {
+      if (click && el.scrollHeight !== click.scrollHeight && clickChangedLayout(click)) {
         userClickLayoutRef.current = null;
         followRef.current = false;
         return;
@@ -1752,7 +1833,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
           if (b > contentBottom) contentBottom = b;
         }
       }
-      const composerClearance = composerHeight + 24;
+      const composerClearance = composerHeight + COMPOSER_CLEARANCE;
       const tail = contentBottom > 0
         ? contentBottom - el.clientHeight + composerClearance
         : el.scrollHeight - el.clientHeight;
@@ -1932,6 +2013,11 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
   useHoldScrollOnKeyboard(scrollRef, phone, () => {
     programmaticScrollUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
   });
+  // A focus pull that lands while the permission banner still holds the slot
+  // (a turn that ends as its request is withdrawn) waits for the composer.
+  const composerFocusPendingRef = useRef(false);
+  const composerMountedRef = useRef(composerMounted);
+  composerMountedRef.current = composerMounted;
   useEffect(() => {
     const becameFocused = !prevFocusedRef.current && isFocused;
     const justFinishedStreaming = wasStreamingRef.current && !streaming;
@@ -1947,17 +2033,26 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     // a new quote, which the user is about to answer, still focuses it.
     if (phone && !quoteJustAdded) return;
 
-    const active = document.activeElement as HTMLElement | null;
-    if (active) {
-      const tag = active.tagName;
-      // Don't steal focus if the user is already in any editable (incl. our
-      // contenteditable composer).
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable) return;
+    // Don't steal focus if the user is already in any editable (incl. our
+    // contenteditable composer).
+    if (editableHasFocus()) return;
+    if (!composerMountedRef.current) {
+      composerFocusPendingRef.current = true;
+      return;
     }
     // Dashboard owns horizontal reveal; focus fallback must not scroll it again.
     const frame = requestAnimationFrame(() => inputRef.current?.editor?.commands.focus(undefined, { scrollIntoView: false }));
     return () => cancelAnimationFrame(frame);
   }, [isFocused, streaming, quotedText, phone]);
+  useEffect(() => {
+    if (!composerFocusPendingRef.current) return;
+    if (!isFocused) { composerFocusPendingRef.current = false; return; }
+    if (!composerMounted) return;
+    composerFocusPendingRef.current = false;
+    if (editableHasFocus()) return;
+    const frame = requestAnimationFrame(() => inputRef.current?.editor?.commands.focus(undefined, { scrollIntoView: false }));
+    return () => cancelAnimationFrame(frame);
+  }, [composerMounted, isFocused]);
 
   // A jump from a page's source: scroll to the cited message once, then put the
   // cursor in the composer (Continue) or keep it out (Open full chat).
@@ -2247,7 +2342,9 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
     // allowed.
     if (!raw && pending.length === 0 && pendingAttachments.length === 0) return;
     clearComposerDraft();
-    // A phone composer rests as one row again once the message is on its way.
+    // A phone composer rests as one row again once the message is on its way;
+    // a desktop one lets its height settle to the emptied field. The field
+    // empties a frame later (the draft store commits on the next frame).
     composerHandle.current?.settle();
     const attachmentsForSend = pendingAttachments.map(p => ({ name: p.name, absPath: p.absPath, relPath: p.relPath }));
     // Attachments stay scoped to this turn — the agent reads them via the
@@ -2505,11 +2602,16 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
         onClickCapture={(e) => {
           // Capture runs before the toggle's own handler (which may stop
           // propagation), so this is the height before the click's change.
-          const record = { scrollHeight: e.currentTarget.scrollHeight };
+          const block = e.target instanceof Element ? e.target.closest<HTMLElement>('[data-msg-id]') : null;
+          const record: UserClickLayout = {
+            scrollHeight: e.currentTarget.scrollHeight,
+            block,
+            blockHeight: block?.offsetHeight ?? 0,
+          };
           userClickLayoutRef.current = record;
-          requestAnimationFrame(() => requestAnimationFrame(() => {
+          window.setTimeout(() => {
             if (userClickLayoutRef.current === record) userClickLayoutRef.current = null;
-          }));
+          }, USER_CLICK_LAYOUT_WINDOW_MS);
         }}
         onKeyDown={markUserScrollIntentFromKey}
         onScroll={(e) => {
@@ -2551,10 +2653,11 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
             prefs.terminalDensity === 'dense' ? 22 : prefs.terminalDensity === 'compact' ? 24 : 32,
           paddingRight:
             prefs.terminalDensity === 'dense' ? 22 : prefs.terminalDensity === 'compact' ? 24 : 32,
-          // Reserve clearance equal to the measured composer height + 12px top
-          // gutter + 12px breathing buffer so the last message scrolls clear.
+          // Reserve clearance equal to the measured composer height + the
+          // card's bottom inset + the tail gap, so the last line of content
+          // scrolls clear of the card rather than resting against it.
           // A docked phone selection can add room below it (SelectionActions).
-          paddingBottom: `calc(${n.pendingPermission ? 12 : composerHeight + 24}px + var(${DOCK_ROOM_VAR}, 0px))`,
+          paddingBottom: `calc(${composerMounted ? composerHeight + COMPOSER_CLEARANCE : COMPOSER_BOTTOM_INSET}px + var(${DOCK_ROOM_VAR}, 0px))`,
           fontSize:
             prefs.terminalDensity === 'dense'
               ? 11
@@ -2579,7 +2682,7 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
           contentStyle={innerWrap}
           streaming={streaming}
           viewportHeight={viewportH}
-          bottomClearance={n.pendingPermission ? 12 : composerHeight + 24}
+          bottomClearance={composerMounted ? composerHeight + COMPOSER_CLEARANCE : COMPOSER_BOTTOM_INSET}
           onRetryTurn={handleRetryTurn}
           onRunAgain={handleRunAgain}
           onEditUserMessage={handleEditUserMessage}
@@ -2598,7 +2701,17 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
           onTestConnection={handleTestConnection}
         />
       </div>
-      {!n.pendingPermission && (
+      <MergeBanner nodeId={nodeId} />
+      <AnimatePresence initial={false} mode="wait">
+      {n.pendingPermission ? (
+        <PermissionSlot key="permission" room={composerHeight + 12} onLeave={recordSlotSwap}>
+          <PermissionBanner
+            permission={n.pendingPermission}
+            onRespond={(optionId) => resolvePermission(nodeId, optionId)}
+          />
+        </PermissionSlot>
+      ) : (
+      <ComposerSlot key="composer">
       <div
         aria-hidden
         style={{
@@ -2612,11 +2725,8 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
           pointerEvents: 'none',
         }}
       />
-      )}
-      <MergeBanner nodeId={nodeId} />
-      {!n.pendingPermission && (
       <ComposerShell
-        ref={composerHandle}
+        ref={composerHandleRef}
         position="absolute"
         density={prefs.terminalDensity}
         contentMaxWidth={contentMaxWidth ?? null}
@@ -2780,7 +2890,9 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
           </>
         }
       />
+      </ComposerSlot>
       )}
+      </AnimatePresence>
       <PaneFind
         open={findOpen}
         node={n}
@@ -2803,12 +2915,6 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
       />
       </div>
 
-      {n.pendingPermission && (
-        <PermissionBanner
-          permission={n.pendingPermission}
-          onRespond={(optionId) => resolvePermission(nodeId, optionId)}
-        />
-      )}
       {/* The ask_user card renders inline in the message flow (see
           InlineUserInputSegment in MessageBlock), not as a docked overlay, so
           it scrolls with the transcript and never shifts the page or hides
@@ -2856,6 +2962,75 @@ function TPane({ nodeId, contentMaxWidth, embedded = false, allowEmbeddedAttachm
       <PaneDropIndicator side={paneDropSide} />
       <FileDropOverlay visible={dropzoneVisible} fileCount={droppedFileCount} />
     </div>
+  );
+}
+
+/** The user is typing somewhere (an input, a textarea, our composer). */
+function editableHasFocus(): boolean {
+  const active = document.activeElement as HTMLElement | null;
+  if (!active) return false;
+  const tag = active.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || active.isContentEditable;
+}
+
+/*
+ * The bottom of a pane is one slot (AnimatePresence mode="wait"): the
+ * composer or, while the agent waits on an approval, the permission banner
+ * in its place. The outgoing side fades and stops being live at once (inert,
+ * hidden from assistive tech: a stale Allow must not answer twice); then the
+ * incoming side comes in. The composer floats over the transcript with a
+ * matching bottom clearance while the banner takes room in the pane's flow,
+ * so the banner grows from the room the composer took (card + gutter) to its
+ * own height and gives that room back as it leaves. The transcript's bottom
+ * edge therefore moves once, smoothly, and the follow pin tracks it through
+ * the viewport's resize. A pane that mounts with either side shows it as it
+ * is (initial={false}).
+ */
+const SLOT_FADE_OUT = { duration: DUR.soft, ease: EASE.out };
+const SLOT_FADE_IN = { duration: 0.14, ease: 'linear' } as const;
+
+function ComposerSlot({ children }: { children: React.ReactNode }) {
+  const present = useIsPresent();
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1, transition: SLOT_FADE_IN }}
+      exit={{ opacity: 0, transition: SLOT_FADE_OUT }}
+      inert={!present}
+      aria-hidden={present ? undefined : true}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function PermissionSlot({ room, onLeave, children }: { room: number; onLeave: () => void; children: React.ReactNode }) {
+  const present = useIsPresent();
+  // Runs in the commit that removes the banner, before its box leaves the
+  // DOM and the composer takes its place.
+  useLayoutEffect(() => () => onLeave(), [onLeave]);
+  return (
+    <motion.div
+      initial={{ height: room, opacity: 0 }}
+      animate={{
+        height: 'auto',
+        opacity: 1,
+        transition: {
+          height: { duration: DUR.enter, ease: EASE.drawer },
+          opacity: { ...SLOT_FADE_IN, delay: 0.06 },
+        },
+      }}
+      exit={{
+        height: room,
+        opacity: 0,
+        transition: { height: { duration: DUR.collapse, ease: EASE.drawer }, opacity: SLOT_FADE_OUT },
+      }}
+      inert={!present}
+      aria-hidden={present ? undefined : true}
+      style={{ overflow: 'hidden', flexShrink: 0 }}
+    >
+      {children}
+    </motion.div>
   );
 }
 

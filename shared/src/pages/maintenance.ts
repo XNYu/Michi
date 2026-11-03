@@ -128,6 +128,56 @@ export interface MaintenanceWorkspaceResponse {
   catchUpSuggestions?: MaintenanceCatchupSuggestion[];
   /** What runs maintenance on this backend: the Meta agent's resolved runtime (Settings › Meta agent). Absent from older backends. */
   runtime?: MetaAgentResolvedRuntime;
+  /** The user's instructions for every Meta agent run in this workspace. Absent from older backends. */
+  instructions?: MaintenanceWorkspaceInstructions | null;
+  /** Timed checks of outside sources. Absent from older backends. */
+  watches?: MaintenanceWatch[];
+}
+
+export const MAINTENANCE_WATCH_LIMITS = Object.freeze({
+  maxWatches: 10,
+  titleMaxLength: 120,
+  instructionsMaxLength: 4000,
+  workspaceInstructionsMaxLength: 4000,
+  minIntervalMinutes: 15,
+  maxIntervalMinutes: 7 * 24 * 60,
+  /** A watch pauses itself after this many failed checks in a row. */
+  pauseAfterFailures: 3,
+});
+
+export interface MaintenanceWorkspaceInstructions {
+  text: string;
+  revision: number;
+  updatedAt: number;
+}
+
+/** `interrupted`: the check's run ended (a restart or a timeout) before it settled. */
+export type MaintenanceWatchRunState = 'running' | 'succeeded' | 'failed' | 'interrupted';
+
+export interface MaintenanceWatchRunSummary {
+  state: MaintenanceWatchRunState;
+  startedAt: number;
+  finishedAt: number | null;
+  summary: string | null;
+  error: string | null;
+}
+
+export interface MaintenanceWatch {
+  id: string;
+  title: string;
+  /** What to check and where to record it, in the user's words. */
+  instructions: string;
+  intervalMinutes: number;
+  enabled: boolean;
+  revision: number;
+  /** Set when the watch paused itself after repeated failures. */
+  pausedReason: string | null;
+  runRequested: boolean;
+  /** When the next check is due; null while disabled. */
+  nextCheckAt: number | null;
+  lastRun: MaintenanceWatchRunSummary | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface MaintenanceCatchupSuggestion {

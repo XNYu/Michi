@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
+import { AnimatePresence, PresenceContext, motion } from 'motion/react';
 import type { ChatMessage } from '../../state/chatTypes';
 import { deriveDiffReceipt } from '../../lib/turnDiffReceipt';
+import { EASE } from '../../motion/tokens';
+import { Reveal } from './agentBlockMotion';
 import { DiffModal } from './DiffModal';
 
 export interface DiffReceiptProps {
@@ -8,7 +11,21 @@ export interface DiffReceiptProps {
   message: ChatMessage;
   /** Workspace owning the pane — needed for the click-to-diff endpoint. */
   workspaceId: string;
+  /** Grow in on mount: the turn just ended on screen (read on mount only).
+   *  A receipt there when the transcript opens renders settled. */
+  enter?: boolean;
 }
+
+/** A receipt arriving at the turn's end grows in under the reply (180ms). */
+const RECEIPT_FROM = { height: 0, opacity: 0, overflow: 'hidden' } as const;
+const RECEIPT_TO = {
+  height: 'auto',
+  opacity: 1,
+  transition: { height: { duration: 0.18, ease: EASE.out }, opacity: { duration: 0.14, ease: 'linear' } },
+  transitionEnd: { overflow: 'visible' },
+} as const;
+/** Keeps the receipt's margin inside the growing box, clipping or not. */
+const RECEIPT_GROW_STYLE: React.CSSProperties = { display: 'flow-root' };
 
 /**
  * Turn diff receipt — a compact "N files changed (+X −Y)" chip rendered
@@ -18,10 +35,12 @@ export interface DiffReceiptProps {
  * Renders nothing when the turn had no successful write/edit tool calls.
  * The caller gates on turn completion (status !== 'streaming').
  */
-export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
+export function DiffReceipt({ message, workspaceId, enter = false }: DiffReceiptProps) {
   const receipt = useMemo(() => deriveDiffReceipt(message), [message]);
   const [expanded, setExpanded] = useState(false);
   const [diffPath, setDiffPath] = useState<string | null>(null);
+  // Decided once, so the element tree never changes under the receipt.
+  const [grows] = useState(enter);
 
   if (!receipt) return null;
 
@@ -33,7 +52,7 @@ export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
   // click-through diff (live `git diff`) is the source of truth.
   const showTotals = files.every((f) => f.countsKnown);
 
-  return (
+  const card = (
     <div
       data-testid="diff-receipt"
       style={{
@@ -80,7 +99,8 @@ export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
         </span>
       </button>
 
-      {expanded && (
+      {/* The file list opens and closes as a height disclosure (260/160ms). */}
+      <Reveal show={expanded}>
         <div style={{ marginTop: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
           {files.map((f) => (
             <button
@@ -117,15 +137,28 @@ export function DiffReceipt({ message, workspaceId }: DiffReceiptProps) {
             </button>
           ))}
         </div>
-      )}
+      </Reveal>
 
-      {diffPath && (
-        <DiffModal
-          workspaceId={workspaceId}
-          filePath={diffPath}
-          onClose={() => setDiffPath(null)}
-        />
-      )}
+      {/* ModalShell plays its exit (110ms) when it leaves this presence. */}
+      <AnimatePresence>
+        {diffPath && (
+          <DiffModal
+            key={diffPath}
+            workspaceId={workspaceId}
+            filePath={diffPath}
+            onClose={() => setDiffPath(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+  if (!grows) return card;
+  return (
+    // Its own entrance: an enclosing AnimatePresence child must not settle it.
+    <PresenceContext.Provider value={null}>
+      <motion.div initial={RECEIPT_FROM} animate={RECEIPT_TO} style={RECEIPT_GROW_STYLE}>
+        {card}
+      </motion.div>
+    </PresenceContext.Provider>
   );
 }

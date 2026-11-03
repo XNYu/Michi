@@ -1,0 +1,7 @@
+/* The frozen copy of an answered ask card (UserInputBanner's hand-off to its
+   receipt) draws its text as generated content, so the copy looks like the
+   card for its ~200ms but is not findable text: find in page, Testing Library
+   and Playwright text lookups only see the receipt. */
+.ask-card-ghost [data-ask-ghost-text]::before {
+  content: attr(data-ask-ghost-text);
+}

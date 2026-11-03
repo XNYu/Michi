@@ -1,5 +1,6 @@
 import React from 'react';
 import { act, createEvent, fireEvent, render, screen } from '@testing-library/react';
+import { MotionConfig } from 'motion/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DrawerShell } from './DrawerShell';
 
@@ -27,6 +28,30 @@ describe('DrawerShell presence', () => {
     expect(panel.isConnected).toBe(true);
     finishTransform(panel);
     expect(panel.isConnected).toBe(false);
+    expect(presence).toHaveBeenLastCalledWith(false);
+  });
+
+  it('keeps the closing scrim click-through while it fades with the panel', () => {
+    const close = vi.fn();
+    const drawer = (open: boolean) => <DrawerShell open={open} onClose={close} title="Settings">Content</DrawerShell>;
+    const view = render(drawer(true));
+    const scrim = document.querySelector('.drawer-shell-scrim') as HTMLElement;
+    view.rerender(drawer(false));
+    expect(scrim.isConnected).toBe(true);
+    expect(scrim.getAttribute('data-state')).toBe('closed');
+    fireEvent.mouseDown(scrim);
+    expect(close).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(500));
+    expect(scrim.isConnected).toBe(false);
+  });
+
+  it('closes on the spot when the in-app Reduce motion preference is on', () => {
+    const presence = vi.fn();
+    const drawer = (open: boolean) => <MotionConfig reducedMotion="always"><DrawerShell open={open} onClose={vi.fn()} title="Artifacts" onPresenceChange={presence}>Content</DrawerShell></MotionConfig>;
+    const view = render(drawer(true));
+    expect(screen.getByRole('dialog').getAttribute('data-motion')).toBe('instant');
+    view.rerender(drawer(false));
+    expect(document.querySelector('.drawer-shell-panel')).toBeNull();
     expect(presence).toHaveBeenLastCalledWith(false);
   });
 

@@ -8,3 +8,39 @@
 }
 .ui-scrim--modal[data-layer='window'] { z-index: var(--z-window-scrim); }
 .ui-modal-positioner[data-layer='window'] { z-index: var(--z-window); }
+
+/* Frozen glass (useFrozenGlass.tsx). While the window is captured neither the
+   scrim nor the panel is drawn (the panel is laid out and focused), so the
+   capture is the page as it was. Then the live backdrop-filter is replaced by
+   the pre-blurred capture, the scrim's dim and the same .term-glass tint,
+   inside the panel's own stacking context. */
+.ui-scrim--modal[data-glass='capturing'],
+.ui-modal-panel[data-glass='capturing'] {
+  opacity: 0 !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.ui-modal-panel[data-glass='frozen'] {
+  isolation: isolate;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.ui-frozen-glass {
+  position: absolute;
+  inset: -1px; /* under the 1px border too */
+  z-index: -1;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.ui-frozen-glass__image { position: absolute; }
+.ui-frozen-glass__image > canvas { display: block; width: 100%; height: 100%; }
+.ui-frozen-glass__dim { position: absolute; inset: 0; background: var(--scrim-modal); }
+.ui-frozen-glass__tint.term-glass {
+  position: absolute;
+  inset: 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}

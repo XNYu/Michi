@@ -388,10 +388,13 @@ export default function CommandPalette({
   // type a filter term and immediately press Enter to run the top match.
   // When the results include a workspace match, auto-focus it so Enter
   // switches workspaces without extra arrow-key navigation.
+  // Keyed on the index, not on `visible`: a reply streaming in any pane gives
+  // `visible` a new identity many times a second, and resetting on each one
+  // put the highlight (and the list's scroll) back on the first row.
+  const workspaceIdx = useMemo(() => visible.findIndex((c) => c.group === 'workspace'), [visible]);
   useEffect(() => {
-    const wsIdx = visible.findIndex((c) => c.group === 'workspace');
-    setActive(wsIdx >= 0 ? wsIdx : 0);
-  }, [query, visible]);
+    setActive(workspaceIdx >= 0 ? workspaceIdx : 0);
+  }, [query, workspaceIdx]);
 
   useEffect(() => {
     if (active >= totalRows) setActive(0);
@@ -487,6 +490,8 @@ export default function CommandPalette({
       titleGlyph="▸"
       width={620}
       anchor="top"
+      motion="enter"
+      glass="frozen"
     >
         <div style={PROMPT_ROW}>
           <PaletteSearchGlyph />

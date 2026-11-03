@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
+import { AnimatePresence, PresenceContext, motion, useIsPresent, type Variants } from 'motion/react';
+import { EASE, TRANSITION } from '../../../motion/tokens';
 import TPane from '../TPane';
 import { MichiSectionLabel } from '../content/MichiSectionLabel';
 import { BorderBtn } from '../primitives';
@@ -51,6 +53,21 @@ import './assistant.css';
 
 /** How long the first open waits for the backend before showing a skeleton. */
 export const FIRST_PROBE_GRACE_MS = 250;
+
+/**
+ * ⌘J opens and closes the panel many times a day: short, no bounce, grown
+ * from its bottom-right anchor. A second ⌘J mid-way reverses it in place
+ * (AnimatePresence brings the leaving panel back).
+ */
+const PANEL_VARIANTS: Variants = {
+  hidden: { opacity: 0, scale: 0.97, y: 6 },
+  shown: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.16, ease: EASE.out } },
+  gone: { opacity: 0, scale: 0.98, y: 4, transition: TRANSITION.exit },
+};
+const PANEL_ORIGIN = { originX: 1, originY: 1 } as const;
+const LEAVING_STYLE = { ...PANEL_ORIGIN, pointerEvents: 'none' } as const;
+/** The conversation replacing the skeleton. */
+const CONTENT_FADE = { duration: 0.12, ease: 'linear' } as const;
 
 /**
  * An Esc pressed outside the panel (focus on the page, not in a text field)
@@ -131,10 +148,13 @@ function focusComposerSoon(root: HTMLElement | (() => HTMLElement | null) | null
   return () => window.clearTimeout(timer);
 }
 
-/** The assistant's pane in the grid (not the panel's own TPane). */
+/**
+ * The assistant's pane in the grid (not the panel's own TPane, also while the
+ * panel is leaving and no longer carries data-assistant-panel).
+ */
 function gridPaneElement(nodeId: string): HTMLElement | null {
   for (const el of document.querySelectorAll<HTMLElement>('[data-node-id]')) {
-    if (el.dataset.nodeId === nodeId && !isInAssistantPanel(el)) return el;
+    if (el.dataset.nodeId === nodeId && !isInAssistantPanel(el) && !el.closest('.assistant-panel')) return el;
   }
   return null;
 }
@@ -212,9 +232,15 @@ function AssistantPanel({
   openFocusSeq: number;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // False while the closed panel plays its exit: it is no longer a layer then
+  // (no Esc, ⌘W, focus or pointer), only its picture fading out.
+  const present = useIsPresent();
   const nodeId = info?.nodeId ?? null;
   const { state: nodeState, retry: retryNode } = useAssistantNode(info);
   const ready = status === 'ready' && nodeState === 'ready' && !!nodeId;
+  // The conversation fades in over a skeleton or error line this panel showed.
+  const [placeholderShown, setPlaceholderShown] = useState(!ready);
+  if (!ready && !placeholderShown) setPlaceholderShown(true);
   const composer = useAssistantComposer(nodeId);
   // Telling an injected prompt from the user's text reads the draft as the
   // store holds it at that moment: every edit lands there synchronously,
@@ -225,10 +251,11 @@ function AssistantPanel({
     selectProject, openPane, openPaneInTree, activateTree, setFocusedNodeId, setComposerDraft,
   } = useChatActions();
 
-  // What's on screen follows the user while the panel is open.
+  // What's on screen follows the user while the panel is open (not while it
+  // leaves: "Open as pane" has just told the assistant there is no page).
   useEffect(() => {
-    if (nodeId && livePage) setAssistantPage(nodeId, livePage);
-  }, [nodeId, livePage]);
+    if (present && nodeId && livePage) setAssistantPage(nodeId, livePage);
+  }, [present, nodeId, livePage]);
 
   // A prompt put in the composer for a page the user has left goes, unless
   // they made it their own. Reads the store, not this render: a request
@@ -252,15 +279,38 @@ function AssistantPanel({
   }, [nodeId, readNode, setComposerDraft]);
 
   // Closing hands focus back to where it was when the panel opened, when it
-  // is still inside the panel (a dismissal, not a click elsewhere).
+  // is still inside the panel (a dismissal, not a click elsewhere). This
+  // happens the moment the panel closes (presence ends), not after its exit,
+  // and in the layout phase: React puts back the focus it saw before the
+  // commit, and the leaving panel's composer is still in the document. The
+  // leaving panel is then inert. A ⌘J that brings it back notes again where
+  // the focus is to return to.
+  const returnToRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const root = rootRef.current;
-    const previous = document.activeElement;
-    const returnTo = previous instanceof HTMLElement && previous !== document.body && !isInAssistantPanel(previous)
-      ? previous
-      : null;
-    returnFocusOnClose = true;
+    if (present) {
+      const previous = document.activeElement;
+      returnToRef.current = previous instanceof HTMLElement && previous !== document.body && !isInAssistantPanel(previous)
+        ? previous
+        : null;
+      returnFocusOnClose = true;
+      return undefined;
+    }
+    if (!root) return undefined;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && root.contains(focused)) {
+      const returnTo = returnToRef.current;
+      if (returnFocusOnClose && returnTo?.isConnected) returnTo.focus();
+      else focused.blur();
+    }
+    root.setAttribute('inert', '');
+    return () => root.removeAttribute('inert');
+  }, [present]);
+  // Unmounted while still open (the shell leaves for Spaces): the same hand-back.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
     return () => {
+      const returnTo = returnToRef.current;
       if (!returnFocusOnClose || !returnTo?.isConnected) return;
       if (root?.contains(document.activeElement)) returnTo.focus();
     };
@@ -269,14 +319,14 @@ function AssistantPanel({
   // Open requests (Ask on a block, Hand to agent…) wait for the node.
   const [requestFocusSeq, setRequestFocusSeq] = useState(0);
   useEffect(() => {
-    if (!ready || !nodeId) return;
+    if (!present || !ready || !nodeId) return;
     const requests = takeRequests();
     if (requests.length === 0) return;
     applyAssistantRequests(nodeId, requests, livePage, setComposerDraft, true);
     setRequestFocusSeq((n) => n + 1);
     // takeRequests drains a ref; requestSeq says there is something new in it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, nodeId, requestSeq]);
+  }, [present, ready, nodeId, requestSeq]);
 
   // The composer takes focus when the user opens the panel and after a request
   // lands — not when the panel comes back after a reload or follows a reset,
@@ -284,10 +334,10 @@ function AssistantPanel({
   const focusKey = `${openFocusSeq}:${requestFocusSeq}`;
   const focusedKeyRef = useRef('0:0');
   useEffect(() => {
-    if (!ready || focusKey === focusedKeyRef.current) return;
+    if (!present || !ready || focusKey === focusedKeyRef.current) return;
     focusedKeyRef.current = focusKey;
     return focusComposerSoon(rootRef.current);
-  }, [ready, focusKey]);
+  }, [present, ready, focusKey]);
 
   const expand = () => {
     if (!info) return;
@@ -349,71 +399,89 @@ function AssistantPanel({
 
   const caption = assistantPageCaption(composer.page);
   return (
-    <div
+    <motion.div
       ref={rootRef}
       className="assistant-panel"
       role="complementary"
       aria-label="Assistant"
-      data-assistant-panel=""
+      // Esc and ⌘W find the panel by this attribute: the leaving one is not it.
+      data-assistant-panel={present ? '' : undefined}
+      aria-hidden={present ? undefined : true}
+      variants={PANEL_VARIANTS}
+      initial="hidden"
+      animate="shown"
+      exit="gone"
+      style={present ? PANEL_ORIGIN : LEAVING_STYLE}
       onKeyDown={onKeyDown}
     >
-      <div className="assistant-panel__head">
-        <MichiSectionLabel label={caption ? `Assistant · on ${caption}` : 'Assistant'} />
-        <button
-          type="button"
-          className="assistant-panel__btn"
-          aria-label="New conversation"
-          title="New conversation"
-          aria-busy={starting || undefined}
-          disabled={!ready || answering || starting}
-          onClick={() => { void startOver(); }}
+      {/* The panel's own presence stops here: the conversation's motion
+          (TPane) enters and leaves as it does in a grid pane, neither held
+          by the panel's exit nor kept from animating after a reload. */}
+      <PresenceContext.Provider value={null}>
+        <div className="assistant-panel__head">
+          <MichiSectionLabel label={caption ? `Assistant · on ${caption}` : 'Assistant'} />
+          <button
+            type="button"
+            className="assistant-panel__btn"
+            aria-label="New conversation"
+            title="New conversation"
+            aria-busy={starting || undefined}
+            disabled={!ready || answering || starting}
+            onClick={() => { void startOver(); }}
+          >
+            <Plus size={13} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="assistant-panel__btn"
+            aria-label="Open as pane"
+            title="Open as pane"
+            disabled={!ready}
+            onClick={expand}
+          >
+            <ExternalLinkIcon size={12} />
+          </button>
+          <button
+            type="button"
+            className="assistant-panel__btn"
+            aria-label="Close"
+            title="Close"
+            onClick={closeAssistantPanel}
+          >
+            ×
+          </button>
+        </div>
+        <motion.div
+          key={ready && nodeId ? 'conversation' : 'status'}
+          className="assistant-panel__body"
+          initial={ready && placeholderShown ? { opacity: 0 } : false}
+          animate={{ opacity: 1 }}
+          transition={CONTENT_FADE}
         >
-          <Plus size={13} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="assistant-panel__btn"
-          aria-label="Open as pane"
-          title="Open as pane"
-          disabled={!ready}
-          onClick={expand}
-        >
-          <ExternalLinkIcon size={12} />
-        </button>
-        <button
-          type="button"
-          className="assistant-panel__btn"
-          aria-label="Close"
-          title="Close"
-          onClick={closeAssistantPanel}
-        >
-          ×
-        </button>
-      </div>
-      <div className="assistant-panel__body">
-        {ready && nodeId ? (
-          <AssistantLinkScope>
-            {/* A message sent while starting over would land in the conversation being archived. */}
-            <TPane nodeId={nodeId} embedded composerDisabled={starting} />
-          </AssistantLinkScope>
-        ) : status === 'error' || nodeState === 'failed' ? (
-          <div className="assistant-panel__status">
-            <div className="assistant-panel__line" role="status">
-              <span title={status === 'error' ? error ?? undefined : undefined}>
-                {status === 'error' ? "Couldn't reach the assistant" : "Couldn't load the conversation"}
-              </span>
-              <BorderBtn onClick={() => { if (status === 'error') void loadAssistant(); else retryNode(); }}>Retry</BorderBtn>
+          {ready && nodeId ? (
+            <AssistantLinkScope>
+              {/* A message sent while starting over would land in the conversation being archived. */}
+              <TPane nodeId={nodeId} embedded composerDisabled={starting} />
+            </AssistantLinkScope>
+          ) : status === 'error' || nodeState === 'failed' ? (
+            <div className="assistant-panel__status">
+              <div className="assistant-panel__line" role="status">
+                <span title={status === 'error' ? error ?? undefined : undefined}>
+                  {status === 'error' ? "Couldn't reach the assistant" : "Couldn't load the conversation"}
+                </span>
+                <BorderBtn onClick={() => { if (status === 'error') void loadAssistant(); else retryNode(); }}>Retry</BorderBtn>
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="assistant-panel__status" aria-busy="true" aria-label="Loading the assistant">
-            <div className="assistant-skeleton" style={{ width: '62%' }} />
-            <div className="assistant-skeleton" style={{ width: '84%' }} />
-            <div className="assistant-skeleton" style={{ width: '48%' }} />
-          </div>
-        )}
-      </div>
-    </div>
+          ) : (
+            <div className="assistant-panel__status" aria-busy="true" aria-label="Loading the assistant">
+              <div className="assistant-skeleton" style={{ width: '62%' }} />
+              <div className="assistant-skeleton" style={{ width: '84%' }} />
+              <div className="assistant-skeleton" style={{ width: '48%' }} />
+            </div>
+          )}
+        </motion.div>
+      </PresenceContext.Provider>
+    </motion.div>
   );
 }
 
@@ -495,16 +563,33 @@ export function AssistantPanelHost({ page }: { page: PageId }) {
     return () => window.clearTimeout(timer);
   }, [probing]);
 
-  if (!snap.open || inGrid || snap.status === 'unsupported' || (probing && !probeShown)) return null;
+  const { status } = snap;
+  const shown = snap.open && !inGrid && status !== 'unsupported' && !(probing && !probeShown);
+  // Handed to its pane in the grid ("Open as pane", the pane already there):
+  // the panel goes in the same commit as the pane comes, with no exit. Its
+  // TPane saves the scroll position on unmount that the pane's TPane then
+  // restores on mount; a panel still on screen would leave an older one.
+  // A new key unmounts AnimatePresence and the leaving panel with it.
+  const [presenceKey, setPresenceKey] = useState(0);
+  const [seen, setSeen] = useState({ shown, inGrid });
+  if (seen.shown !== shown || seen.inGrid !== inGrid) {
+    setSeen({ shown, inGrid });
+    if ((seen.shown && !shown && !returnFocusOnClose) || (inGrid && !seen.inGrid)) setPresenceKey((n) => n + 1);
+  }
   return (
-    <AssistantPanel
-      info={snap.info}
-      status={snap.status}
-      error={snap.error}
-      livePage={livePage}
-      takeRequests={takeRequests}
-      requestSeq={requestSeq}
-      openFocusSeq={snap.focusSeq}
-    />
+    <AnimatePresence key={presenceKey} initial={false}>
+      {status !== 'unsupported' && shown ? (
+        <AssistantPanel
+          key="assistant-panel"
+          info={snap.info}
+          status={status}
+          error={snap.error}
+          livePage={livePage}
+          takeRequests={takeRequests}
+          requestSeq={requestSeq}
+          openFocusSeq={snap.focusSeq}
+        />
+      ) : null}
+    </AnimatePresence>
   );
 }

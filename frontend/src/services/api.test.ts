@@ -20,6 +20,8 @@ describe('ensureSession', () => {
     ['RUNTIME_SESSIONS_BUSY', 'codex', 'claude', 'Codex'],
     ['RUNTIME_SESSIONS_BUSY', 'claude', 'codex', 'Claude'],
     ['RUNTIME_SESSIONS_BUSY', 'kiro', undefined, 'Kiro'],
+    ['RUNTIME_SESSIONS_BUSY', 'crew', undefined, 'Kiro Crew'],
+    ['RUNTIME_SESSIONS_BUSY', undefined, 'antigravity', 'Antigravity'],
     ['CLAUDE_SESSIONS_BUSY', undefined, 'codex', 'Codex'],
     ['CLAUDE_SESSIONS_BUSY', undefined, undefined, 'Agent'],
   ] as const)('labels capacity errors using the runtime: %s %s %s', async (code, runtimeId, requestedRuntime, label) => {

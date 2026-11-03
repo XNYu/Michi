@@ -11,6 +11,7 @@ import {
   workflowNowLine,
 } from './workflowPresentation';
 import { WorkflowApprovals } from './WorkflowApprovals';
+import { FadeOnChange, RevealOnShow } from '../agentBlockMotion';
 
 /**
  * A workflow launched by this message, under the chip that launched it.
@@ -66,7 +67,7 @@ export function WorkflowActions({ run, pending, onAction }: {
   );
 }
 
-/** One cell per agent/step, colored by status; hover names it. */
+/** One cell per agent/step, colored by status (a change eases in); hover names it. */
 function ProgressStrip({ run }: { run: WorkflowRunDtoV1 }) {
   const leaves = run.nodes.filter((node) => node.kind === 'agent' || node.kind === 'step');
   if (leaves.length === 0) return null;
@@ -83,6 +84,7 @@ function ProgressStrip({ run }: { run: WorkflowRunDtoV1 }) {
             height: 3,
             background: node.status === 'queued' || node.status === 'skipped' ? 'var(--term-line)' : NODE_STATUS_COLOR[node.status],
             opacity: node.status === 'completed' ? 0.55 : 1,
+            transition: 'background-color var(--t-enter) ease-out, opacity var(--t-enter) ease-out',
           }}
         />
       ))}
@@ -118,28 +120,34 @@ export function WorkflowRunCard({ run, pending, error, onOpen, onAction, onAnswe
         <span style={{ fontSize: 'var(--fs-2xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase', color: 'var(--term-muted)', border: '1px solid var(--term-line-s)', padding: '1px 5px', flexShrink: 0 }}>
           workflow
         </span>
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, color, fontSize: 'var(--fs-xs)', fontWeight: 700, letterSpacing: 'var(--ls-wide)', textTransform: 'uppercase', flexShrink: 0 }}>
+        {/* A new status fades in in its colour; sections that appear later grow in. */}
+        <FadeOnChange
+          k={run.status}
+          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, color, fontSize: 'var(--fs-xs)', fontWeight: 700, letterSpacing: 'var(--ls-wide)', textTransform: 'uppercase', flexShrink: 0 }}
+        >
           {live ? <span className={run.status === 'running' ? 'term-dot-i term-dot-i--run' : 'term-dot-i'} aria-hidden /> : null}
           {WORKFLOW_STATUS_LABEL[run.status]}
-        </span>
+        </FadeOnChange>
       </div>
       {run.description && run.description !== run.name && (
         <div style={{ color: 'var(--term-mid)', fontSize: 'var(--fs-sm)', lineHeight: 1.45, marginTop: 4 }}>{run.description}</div>
       )}
       <ProgressStrip run={run} />
-      {nowLine && (
+      <RevealOnShow show={!!nowLine}>
         <div data-testid="workflow-now" style={{ marginTop: 6, fontFamily: MONO, fontSize: 'var(--fs-xs)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           <span style={{ color: 'var(--term-muted)' }}>now ❯ </span>
           <span style={{ color: run.status === 'paused' ? 'var(--term-select)' : 'var(--term-accent)' }}>{nowLine}</span>
         </div>
-      )}
-      {run.approvals?.length ? (
+      </RevealOnShow>
+      <RevealOnShow show={!!run.approvals?.length}>
         <div style={{ marginTop: 8 }}><WorkflowApprovals run={run} busy={pending === 'answer'} onAnswer={onAnswer} /></div>
-      ) : null}
-      {!live && run.statusDetail && run.status !== 'completed' && (
+      </RevealOnShow>
+      <RevealOnShow show={!live && !!run.statusDetail && run.status !== 'completed'}>
         <div style={{ marginTop: 6, fontSize: 'var(--fs-sm)', color: run.status === 'failed' ? 'var(--term-danger)' : 'var(--term-muted)' }}>{run.statusDetail}</div>
-      )}
-      {error && <div role="alert" style={{ marginTop: 6, fontSize: 'var(--fs-xs)', color: 'var(--term-danger)' }}>{error}</div>}
+      </RevealOnShow>
+      <RevealOnShow show={!!error}>
+        <div role="alert" style={{ marginTop: 6, fontSize: 'var(--fs-xs)', color: 'var(--term-danger)' }}>{error}</div>
+      </RevealOnShow>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, color: 'var(--term-muted)', fontSize: 'var(--fs-xs)', minWidth: 0 }}>
         <span>{RUNTIME_LABEL[run.runtime]}</span>
         {progress.total > 0 && (

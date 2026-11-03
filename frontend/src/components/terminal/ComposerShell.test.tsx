@@ -196,3 +196,163 @@ describe('ComposerShell on a phone', () => {
     expect(collapsed()).toBe(false);
   });
 });
+
+describe('ComposerShell height after a desktop send', () => {
+  type Listener = () => void;
+  interface FakeAnimation { target: Element; keyframes: Keyframe[]; finish: () => void; cancel: () => void }
+  let animations: FakeAnimation[] = [];
+  let observers: { callback: () => void; disconnected: boolean }[] = [];
+  const realObserver = globalThis.ResizeObserver;
+  let height = 120;
+
+  beforeEach(() => {
+    setWidth(1200);
+    animations = [];
+    observers = [];
+    height = 120;
+    globalThis.ResizeObserver = class {
+      private entry: { callback: () => void; disconnected: boolean };
+      constructor(callback: () => void) {
+        this.entry = { callback, disconnected: false };
+        observers.push(this.entry);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() { this.entry.disconnected = true; }
+    } as unknown as typeof ResizeObserver;
+    Element.prototype.animate = function animate(this: Element, keyframes: Keyframe[]) {
+      const listeners: Record<string, Listener> = {};
+      const animation = {
+        target: this,
+        keyframes,
+        addEventListener: (type: string, listener: Listener) => { listeners[type] = listener; },
+        finish: () => listeners.finish?.(),
+        cancel: () => listeners.cancel?.(),
+      };
+      animations.push(animation);
+      return animation as unknown as Animation;
+    } as unknown as Element['animate'];
+  });
+  afterEach(() => {
+    globalThis.ResizeObserver = realObserver;
+    delete (Element.prototype as { animate?: unknown }).animate;
+    delete document.documentElement.dataset.reduceMotion;
+  });
+
+  let preBlocks: React.ReactNode = undefined;
+  let preHeight = 0;
+  beforeEach(() => { preBlocks = undefined; preHeight = 0; });
+
+  // The composer's bottom edge stays at 500; its top follows `height`.
+  const mount = () => {
+    const handle = React.createRef<ComposerShellHandle>();
+    const view = render(<Shell ref={handle} position="absolute" preBlocks={preBlocks} />);
+    const root = document.querySelector('.terminal-composer') as HTMLElement;
+    const rect = (top: number, bottom: number) => ({ top, bottom, height: bottom - top, left: 0, right: 300, width: 300, x: 0, y: top }) as DOMRect;
+    root.getBoundingClientRect = () => rect(500 - height, 500);
+    const pre = root.querySelector<HTMLElement>('.composer-pre-blocks-scroll');
+    if (pre) pre.getBoundingClientRect = () => rect(500 - height + 1, 500 - height + 1 + preHeight);
+    caretRow().getBoundingClientRect = () => rect(500 - height + 1 + preHeight, 500 - 40);
+    const rerender = (next: React.ReactNode) => view.rerender(<Shell ref={handle} position="absolute" preBlocks={next} />);
+    return { handle, root, pre, rerender, frame: root.querySelector('.terminal-composer__morph') as HTMLElement };
+  };
+  const resize = () => act(() => { for (const o of observers) if (!o.disconnected) o.callback(); });
+
+  it('settles the frame and the caret row from the old height once the emptied field lands', () => {
+    const { handle, root, frame } = mount();
+    act(() => handle.current!.settle());
+    expect(observers).toHaveLength(1);
+    resize(); // the observer's first report: nothing has changed yet
+    expect(animations).toHaveLength(0);
+    height = 60;
+    resize();
+    const [frameAnimation, caretAnimation] = animations;
+    expect(frameAnimation.target).toBe(frame);
+    const border = -parseFloat(frame.style.left) || 0;
+    expect(frameAnimation.keyframes).toEqual([{ top: `${60 - 120 - border}px` }, { top: `${-border}px` }]);
+    expect(caretAnimation.target).toBe(caretRow());
+    expect(caretAnimation.keyframes).toEqual([{ transform: 'translateY(-60px)' }, { transform: 'none' }]);
+    expect(root.hasAttribute('data-morphing')).toBe(true);
+    act(() => frameAnimation.finish());
+    expect(root.hasAttribute('data-morphing')).toBe(false);
+    expect(observers[0].disconnected).toBe(true);
+  });
+
+  it('never animates the card while typing, only after a send', () => {
+    mount();
+    height = 60;
+    resize();
+    expect(observers).toHaveLength(0);
+    expect(animations).toHaveLength(0);
+  });
+
+  it('lets growth after a send through at once', () => {
+    const { handle, root } = mount();
+    act(() => handle.current!.settle());
+    height = 180;
+    resize();
+    expect(animations).toHaveLength(0);
+    expect(root.hasAttribute('data-morphing')).toBe(false);
+    expect(observers[0].disconnected).toBe(true);
+  });
+
+  it('ends a running settle at once when the field changes again', () => {
+    const { handle, root } = mount();
+    act(() => handle.current!.settle());
+    height = 60;
+    resize();
+    expect(root.hasAttribute('data-morphing')).toBe(true);
+    height = 80;
+    resize();
+    expect(root.hasAttribute('data-morphing')).toBe(false);
+    expect(observers[0].disconnected).toBe(true);
+  });
+
+  it('snaps under reduced motion', () => {
+    document.documentElement.dataset.reduceMotion = 'on';
+    const { handle } = mount();
+    act(() => handle.current!.settle());
+    expect(observers).toHaveLength(0);
+  });
+
+  it('slides standing pre-blocks down with the caret row', () => {
+    preBlocks = <div>Quote: keep this</div>;
+    preHeight = 30;
+    const { handle, pre } = mount();
+    act(() => handle.current!.settle());
+    height = 60;
+    resize();
+    expect(animations.map((a) => a.target)).toEqual([expect.anything(), pre, caretRow()]);
+    for (const slide of animations.slice(1)) {
+      expect(slide.keyframes).toEqual([{ transform: 'translateY(-60px)' }, { transform: 'none' }]);
+    }
+  });
+
+  it('snaps when a queued message lands with the emptied field (Send next)', () => {
+    preBlocks = <div>Queued: first</div>;
+    preHeight = 30;
+    const { handle, root, rerender } = mount();
+    act(() => handle.current!.settle());
+    // Same commit: the field empties and the queued message appears.
+    rerender(<><div>Queued: first</div><div>Queued: second</div></>);
+    height = 90;
+    resize();
+    expect(animations).toHaveLength(0);
+    expect(root.hasAttribute('data-morphing')).toBe(false);
+    expect(observers[0].disconnected).toBe(true);
+  });
+
+  it('ends a running settle before the phone layout takes the frame', () => {
+    const { handle, root } = mount();
+    act(() => handle.current!.settle());
+    height = 60;
+    resize();
+    expect(root.hasAttribute('data-morphing')).toBe(true);
+    act(() => {
+      setWidth(390);
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(observers[0].disconnected).toBe(true);
+    expect(root.hasAttribute('data-morphing')).toBe(false);
+  });
+});

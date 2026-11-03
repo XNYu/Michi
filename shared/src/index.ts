@@ -19,6 +19,7 @@ export * from './remoteDiagnostics';
 export * from './remoteCredentials';
 export * from './remoteSignIn';
 export * from './remoteUpdate';
+export * from './selfUpdate';
 export * from './content';
 export * from './assistant';
 export * from './metaAgent';

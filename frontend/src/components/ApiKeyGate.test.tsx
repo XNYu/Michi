@@ -135,6 +135,35 @@ describe('ApiKeyGate', () => {
     expect(screen.queryByText('Add a provider key')).toBeNull();
   });
 
+  it('does not reopen a dismissed window from the status of the runtime the user left', async () => {
+    let resolveReload!: (value: AgentStatus) => void;
+    fetchAgentStatus
+      .mockResolvedValueOnce(status({ provider: 'cerebras', model: cerebras.defaultModel, hasRequiredKey: false }))
+      .mockImplementationOnce(() => new Promise<AgentStatus>((resolve) => { resolveReload = resolve; }));
+
+    render(<ApiKeyGate />);
+    expect(await screen.findByText('Add a provider key')).toBeTruthy();
+    await act(async () => { screen.getByRole('button', { name: 'Cancel' }).click(); });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    // Switching to Claude: the gate must wait for Claude's status.
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('michi:reload-agent-status'));
+    });
+    await waitFor(() => expect(fetchAgentStatus).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    await act(async () => {
+      resolveReload(status({
+        runtime: 'claude',
+        label: 'Claude',
+        capabilities: { ...status().capabilities, apiKeys: false },
+        providers: [],
+      }));
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('ignores an older status response that resolves after a provider switch', async () => {
     let resolveInitial!: (value: AgentStatus) => void;
     let resolveReload!: (value: AgentStatus) => void;

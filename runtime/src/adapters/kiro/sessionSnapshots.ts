@@ -37,7 +37,8 @@ export class KiroSessionSnapshots {
     }
     state(sessionId: string, info?: AcpSessionInfo): AgentSessionState {
         const snapshot = this.get(sessionId);
-        const effort = info?.configOptions?.find((option) => option.id === 'effortLevel');
+        const effort = info?.configOptions?.find((option) => option.id === 'effortLevel')
+            ?? info?.configOptions?.find((option) => option.category === 'thought_level');
         return parseSessionState({ runtimeId: this.runtimeId, version: snapshot?.version,
             ...(info?.modes ? { currentModeId: info.modes.currentModeId, availableModes: info.modes.availableModes } : {}),
             ...(info?.models ? { modelId: info.models.currentModelId,

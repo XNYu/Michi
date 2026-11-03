@@ -3,7 +3,8 @@
 .page-changes-history > summary { cursor: pointer; padding: 9px 11px; color: var(--color-fg-muted); font-size: 12px; }
 .page-changes-history[open] > summary { border-bottom: 1px solid var(--color-line); }
 .page-changes-history > .page-change-batch { border: 0; border-radius: 0; background: transparent; }
-.page-change-targets { display: grid; gap: 6px; margin: 8px 0 0; }
+/* A column, not a grid: a suggestion collapsing away takes its gap with it (a negative margin). */
+.page-change-targets { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 0; }
 .page-change-batch { border: 1px solid var(--color-line, var(--line)); border-radius: 10px; overflow: hidden; background: var(--color-surface, var(--surface)); }
 .page-change-batch__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; border-bottom: 1px solid var(--color-line); color: var(--color-fg-muted); font-size: 12px; }
 .page-change-card { display: grid; gap: 9px; padding: 11px; border-bottom: 1px solid var(--color-line, var(--line)); font-size: 13px; }
@@ -34,7 +35,8 @@
 /* Inline: one quiet line under a changed block, or a suggestion card */
 .page-change-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; color: var(--term-muted); font: var(--fs-sm)/1.5 var(--ui-font); }
 .page-change-line > svg { color: var(--term-accent); flex: none; }
-.page-change-line__lead { color: var(--term-accent); }
+.page-change-line__lead { color: var(--term-accent); transition: color 120ms ease; }
+.page-change-line > svg { transition: color 120ms ease; }
 .page-change-line[data-state='reverted'] .page-change-line__lead,
 .page-change-line[data-state='dismissed'] .page-change-line__lead { color: var(--term-muted); }
 .page-change-line[data-state='reverted'] > svg,
@@ -85,4 +87,18 @@
 .page-change-prop__actions > .page-change-primary:hover:not(:disabled) { background: var(--term-accent); filter: brightness(1.05); }
 .page-change-prop__actions > .page-change-quiet { border-color: transparent; background: transparent; color: var(--term-mid); }
 .page-change-prop__actions > button:disabled { opacity: .55; cursor: default; }
+/* A suggestion answered: the chosen action holds (Dismiss takes a quiet fill), the rest fade while it resolves. */
+.page-change-prop__actions > button, .page-change-prop__body, .page-change-prop__from, .page-change-line[data-state='pending'] .page-change-link {
+  transition: opacity 100ms ease, background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.page-change-prop[data-chosen] :is(.page-change-prop__actions > button:not([data-chosen]), .page-change-prop__from) { opacity: .3; }
+.page-change-prop[data-chosen] .page-change-prop__body { opacity: .6; }
+.page-change-prop[data-chosen] .page-change-prop__actions > button[data-chosen] { opacity: 1; }
+.page-change-prop[data-chosen='dismiss'] .page-change-prop__actions > button[data-chosen] { border-color: var(--term-line-s); background: var(--term-alt); color: var(--term-fg); }
+.page-change-line[data-chosen] .page-change-link:not([data-chosen]) { opacity: .3; }
+.page-change-line[data-chosen] .page-change-link[data-chosen] { color: var(--term-accent); text-decoration-color: currentColor; }
+@media (prefers-reduced-motion: reduce) {
+  .page-change-line__lead, .page-change-line > svg, .page-change-prop__actions > button, .page-change-prop__body, .page-change-prop__from,
+  .page-change-line[data-state='pending'] .page-change-link { transition: none; }
+}
 .page-change-prop__from { display: inline-flex; gap: 5px; margin-left: auto; color: var(--term-muted); font-size: var(--fs-sm); }

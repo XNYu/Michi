@@ -48,6 +48,8 @@ import {
   isOwnedLifetimeSender,
   packagedTrayIconPath,
 } from './windowsLifecycle';
+import { mergeFeatureList, michiDisabledFeatures } from './chromiumFeatures';
+import { backdropCaptureBounds, backdropImageWidth } from './backdropCapture';
 
 // Patch PATH from the user's login shell so the forked backend can find
 // kiro-cli (common macOS issue when launched from Finder). fix-path v5 is
@@ -671,118 +673,6 @@ async function waitForBackend(port: number, timeoutMs = 15_000): Promise<void> {
   });
 }
 
-function isExecutable(cand: string): boolean {
-  if (!fs.existsSync(cand)) return false;
-  if (process.platform === 'win32') return true;
-  try { fs.accessSync(cand, fs.constants.X_OK); return true; } catch { return false; }
-}
-
-function candidateBinNames(binName: string): string[] {
-  if (process.platform !== 'win32' || path.extname(binName)) return [binName];
-  return [`${binName}.exe`, `${binName}.cmd`, `${binName}.bat`, binName];
-}
-
-function probePath(binName: string): boolean {
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-    if (!dir) continue;
-    if (candidateBinNames(binName).some((name) => isExecutable(path.join(dir, name)))) return true;
-  }
-  return false;
-}
-
-function probeNamedBins(binName: string, extraFiles: string[] = []): boolean {
-  if (probePath(binName)) return true;
-  const home = os.homedir();
-  const dirs = [
-    path.join(home, '.local', 'bin'),
-    path.join(home, '.toolbox', 'bin'),
-    path.join(home, '.npm-global', 'bin'),
-  ];
-  const extras = [...extraFiles];
-  if (process.platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
-    dirs.unshift(path.join(localAppData, 'Toolbox', 'bin'));
-    dirs.push(path.join(appData, 'npm'));
-  } else {
-    extras.push(`/usr/local/bin/${binName}`, `/opt/homebrew/bin/${binName}`);
-  }
-  if (dirs.some((dir) => candidateBinNames(binName).some((name) => isExecutable(path.join(dir, name))))) {
-    return true;
-  }
-  return extras.some((cand) => fs.existsSync(cand));
-}
-/**
- * Mirror of runtime/src/adapters/kiro/kiroCli.ts findKiroCli() for the
- * packaged-default decision. Kept in sync by hand — both probes look in
- * the same set of locations.
- */
-function probeKiroCli(): boolean {
-  const env = process.env.KIRO_CLI_BIN;
-  if (env && fs.existsSync(env)) return true;
-  const home = os.homedir();
-
-  if (probeNamedBins('kiro-cli')) return true;
-
-  if (process.platform === 'darwin') {
-    const toolsDir = path.join(home, '.toolbox', 'tools', 'kiro-cli');
-    try {
-      for (const v of fs.readdirSync(toolsDir)) {
-        const cand = path.join(toolsDir, v, 'Kiro CLI.app', 'Contents', 'MacOS', 'kiro-cli');
-        if (isExecutable(cand)) return true;
-      }
-    } catch { /* toolsDir may not exist */ }
-  }
-
-  if (process.platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    if (candidateBinNames('kiro-cli').some((name) => isExecutable(path.join(localAppData, 'Kiro-Cli', name)))) {
-      return true;
-    }
-    const toolsDir = path.join(localAppData, 'Toolbox', 'tools', 'kiro-cli');
-    try {
-      for (const v of fs.readdirSync(toolsDir)) {
-        if (candidateBinNames('kiro-cli').some((name) => isExecutable(path.join(toolsDir, v, name)))) {
-          return true;
-        }
-      }
-    } catch { /* toolsDir may not exist */ }
-  }
-
-  return false;
-}
-
-/**
- * Mirror of runtime/src/adapters/codex/codexBinary.ts findCodexBinary() for
- * the packaged-default decision. Kept in sync by hand.
- */
-function probeCodexCli(): boolean {
-  const env = process.env.CODEX_CLI_BIN;
-  if (env && fs.existsSync(env)) return true;
-  return probeNamedBins('codex', [
-    '/Applications/ChatGPT.app/Contents/Resources/codex',
-    '/Applications/Codex.app/Contents/Resources/codex',
-  ]);
-}
-
-/**
- * Mirror of runtime/src/adapters/claude/claudeBinary.ts findClaudeBinary()
- * for the packaged-default decision. Kept in sync by hand.
- */
-function probeClaudeCli(): boolean {
-  const env = process.env.CLAUDE_CLI_BIN;
-  if (env && fs.existsSync(env)) return true;
-  return probeNamedBins('claude');
-}
-
-/** Pick the first installed CLI, falling back to the CLI-free Pi runtime. */
-function detectDefaultRuntime(): string {
-  if (probeCodexCli()) return 'codex';
-  if (probeClaudeCli()) return 'claude';
-  if (probeKiroCli()) return 'kiro';
-  return 'pi';
-}
-
 /**
  * Load a .env file into an object (does NOT pollute process.env).
  * Supports KEY=VALUE, KEY="VALUE", KEY='VALUE', comments (#), blank lines.
@@ -847,12 +737,7 @@ async function forkBackend(): Promise<number | null> {
     elog('INFO', 'boot', 'loaded ~/.michi/.env', { keys: userDotenvKeys.length });
   }
 
-  // Packaged builds select an installed CLI, falling back to Pi.
-  // Dev keeps the agentConfig default (Kiro)
-  // unless the developer explicitly sets MICHI_AGENT_RUNTIME. We pass via
-  // MICHI_DEFAULT_RUNTIME (read by agentConfig.ts) so an existing on-disk
-  // config still wins — only first-run packaged builds with no config see
-  // this default.
+  // Runtime selection belongs to the backend config and the user's setup choice.
   const env: NodeJS.ProcessEnv = {
     ...userDotenv,
     ...process.env,
@@ -876,11 +761,7 @@ async function forkBackend(): Promise<number | null> {
     env.MICHI_STARTUP_TRACE = '1';
     env.MICHI_STARTUP_RUN_ID = startupRunId();
   }
-  if (app.isPackaged && env.MICHI_DEFAULT_RUNTIME == null) {
-    const detected = detectDefaultRuntime();
-    env.MICHI_DEFAULT_RUNTIME = detected;
-    elog('INFO', 'boot', 'default runtime detected', { runtime: detected });
-  }
+
 
   elog('INFO', 'boot', 'forking backend', { entry, port });
   startupMark('backend_fork_start', { entry, port });
@@ -999,7 +880,6 @@ async function ensureServiceRunning(port: number): Promise<boolean> {
     bundlePath: appBundlePath(process.execPath),
     build,
     baseEnv: process.env,
-    defaultRuntime: detectDefaultRuntime(),
   });
   try {
     elog('INFO', 'service', health ? 'restarting background service for this build' : 'starting background service', { port, build });
@@ -1871,6 +1751,26 @@ onDesktopCommand('app:setVibrancy', (_ev, material: string) => {
   }
 });
 
+// Frozen glass: one downscaled capture of the window, blurred by the renderer
+// in place of a live backdrop-filter (see backdropCapture.ts). Null when the
+// window or the rect is gone, or the capture fails; the renderer then keeps
+// its live glass.
+handleDesktopInvoke('app:captureBackdrop', async (event, rect) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return null;
+  const [width, height] = win.getContentSize();
+  const bounds = backdropCaptureBounds(rect, event.sender.getZoomFactor(), { width, height });
+  if (!bounds) return null;
+  try {
+    const image = await event.sender.capturePage(bounds);
+    if (image.isEmpty()) return null;
+    return image.resize({ width: backdropImageWidth(bounds), quality: 'good' }).toDataURL();
+  } catch (err) {
+    elog('WARN', 'glass', 'backdrop capture failed', { error: String(err) });
+    return null;
+  }
+});
+
 async function installDevExtensions(): Promise<void> {
   if (!isDev) return;
   try {
@@ -1888,6 +1788,16 @@ async function installDevExtensions(): Promise<void> {
   } catch (err) {
     console.warn('[devtools] failed to install React DevTools:', err);
   }
+}
+
+// Chromium features must be switched off before the app is ready. Merge with
+// any --disable-features Michi was launched with: a second switch would
+// replace the first. See chromiumFeatures.ts for why each one is off.
+const disabledFeatures = michiDisabledFeatures(process.platform, process.env);
+if (disabledFeatures.length > 0) {
+  const value = mergeFeatureList(app.commandLine.getSwitchValue('disable-features'), disabledFeatures);
+  app.commandLine.appendSwitch('disable-features', value);
+  elog('INFO', 'boot', 'disabled Chromium features', { features: value });
 }
 
 // Single-instance lock: when `michi` (CLI) and Spotlight both launch the same

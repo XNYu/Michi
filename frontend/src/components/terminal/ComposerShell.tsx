@@ -1,6 +1,7 @@
 import './mobile.css';
 import React, {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -12,6 +13,7 @@ import React, {
 } from 'react';
 import { usePhoneLayout } from '../../hooks/usePhoneLayout';
 import { useKeyboardDismiss } from '../../hooks/useKeyboardDismiss';
+import { DUR, EASE } from '../../motion/tokens';
 import { composerMotionAllowed, morphComposer, snapshotComposer, type ComposerSnapshot } from './composerMorph';
 
 export type ComposerShellPosition = 'absolute' | 'static';
@@ -64,7 +66,10 @@ export interface ComposerShellHandle {
   el: HTMLDivElement | null;
   /**
    * After a send on a phone: leave the field, which lowers the keyboard, and
-   * rest as one row again. Does nothing where the composer cannot collapse.
+   * rest as one row again. Where the composer cannot collapse, focus stays
+   * put; the card's height settles to the emptied field instead of snapping
+   * (settleComposerHeight). Call it from the send itself, before the
+   * emptied field reaches the screen.
    */
   settle: () => void;
 }
@@ -74,6 +79,128 @@ const DENSITY_INSET: Record<ComposerShellDensity, number> = {
   compact: 20,
   comfortable: 26,
 };
+
+/**
+ * What moves down with the frame's top edge after a send: the pre-blocks
+ * (queued messages, quotes, attachments) and the caret row, whose emptied
+ * field's first line sits where the frame's top lands.
+ */
+const PRE_BLOCKS = ':scope > .composer-pre-blocks-scroll';
+const CARET_ROW = '.terminal-composer__input';
+/**
+ * How long a send waits for the emptied field to land. The draft store
+ * commits on the next frame and the editor syncs in an effect after that,
+ * so the field shrinks a frame or two after the send itself.
+ */
+const SEND_SETTLE_WINDOW_MS = 400;
+
+interface PreBlocksBox {
+  /** Its top, from the composer's bottom edge (which stays put). */
+  top: number | null;
+  height: number;
+  /** Elements inside: a queued message added under a capped height still counts. */
+  count: number;
+}
+
+interface SettleStart {
+  height: number;
+  /** The caret row's top, from the composer's bottom edge. */
+  caretTop: number | null;
+  pre: PreBlocksBox;
+}
+
+function measurePreBlocks(root: HTMLElement, bottom: number): PreBlocksBox {
+  const pre = root.querySelector(PRE_BLOCKS);
+  if (!pre) return { top: null, height: 0, count: 0 };
+  const rect = pre.getBoundingClientRect();
+  return { top: rect.top - bottom, height: rect.height, count: pre.querySelectorAll('*').length };
+}
+
+function measureSettleStart(root: HTMLElement): SettleStart {
+  const box = root.getBoundingClientRect();
+  const caretRow = root.querySelector(CARET_ROW);
+  return {
+    height: box.height,
+    caretTop: caretRow ? caretRow.getBoundingClientRect().top - box.bottom : null,
+    pre: measurePreBlocks(root, box.bottom),
+  };
+}
+
+/**
+ * The pre-blocks changed since the send: a queued message (Send next) can
+ * land in the commit that empties the field, and rows sliding down from
+ * their old places would cross it. Such a send snaps.
+ */
+function preBlocksChanged(root: HTMLElement, from: SettleStart): boolean {
+  const now = measurePreBlocks(root, root.getBoundingClientRect().bottom);
+  return now.count !== from.pre.count || Math.abs(now.height - from.pre.height) >= 1;
+}
+
+/**
+ * A send empties a multi-line field, so the card shrinks at once. Its box
+ * takes the new height in one step (TPane re-measures once and the
+ * transcript's clearance moves once); only the drawing settles. As in the
+ * phone composer's morph (composerMorph.ts, whose stand-in frame and
+ * data-morphing styles this borrows from mobile.css), the frame's top edge
+ * moves from the old height to the new one and the rows above the toolbar
+ * (pre-blocks, caret row) slide with it. Returns a function that ends it at
+ * once; `onDone` runs when it finishes.
+ */
+function settleComposerHeight(root: HTMLElement, frame: HTMLElement, from: SettleStart, onDone: () => void): () => void {
+  const box = root.getBoundingClientRect();
+  const style = getComputedStyle(root);
+  const border = parseFloat(style.borderTopWidth) || 0;
+  // Copy the look before data-morphing turns the composer's own frame off.
+  Object.assign(frame.style, {
+    left: `${-border}px`,
+    right: `${-border}px`,
+    bottom: `${-border}px`,
+    top: `${-border}px`,
+    borderStyle: style.borderTopStyle,
+    borderWidth: style.borderTopWidth,
+    borderColor: style.borderTopColor,
+    borderRadius: style.borderRadius,
+    backgroundColor: style.backgroundColor,
+    boxShadow: style.boxShadow,
+  });
+  root.setAttribute('data-morphing', '');
+  const timing: KeyframeAnimationOptions = { duration: DUR.enter * 1000, easing: `cubic-bezier(${EASE.out.join(', ')})` };
+  const animations: Animation[] = [];
+  try {
+    animations.push(frame.animate([{ top: `${box.height - from.height - border}px` }, { top: `${-border}px` }], timing));
+    const slide = (el: HTMLElement | null, fromTop: number | null) => {
+      if (!el || fromTop === null) return;
+      const dy = fromTop - (el.getBoundingClientRect().top - box.bottom);
+      if (Math.abs(dy) < 0.5) return;
+      animations.push(el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], timing));
+    };
+    if (from.pre.height > 0) slide(root.querySelector<HTMLElement>(PRE_BLOCKS), from.pre.top);
+    slide(root.querySelector<HTMLElement>(CARET_ROW), from.caretTop);
+  } catch {
+    // An easing the browser rejects: no animation rather than a broken one.
+  }
+  let done = false;
+  const end = () => {
+    if (done) return;
+    done = true;
+    for (const animation of animations) animation.cancel();
+    // Hand the frame back without its colour transition replaying.
+    const transition = root.style.transition;
+    root.style.transition = 'none';
+    root.removeAttribute('data-morphing');
+    void getComputedStyle(root).backgroundColor;
+    root.style.transition = transition;
+    onDone();
+  };
+  const frameAnimation = animations[0];
+  if (frameAnimation) {
+    frameAnimation.addEventListener('finish', end);
+    frameAnimation.addEventListener('cancel', end);
+  } else {
+    end();
+  }
+  return end;
+}
 
 /** The text field inside the caret row: the MentionEditor or a plain input. */
 const FIELD = [
@@ -165,6 +292,13 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
     const settledRef = useRef<ComposerSnapshot | null>(null);
     const shownCollapsedRef = useRef(collapsed);
     const endMorphRef = useRef<(() => void) | null>(null);
+    // A desktop send's height settle (armSendSettle below) shares the frame
+    // and data-morphing: crossing into the phone layout ends it first, so
+    // the morph below snapshots the composer's own look.
+    const sendSettleRef = useRef<(() => void) | null>(null);
+    useLayoutEffect(() => {
+      if (canCollapse) sendSettleRef.current?.();
+    }, [canCollapse]);
     useLayoutEffect(() => {
       const root = rootRef.current;
       const changed = shownCollapsedRef.current !== collapsed;
@@ -191,6 +325,40 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
       if (!finished) endMorphRef.current = end;
     });
     useEffect(() => () => endMorphRef.current?.(), []);
+
+    // Desktop: a send arms one height settle (settleComposerHeight) for the
+    // field emptying a moment later. Typing, pasting and pre-blocks never arm
+    // it, and growth ends it. A phone collapses after a send instead.
+    const armSendSettle = useCallback(() => {
+      sendSettleRef.current?.();
+      const root = rootRef.current;
+      const frame = frameRef.current;
+      if (!root || !frame || typeof ResizeObserver === 'undefined' || !composerMotionAllowed()) return;
+      const from = measureSettleStart(root);
+      let endSettle: (() => void) | null = null;
+      let timer = 0;
+      let observer: ResizeObserver | null = null;
+      const stop = () => {
+        if (sendSettleRef.current !== stop) return;
+        sendSettleRef.current = null;
+        observer?.disconnect();
+        window.clearTimeout(timer);
+        endSettle?.();
+      };
+      observer = new ResizeObserver(() => {
+        // Any later change (the next line typed) ends a running settle at once.
+        if (endSettle) { stop(); return; }
+        const height = root.getBoundingClientRect().height;
+        if (Math.abs(height - from.height) < 1) return;
+        if (height > from.height || preBlocksChanged(root, from)) { stop(); return; }
+        window.clearTimeout(timer);
+        endSettle = settleComposerHeight(root, frame, from, stop);
+      });
+      sendSettleRef.current = stop;
+      observer.observe(root);
+      timer = window.setTimeout(() => { if (!endSettle) stop(); }, SEND_SETTLE_WINDOW_MS);
+    }, []);
+    useEffect(() => () => sendSettleRef.current?.(), []);
     // An IME (Chinese, Japanese) holds text before the draft sees it.
     const [composing, setComposing] = useState(false);
     // On the phone the hint is the empty field's placeholder, in place of ›_.
@@ -242,12 +410,15 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
     useImperativeHandle(ref, () => ({
       el: rootRef.current,
       settle: () => {
-        if (!canCollapseRef.current) return;
+        if (!canCollapseRef.current) {
+          armSendSettle();
+          return;
+        }
         const active = document.activeElement;
         if (active instanceof HTMLElement && rootRef.current?.contains(active)) active.blur();
         setEngaged(false);
       },
-    }), []);
+    }), [armSendSettle]);
 
     const className =
       'terminal-composer' +
@@ -308,8 +479,9 @@ export const ComposerShell = forwardRef<ComposerShellHandle, ComposerShellProps>
           alignItems: collapsed ? 'center' : undefined,
         }}
       >
-        {/* Draws the frame while the open/close animation runs (mobile.css). */}
-        {canCollapse && <div ref={frameRef} className="terminal-composer__morph" aria-hidden="true" />}
+        {/* Draws the frame while the open/close animation or a send's height
+            settle runs (mobile.css). */}
+        {(canCollapse || position === 'absolute') && <div ref={frameRef} className="terminal-composer__morph" aria-hidden="true" />}
         {preBlocks && (
           <div
             ref={preBlocksRef}

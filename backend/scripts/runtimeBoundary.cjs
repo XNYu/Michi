@@ -56,15 +56,15 @@ const RUNTIME_ID_GLOBS = [
   'backend/src/**/*.ts',
   'runtime/src/**/*.ts',
   '!backend/src/agents/pi/**',
-  '!runtime/src/adapters/{claude,codex,crew,kiro}/**',
+  '!runtime/src/adapters/{claude,codex,crew,kiro,antigravity}/**',
   '!**/*.test.ts',
 ];
 
 /** Import edges from this prefix into backend/ always count, even into candidate files. */
 const RUNTIME_PACKAGE_PREFIX = 'runtime/';
 
-const RUNTIME_IDS = new Set(['kiro', 'crew', 'claude', 'codex', 'pi']);
-const RUNTIME_ID_TEXT = /(['"`])(?:kiro|crew|claude|codex|pi)\1/;
+const RUNTIME_IDS = new Set(['kiro', 'crew', 'claude', 'codex', 'pi', 'antigravity']);
+const RUNTIME_ID_TEXT = /(['"`])(?:kiro|crew|claude|codex|pi|antigravity)\1/;
 const EQUALITY_OPERATORS = new Set([
   ts.SyntaxKind.EqualsEqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsEqualsToken,

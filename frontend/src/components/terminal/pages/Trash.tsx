@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
+import { AnimatePresence } from 'motion/react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Clock3, Ellipsis, Folder, MessageSquare, Search, Trash2, Undo2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useChatStore, useChatNodesSnapshot } from '../../../state/chatStore';
@@ -239,7 +240,10 @@ export default function TerminalTrash({ onNav }: { onNav?: (page: PageId) => voi
       </>}
     </div>
     {menu && menuEntry && !busy && <TrashMenu anchor={menu.anchor} onClose={() => setMenu(null)} onPreview={() => showPreview(menuEntry)} onRestore={() => restore(menuEntry)} onDelete={() => { void purge(menuEntry); }} />}
-    {preview && <TrashPreview entry={preview} nodes={nodes} ttl={ttl} now={now} busy={busy} onClose={closePreview} onRestore={restore} onDelete={entry => { void purge(entry); }} onPreview={showPreview} />}
+    {/* Closing fades the preview out with the props it last had open. */}
+    <AnimatePresence>
+      {preview && <TrashPreview key="preview" entry={preview} nodes={nodes} ttl={ttl} now={now} busy={busy} onClose={closePreview} onRestore={restore} onDelete={entry => { void purge(entry); }} onPreview={showPreview} />}
+    </AnimatePresence>
   </div>;
 }
 

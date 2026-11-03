@@ -6,7 +6,8 @@ type ScrollTimelineConstructor = new (options: {
 /** The dashboard owns scrolling; captions are a non-scrolling projection. */
 export function bindPaneCaptionScroll(strip: HTMLElement, captions: HTMLElement, moving = false) {
   const viewport = captions.parentElement!;
-  const Timeline = (window as Window & { ScrollTimeline?: ScrollTimelineConstructor }).ScrollTimeline;
+  // motion-dom declares its own global `ScrollTimeline`; read the native one untyped.
+  const Timeline = (window as unknown as { ScrollTimeline?: ScrollTimelineConstructor }).ScrollTimeline;
   let animation: Animation | undefined;
   let range = -1;
 

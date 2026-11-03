@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type JSX, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowUpRight } from 'lucide-react';
+import { prefersReducedMotion } from '../../hooks/useReducedMotion';
 import { relativeTime } from '../../lib/relativeTime';
+import { isFresh } from '../../motion/useFresh';
+import { EASE } from '../../motion/tokens';
 import type { ChatNodeState } from '../../state/chatTypes';
 import { BranchStatusLabel } from './BranchAnchorRow';
 import { BranchIcon } from './icons';
@@ -98,6 +101,48 @@ const CLOSE_DELAY_MS = 100;
 /** Hides the card that is open, so moving between passages never shows two. */
 let hideOpenCard: (() => void) | null = null;
 
+const DRAW_MS = 240;
+/**
+ * The underline sits below the text's own box (text-underline-offset), out of
+ * reach of a mask. Inline padding reaches it without moving a line.
+ */
+const DRAW_ROOM = 8;
+const DRAW_STYLES = ['padding-bottom', 'mask-image', 'mask-repeat', 'mask-position', 'mask-size'];
+/** Branches whose underline has drawn once: a remounted passage never redraws. */
+const drawnBranches = new Set<string>();
+
+/**
+ * Draws the underline of a branch just made from this passage from the left,
+ * on every line at once: one mask layer keeps the text whole, a second one
+ * widens across the band under it. Returns a cancel that settles it.
+ */
+function drawUnderline(span: HTMLElement): () => void {
+  const style = span.style;
+  const settle = () => { for (const name of DRAW_STYLES) style.removeProperty(name); };
+  // Text layer: the text's box, cut above the underline where a large font
+  // puts it inside that box. The baseline comes from a probe removed before paint.
+  const line = span.getClientRects()[0];
+  const probe = document.createElement('span');
+  probe.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+  span.insertBefore(probe, span.firstChild);
+  const baseline = probe.getBoundingClientRect().bottom;
+  probe.remove();
+  const offset = parseFloat(getComputedStyle(span).textUnderlineOffset) || 0;
+  const cut = line && baseline > 0 ? Math.max(0, line.bottom - baseline - offset + 0.5) : 0;
+  const text = `100% calc(100% - ${DRAW_ROOM + cut}px)`;
+  style.setProperty('padding-bottom', `${DRAW_ROOM}px`);
+  style.setProperty('mask-image', 'linear-gradient(#000, #000), linear-gradient(#000, #000)');
+  style.setProperty('mask-repeat', 'no-repeat');
+  style.setProperty('mask-position', '0 0, 0 0');
+  style.setProperty('mask-size', `${text}, 100% 100%`);
+  const draw = span.animate(
+    [{ maskSize: `${text}, 0% 100%` }, { maskSize: `${text}, 100% 100%` }],
+    { duration: DRAW_MS, easing: `cubic-bezier(${EASE.out.join(', ')})` },
+  );
+  draw.onfinish = settle;
+  return () => { draw.onfinish = null; draw.cancel(); settle(); };
+}
+
 /**
  * A dotted underline over a passage that child branches quoted. Hovering it,
  * focusing it or tapping it opens a card listing those branches; the card
@@ -114,6 +159,20 @@ export function BranchQuoteUnderline({ anchors, children }: BranchQuoteUnderline
   const focusCardRef = useRef(false);
   const refocusRef = useRef(false);
   const cardId = useId();
+  // Decided once, per branch: only a branch made just now draws its underline,
+  // and only the first time. Hydrated passages, and passages re-parsed because
+  // another branch quoted the same message, show theirs settled.
+  const [drawFor] = useState(() => anchors.flatMap((anchor) =>
+    isFresh(anchor.createdAt) && !drawnBranches.has(anchor.childNodeId) ? [anchor.childNodeId] : []));
+
+  useLayoutEffect(() => {
+    if (drawFor.length === 0) return undefined;
+    for (const id of drawFor) drawnBranches.add(id);
+    const span = spanRef.current;
+    if (!span || typeof span.animate !== 'function') return undefined;
+    if (prefersReducedMotion(document.documentElement.dataset.reduceMotion === 'on')) return undefined;
+    return drawUnderline(span);
+  }, [drawFor]);
 
   const cancelClose = useCallback(() => {
     if (closeTimerRef.current !== null) {

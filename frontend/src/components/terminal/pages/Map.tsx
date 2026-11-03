@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import dagre from '@dagrejs/dagre';
 import { useChatStore, useChatNodesSnapshot, useStructuralSelector, chatLabel } from '../../../state/chatStore';
 import { sortTrees } from '../../../state/sidebarSelectors';
@@ -22,6 +23,7 @@ import { useElkLayout, elkEdgePathD, type ElkRoutingStyle } from './useElkLayout
 import { useOrbitLayout, autoSelectVariant, type OrbitVariant } from './useOrbitLayout';
 import type { PageId } from '../../../state/commands';
 import type { Tree, ProjectEdge } from '../../../state/chatTypes';
+import { DUR } from '../../../motion/tokens';
 
 // MapCard boxes fed to the layout engines use measured DOM heights (see
 // cardHeights below). Expanding a card reflows the graph so neighbors slide
@@ -31,6 +33,9 @@ const NODE_SEP = 48;         // gap between sibling cards (cross-axis, vertical 
 const RANK_SEP = 110;        // gap between ranks (main-axis, horizontal in LR)
 const TREE_GAP = 80;
 const FIT_PADDING = 72;
+// A grown-in card keeps its grow flag until map-card-in and map-edge-draw
+// (both var(--t-slow) = DUR.slow, index.css) have finished, plus a hair.
+const GROW_IN_MS = Math.round(DUR.slow * 1000) + 120;
 
 // Glass material shared by the floating zoom pill. Token-based so it stays
 // legible across palettes (translucent white on light, dark on dark).
@@ -520,7 +525,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           next.delete(id);
           return next;
         });
-      }, 720)); // matches map-card-in (0.5s) / edge-draw (0.7s) + a hair
+      }, GROW_IN_MS));
     }
   }, [layoutIds]);
 
@@ -622,8 +627,9 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
               setMenu({ x: event.clientX, y: event.clientY, targetId: nodeId });
             }}
           />
-          {menu && activeProject && (
+          <AnimatePresence>{menu && activeProject && (
             <ContextMenu
+              key={`${menu.x}:${menu.y}`}
               x={menu.x}
               y={menu.y}
               sections={buildTreeContextMenu({
@@ -657,7 +663,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
               })}
               onClose={() => setMenu(null)}
             />
-          )}
+          )}</AnimatePresence>
         </MapFrame>
       );
     }
@@ -996,8 +1002,9 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
         )}
       </div>
       )}
-      {menu && view === 'graph' && activeProject && (
+      <AnimatePresence>{menu && view === 'graph' && activeProject && (
         <ContextMenu
+          key={`${menu.x}:${menu.y}`}
           x={menu.x}
           y={menu.y}
           sections={buildTreeContextMenu({
@@ -1034,7 +1041,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
           })}
           onClose={() => setMenu(null)}
         />
-      )}
+      )}</AnimatePresence>
     </MapFrame>
   );
 }

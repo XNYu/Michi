@@ -1,3 +1,5 @@
+import path from "path";
+import { pathToFileURL } from "url";
 // pi 0.80.0 moved the free-function catalog API (getModel/getModels/streamSimple/…)
 // off the "@earendil-works/pi-ai" ROOT entrypoint. The root now exposes only the
 // Models class / createModels() instance API; the free functions we call
@@ -46,18 +48,14 @@ export async function loadPiAgentCore(): Promise<PiAgentCoreModule> {
 
 async function loadPiAiModule(): Promise<PiAiModule> {
     if (typeof __MICHIBUNDLE__ !== "undefined" && __MICHIBUNDLE__) {
-        // esbuild resolves the /compat subpath via the package `exports` map at
-        // bundle time; tsc (moduleResolution:"node") cannot, so silence the
-        // type-only TS2307 here — this branch never runs under ts-node.
-        // @ts-ignore - /compat unresolvable under node10 moduleResolution; runtime + esbuild handle it
-        return import("@earendil-works/pi-ai/compat") as Promise<PiAiModule>;
+        return (await loadPiBundle()).ai;
     }
     return nativeDynamicImport("@earendil-works/pi-ai/compat") as Promise<PiAiModule>;
 }
 
 async function loadPiAgentCoreModule(): Promise<PiAgentCoreModule> {
     if (typeof __MICHIBUNDLE__ !== "undefined" && __MICHIBUNDLE__) {
-        return import("@earendil-works/pi-agent-core");
+        return (await loadPiBundle()).core;
     }
     return nativeDynamicImport("@earendil-works/pi-agent-core") as Promise<PiAgentCoreModule>;
 }
@@ -67,16 +65,17 @@ async function loadPiAgentCoreModule(): Promise<PiAgentCoreModule> {
 // visible to esbuild, while ts-node needs native ESM imports.
 export async function loadPiGoogleHelpers(): Promise<any> {
     if (typeof __MICHIBUNDLE__ !== 'undefined' && __MICHIBUNDLE__) {
-        return Promise.all([
-            // @ts-ignore - exports subpath requires newer moduleResolution
-            import('@earendil-works/pi-ai/api/google-shared'),
-            // @ts-ignore - exports subpath requires newer moduleResolution
-            import('@earendil-works/pi-ai/api/simple-options'),
-        ]).then(([google, simple]) => ({ ...google, ...simple }));
+        const bundle = await loadPiBundle();
+        return { ...bundle.google, ...bundle.simple };
     }
     const [google, simple] = await Promise.all([
         nativeDynamicImport('@earendil-works/pi-ai/api/google-shared'),
         nativeDynamicImport('@earendil-works/pi-ai/api/simple-options'),
     ]);
     return { ...(google as object), ...(simple as object) };
+}
+
+let bundledPi: Promise<any> | undefined;
+export function loadPiBundle(): Promise<any> {
+    return bundledPi ??= nativeDynamicImport(pathToFileURL(path.join(__dirname, 'pi-sdk', 'sdk.mjs')).href);
 }

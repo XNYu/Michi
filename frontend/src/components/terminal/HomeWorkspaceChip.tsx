@@ -1,8 +1,10 @@
 import React, { useId, useState } from 'react';
-import ContextMenu, { type MenuSection } from '../ContextMenu';
+import { AnimatePresence } from 'motion/react';
+import ContextMenu, { menuOpenKey, type MenuSection } from '../ContextMenu';
 import { workspaceRemoteNote } from '../WorkspaceLocation';
 import { useBackendConnections } from '../../state/useBackendConnections';
 import { FolderIcon } from './icons';
+import { composerMenusOpenBelow } from './PaneComposerToolbarLeft';
 
 interface MinimalProject {
   id: string;
@@ -104,8 +106,7 @@ export function HomeWorkspaceChip({
           e.stopPropagation();
           const trigger = e.currentTarget;
           const r = trigger.getBoundingClientRect();
-          // In the tray under the composer, open downward, off the draft.
-          const preferBelow = !!trigger.closest('.composer-tray');
+          const preferBelow = composerMenusOpenBelow(trigger);
           setMenu((open) => (open ? null : { x: r.left, y: r.bottom + 6, anchorBottom: r.top - 6, preferBelow, trigger }));
         }}
         style={{
@@ -135,20 +136,23 @@ export function HomeWorkspaceChip({
           <ClearGlyph />
         </button>
       )}
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          anchorBottom={menu.anchorBottom}
-          preferBelow={menu.preferBelow}
-          trigger={menu.trigger}
-          sections={sections}
-          menuKind="workspace"
-          searchable
-          searchPlaceholder="Search workspaces…"
-          onClose={() => setMenu(null)}
-        />
-      )}
+      <AnimatePresence>
+        {menu && (
+          <ContextMenu
+            key={menuOpenKey(menu)}
+            x={menu.x}
+            y={menu.y}
+            anchorBottom={menu.anchorBottom}
+            preferBelow={menu.preferBelow}
+            trigger={menu.trigger}
+            sections={sections}
+            menuKind="workspace"
+            searchable
+            searchPlaceholder="Search workspaces…"
+            onClose={() => setMenu(null)}
+          />
+        )}
+      </AnimatePresence>
     </span>
   );
 }

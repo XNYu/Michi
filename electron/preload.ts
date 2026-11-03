@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type {
-  AppUpdateState, BackgroundServiceStatus, BrowserSurfaceState, ChooseFolderResult, ChooseFoldersResult,
+  AppUpdateState, BackdropRect, BackgroundServiceStatus, BrowserSurfaceState, ChooseFolderResult, ChooseFoldersResult,
   DesktopBridge, DesktopCommandContract, DesktopEventContract, DesktopInvokeContract, DesktopInvokeArgs,
   DesktopInvokeResult, DesktopLifetimeStatus, FilePreviewResult, FileTreeEntry, GitChangeEntry,
   RemoteAuthenticationTarget, SaveMarkdownResult, ScheduledNotice, ScheduledRunTarget,
@@ -83,6 +83,10 @@ const electronBridge = {
   /** Switch the sidebar's native vibrancy material (desktop see-through density). */
   setVibrancy(material: VibrancyMaterial): void {
     send('app:setVibrancy', material);
+  },
+  /** The window's pixels in `rect` (CSS px) as a small PNG data URL, for frozen glass. */
+  captureBackdrop(rect: BackdropRect): Promise<string | null> {
+    return invoke('app:captureBackdrop', rect);
   },
   /** Relaunch the app (used after self-update). */
   relaunch(): void {

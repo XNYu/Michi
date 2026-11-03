@@ -391,10 +391,12 @@ export function reduceNodes(
       const exists = n.messages.some((m) => m.id === durable.id);
       const pendingQueued = n.pendingQueued?.filter((q) => q.id !== action.data.queueId);
       if (exists && pendingQueued?.length === n.pendingQueued?.length) return nodes;
-      const message = mapMessageRow({
+      const row = mapMessageRow({
         id: durable.id, role: 'user', content: durable.content,
         metadata: durable.metadata, created_at: durable.createdAt,
       });
+      // Links the bubble to the queued block it replaces (messageFlight).
+      const message = action.data.queueId ? { ...row, queueId: action.data.queueId } : row;
       return { ...nodes, [action.nodeId]: {
         ...n,
         pendingQueued: pendingQueued?.length ? pendingQueued : undefined,
@@ -849,14 +851,16 @@ export function reduceNodes(
       if (!n || action.fromId === action.toId) return nodes;
       if (n.messages.some((m) => m.id === action.toId)) return nodes;
       let changed = false;
+      // The transcript keys rows by clientKey ?? id: keeping the first id as
+      // clientKey stops the rename from remounting the bubble and placeholder.
       const msgs = n.messages.map((m) => {
         if (m.id === action.fromId) {
           changed = true;
-          return { ...m, id: action.toId };
+          return { ...m, id: action.toId, clientKey: m.clientKey ?? m.id };
         }
         if (m.id === `u-${action.fromId}`) {
           changed = true;
-          return { ...m, id: `u-${action.toId}` };
+          return { ...m, id: `u-${action.toId}`, clientKey: m.clientKey ?? m.id };
         }
         return m;
       });
@@ -949,7 +953,12 @@ export function reduceNodes(
       if (lastIdx >= 0 && msgs[lastIdx].role === 'assistant') {
         msgs[lastIdx] = projectAssistantStreamEvent(msgs[lastIdx], n.projectId, { event: CHAT_STREAM_EVENTS.userInputRequest, data: { ...action.userInput, turnId: n.activeTurnId } });
       }
-      return { ...nodes, [action.nodeId]: { ...n, messages: msgs, pendingUserInput: lastIdx === msgs.length - 1 ? action.userInput : n.pendingUserInput } };
+      // receivedAt: the live ask card plays its entrance only for a request that
+      // just arrived; hydrated ones carry no stamp and render settled.
+      const pendingUserInput = lastIdx === msgs.length - 1
+        ? { ...action.userInput, receivedAt: action.userInput.receivedAt ?? Date.now() }
+        : n.pendingUserInput;
+      return { ...nodes, [action.nodeId]: { ...n, messages: msgs, pendingUserInput } };
     }
     case 'user-input-resolved': {
       const n = nodes[action.nodeId];

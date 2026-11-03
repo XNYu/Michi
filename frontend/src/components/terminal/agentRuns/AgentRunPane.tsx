@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotionConfig } from 'motion/react';
 import { AgentRunStatus } from 'michi-shared';
 import type {
   AgentRunAttemptDtoV1,
@@ -13,8 +14,33 @@ import { AgentRunInteractions } from './AgentRunInteractions';
 import { AgentRunTimeline } from './AgentRunTimeline';
 import { elapsedRunLabel, runIdentity, runtimeProfileLabel, type LocatedAgentRun } from './agentRunSelectors';
 import { AgentRunActions } from './AgentRunActions';
+import { EASE } from '../../../motion/tokens';
 
 const TERMINAL = new Set<AgentRunStatus>([AgentRunStatus.Completed, AgentRunStatus.Failed, AgentRunStatus.Cancelled]);
+
+const REVEAL = { duration: 0.2, ease: EASE.out };
+const STATUS_FADE = { duration: 0.12, ease: EASE.out };
+const STATUS_TINT = 'color 120ms ease, background-color 120ms ease';
+
+/**
+ * What a run adds as it finishes (its result, its actions) opens in: height
+ * and opacity over 200ms, bringing the body's gap (read from it as it opens)
+ * with it. Present when the pane opens (a finished run), it is simply there.
+ * Under reduced motion only the fade.
+ */
+function RunReveal({ body, children }: { body: React.RefObject<HTMLElement | null>; children: React.ReactNode }) {
+  const still = useReducedMotionConfig() === true;
+  const [gap] = useState(() => (body.current ? parseFloat(getComputedStyle(body.current).rowGap) || 0 : 0));
+  return (
+    <motion.div
+      initial={still ? { opacity: 0 } : { height: 0, marginTop: -gap, opacity: 0, overflow: 'hidden' }}
+      animate={still ? { opacity: 1 } : { height: 'auto', marginTop: 0, opacity: 1, transitionEnd: { overflow: 'visible' } }}
+      transition={REVEAL}
+    >
+      {children}
+    </motion.div>
+  );
+}
 
 const STATUS_COLOR: Partial<Record<AgentRunStatus, string>> = {
   [AgentRunStatus.Running]: 'var(--term-accent)',
@@ -65,6 +91,10 @@ export function AgentRunPane({
   const attemptRows = useMemo(() => [...attempts].sort((a, b) => a.attemptIndex - b.attemptIndex), [attempts]);
   const fallbacks = attemptRows.length > 1 ? attemptRows.length - 1 : 0;
   const statusColor = STATUS_COLOR[run.status] ?? 'var(--term-muted)';
+  // The status the pane opened with is drawn settled; a later one fades in.
+  const statusSeen = useRef(false);
+  useEffect(() => { statusSeen.current = true; }, []);
+  const bodyRef = useRef<HTMLDivElement>(null);
   return (
     <section data-testid="agent-run-pane" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', background: 'var(--term-bg)', color: 'var(--term-fg)', fontFamily: 'var(--ui-font)', position: 'relative' }}>
       {/* Boxless identity header: plain text + status dot, no chips. */}
@@ -73,9 +103,11 @@ export function AgentRunPane({
           style={{ border: 0, padding: 0, background: 'transparent', cursor: 'pointer', color: 'var(--term-fg)', fontSize: 'var(--fs-lg)', fontWeight: 700, borderBottom: '1px dotted var(--term-line-s)' }}>
           {run.effectiveDefinition.name}
         </button>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase', color: statusColor, fontWeight: 600 }}>
-          <span aria-hidden style={{ width: 5, height: 5, borderRadius: 'var(--ui-radius-pill)', background: statusColor }} />
-          {run.status} · {elapsedRunLabel(run, now)}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)', textTransform: 'uppercase', color: statusColor, fontWeight: 600, transition: STATUS_TINT }}>
+          <span aria-hidden style={{ width: 5, height: 5, borderRadius: 'var(--ui-radius-pill)', background: statusColor, transition: STATUS_TINT }} />
+          {/* A new status fades its word in; the clock beside it ticks on unanimated. */}
+          <motion.span key={run.status} initial={statusSeen.current ? { opacity: 0 } : false} animate={{ opacity: 1 }} transition={STATUS_FADE}>{run.status}</motion.span>
+          {' · '}{elapsedRunLabel(run, now)}
         </span>
         <span style={{ flex: 1 }} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>{runtimeProfileLabel(run)}</span>
@@ -119,7 +151,7 @@ export function AgentRunPane({
       )}
 
       {/* Conversation body: task bubble → event flow → interactions → result. */}
-      <div style={{ overflowY: 'auto', padding: '16px 16px 0', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div ref={bodyRef} style={{ overflowY: 'auto', padding: '16px 16px 0', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
           <div data-testid="run-task" style={{
             maxWidth: '84%', padding: '10px 14px 11px',
@@ -153,22 +185,27 @@ export function AgentRunPane({
         <AgentRunInteractions interactions={interactions}
           onRespond={onRespondInteraction ? (interaction, response) => onRespondInteraction(identity, interaction, response) : undefined} />
 
-        {result && (
-          <div data-testid="run-result" style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)', padding: 10, display: 'grid', gap: 8, fontSize: 'var(--fs-sm)' }}>
-            {result.source === 'inferred' && <span style={{ color: 'var(--term-select)' }}>Inferred from final output</span>}
-            <strong>{result.handoff.conclusion}</strong>
-            <div>{result.handoff.artifactsOrChanges}</div>
-            {result.handoff.unresolvedIssues && <div style={{ color: 'var(--term-select)' }}>Unresolved: {result.handoff.unresolvedIssues}</div>}
-            {result.changeSet && (
-              <div style={{ border: '1px solid var(--term-line)', padding: 9 }}>
-                <div style={{ fontWeight: 600 }}>Change Set · {result.changeSet.changedFiles.length} files</div>
-                <div style={{ color: 'var(--term-muted)', marginTop: 3 }}>{result.changeSet.summary}</div>
-                <div style={{ color: 'var(--term-muted)', marginTop: 3 }}>Base {result.changeSet.baseCommit} · changes have not been merged automatically</div>
+        {/* A run finishing while it is open: its result and actions open in. Opened finished, they are there. */}
+        <AnimatePresence initial={false}>
+          {result && (
+            <RunReveal key="result" body={bodyRef}>
+              <div data-testid="run-result" style={{ border: '1px solid var(--term-line)', background: 'var(--term-surface)', padding: 10, display: 'grid', gap: 8, fontSize: 'var(--fs-sm)' }}>
+                {result.source === 'inferred' && <span style={{ color: 'var(--term-select)' }}>Inferred from final output</span>}
+                <strong>{result.handoff.conclusion}</strong>
+                <div>{result.handoff.artifactsOrChanges}</div>
+                {result.handoff.unresolvedIssues && <div style={{ color: 'var(--term-select)' }}>Unresolved: {result.handoff.unresolvedIssues}</div>}
+                {result.changeSet && (
+                  <div style={{ border: '1px solid var(--term-line)', padding: 9 }}>
+                    <div style={{ fontWeight: 600 }}>Change Set · {result.changeSet.changedFiles.length} files</div>
+                    <div style={{ color: 'var(--term-muted)', marginTop: 3 }}>{result.changeSet.summary}</div>
+                    <div style={{ color: 'var(--term-muted)', marginTop: 3 }}>Base {result.changeSet.baseCommit} · changes have not been merged automatically</div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        )}
-        {terminal && <AgentRunActions run={resource} events={events} />}
+            </RunReveal>
+          )}
+          {terminal && <RunReveal key="actions" body={bodyRef}><AgentRunActions run={resource} events={events} /></RunReveal>}
+        </AnimatePresence>
         <div style={{ flexShrink: 0, height: 2 }} />
       </div>
 

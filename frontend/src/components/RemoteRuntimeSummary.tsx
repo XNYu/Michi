@@ -1,4 +1,4 @@
-const LABELS: Record<string, string> = { kiro: 'Kiro', codex: 'Codex', claude: 'Claude Code', crew: 'Kiro Crew', pi: 'Pi' };
+const LABELS: Record<string, string> = { kiro: 'Kiro', codex: 'Codex', claude: 'Claude Code', crew: 'Kiro Crew', pi: 'Pi', antigravity: 'Antigravity' };
 
 export function RemoteRuntimeSummary({ runtimes }: { runtimes: string[] }) {
   const names = [...new Set(runtimes)].map(id => LABELS[id] ?? id);

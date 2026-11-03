@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { useIsPresent } from 'motion/react';
 import { redactRemoteLog, type RemoteConnectionDiagnostic } from 'michi-shared';
 import { connectRemoteDesktop } from '../services/api/backendConnections';
 import type { BackendConnectionSummary } from '../config/backendConnections';
@@ -27,6 +28,20 @@ export function RemoteDesktopConnect({ onConnected }: {
   const hostHintId = useId();
   const errorId = useId();
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; request.current?.abort(); }; }, []);
+  // Closed with its dialog, the form stays a moment in the dialog's fade-out.
+  // The request ends now, as if it had unmounted, so nothing it would still
+  // do (an authentication prompt, onConnected) outlives the dialog.
+  const present = useIsPresent();
+  useEffect(() => {
+    if (present) {
+      if (mounted.current) return;
+      mounted.current = true;
+      setBusy(false); setMessage('');
+      return;
+    }
+    mounted.current = false;
+    request.current?.abort();
+  }, [present]);
 
   const connect = async (install: boolean) => {
     if (!mounted.current || !host.trim() || busy || sendingDiagnostic) return;

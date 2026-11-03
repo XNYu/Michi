@@ -1,4 +1,5 @@
 import React from 'react';
+import { AnimatePresence, motion, useIsPresent, useReducedMotionConfig, type Variants } from 'motion/react';
 import { Check, ChevronRight, CircleAlert, CircleStop, Hand, MessageSquare } from 'lucide-react';
 import type { ProgressCardAwaiting, ProgressCardDto, ProgressCardStatus } from 'michi-shared';
 import { useChatProjects, useNodesSelector } from '../../../../state/chatStore';
@@ -6,6 +7,7 @@ import type { ChatNodeState } from '../../../../state/chatTypes';
 import { cardLiveState, replySummary } from '../../../../state/spaceConversations/liveStatus';
 import { Button } from '../../../ui/controls';
 import { homeAge } from '../home/homeFormat';
+import { EASE, SPRING, TRANSITION } from '../../../../motion/tokens';
 import '../../content/michi.css';
 
 interface LiveView {
@@ -47,13 +49,68 @@ function endText(view: LiveView, error: string | null | undefined): string {
   return view.summary || 'Finished without a reply.';
 }
 
-function StatusIcon({ view }: { view: LiveView }) {
-  if (view.awaiting) return <Hand size={14} strokeWidth={1.8} className="space-live-card__waiting" aria-label="Waiting for you" />;
-  if (view.status === 'running' || view.status === 'idle') return <span className="agent-spinner" role="img" aria-label="Running" />;
-  if (view.status === 'done') return <Check size={14} strokeWidth={2} className="space-live-card__done" aria-label="Done" />;
-  if (view.status === 'cancelled') return <CircleStop size={14} strokeWidth={1.8} className="space-live-card__stopped" aria-label="Stopped" />;
+type IconKind = 'waiting' | 'running' | 'done' | 'stopped' | 'failed';
+const iconKind = (view: LiveView): IconKind => (view.awaiting ? 'waiting'
+  : view.status === 'running' || view.status === 'idle' ? 'running'
+    : view.status === 'done' ? 'done' : view.status === 'cancelled' ? 'stopped' : 'failed');
+
+function Icon({ kind }: { kind: IconKind }) {
+  if (kind === 'waiting') return <Hand size={14} strokeWidth={1.8} className="space-live-card__waiting" aria-label="Waiting for you" />;
+  if (kind === 'running') return <span className="agent-spinner" role="img" aria-label="Running" />;
+  if (kind === 'done') return <Check size={14} strokeWidth={2} className="space-live-card__done" aria-label="Done" />;
+  if (kind === 'stopped') return <CircleStop size={14} strokeWidth={1.8} className="space-live-card__stopped" aria-label="Stopped" />;
   return <CircleAlert size={14} strokeWidth={1.8} className="space-live-card__failed" aria-label="Failed" />;
 }
+
+const ICON_STAGE: React.CSSProperties = { display: 'inline-grid', flexShrink: 0 };
+const ICON_LAYER: React.CSSProperties = { gridArea: '1 / 1', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' };
+
+function IconLayer({ kind }: { kind: IconKind }) {
+  // The glyph on its way out is not read out alongside the new one.
+  const present = useIsPresent();
+  return (
+    <motion.span style={ICON_LAYER} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+      exit={{ scale: 0.6, opacity: 0, transition: TRANSITION.exit }} transition={SPRING.snappy} aria-hidden={present ? undefined : true}>
+      <Icon kind={kind} />
+    </motion.span>
+  );
+}
+
+/** How the conversation is doing; a new state (running → done ✓, stopped) scales in over the last. Drawn settled at first. */
+function StatusIcon({ view }: { view: LiveView }) {
+  const kind = iconKind(view);
+  return (
+    <span style={ICON_STAGE}>
+      <AnimatePresence initial={false}>
+        <IconLayer key={kind} kind={kind} />
+      </AnimatePresence>
+    </span>
+  );
+}
+
+/** The gap an element sits in beside a sibling (its parent's row gap, whatever the CSS says now). */
+const rowGapOf = (el: Element | null) => {
+  const parent = el?.parentElement;
+  return parent && parent.children.length > 1 ? parseFloat(getComputedStyle(parent).rowGap) || 0 : 0;
+};
+
+export interface FoldCustom { still: boolean; el: () => Element | null }
+
+/**
+ * How a card, or the list with its last card, folds away when the list lets
+ * it go: height, padding and opacity over 140ms, taking the gap it sat in
+ * along. Back before it is gone (a dismissal Michi refused), it opens again.
+ * Under reduced motion only the fade.
+ */
+export const FOLD: Variants = {
+  shown: { height: 'auto', opacity: 1, marginBottom: 0 },
+  gone: ({ still, el }: FoldCustom) => (still
+    ? { opacity: 0, transition: { duration: 0.14 } }
+    : {
+      height: 0, paddingTop: 0, paddingBottom: 0, borderTopWidth: 0, borderBottomWidth: 0, opacity: 0,
+      marginBottom: -rowGapOf(el()), overflow: 'hidden', transition: { duration: 0.14, ease: EASE.drawer },
+    }),
+};
 
 /**
  * One conversation started from a Space. Shows only how it is doing, read
@@ -79,6 +136,10 @@ export function SpaceProgressCard({ card, clock, onOpen, onDismiss }: {
   );
   const running = view.status === 'running';
   const inProgress = running || view.status === 'idle';
+  const cardRef = React.useRef<HTMLElement>(null);
+  // In its list's AnimatePresence: folding away it is out of reach and inert.
+  const present = useIsPresent();
+  const still = useReducedMotionConfig() === true;
   const dismiss = onDismiss && (
     <Button variant="ghost" size="sm" className="space-live-card__dismiss" aria-label={`Dismiss “${view.title}”`} onClick={() => onDismiss(card)}>Dismiss</Button>
   );
@@ -89,7 +150,9 @@ export function SpaceProgressCard({ card, clock, onOpen, onDismiss }: {
   const waiting = view.awaiting ? WAITING[view.awaiting] : null;
 
   return (
-    <article className="space-live-card" data-status={view.status} data-awaiting={view.awaiting ?? undefined} aria-label={`Chat: ${view.title}`}>
+    <motion.article ref={cardRef} className="space-live-card" data-status={view.status} data-awaiting={view.awaiting ?? undefined} aria-label={`Chat: ${view.title}`}
+      custom={{ still, el: () => cardRef.current } satisfies FoldCustom} variants={FOLD} initial={false} animate="shown" exit="gone"
+      aria-hidden={present ? undefined : true} inert={!present}>
       <header className="space-live-card__head">
         <StatusIcon view={view} />
         <button type="button" className="space-live-card__title" title={view.title} onClick={() => open(false)}>{view.title}</button>
@@ -121,6 +184,6 @@ export function SpaceProgressCard({ card, clock, onOpen, onDismiss }: {
           {dismiss}
         </div>
       </>}
-    </article>
+    </motion.article>
   );
 }

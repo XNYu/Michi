@@ -1,5 +1,6 @@
 /* Phone action sheet (BottomSheet.tsx). Layering and the scrim come from the
-   modal rungs; colours, corners, type and motion from the shared tokens. */
+   modal rungs; colours, corners and type from the shared tokens. The rise and
+   drop are motion's (BottomSheet.tsx), which also honours Reduce motion. */
 .ui-sheet {
   position: fixed;
   left: 0;
@@ -20,12 +21,7 @@
   box-shadow: var(--term-float-shadow);
   font-family: var(--ui-font);
   outline: none;
-  animation: ui-sheet-in var(--t-enter) var(--t-ease) both;
   -webkit-app-region: no-drag;
-}
-@keyframes ui-sheet-in {
-  from { transform: translateY(100%); }
-  to { transform: none; }
 }
 
 /* One group of actions; groups are divided by a hairline. */
@@ -86,8 +82,3 @@
   min-height: 48px;
   font-size: var(--fs-2xl);
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .ui-sheet { animation: none; }
-}
-:root[data-reduce-motion='on'] .ui-sheet { animation: none; }

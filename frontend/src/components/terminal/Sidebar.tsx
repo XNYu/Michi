@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, useIsPresent } from 'motion/react';
 import { SidebarContentPrefsProvider, usePrefs } from '../../state/prefs';
+import { DUR, EASE, TRANSITION } from '../../motion/tokens';
 import { PROFILE_PAGE_ENABLED } from '../../state/featureFlags';
 import { Row } from './primitives';
 import WorkspaceTree from './WorkspaceTree';
@@ -32,6 +34,10 @@ const SCROLLBAR_LINGER_MS = 2000;
  *  an interrupted transition, or a browser that skips the event). The
  *  authoritative clock is the transition itself (`--t-enter`, 180ms). */
 const SIDEBAR_SETTLE_FALLBACK_MS = 260;
+/** The phone drawer slides back out a little faster than it came in; the scrim
+ *  clears just before the panel is gone. */
+const OVERLAY_PANEL_EXIT = TRANSITION.collapse;
+const OVERLAY_SCRIM_EXIT = { duration: DUR.scrimExit, ease: EASE.out };
 
 /** Sidebar row density → the `--sb-*` CSS vars consumed by WorkspaceRow /
  *  ThreadRow / BranchRow / merge rows / BottomNav. `compact` reproduces the
@@ -123,7 +129,7 @@ export default function TerminalSidebar({
   const firstRunRef = useRef(true);
   useEffect(() => {
     if (firstRunRef.current) { firstRunRef.current = false; return; }
-    if (narrowMode) return; // overlay slides in via CSS keyframes; panes don't reflow
+    if (narrowMode) return; // the overlay slides over the panes; they don't reflow
     const el = asideRef.current;
     let finished = false;
     const finish = () => {
@@ -147,11 +153,25 @@ export default function TerminalSidebar({
     };
   }, [prefs.sidebarCollapsed, narrowMode]);
 
-  // In narrow mode, when the overlay is closed, render nothing — no sliver, no
-  // hit target. The Topbar's ≡ button drives narrowOverlayOpen.
-  if (narrowMode && !narrowOverlayOpen) return null;
+  // A destination chosen inside the phone drawer (a thread, a page, an area)
+  // closes it at once: what it opens takes the screen, and a drawer sliding
+  // out over it would leave a second copy of the list for the length of the
+  // slide. Dismissing it (scrim, Esc, swipe, the ≡ button) slides it out.
+  // The shell closes the drawer within the choosing click or key, so a mark
+  // that lasts until the next task covers exactly that close.
+  const choseInDrawerRef = useRef(false);
+  const noteChoice = useCallback(() => {
+    choseInDrawerRef.current = true;
+    window.setTimeout(() => { choseInDrawerRef.current = false; }, 0);
+  }, []);
+  const noteKeyChoice = useCallback((event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' || event.key === ' ') noteChoice();
+  }, [noteChoice]);
 
-  const overlayMode = narrowMode && narrowOverlayOpen;
+  // In narrow mode the sidebar is an overlay drawer, or nothing at all while it
+  // is closed: no sliver, no hit target. The Topbar's ≡ button drives
+  // narrowOverlayOpen; closing slides the drawer out (NarrowSidebarOverlay).
+  const overlayMode = narrowMode;
   // Wide mode + collapsed: keep mounted at width 0 so the open/close transition
   // can actually play. Suppress border + interactivity while collapsed so it
   // behaves like the previous unmounted state visually.
@@ -197,81 +217,108 @@ export default function TerminalSidebar({
     '--sb-radius': geom.radius > 0 ? 'var(--ui-radius-lg)' : '0px',
   } as React.CSSProperties;
 
-  const aside = (
+  const asideStyle: React.CSSProperties = {
+    ...densityVars,
+    // A phone drawer is a share of the screen, not the desktop column width.
+    width: overlayMode ? OVERLAY_WIDTH : (collapsed ? 0 : effectiveWidth),
+    flexShrink: 0,
+    background: 'var(--term-sidebar-body-bg, var(--term-sidebar-bg, var(--term-surface)))',
+    border: 'var(--term-sidebar-outline, none)',
+    borderRight: overlayMode
+      ? '1px solid var(--term-line)'
+      : 'var(--term-sidebar-edge, 1px solid color-mix(in srgb, var(--term-line) 50%, transparent))',
+    borderRadius: 'var(--term-sidebar-radius, 0px)',
+    display: 'flex',
+    flexDirection: 'column',
+    fontFamily: 'var(--ui-font)',
+    color: 'var(--term-fg)',
+    position: overlayMode ? 'absolute' : 'relative',
+    left: overlayMode ? 0 : undefined,
+    top: overlayMode ? 0 : undefined,
+    bottom: overlayMode ? 0 : undefined,
+    // z-index 1 in non-overlay mode lifts the sidebar (and its right-edge
+    // box-shadow) above sibling pane content, which otherwise paints its
+    // own surface bg over the 8px shadow extension and hides the glow.
+    zIndex: overlayMode ? 'var(--z-sidebar-overlay)' : 'var(--z-raised)',
+    boxShadow: overlayMode
+      ? '4px 0 24px rgba(0,0,0,0.18)'
+      : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.025))',
+    // Clip the box-shadow's upward feather (top: 0) so it doesn't bleed
+    // into the Topbar Zone 1 spacer above and create a visible horizontal
+    // joint. Right/bottom are extended past the element so the right glow
+    // and bottom feather still render. Overlay mode keeps its own halo.
+    clipPath: overlayMode ? undefined : 'inset(0 -8px -8px 0)',
+    height: '100%',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    overflow: 'hidden',
+    // The overlay's slide is NarrowSidebarOverlay's (motion), not a CSS one.
+    transition: overlayMode || isResizing
+      ? 'none'
+      : collapsed
+        ? 'width var(--t-enter) cubic-bezier(.4,0,1,1)'
+        : 'width var(--t-enter) cubic-bezier(0,0,.2,1)',
+  };
+  const scrollbarHandlers = {
+    onPointerEnter: showScrollbars,
+    onPointerLeave: quietScrollbarsSoon,
+    onFocusCapture: showScrollbars,
+    onBlurCapture: quietScrollbarsSoon,
+  };
+  const body = (
+    <div
+      className="terminal-sidebar-content"
+      aria-hidden={collapsed || undefined}
+      inert={collapsed}
+      style={{
+        // Only the shell changes width during a toggle; rows never squeeze.
+        width: overlayMode ? '100%' : effectiveWidth,
+        flex: '1 0 0',
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      {overlayMode && overlayHeader}
+      <SidebarContentPrefsProvider>{contents}</SidebarContentPrefsProvider>
+    </div>
+  );
+
+  if (overlayMode) {
+    // Closed by a choice inside it: unmount now, with no exit (see choseInDrawerRef).
+    if (!narrowOverlayOpen && choseInDrawerRef.current) return null;
+    return (
+      <AnimatePresence>
+        {narrowOverlayOpen && (
+          <NarrowSidebarOverlay
+            key="overlay"
+            asideRef={asideRef}
+            rowStyle={geom.style}
+            scrollbars={scrollbarsQuiet ? 'quiet' : 'visible'}
+            style={asideStyle}
+            handlers={{ ...scrollbarHandlers, onClickCapture: noteChoice, onKeyDownCapture: noteKeyChoice }}
+            onClose={onCloseOverlay}
+          >
+            {body}
+          </NarrowSidebarOverlay>
+        )}
+      </AnimatePresence>
+    );
+  }
+
+  return (
     <aside
       ref={asideRef}
       className="terminal-sidebar"
       data-row-style={geom.style}
-      // The narrow overlay closes on any Esc: a layer under the ⌘J panel
-      // ("shell"), which its Esc yields to when the page has focus.
-      data-escape-layer={overlayMode ? 'shell' : undefined}
       data-scrollbars={scrollbarsQuiet ? 'quiet' : 'visible'}
       data-collapsed={collapsed || undefined}
-      style={{
-        ...densityVars,
-        // A phone drawer is a share of the screen, not the desktop column width.
-        width: overlayMode ? OVERLAY_WIDTH : (collapsed ? 0 : effectiveWidth),
-        flexShrink: 0,
-        background: 'var(--term-sidebar-body-bg, var(--term-sidebar-bg, var(--term-surface)))',
-        border: 'var(--term-sidebar-outline, none)',
-        borderRight: overlayMode
-          ? '1px solid var(--term-line)'
-          : 'var(--term-sidebar-edge, 1px solid color-mix(in srgb, var(--term-line) 50%, transparent))',
-        borderRadius: 'var(--term-sidebar-radius, 0px)',
-        display: 'flex',
-        flexDirection: 'column',
-        fontFamily: 'var(--ui-font)',
-        color: 'var(--term-fg)',
-        position: overlayMode ? 'absolute' : 'relative',
-        left: overlayMode ? 0 : undefined,
-        top: overlayMode ? 0 : undefined,
-        bottom: overlayMode ? 0 : undefined,
-        // z-index 1 in non-overlay mode lifts the sidebar (and its right-edge
-        // box-shadow) above sibling pane content, which otherwise paints its
-        // own surface bg over the 8px shadow extension and hides the glow.
-        zIndex: overlayMode ? 'var(--z-sidebar-overlay)' : 'var(--z-raised)',
-        boxShadow: overlayMode
-          ? '4px 0 24px rgba(0,0,0,0.18)'
-          : 'var(--term-sidebar-shadow, 2px 0 6px rgba(0,0,0,0.025))',
-        // Clip the box-shadow's upward feather (top: 0) so it doesn't bleed
-        // into the Topbar Zone 1 spacer above and create a visible horizontal
-        // joint. Right/bottom are extended past the element so the right glow
-        // and bottom feather still render. Overlay mode keeps its own halo.
-        clipPath: overlayMode ? undefined : 'inset(0 -8px -8px 0)',
-        height: '100%',
-        userSelect: 'none',
-        WebkitUserSelect: 'none',
-        overflow: 'hidden',
-        transition: overlayMode || isResizing
-          ? 'none'
-          : collapsed
-            ? 'width var(--t-enter) cubic-bezier(.4,0,1,1)'
-            : 'width var(--t-enter) cubic-bezier(0,0,.2,1)',
-        animation: overlayMode ? 'slideInLeft var(--t-enter) ease-out' : undefined,
-      }}
-      onPointerEnter={showScrollbars}
-      onPointerLeave={quietScrollbarsSoon}
-      onFocusCapture={showScrollbars}
-      onBlurCapture={quietScrollbarsSoon}
+      style={asideStyle}
+      {...scrollbarHandlers}
     >
-      <div
-        className="terminal-sidebar-content"
-        aria-hidden={collapsed || undefined}
-        inert={collapsed}
-        style={{
-          // Only the shell changes width during a toggle; rows never squeeze.
-          width: overlayMode ? '100%' : effectiveWidth,
-          flex: '1 0 0',
-          minHeight: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
-      >
-        {overlayMode && overlayHeader}
-        <SidebarContentPrefsProvider>{contents}</SidebarContentPrefsProvider>
-      </div>
-      {!collapsed && !overlayMode && (
+      {body}
+      {!collapsed && (
         <ResizeHandle
           paneRef={asideRef}
           min={MIN_SIDEBAR_WIDTH}
@@ -293,26 +340,71 @@ export default function TerminalSidebar({
       )}
     </aside>
   );
+}
 
-  if (overlayMode) {
-    return (
-      <>
-        <div
-          onMouseDown={onCloseOverlay}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background: 'rgba(0,0,0,0.32)',
-            zIndex: 'var(--z-sidebar-scrim)',
-            animation: 'fadeIn var(--t-enter) ease-out',
-          }}
-        />
-        {aside}
-      </>
-    );
-  }
-
-  return aside;
+/**
+ * The phone drawer and its scrim. Opening slides the panel in from the left
+ * edge; a dismissal slides it back out while the scrim clears (a destination
+ * chosen inside it unmounts it at once, TerminalSidebar). A drawer on its
+ * way out is no longer a layer: it drops `data-escape-layer` (Esc routing,
+ * escapeLayers.ts), leaves the accessibility tree, takes no focus or taps, and
+ * its scrim no longer closes anything. Reopening mid-exit turns it around.
+ */
+function NarrowSidebarOverlay({
+  asideRef,
+  rowStyle,
+  scrollbars,
+  style,
+  handlers,
+  onClose,
+  children,
+}: {
+  asideRef: React.RefObject<HTMLElement | null>;
+  rowStyle: string;
+  scrollbars: 'quiet' | 'visible';
+  style: React.CSSProperties;
+  handlers: Pick<React.HTMLAttributes<HTMLElement>, 'onPointerEnter' | 'onPointerLeave' | 'onFocusCapture' | 'onBlurCapture' | 'onClickCapture' | 'onKeyDownCapture'>;
+  onClose?: () => void;
+  children: React.ReactNode;
+}) {
+  const present = useIsPresent();
+  return (
+    <>
+      <motion.div
+        onMouseDown={present ? onClose : undefined}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0, transition: OVERLAY_SCRIM_EXIT }}
+        transition={TRANSITION.enter}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0,0,0,0.32)',
+          zIndex: 'var(--z-sidebar-scrim)',
+          pointerEvents: present ? undefined : 'none',
+        }}
+      />
+      <motion.aside
+        ref={asideRef}
+        className="terminal-sidebar"
+        data-row-style={rowStyle}
+        // The narrow overlay closes on any Esc: a layer under the ⌘J panel
+        // ("shell"), which its Esc yields to when the page has focus.
+        data-escape-layer={present ? 'shell' : undefined}
+        data-scrollbars={scrollbars}
+        aria-hidden={present ? undefined : true}
+        inert={!present}
+        initial={{ x: '-100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '-100%', transition: OVERLAY_PANEL_EXIT }}
+        transition={TRANSITION.enter}
+        style={{ ...style, pointerEvents: present ? undefined : 'none' }}
+        {...handlers}
+      >
+        {children}
+      </motion.aside>
+    </>
+  );
 }
 
 /** Phone drawer header for the conversation list. Narrow windows hide the

@@ -18,6 +18,8 @@ export interface KiroStepPermission {
   sessionId: string;
   requestId: number;
   toolCall?: Record<string, unknown>;
+  /** The request's `_meta` (Kiro names the tool there). */
+  meta?: Record<string, unknown>;
   options: Array<{ optionId: string; name?: string; kind?: string }>;
 }
 
@@ -31,6 +33,12 @@ export interface KiroWorkflowBridgeDeps {
   supports?: (method: KiroWorkflowControlMethod) => boolean;
   /** Answer a step's permission request (null cancels it). */
   answerPermission?: (requestId: number, optionId: string | null) => void;
+  /**
+   * Whether the launching chat's own permissions (Trust, YOLO, a tool
+   * grant, trust for the session) approve this step's request. Approved
+   * requests are answered once with allow_once and never shown. Absent: ask.
+   */
+  approves?: (parentSessionId: string, request: KiroStepPermission) => boolean;
   now?: () => number;
 }
 
@@ -141,6 +149,14 @@ export function createKiroWorkflowBridge(deps: KiroWorkflowBridgeDeps): KiroWork
       const step = stepSessions.get(request.sessionId);
       const entry = step ? runs.get(step.workflowId) : undefined;
       if (!step || !entry || !deps.answerPermission || request.options.length === 0) return false;
+      // As in the chat: a single-use answer, never Kiro's own always-allow.
+      const allow = request.options.find((option) => option.kind === 'allow_once');
+      let approved = false;
+      try { approved = !!allow && deps.approves?.(entry.parentSessionId, request) === true; } catch { /* Ask instead. */ }
+      if (allow && approved) {
+        deps.answerPermission(request.requestId, allow.optionId);
+        return true;
+      }
       const toolCall = rec(request.toolCall);
       const rawInput = toolCall?.['rawInput'];
       const detail = rawInput === undefined ? undefined

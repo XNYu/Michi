@@ -478,6 +478,31 @@ export function applyMaintenanceDatabaseSet(input: ApplyMaintenanceDatabaseSetIn
   });
 }
 
+export interface ApplyWatchDatabaseSetInput {
+  databaseId: string; workspaceId: string; ownerUserId: string; jobId: string;
+  /** The revision the watch run read; a later change refuses the whole set. */
+  expectedRevision: number;
+  ops: unknown; execution: BlockSource & { runId: string }; authorize: () => void; now: number;
+}
+
+/** A watch run's row batch, applied whole or not at all; cells a person edited become proposals. */
+export function applyWatchDatabaseSet(input: ApplyWatchDatabaseSetInput): PageWriteResult {
+  return pagesTransaction(() => {
+    const now = safeNow(input.now);
+    const ops = parseOps(input.ops, 'agent');
+    if (!ops.length || ops.some((op) => !op.op.startsWith('row.'))) throw invalid('Watch database edits must contain row operations only');
+    const current = getDatabase(input.databaseId, input.ownerUserId, { write: true });
+    if (current.workspaceId !== input.workspaceId) throw new PageWriteError(404, 'not_found', 'Database not found');
+    if (current.revision !== input.expectedRevision) throw new PageWriteError(409, 'stale_revision', 'Database changed since this check read it; read it again from its first page');
+    const source: ChangeSource = { kind: 'maintenance', ...input.execution, jobId: input.jobId, runId: input.execution.runId, evidence: [] };
+    const result = applyAgentDbEditsWithSource({ databaseId: input.databaseId, workspaceId: input.workspaceId,
+      ownerUserId: input.ownerUserId, source, ops, now }, source, input.authorize);
+    if (result.rejected.length) throw new PageWriteError(409, 'stale_revision', `Row batch rejected and nothing was applied: ${result.rejected[0]!.message}`);
+    if (!result.applied.length && !result.proposed.length) throw invalid('The operation set made no change; record an explicit no-change decision');
+    return result;
+  });
+}
+
 export interface ConfigureDatabaseViewInput {
   databaseId: string; workspaceId: string; ownerUserId: string; revision: number; viewId?: string;
   componentId: string; props: unknown; pinnedVersion?: number; source: Extract<ChangeSource, { kind: 'chat' | 'helper' }>;

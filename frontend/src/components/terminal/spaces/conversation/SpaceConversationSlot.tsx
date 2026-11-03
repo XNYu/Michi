@@ -1,4 +1,5 @@
 import React from 'react';
+import { AnimatePresence, motion, useIsPresent, useReducedMotionConfig } from 'motion/react';
 import type { ProgressCardDto } from 'michi-shared';
 import { dismissProgressCard } from '../../../../services/api/spacesHome';
 import { useProgressCards } from '../../../../state/pages/useSpacesHome';
@@ -10,7 +11,7 @@ import {
 } from '../../../../state/spaceConversations/store';
 import { useMinuteClock } from '../../content/home/useMinuteClock';
 import { NewChatSheet } from './NewChatSheet';
-import { SpaceProgressCard } from './SpaceProgressCard';
+import { FOLD, SpaceProgressCard, type FoldCustom } from './SpaceProgressCard';
 import { useOpenSpaceConversation } from './openConversation';
 import './conversation.css';
 
@@ -71,7 +72,6 @@ export function SpaceProgressCardList({ scope, cards, everyPage = false, onChang
   // The backend stops listing a card 24 hours after it was seen; a list read before then may still hold it.
   const shown = [...fresh, ...cards].filter((card) => card.dismissedAt === null && !dismissed.has(card.threadNodeId)
     && (card.expiresAt === null || card.expiresAt > clock));
-  if (!shown.length) return null;
 
   const dismiss = (card: ProgressCardDto) => {
     setDismissed((current) => new Set(current).add(card.threadNodeId));
@@ -81,18 +81,39 @@ export function SpaceProgressCardList({ scope, cards, everyPage = false, onChang
     );
   };
 
+  // The list owns every exit: a dismissed card folds away inside it, and with
+  // its last card the list itself, gap and all. Nothing is drawn when empty.
   return (
-    <div className="space-live-cards" aria-label="Chats started from Pages">
-      {shown.map((card) => (
-        <SpaceProgressCard
-          key={card.threadNodeId}
-          card={card}
-          clock={clock}
-          onOpen={(target, { continueChat, pending }) => { void open(target, { continueChat, from: scope, pending }); }}
-          onDismiss={listed.has(card.threadNodeId) ? dismiss : undefined}
-        />
-      ))}
-    </div>
+    <AnimatePresence initial={false}>
+      {shown.length > 0 && (
+        <CardList key="cards">
+          <AnimatePresence initial={false}>
+            {shown.map((card) => (
+              <SpaceProgressCard
+                key={card.threadNodeId}
+                card={card}
+                clock={clock}
+                onOpen={(target, { continueChat, pending }) => { void open(target, { continueChat, from: scope, pending }); }}
+                onDismiss={listed.has(card.threadNodeId) ? dismiss : undefined}
+              />
+            ))}
+          </AnimatePresence>
+        </CardList>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function CardList({ children }: { children: React.ReactNode }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const present = useIsPresent();
+  const still = useReducedMotionConfig() === true;
+  return (
+    <motion.div ref={ref} className="space-live-cards" aria-label="Chats started from Pages"
+      custom={{ still, el: () => ref.current } satisfies FoldCustom} variants={FOLD} initial={false} animate="shown" exit="gone"
+      aria-hidden={present ? undefined : true} inert={!present}>
+      {children}
+    </motion.div>
   );
 }
 

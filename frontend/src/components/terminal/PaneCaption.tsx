@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import { Dot } from './primitives';
 import ContextMenu from '../ContextMenu';
 import { kbd } from '../../lib/platform';
@@ -216,8 +217,9 @@ export default function PaneCaption({
           ×
         </button>
       </div>
-      {menu && (
+      <AnimatePresence>{menu && (
         <ContextMenu
+          key={`${menu.x}:${menu.y}`}
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
@@ -236,7 +238,7 @@ export default function PaneCaption({
             },
           ]}
         />
-      )}
+      )}</AnimatePresence>
     </>
   );
 }

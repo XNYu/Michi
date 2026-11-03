@@ -579,8 +579,7 @@ export class RemoteDesktopSetup {
         const probe = await probeBackendConnection({ apiUrl, token: info.token, onDiagnostic: message => diagnostics?.append('health', message) });
         if (!probe.ok) throw new RemoteDesktopError('verify', probe.error);
         if (signal?.aborted) throw new RemoteDesktopError('cancelled', 'Connection cancelled.');
-        // Older remote installations can still default to a missing Kiro CLI.
-        // Reuse the remote status and options API, preserving any usable choice.
+        // Discover runtimes without changing the user's selection.
         // Runtime discovery is advisory: a connected machine remains connected
         // when no runtime is configured or an older API cannot answer.
         progress('runtime', 'Detecting agent runtimes…');
@@ -602,14 +601,6 @@ export class RemoteDesktopSetup {
             }
           }
           info.runtimes = [...new Set([...info.runtimes, ...usable.map(runtime => runtime.id)])];
-          const preferred = usable.find(runtime => runtime.id === status.runtime) ?? usable[0];
-          if (preferred && preferred.id !== status.runtime) {
-            const response = await fetch(`${apiUrl}/agent/options`, {
-              method: 'POST', headers, body: JSON.stringify({ runtime: preferred.id }), signal: AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]),
-            });
-            if (!response.ok) throw new Error('Runtime preselection returned HTTP ' + response.status);
-            diagnostics?.append('runtime', 'Preselected ' + preferred.id + ' for new conversations');
-          }
           diagnostics?.append('runtime', 'Detected ' + info.runtimes.join(', '));
         } catch (error) {
           diagnostics?.append('runtime detection', String(error));

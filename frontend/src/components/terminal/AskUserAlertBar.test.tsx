@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import AskUserAlertBar from './AskUserAlertBar';
 import type { ChatNodeState } from '../../state/chatTypes';
@@ -98,6 +98,41 @@ describe('AskUserAlertBar', () => {
     expect(scrolls).toEqual([{ nodeId: 'child', messageId: 'child-m1' }]);
 
     window.removeEventListener('michi:scroll-to-message', onScroll as EventListener);
+  });
+
+  it('opens its height when an ask arrives; one pending at mount shows at once', () => {
+    withNodes({});
+    const { container, rerender, unmount } = render(<AskUserAlertBar />);
+    expect(container.firstChild).toBeNull();
+    withNodes({ child: askingNode('child', 'Deploy plan', 4) });
+    rerender(<AskUserAlertBar />);
+    expect(screen.getByRole('alert')).toBeTruthy();
+    const arriving = container.firstChild as HTMLElement;
+    expect(arriving.style.overflow).toBe('hidden');
+    expect(arriving.style.height).toBe('0px');
+    unmount();
+
+    render(<AskUserAlertBar />);
+    const shell = screen.getByRole('alert').parentElement as HTMLElement;
+    expect(shell.style.height).toBe('auto');
+    expect(shell.style.opacity).toBe('1');
+  });
+
+  it('closes when the last ask is answered, no longer an alert or a target while it leaves', async () => {
+    withNodes({ child: askingNode('child', 'Deploy plan', 4) });
+    const { container, rerender } = render(<AskUserAlertBar />);
+    withNodes({});
+    rerender(<AskUserAlertBar />);
+
+    const leaving = container.querySelector('.ask-alert-bar') as HTMLElement;
+    expect(leaving).not.toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(leaving.getAttribute('aria-hidden')).toBe('true');
+    expect(leaving.hasAttribute('inert')).toBe(true);
+    fireEvent.click(leaving);
+    fireEvent.click(leaving.querySelector('.ask-alert-cta') as HTMLElement);
+    expect(actions.openPane).not.toHaveBeenCalled();
+    await waitFor(() => expect(container.querySelector('.ask-alert-bar')).toBeNull());
   });
 
   it('exposes a keyboard/AT-reachable Answer button that navigates exactly once', () => {

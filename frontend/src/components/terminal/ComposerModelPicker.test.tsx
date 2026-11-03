@@ -82,7 +82,7 @@ describe('ComposerModelPicker', () => {
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
     expect(document.activeElement).toBe(screen.getByRole('menuitemradio', { name: 'Claude' }));
     fireEvent.keyDown(document.activeElement!, { key: 'End' });
-    expect(document.activeElement).toBe(screen.getByRole('menuitemradio', { name: 'Claude' }));
+    expect(document.activeElement).toBe(screen.getByRole('menuitemradio', { name: 'Codex' }));
     fireEvent.keyDown(document.activeElement!, { key: 'ArrowLeft' });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Select runtime: Codex' }));
   });
@@ -202,6 +202,19 @@ describe('ComposerModelPicker placement', () => {
     const trigger = triggerAt(270);
     render(<ComposerModelPicker {...baseProps} anchor={{ ...baseProps.anchor, trigger }} />);
     expect(surfaceTop()).toBe(264 - 180);
+  });
+
+  it('opens below a composer at the top of the page even when the summary fits above', () => {
+    layout.content = 150;
+    const trigger = triggerAt(270);
+    render(<ComposerModelPicker {...baseProps} anchor={{ ...baseProps.anchor, trigger, preferBelow: true }} />);
+    expect(surfaceTop()).toBe(306);
+  });
+
+  it('flips a below-preferring summary above when only that side fits', () => {
+    const trigger = triggerAt(700);
+    render(<ComposerModelPicker {...baseProps} anchor={{ ...baseProps.anchor, trigger, preferBelow: true }} />);
+    expect(surfaceTop()).toBe(694 - 260);
   });
 
   it('opens above a composer near the bottom of the window', () => {

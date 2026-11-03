@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion, type Transition } from 'motion/react';
 import { useChatPanes, useChatProjects, useChatActions, useChatNodesSnapshot, useStructuralSelector } from '../../state/chatStore';
+import { EASE } from '../../motion/tokens';
 import { usePrefs } from '../../state/prefs';
 import type { Project, Tree, ProjectEdge, ChatNodeState } from '../../state/chatTypes';
 import { buildTree } from '../../state/tree';
@@ -62,6 +64,17 @@ const BUCKET_LABELS: Record<TimeBucket, string> = {
 // Streaming trees are what the user is waiting on right now; they never count
 // toward the preview cap and are never hidden behind "Show more".
 const CAP_EXEMPT_BUCKETS: ReadonlySet<TimeBucket> = new Set<TimeBucket>(['now']);
+
+// ── Re-sort motion ─────────────────────────────────────────────────────────
+// When the list re-sorts (a thread starts or stops streaming, or a send moves
+// it to the top), rows and bucket labels glide to their new places. Position
+// only: a row that also changed height snaps to it.
+const RESORT_MOVE: Transition = { layout: { duration: 0.22, ease: EASE.drawer } };
+// Under the pointer the list re-sorts at once, so nothing slides under the cursor.
+const RESORT_INSTANT: Transition = { layout: { duration: 0 } };
+/** Stands in for the order while the pointer is over the list: an unchanged
+ *  layoutDependency means motion does not even measure. */
+const RESORT_FROZEN = 'pointer-over';
 
 // ── Data derivation ────────────────────────────────────────────────────────
 
@@ -178,6 +191,20 @@ export default function ActivityView({
     [bucketGroups, visibleLimit],
   );
 
+  // The visible order, the only thing whose change lets rows glide: streaming
+  // chunks re-render this list every frame without re-sorting it, and motion
+  // measures rows only when their layoutDependency changes.
+  const visibleOrder = useMemo(
+    () => BUCKET_ORDER.map((bucket) => `${bucket}:${(visibleBuckets.get(bucket) ?? []).map((item) => item.tree.id).join(',')}`).join('|'),
+    [visibleBuckets],
+  );
+  // A ref, not state: hovering must not re-render (and re-measure) every row.
+  // It is read on the render that re-sorts, which is all that needs it.
+  const pointerOverRef = useRef(false);
+  const pointerOver = pointerOverRef.current;
+  const resortDependency = pointerOver ? RESORT_FROZEN : visibleOrder;
+  const resortTransition = pointerOver ? RESORT_INSTANT : RESORT_MOVE;
+
   const isAlive = useCallback(
     (id: string) => !nodes[id]?.deletedAt,
     [nodes],
@@ -266,6 +293,8 @@ export default function ActivityView({
         paddingRight: 'var(--sb-inset, 0px)',
         fontSize: 'var(--sb-fs, var(--fs-xl))',
       }}
+      onPointerEnter={() => { pointerOverRef.current = true; }}
+      onPointerLeave={() => { pointerOverRef.current = false; }}
     >
       {agentRuns.length > 0 && (
         <AgentRunsActivity
@@ -278,80 +307,86 @@ export default function ActivityView({
           }}
         />
       )}
-      {BUCKET_ORDER.map((bucket) => {
+      {/* One flat list, labels and rows as siblings, so a row that changes
+          bucket moves instead of remounting under another section. */}
+      {BUCKET_ORDER.flatMap((bucket) => {
         const items = visibleBuckets.get(bucket);
-        if (!items || items.length === 0) return null;
-        return (
-          <div key={bucket} className="activity-section">
-            <div
-              className="activity-time-label"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                fontSize: geom.isCard ? 'var(--sb-ts-fs, var(--fs-md))' : 11,
-                fontWeight: 600,
-                letterSpacing: geom.isCard ? 0 : 'var(--ls-wide)',
-                textTransform: geom.isCard ? 'none' : 'uppercase',
-                color: 'var(--term-muted)',
-                // Card modes drop the label onto the same text spine as the
-                // thread titles below it, sentence-case at one shared size.
-                padding: geom.isCard
-                  ? `0 ${spinePadding(geom, geom.rightGap)} 6px ${spinePadding(geom, geom.titleX)}`
-                  : 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
-                marginTop: geom.isCard ? 17 : 8,
-              }}
-            >
-              {bucket === 'now' && (
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    background: 'var(--term-digest)',
-                    animation: 'pulse var(--t-loop-slow) ease-in-out infinite',
-                    flexShrink: 0,
-                  }}
-                />
-              )}
-              {BUCKET_LABELS[bucket]}
-            </div>
-            {items.map((item) => (
-              <ActivityTreeEntry
-                key={item.tree.id}
-                item={item}
-                isAlive={isAlive}
-                nodePinnedAt={nodePinnedAt}
-                isThreadExpandedFn={isThreadOpen}
-                isBranchExpanded={isBranchOpen}
-                isBranchSelected={isBranchSelected}
-                isBranchMenuTarget={isBranchMenuTarget}
-                toggleThread={toggleThread}
-                toggleBranch={toggleBranch}
-                getNodeOpenState={getNodeOpenState}
-                getSubtreeOpenState={getSubtreeOpenState}
-                onActivateTree={openThreadRoot}
-                onSelectBranch={selectBranch}
-                onBranchContextMenu={openBranchMenu}
-                moveTargets={moveTargetsFor(item.project.id)}
-                activeProjectId={activeProjectId}
-                focusedNodeId={focusedNodeId}
-                archiveTree={archiveTree}
-                unarchiveTree={unarchiveTree}
-                pinTree={pinTree}
-                unpinTree={unpinTree}
-                renameTree={renameTree}
-                deleteTree={deleteTree}
-                moveTreeToWorkspace={moveTreeToWorkspace}
-                treeSelection={treeSelection}
-                clearTreeSelection={clearTreeSelection}
-                renamingNodeId={renamingNodeId}
-                onRenameNode={renameNode}
-                onRenameEnd={endRename}
+        if (!items || items.length === 0) return [];
+        return [
+          <motion.div
+            key={`bucket:${bucket}`}
+            className="activity-time-label"
+            layout="position"
+            layoutDependency={resortDependency}
+            transition={resortTransition}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: geom.isCard ? 'var(--sb-ts-fs, var(--fs-md))' : 11,
+              fontWeight: 600,
+              letterSpacing: geom.isCard ? 0 : 'var(--ls-wide)',
+              textTransform: geom.isCard ? 'none' : 'uppercase',
+              color: 'var(--term-muted)',
+              // Card modes drop the label onto the same text spine as the
+              // thread titles below it, sentence-case at one shared size.
+              padding: geom.isCard
+                ? `0 ${spinePadding(geom, geom.rightGap)} 6px ${spinePadding(geom, geom.titleX)}`
+                : 'var(--sb-row-py, 5px) 10px var(--sb-row-py, 4px) 6px',
+              marginTop: geom.isCard ? 17 : 8,
+            }}
+          >
+            {bucket === 'now' && (
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: 'var(--term-digest)',
+                  animation: 'pulse var(--t-loop-slow) ease-in-out infinite',
+                  flexShrink: 0,
+                }}
               />
-            ))}
-          </div>
-        );
+            )}
+            {BUCKET_LABELS[bucket]}
+          </motion.div>,
+          ...items.map((item) => (
+            <ActivityTreeEntry
+              key={`tree:${item.tree.id}`}
+              resortDependency={resortDependency}
+              resortTransition={resortTransition}
+              item={item}
+              isAlive={isAlive}
+              nodePinnedAt={nodePinnedAt}
+              isThreadExpandedFn={isThreadOpen}
+              isBranchExpanded={isBranchOpen}
+              isBranchSelected={isBranchSelected}
+              isBranchMenuTarget={isBranchMenuTarget}
+              toggleThread={toggleThread}
+              toggleBranch={toggleBranch}
+              getNodeOpenState={getNodeOpenState}
+              getSubtreeOpenState={getSubtreeOpenState}
+              onActivateTree={openThreadRoot}
+              onSelectBranch={selectBranch}
+              onBranchContextMenu={openBranchMenu}
+              moveTargets={moveTargetsFor(item.project.id)}
+              activeProjectId={activeProjectId}
+              focusedNodeId={focusedNodeId}
+              archiveTree={archiveTree}
+              unarchiveTree={unarchiveTree}
+              pinTree={pinTree}
+              unpinTree={unpinTree}
+              renameTree={renameTree}
+              deleteTree={deleteTree}
+              moveTreeToWorkspace={moveTreeToWorkspace}
+              treeSelection={treeSelection}
+              clearTreeSelection={clearTreeSelection}
+              renamingNodeId={renamingNodeId}
+              onRenameNode={renameNode}
+              onRenameEnd={endRename}
+            />
+          )),
+        ];
       })}
       {hiddenCount > 0 && (
         <ActivityLoadMoreSentinel onLoadMore={() => setVisibleLimit((v) => v + ACTIVITY_PAGE_SIZE)} />
@@ -368,14 +403,17 @@ export default function ActivityView({
           No activity yet
         </div>
       )}
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          sections={menuSections}
-          onClose={closeMenu}
-        />
-      )}
+      <AnimatePresence>
+        {menu && (
+          <ContextMenu
+            key={`${menu.x}:${menu.y}`}
+            x={menu.x}
+            y={menu.y}
+            sections={menuSections}
+            onClose={closeMenu}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -407,6 +445,8 @@ function ActivityLoadMoreSentinel({ onLoadMore }: { onLoadMore: () => void }) {
 // ── Per-tree entry: ThreadRow + workspace label + BranchRow children ────────
 
 function ActivityTreeEntry({
+  resortDependency,
+  resortTransition,
   item,
   isAlive,
   nodePinnedAt,
@@ -437,6 +477,9 @@ function ActivityTreeEntry({
   onRenameNode,
   onRenameEnd,
 }: {
+  /** The list's re-sort motion (see RESORT_MOVE): rows glide only when this changes. */
+  resortDependency: string;
+  resortTransition: Transition;
   item: ActivityTree;
   isAlive: (id: string) => boolean;
   nodePinnedAt: NodePinnedAt;
@@ -478,7 +521,12 @@ function ActivityTreeEntry({
   const threadOpenState = getSubtreeOpenState(tree.rootNodeId, project.edges);
 
   return (
-    <div style={{ marginTop: 'var(--sb-ws-gap, 6px)' }}>
+    <motion.div
+      layout="position"
+      layoutDependency={resortDependency}
+      transition={resortTransition}
+      style={{ marginTop: 'var(--sb-ws-gap, 6px)' }}
+    >
       <ThreadRow
         tree={tree}
         projectId={project.id}
@@ -572,6 +620,6 @@ function ActivityTreeEntry({
           ))}
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

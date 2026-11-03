@@ -308,7 +308,7 @@ export async function ensureSession(opts: EnsureSessionOptions): Promise<EnsureS
       startupMark('ensure_session_failed', { nodeId: opts.nodeId, status: res.status, code: payload.code, durMs: Date.now() - startedAt });
       // Older gateways use CLAUDE_SESSIONS_BUSY for every runtime.
       const runtimeId = payload.runtimeId ?? opts.runtimeId;
-      const label = ({ claude: 'Claude', codex: 'Codex', kiro: 'Kiro', pi: 'Pi' } as Record<string, string>)[runtimeId ?? ''] ?? 'Agent';
+      const label = ({ claude: 'Claude', codex: 'Codex', kiro: 'Kiro', pi: 'Pi', crew: 'Kiro Crew', antigravity: 'Antigravity' } as Record<string, string>)[runtimeId ?? ''] ?? 'Agent';
       throw new Error(
         `${label} session capacity is full. Wait for an idle session to be released, then retry.`,
       );

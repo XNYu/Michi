@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { AnimatePresence, motion, useIsPresent, type Variants } from 'motion/react';
 import type { MichiDatabase, MichiDbColumn, MichiDbRow, DatabaseRowStatus } from 'michi-shared';
+import { DUR, EASE } from '../../../../../motion/tokens';
 import { FolderIcon } from '../../../icons';
 import { isTaskDb, TASK_COLUMN } from 'michi-shared';
 import { ThreadStateDot } from '../../ThreadStateDot';
@@ -26,6 +28,38 @@ export function rowTitle(db: MichiDatabase, row: MichiDbRow): string {
   return (title ? cellText(title, cellOf(row, title.id), (c, v) => optionName(db, c, v)) : '').trim() || UNTITLED;
 }
 
+// The count rolls the way it changed: up as a column fills, down as it empties.
+const ROLL: Variants = {
+  enter: (dir: number) => ({ y: `${dir * 100}%`, opacity: 0 }),
+  shown: { y: 0, opacity: 1, transition: { duration: 0.2, ease: EASE.out, delay: 0.04 } },
+  exit: (dir: number) => ({ y: `${-dir * 100}%`, opacity: 0, transition: { duration: DUR.collapse, ease: EASE.out } }),
+};
+const ROLL_STAGE: React.CSSProperties = { display: 'inline-grid', overflow: 'hidden' };
+const ROLL_LAYER: React.CSSProperties = { gridArea: '1 / 1' };
+
+function RollingDigits({ value, dir }: { value: number; dir: number }) {
+  // The number on its way out is not read out alongside the new one.
+  const present = useIsPresent();
+  return <motion.span style={ROLL_LAYER} custom={dir} variants={ROLL} initial="enter" animate="shown" exit="exit" aria-hidden={present ? undefined : true}>{value}</motion.span>;
+}
+
+/** A count that rolls to its new value; it is drawn settled the first time. */
+export function RollingCount({ value, className }: { value: number; className?: string }) {
+  const last = useRef(value);
+  const dir = useRef(1);
+  if (value !== last.current) {
+    dir.current = value > last.current ? 1 : -1;
+    last.current = value;
+  }
+  return (
+    <span className={className} style={ROLL_STAGE}>
+      <AnimatePresence initial={false} custom={dir.current}>
+        <RollingDigits key={value} value={value} dir={dir.current} />
+      </AnimatePresence>
+    </span>
+  );
+}
+
 /** A group's heading: its option (with a thread's state dot) or value, its count and sums. */
 export function GroupHeading({
   db,
@@ -33,12 +67,18 @@ export function GroupHeading({
   group,
   showCount,
   sums,
+  roll = false,
+  cheer,
 }: {
   db: MichiDatabase;
   column?: MichiDbColumn;
   group: DbGroup;
   showCount: boolean;
   sums: string[];
+  /** A board column's heading: its count rolls as cards come and go. */
+  roll?: boolean;
+  /** Changes when cards arrive in the group: a Done heading's check settles again. */
+  cheer?: string;
 }) {
   const threadState = column && isThreadsDb(db) && column.builtin && column.id === 'state' && group.key !== null;
   const taskStatus = !!column && isTaskDb(db) && column.id === TASK_COLUMN.status && group.key !== null;
@@ -52,7 +92,7 @@ export function GroupHeading({
       )}
       {taskStatus && (
         <span className="michi-db-group__dot" aria-hidden="true">
-          <TaskStatusGlyph status={group.key!} />
+          <TaskStatusGlyph status={group.key!} cheer={cheer} />
         </span>
       )}
       {option ? (
@@ -60,7 +100,9 @@ export function GroupHeading({
       ) : (
         <span className="michi-db-group__label">{groupName(db, column, group.key, group.label)}</span>
       )}
-      {showCount && <span className="michi-db-group__count michi-db-mono">{group.count}</span>}
+      {showCount && (roll
+        ? <RollingCount className="michi-db-group__count michi-db-mono" value={group.count} />
+        : <span className="michi-db-group__count michi-db-mono">{group.count}</span>)}
       {sums.map((s) => <span key={s} className="michi-db-group__sum michi-db-mono">· {s}</span>)}
     </span>
   );

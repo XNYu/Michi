@@ -17,6 +17,10 @@ import {
 } from './maintenanceRepository';
 import { runInTransaction } from '../db';
 import { withoutSources } from '../metaAgent/firstRunSources';
+import {
+  listWatchResources, observeWatchTaskDatabase, readWatchDatabase, readWatchPage, readWatchSource, recordWatchNoChange,
+  watchRunFor, writeWatchDatabase, writeWatchPage,
+} from '../metaAgent/watchTools';
 import { PageWriteError } from './core';
 import {
   createMaintenanceWriter, deferIfPageLeased, getPlannedMaintenanceResource, reobserveRoutedResource, requireMaintenanceResource, requireMaintenanceSource,
@@ -317,7 +321,18 @@ export function createMaintenanceTools(
   return definitions.map((tool) => ({ ...tool, execute: (raw: unknown) => {
     const context = getContext();
     let homeRun: ReturnType<typeof homeRunFor>;
-    try { homeRun = context ? homeRunFor(context) : null; } catch (error) { return failure(error); }
+    let watchRun: ReturnType<typeof watchRunFor>;
+    try {
+      homeRun = context ? homeRunFor(context) : null;
+      watchRun = context && !homeRun ? watchRunFor(context) : null;
+    } catch (error) { return failure(error); }
+    if (watchRun) {
+      const handler = WATCH_RUN_TOOLS[tool.name];
+      if (!handler) return failure(new PageWriteError(409, 'invalid', tool.name === 'maintenance_route_source'
+        ? 'A watch check does not route: read and write the workspace\'s pages and databases directly'
+        : `${tool.name} is not used in a watch check`));
+      return invoke(() => handler(context!, closedArgs(raw, Object.keys(tool.parameters.properties)), currentTime()));
+    }
     if (!homeRun) return tool.execute(raw);
     const handler = HOME_RUN_TOOLS[tool.name];
     if (!handler) return failure(new PageWriteError(409, 'invalid', `${tool.name} is not used while the Meta agent writes a home page`));
@@ -347,8 +362,21 @@ const HOME_RUN_TOOLS: Record<string, (context: HomeToolContext, args: Record<str
   maintenance_read_workspace_home: readWorkspaceHome,
 };
 
-/** The routed task database's tasks for one source: compact, at most 20, within the 64 KB read bound. */
-function listMaintenanceTasks(context: MaintenanceExecutionContext, args: Record<string, unknown>, now: number) {
+/** The tools a watch check uses, bound to its check (watchTools.ts); a check routes nothing and reads no history. */
+const WATCH_RUN_TOOLS: Record<string, (context: MaintenanceExecutionContext, args: Record<string, unknown>, now: number) => unknown> = {
+  maintenance_read_source: readWatchSource,
+  maintenance_list_resources: listWatchResources,
+  maintenance_read_page: (context, args, now) => withLayoutRules(readWatchPage(context, args, now), context.ownerUserId),
+  maintenance_read_database: readWatchDatabase,
+  maintenance_list_tasks: (context, args, now) => listWatchTasks(context, args, now),
+  maintenance_write_page: writeWatchPage,
+  maintenance_write_database: writeWatchDatabase,
+  maintenance_no_change: recordWatchNoChange,
+};
+
+interface TaskQuery { nodeId?: string; query?: string; statuses?: string[]; limit: number }
+
+function taskQuery(args: Record<string, unknown>): TaskQuery {
   const words = (value: unknown, name: string): string | undefined => {
     if (value === undefined) return undefined;
     if (typeof value !== 'string' || !value.trim() || value.length > 200) throw new PageWriteError(400, 'invalid', `Invalid ${name}`);
@@ -364,6 +392,12 @@ function listMaintenanceTasks(context: MaintenanceExecutionContext, args: Record
   if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > MAINTENANCE_TASK_LIMIT) {
     throw new PageWriteError(400, 'invalid', `limit must be between 1 and ${MAINTENANCE_TASK_LIMIT}`);
   }
+  return { ...(nodeId ? { nodeId } : {}), ...(query ? { query } : {}), ...(args.statuses ? { statuses: args.statuses as string[] } : {}), limit: limit as number };
+}
+
+/** The routed task database's tasks for one source: compact, at most 20, within the 64 KB read bound. */
+function listMaintenanceTasks(context: MaintenanceExecutionContext, args: Record<string, unknown>, now: number) {
+  const search = taskQuery(args);
   const databaseId = liveTaskDatabaseId(context.workspaceId, context.ownerUserId);
   if (!databaseId) throw new PageWriteError(404, 'not_found', 'This workspace has no task database');
   const source = requireMaintenanceSource(context, args.sourceTurnId);
@@ -378,11 +412,24 @@ function listMaintenanceTasks(context: MaintenanceExecutionContext, args: Record
   }
   reobserveRoutedResource(context, args.sourceTurnId as string, 'database', databaseId);
   const ref = requireMaintenanceResource(context, args.sourceTurnId as string, 'database', databaseId);
+  return taskListing(context, databaseId, ref.revision, search, now);
+}
+
+/** A watch check lists tasks without routing; its listing records the revision a later write must find. */
+function listWatchTasks(context: MaintenanceExecutionContext, args: Record<string, unknown>, now: number) {
+  const search = taskQuery(args);
+  const { databaseId, revision } = observeWatchTaskDatabase(context, args, now);
+  return taskListing(context, databaseId, revision, search, now);
+}
+
+/** Compact tasks of the workspace's task database, which must still be at `revision`. */
+function taskListing(context: MaintenanceExecutionContext, databaseId: string, revision: number, search: TaskQuery, now: number) {
+  const { nodeId, query, statuses, limit } = search;
   const database = getDatabase(databaseId, context.ownerUserId);
-  if (database.workspaceId !== context.workspaceId || database.revision !== ref.revision) throw new PageWriteError(409, 'stale_revision', 'Database changed since routing; read it again from the first page; that read refreshes its revision (a continuation read cannot)');
+  if (database.workspaceId !== context.workspaceId || database.revision !== revision) throw new PageWriteError(409, 'stale_revision', 'Database changed since routing; read it again from the first page; that read refreshes its revision (a continuation read cannot)');
   const found = listTasks({
-    ownerUserId: context.ownerUserId, scope: { kind: 'workspace', workspaceId: context.workspaceId }, now, limit: limit as number,
-    ...(nodeId ? { nodeId } : {}), ...(query ? { query } : {}), ...(args.statuses ? { statuses: args.statuses as string[] } : {}),
+    ownerUserId: context.ownerUserId, scope: { kind: 'workspace', workspaceId: context.workspaceId }, now, limit,
+    ...(nodeId ? { nodeId } : {}), ...(query ? { query } : {}), ...(statuses ? { statuses } : {}),
   });
   // At most 20 tasks of at most 20 conversations each: one state read.
   const linked = [...new Set(found.items.flatMap((item) => item.conversationIds))];

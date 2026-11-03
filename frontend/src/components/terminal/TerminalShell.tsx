@@ -844,10 +844,10 @@ export default function TerminalShell() {
         padding: 'var(--term-shell-padding, 0px)',
         gap: 'var(--term-shell-gap, 0px)',
         boxSizing: 'border-box',
-        // Clip drawer/overlay slide-in animations (e.g. SettingsDrawer's
-        // slideInRight starts at translateX(100%), which would otherwise
-        // overshoot the viewport right edge and flash a horizontal scrollbar
-        // on Windows where scrollbars take up space. clip, unlike hidden,
+        // Clip drawer/overlay slide-ins (a drawer panel starts at
+        // translateX(100%), which would otherwise overshoot the viewport
+        // right edge and flash a horizontal scrollbar on Windows where
+        // scrollbars take up space). clip, unlike hidden,
         // cannot be scrolled by focus or scrollIntoView, which on a phone
         // shifted the whole shell sideways behind an overflowing topbar.
         overflow: 'clip',

@@ -16,12 +16,17 @@ const runtimes: AgentRuntimeOption[] = [
 describe('filterVisibleRuntimes', () => {
   it('offers available runtimes in public builds', () => {
     expect(filterVisibleRuntimes(runtimes, false).map((runtime) => runtime.id)).toEqual(
-      ['kiro', 'claude', 'codex', 'pi', 'cursor', 'grok'],
+      ['claude', 'codex', 'cursor', 'grok', 'kiro', 'pi'],
     );
   });
 
   it('applies availability and the internal allowlist together', () => {
-    expect(filterVisibleRuntimes(runtimes, true).map((runtime) => runtime.id)).toEqual(['kiro', 'claude', 'codex', 'pi']);
+    expect(filterVisibleRuntimes(runtimes, true).map((runtime) => runtime.id)).toEqual(['claude', 'codex', 'kiro', 'pi']);
     expect(runtimes.find((runtime) => runtime.id === 'crew')?.available).toBe(false);
+  });
+
+  it('keeps Antigravity visible in Restricted builds when available', () => {
+    const available = runtimes.map((runtime) => runtime.id === 'antigravity' ? { ...runtime, available: true } : runtime);
+    expect(filterVisibleRuntimes(available, true).map((runtime) => runtime.id)).toEqual(['antigravity', 'claude', 'codex', 'kiro', 'pi']);
   });
 });

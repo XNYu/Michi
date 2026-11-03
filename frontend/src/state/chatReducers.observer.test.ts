@@ -72,4 +72,31 @@ describe('realign-assistant-id', () => {
 
     expect(next).toEqual({ n1: node });
   });
+
+  it('renames both optimistic rows and keeps their first ids as render keys', () => {
+    const node = baseNode();
+    node.messages = [
+      { id: 'u0', role: 'user', text: 'earlier', toolCalls: [] },
+      { id: 'u-a-local', role: 'user', text: 'hi', toolCalls: [] },
+      { id: 'a-local', role: 'assistant', text: '', toolCalls: [], blocks: [], streaming: true },
+    ];
+
+    let nodes = reduceNodes(
+      { n1: node },
+      { type: 'realign-assistant-id', nodeId: 'n1', fromId: 'a-local', toId: 'a-server' },
+    );
+    expect(nodes.n1.messages.map((m) => [m.id, m.clientKey])).toEqual([
+      ['u0', undefined],
+      ['u-a-server', 'u-a-local'],
+      ['a-server', 'a-local'],
+    ]);
+
+    // A second realign keeps the key the rows were first rendered under.
+    nodes = reduceNodes(nodes, { type: 'realign-assistant-id', nodeId: 'n1', fromId: 'a-server', toId: 'a-final' });
+    expect(nodes.n1.messages.map((m) => [m.id, m.clientKey])).toEqual([
+      ['u0', undefined],
+      ['u-a-final', 'u-a-local'],
+      ['a-final', 'a-local'],
+    ]);
+  });
 });

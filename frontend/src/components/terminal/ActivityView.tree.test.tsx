@@ -5,10 +5,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import ActivityView from './ActivityView';
-import { ChatProvider, useChatStore } from '../../state/chatStore';
-import { PrefsProvider } from '../../state/prefs';
+import { ChatProvider, useChatActions, useChatStore } from '../../state/chatStore';
+import { PREFS_KEY, PrefsProvider } from '../../state/prefs';
 import type { ChatNodeState, Project } from '../../state/chatTypes';
 
 const mocks = vi.hoisted(() => ({ extractNodeTree: vi.fn() }));
@@ -94,8 +94,10 @@ function fixture() {
 }
 
 const storeRef: { current: ReturnType<typeof useChatStore> | null } = { current: null };
+const actionsRef: { current: ReturnType<typeof useChatActions> | null } = { current: null };
 function StoreProbe() {
   storeRef.current = useChatStore();
+  actionsRef.current = useChatActions();
   return null;
 }
 
@@ -160,5 +162,48 @@ describe('ActivityView tree controller', () => {
 
     // The menu blinks the chosen row before running it.
     await waitFor(() => expect(mocks.extractNodeTree).toHaveBeenCalledWith('childA'));
+  });
+});
+
+describe('ActivityView re-sort', () => {
+  const labels = () => Array.from(document.querySelectorAll('.activity-time-label')).map((label) => label.textContent);
+
+  it('moves a thread that starts streaming into Now without remounting its row', async () => {
+    renderActivity();
+    await screen.findByText('Child of C');
+    const before = row('rootC');
+    expect(labels()).toEqual(['Today']);
+
+    act(() => {
+      actionsRef.current!.dispatch({ type: 'user-send', nodeId: 'rootC', userText: 'hi', assistantId: 'a1' });
+    });
+
+    await waitFor(() => expect(labels()).toEqual(['Now', 'Today']));
+    // The same element, now listed first: it glides to its new place
+    // (layout="position") instead of being rebuilt under the Now label.
+    expect(row('rootC')).toBe(before);
+    const threadRows = Array.from(document.querySelectorAll('[data-sidebar-row]'))
+      .map((el) => el.getAttribute('data-sidebar-row'))
+      .filter((id) => id?.startsWith('root'));
+    expect(threadRows).toEqual(['rootC', 'rootA', 'rootB']);
+  });
+
+  it('scrolls a revealed row into view, without gliding under reduce motion', async () => {
+    const scroll = Element.prototype.scrollIntoView as unknown as ReturnType<typeof vi.fn>;
+    renderActivity();
+    await screen.findByText('Child of A');
+    fireEvent.click(screen.getByText('Thread B'));
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+    expect(scroll.mock.calls.at(-1)?.[0]).toEqual({ block: 'nearest', behavior: 'smooth' });
+
+    cleanup();
+    localStorage.clear();
+    scroll.mockClear();
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ reduceMotion: true }));
+    renderActivity();
+    await screen.findByText('Child of A');
+    fireEvent.click(screen.getByText('Thread B'));
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+    expect(scroll.mock.calls.at(-1)?.[0]).toEqual({ block: 'nearest', behavior: 'auto' });
   });
 });

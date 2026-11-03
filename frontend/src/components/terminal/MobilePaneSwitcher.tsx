@@ -1,7 +1,9 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence } from 'motion/react';
 import { activeTreeRootNodeId, chatLabel, shallowArrayEqual, useChatActions, useChatPanes, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { buildTree, type TreeNode } from '../../state/tree';
+import { DUR, EASE } from '../../motion/tokens';
 import { PopoverSurface } from '../ui/Popover';
 import { branchMotionAllowed, branchMotionReduced, isFreshBranch, playBranchFlight, pulseBranchTarget, type BranchFlightOrigin } from './branchMotion';
 import { BranchIcon } from './icons';
@@ -9,6 +11,9 @@ import './mobile.css';
 
 /** A tap this recent is the gesture that started the branch. */
 const FLIGHT_TAP_MS = 2000;
+/** The list lifts back toward its trigger as it fades (PopoverSurface keeps the
+ *  ghost inert and roleless while it leaves). */
+const LIST_EXIT = { opacity: 0, y: -4, transition: { duration: DUR.exit, ease: EASE.out } };
 
 /** The accepted Touch study: a right-hand list of indented titles, not cards.
  * Branches in the current tree can reopen a closed pane, and open panes carry
@@ -93,8 +98,8 @@ export function MobilePaneSwitcher() {
   return <>
     <button ref={trigger} type="button" className="mobile-pane-trigger t-icon-btn" aria-label="Switch pane" aria-expanded={open} aria-controls={id}
       onClick={() => setOpen(value => !value)}><svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M4 6h16M9 12h11M4 18h16" /></svg></button>
-    {open && <PopoverSurface ref={panel} role="navigation" aria-label="Branches and panes" right={12} top={52}
-      width="min(300px, calc(100vw - 24px))" maxHeight="calc(100dvh - 76px)" className="mobile-pane-list" glass>
+    <AnimatePresence>{open && <PopoverSurface key="list" ref={panel} role="navigation" aria-label="Branches and panes" right={12} top={52}
+      width="min(300px, calc(100vw - 24px))" maxHeight="calc(100dvh - 76px)" className="mobile-pane-list" glass exit={LIST_EXIT}>
       <div id={id} onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }}>{rows.map((row, index) => {
         const isOpen = panes.includes(row.id);
         return <div key={row.id} className="mobile-pane-item" data-current={focusedPane === row.id ? '' : undefined}>
@@ -113,7 +118,7 @@ export function MobilePaneSwitcher() {
           </button>}
         </div>;
       })}</div>
-    </PopoverSurface>}
+    </PopoverSurface>}</AnimatePresence>
     {flight && createPortal(<span ref={chip} key={flight.id} className="mobile-branch-flight" aria-hidden="true"><BranchIcon size={16} /></span>, document.body)}
   </>;
 }

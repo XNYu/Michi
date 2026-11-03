@@ -343,7 +343,7 @@ function ConnectionRow({
             {onRemove && <Button variant="ghost" size="sm" danger disabled={loading} onClick={onRemove}>Remove</Button>}
           </div>
         </div>}
-        {!local && <details className="remote-machine__workspaces" open aria-busy={loading}>
+        {!local && <details className="remote-machine__workspaces" aria-busy={loading}>
           <summary>{loading ? 'Reading remote workspaces…' : workspaceState?.status === 'error' ? 'Workspaces unavailable'
             : `${workspaces.length} ${workspaces.length === 1 ? 'workspace' : 'workspaces'}`}</summary>
           {loading && <p role="status">Connecting to this machine and reading its current workspaces…</p>}

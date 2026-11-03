@@ -106,8 +106,8 @@ function WindowNav({ page, query, onQuery, onOpen, onNav, onSubmit, history, met
                 {count > 0 && <em id={countId} aria-hidden="true">{count}</em>}
               </button>;
             }
-            if (item.page === 'account' && !signedIn) return null;
             const info = SETTINGS_PAGES[item.page];
+            if ((item.page === 'account' && !signedIn) || info.only === 'phone') return null;
             const Icon = info.icon;
             const status = alert[item.page];
             return <button key={item.page} type="button" className="settings-window__item"

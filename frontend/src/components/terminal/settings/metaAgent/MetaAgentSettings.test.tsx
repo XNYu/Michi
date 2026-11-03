@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   fetchAgentStatus: vi.fn(),
   fetchOverview: vi.fn(),
   setPaused: vi.fn(),
+  runUpdate: vi.fn(),
 }));
 const catalog = vi.hoisted(() => ({
   value: {
@@ -45,6 +46,10 @@ vi.mock('../../../../services/api/agentRuntime', async (importOriginal) => ({
 vi.mock('../../../../services/api/metaAgentOverview', () => ({
   fetchMetaAgentOverview: api.fetchOverview,
   setMetaAgentPaused: api.setPaused,
+}));
+vi.mock('../../../../state/metaAgent/metaAgentUpdate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../../state/metaAgent/metaAgentUpdate')>()),
+  runMetaAgentUpdate: api.runUpdate,
 }));
 vi.mock('../../../../hooks/useRuntimeCatalog', () => ({
   useRuntimeCatalog: (opts: { runtime?: string | null }) => {
@@ -150,10 +155,9 @@ describe('Settings › Meta agent runtime', () => {
     await flush();
     expect(lastPatch()).toEqual({ runtimeId: 'kiro', providerId: null, modelId: null, reasoning: null });
     expect(screen.getByRole('button', { name: 'Kiro' }).getAttribute('aria-pressed')).toBe('true');
-    expect(runtimeSection().textContent).toContain('Now using Kiro · default model (custom). Background maintenance: Michi checks tool access; external tools are read-only.');
   });
 
-  it('says what each “Default” stands for, and the line the window’s chip repeats', async () => {
+  it('says what each “Default” stands for', async () => {
     await mount({
       ...CUSTOM_CODEX,
       settings: { runtimeId: 'codex', providerId: null, modelId: null, reasoning: null },
@@ -162,7 +166,6 @@ describe('Settings › Meta agent runtime', () => {
     const first = (name: string) => (screen.getByRole('combobox', { name }) as HTMLSelectElement).options[0]!.textContent;
     expect(first('Meta agent model')).toBe('Default (GPT 5.5 Codex)');
     expect(first('Meta agent reasoning')).toBe('Default (High)');
-    expect(runtimeSection().textContent).toContain('Now using Codex · gpt-5.5-codex · reasoning high (custom)');
     cleanup();
 
     // A value picked by hand needs no explanation.
@@ -176,8 +179,6 @@ describe('Settings › Meta agent runtime', () => {
     await mount({ ...followOn('crew'), availability: { available: false, reason } });
     const notice = within(runtimeSection()).getByRole('status');
     expect(notice.textContent).toContain(reason);
-    expect(runtimeSection().textContent).toContain('Crew: the Meta agent can’t use Kiro Crew yet.');
-    expect(runtimeSection().textContent).not.toContain('Now using Crew');
     api.updateMetaAgentSettings.mockResolvedValue({
       ...CUSTOM_CODEX, settings: { runtimeId: 'claude', providerId: null, modelId: null, reasoning: null },
       resolved: { runtimeId: 'claude', providerId: null, modelId: null, reasoning: null, followsGlobal: false },
@@ -202,6 +203,11 @@ describe('Settings › Meta agent runtime', () => {
     expect(screen.queryByText('Kiro isn’t installed on this computer.')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'How to install' }));
     expect(screen.getByText('npm install -g @anthropic-ai/claude-code', { selector: 'code' })).toBeTruthy();
+    // No Pi explanation; with nothing unavailable to explain, no hint list.
+    expect(screen.queryByText(/Pi runs inside Michi/)).toBeNull();
+    cleanup();
+    await mount(CUSTOM_CODEX);
+    expect(screen.getByRole('group', { name: 'Meta agent runtime' }).nextElementSibling?.classList.contains('meta-set__hints')).toBe(false);
   });
 
   it('sends nulls for every field when going back to the global settings', async () => {
@@ -241,19 +247,7 @@ describe('Settings › Meta agent runtime', () => {
   });
 });
 
-describe('Settings › Meta agent restriction', () => {
-  it.each([
-    ['claude', 'Now using Claude · default model (follows global). Background maintenance: Michi checks tool access; external tools are read-only.'],
-    ['pi', 'Now using Pi · default model (follows global). Background maintenance: Michi checks tool access; external tools are read-only.'],
-    ['codex', 'Now using Codex · default model (follows global). Background maintenance: Michi checks tool access; external tools are read-only.'],
-    ['kiro', 'Now using Kiro · default model (follows global). Background maintenance: Michi checks tool access; external tools are read-only.'],
-  ])('describes how %s is restricted', async (runtimeId, text) => {
-    await mount(followOn(runtimeId));
-    const section = runtimeSection();
-    expect(section.textContent).toContain(text);
-    expect(section.textContent).toContain('Background maintenance can change Michi content and use external read-only tools. Other external tools need your saved approval. Assistant chat runs on the global settings, or what you pick in its composer, with that AI service’s built-in and connected tools and ordinary chat permissions.');
-  });
-
+describe('Settings › Meta agent follow-global line', () => {
   it('names the resolved runtime in the follow-global line', async () => {
     await mount(followOn('kiro', 'kiro_default'));
     expect(runtimeSection().textContent).toContain('Now Kiro · kiro_default. Change the global settings');
@@ -304,6 +298,48 @@ describe('Settings › Meta agent guard failure', () => {
   it('has no red box while every check passed', async () => {
     await mount({ ...followOn('kiro'), guard: { maintenance: { ...failed(), state: 'ok', unexpectedTools: [] }, chat: null } });
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
+describe('Settings › Meta agent stopped by errors', () => {
+  const AUTH = 'Claude authentication failed. Refresh the CLI credentials and retry; the original session is retained.';
+  const stopped = (reason: 'other' | 'runtime-unsupported', message: string) => ({
+    ...overview('error'), error: message, stopped: { reason, message, workspaceIds: ['w1'] },
+  });
+
+  it('says why it stopped, which is what raised the Settings dot, and Retry resumes and runs a round', async () => {
+    api.fetchOverview.mockResolvedValue(stopped('other', AUTH));
+    await mount();
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('Meta agent stopped');
+    expect(alert.textContent).toContain(AUTH);
+
+    api.setPaused.mockResolvedValue(overview('running'));
+    api.fetchOverview.mockResolvedValue(overview('running'));
+    api.runUpdate.mockResolvedValue(undefined);
+    fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    await flush();
+    expect(api.setPaused).toHaveBeenCalledWith(false);
+    expect(api.runUpdate).toHaveBeenCalledWith('local');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('explains a runtime the overview says cannot run it, without a Retry', async () => {
+    api.fetchOverview.mockResolvedValue(stopped('runtime-unsupported', 'Codex is not installed on this computer'));
+    await mount();
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toContain('Meta agent is not running');
+    expect(alert.textContent).toContain('Codex is not installed on this computer.');
+    expect(within(alert).queryByRole('button', { name: 'Retry' })).toBeNull();
+    fireEvent.click(within(alert).getByRole('button', { name: 'Change runtime' }));
+    expect(document.activeElement).toBe(screen.getByRole('radio', { name: /Custom/ }));
+  });
+
+  it('leaves a failed tool check to its own red box', async () => {
+    api.fetchOverview.mockResolvedValue({ ...stopped('other', AUTH), stopped: { reason: 'restriction-check', message: 'Its tool check failed', workspaceIds: [] } });
+    await mount({ ...followOn('kiro'), guard: { maintenance: failed(), chat: null } });
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getByRole('alert').textContent).toContain('Kiro started with extra tools');
   });
 });
 

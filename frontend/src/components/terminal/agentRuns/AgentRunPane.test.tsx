@@ -71,4 +71,21 @@ describe('AgentRunPane', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close Run Pane' }));
     expect(close).toHaveBeenCalledWith({ backendConnectionId: 'remote-b', id: 'run-pane' });
   });
+
+  it('shows the result of a run that finishes while it is open, and of one opened finished', () => {
+    const resultBundle: NonNullable<AgentRunDtoV1['resultBundle']> = {
+      version: 1, status: 'completed', source: 'submitted',
+      handoff: { conclusion: 'All checks pass', artifactsOrChanges: 'Changed one file', unresolvedIssues: '' },
+      artifacts: [], resourceMutations: [], externalActions: [],
+    };
+    const finished = { ...resource, value: { ...resource.value, status: AgentRunStatus.Completed, resultBundle, completedAt: 9 } };
+    const { rerender, unmount } = render(<AgentRunPane run={resource} onClose={() => {}} />);
+    expect(screen.queryByTestId('run-result')).toBeNull();
+    rerender(<AgentRunPane run={finished} onClose={() => {}} />);
+    expect(screen.getByTestId('run-result').textContent).toContain('All checks pass');
+    expect(screen.getByTestId('agent-run-pane').querySelector('header')!.textContent).toContain(`${AgentRunStatus.Completed} ·`);
+    unmount();
+    render(<AgentRunPane run={finished} onClose={() => {}} />);
+    expect(screen.getByTestId('run-result').textContent).toContain('All checks pass');
+  });
 });

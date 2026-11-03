@@ -11,7 +11,7 @@ const digest: DigestState = {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('DigestGenerationStatus', () => {
-  it('updates elapsed time and removes progress when generation completes', () => {
+  it('updates elapsed time and removes progress when generation completes', async () => {
     vi.useFakeTimers();
     const running: DigestState = {
       ...digest, generation: { startedAt: Date.now() - 61_000, thought: 'Reviewing notes', activity: 'Thinking...' },
@@ -21,8 +21,12 @@ describe('DigestGenerationStatus', () => {
     act(() => { vi.advanceTimersByTime(1000); });
     expect(screen.getByText('1m 2s')).toBeTruthy();
     view.rerender(<DigestGenerationStatus digest={{ ...running, status: 'idle' }} />);
+    // Folding away it is already out of reach, then gone.
     expect(screen.queryByRole('region', { name: 'Digest generation' })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
     expect(screen.queryByText('Reviewing notes')).toBeNull();
+    // The clock stopped with the generation (motion's last frame aside).
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     expect(vi.getTimerCount()).toBe(0);
   });
 });

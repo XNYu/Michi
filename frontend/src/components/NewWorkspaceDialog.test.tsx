@@ -16,6 +16,9 @@ vi.mock('../services/api', () => ({
   listBackendConnections: vi.fn().mockResolvedValue([]),
 }));
 
+const connectRemoteDesktop = vi.hoisted(() => vi.fn());
+vi.mock('../services/api/backendConnections', () => ({ connectRemoteDesktop }));
+
 function renderDialog(overrides: Partial<React.ComponentProps<typeof NewWorkspaceDialog>> = {}) {
   const props: React.ComponentProps<typeof NewWorkspaceDialog> = {
     open: true,
@@ -24,9 +27,36 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof NewWorkspac
     onSkip: vi.fn(),
     ...overrides,
   };
-  render(<NewWorkspaceDialog {...props} />);
-  return props;
+  const view = render(<NewWorkspaceDialog {...props} />);
+  return { ...props, rerender: (next: Partial<typeof props>) => view.rerender(<NewWorkspaceDialog {...props} {...next} />) };
 }
+
+describe('NewWorkspaceDialog closing', () => {
+  afterEach(() => setKnownBackendConnections([]));
+
+  it('drops a remote connection that finishes after the dialog closed', async () => {
+    let finish!: (value: unknown) => void;
+    connectRemoteDesktop.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const dialog = renderDialog();
+    fireEvent.change(screen.getByLabelText('Backend connection'), { target: { value: '__add_remote__' } });
+    fireEvent.change(screen.getByLabelText('Remote SSH host'), { target: { value: 'dev-box' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    expect(connectRemoteDesktop).toHaveBeenCalledTimes(1);
+
+    // Closed mid-connect; the fading dialog still holds the form when it lands.
+    dialog.rerender({ open: false });
+    await act(async () => {
+      finish({
+        kind: 'connected', home: '/home/dev', runtimes: ['kiro'], runtimeWarnings: [],
+        connection: { id: 'remote-9', name: 'dev-box', transport: 'ssh', apiUrl: 'http://127.0.0.1:1/api', hasToken: true, createdAt: 1, updatedAt: 1 },
+      });
+    });
+
+    dialog.rerender({ open: true });
+    expect((screen.getByLabelText('Backend connection') as HTMLSelectElement).value).toBe('local');
+    expect(screen.queryByPlaceholderText('/home/you/project')).toBeNull();
+  });
+});
 
 describe('NewWorkspaceDialog multi-folder', () => {
   afterEach(() => {

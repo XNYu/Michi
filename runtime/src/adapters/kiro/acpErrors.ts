@@ -1,4 +1,4 @@
-import { isKiroSignInError } from './kiroSignIn';
+import { isKiroSignInError, KiroSignedOutError } from './kiroSignIn';
 import { ACPNativeSessionMissingError, ACPError, ACPProcessExitedError, ACPNotRunningError } from "./acpClient";
 import { NativeResumeFailedError } from "../../contract/errors";
 
@@ -109,7 +109,8 @@ function matchesAny(hay: string, markers: string[]): boolean {
 }
 
 export function classifyAcpError(err: unknown): AcpErrorClass {
-  if (isKiroSignInError(haystack(err))) return 'auth';
+  // A launch override's own signed-out message need not read like Kiro's.
+  if (err instanceof KiroSignedOutError || isKiroSignInError(haystack(err))) return 'auth';
   // A dead process is unambiguously a connection failure regardless of message.
   if (err instanceof ACPProcessExitedError || err instanceof ACPNotRunningError) {
     return "connection";

@@ -4,7 +4,7 @@ import { usePhoneLayout } from '../../hooks/usePhoneLayout';
 import type { AgentCapabilities, AgentModelInfo, AgentProviderInfo, AgentStatus } from '../../services/api';
 import type { ResolvedNodeBinding } from '../../state/nodeBindingResolution';
 import { ChevronRightIcon } from './icons';
-import { COMPOSER_ICON_STROKE, REASONING_LABELS, composerIconSize, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
+import { COMPOSER_ICON_STROKE, REASONING_LABELS, composerIconSize, composerMenusOpenBelow, type PaneMenuAnchor } from './PaneComposerToolbarLeft';
 import './ComposerModelPicker.css';
 import { resolveComposerReasoning } from './composerReasoning';
 import { composerModelLabel } from './composerModelLabel';
@@ -46,7 +46,8 @@ export function ComposerModelTrigger({ toolbarTier, agentStatus, resolvedBinding
       onClick={(event) => {
         event.stopPropagation();
         const rect = event.currentTarget.getBoundingClientRect();
-        onOpenModelMenu({ x: rect.right, y: rect.bottom + 6, anchorBottom: rect.top - 6, align: 'end', trigger: event.currentTarget, keyboard: event.detail === 0 });
+        onOpenModelMenu({ x: rect.right, y: rect.bottom + 6, anchorBottom: rect.top - 6, preferBelow: composerMenusOpenBelow(event.currentTarget),
+          align: 'end', trigger: event.currentTarget, keyboard: event.detail === 0 });
       }}
       onKeyDown={(event) => {
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;

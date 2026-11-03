@@ -17,11 +17,17 @@ export const REASONING_LABELS: Record<string, string> = {
   max: 'Max',
 };
 
+/** Toolbar menus open downward, off the draft, where the toolbar is near the
+ *  top of the screen: the tray under the composer, and Home, whose composer
+ *  sits at the top of the page. Elsewhere they open above. */
+export const composerMenusOpenBelow = (trigger: Element) => !!trigger.closest('.composer-tray, .home-compose');
+
 export interface PaneMenuAnchor {
   x: number;
   y: number;
   anchorBottom?: number;
-  /** The trigger sits under the composer: open below it (ContextMenu). */
+  /** Open below the trigger, flipping above only when it does not fit
+   *  (composerMenusOpenBelow). */
   preferBelow?: boolean;
   align?: 'start' | 'end';
   trigger?: HTMLButtonElement;
@@ -110,7 +116,7 @@ export function PaneComposerToolbarLeft({
           onClick={(e) => {
             e.stopPropagation();
             const r = e.currentTarget.getBoundingClientRect();
-            onOpenAgentMenu({ x: r.left, y: r.bottom + 6, anchorBottom: r.top - 6, trigger: e.currentTarget });
+            onOpenAgentMenu({ x: r.left, y: r.bottom + 6, anchorBottom: r.top - 6, preferBelow: composerMenusOpenBelow(e.currentTarget), trigger: e.currentTarget });
           }}
         >
           {/* Chip icons follow the 11px label (14px); ⌄ marks it as a picker, like the model chip. */}

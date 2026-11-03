@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatNodeState, Project } from '../../state/chatTypes';
 import type { PaneItem } from '../../state/paneItems';
@@ -56,6 +56,23 @@ it('focuses existing panes, supports keyboard navigation and dismisses outside',
   expect(screen.queryByRole('navigation')).toBeNull();
   fireEvent.click(trigger); fireEvent.pointerDown(document.body);
   expect(screen.queryByRole('navigation')).toBeNull();
+});
+
+it('fades the closed list out as an inert ghost and returns focus at once', async () => {
+  render(<MobilePaneSwitcher />);
+  const trigger = screen.getByRole('button', { name: 'Switch pane' });
+  fireEvent.click(trigger);
+  const list = screen.getByRole('navigation', { name: 'Branches and panes' });
+  fireEvent.keyDown(document, { key: 'Escape' });
+  // Not a layer any more (no role for escapeLayers, no taps, no focus), but
+  // still on screen for its 110ms exit.
+  expect(document.activeElement).toBe(trigger);
+  expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  expect(list.isConnected).toBe(true);
+  expect(list.getAttribute('role')).toBeNull();
+  expect(list.getAttribute('aria-hidden')).toBe('true');
+  expect(list.hasAttribute('inert')).toBe(true);
+  await waitFor(() => expect(list.isConnected).toBe(false));
 });
 
 it('keeps non-chat panes reachable and closes the list when the active tree changes', () => {

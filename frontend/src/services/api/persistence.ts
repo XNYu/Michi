@@ -4,6 +4,7 @@ import { redactRemoteLog } from 'michi-shared';
 import {
   activeBackendApiBase,
   backendApiBase,
+  nodeBackendApiBase,
   workspaceBackendApiBase,
 } from '../../config/backendConnections';
 import { configureStreamTransport } from './streamTransport';
@@ -153,15 +154,16 @@ export async function fetchTreeMessagePage(workspaceId: string, treeId: string, 
 }
 
 /**
- * Which workspace and thread of this machine's backend hold a live node.
- * Null when there is none (deleted, in a deleted workspace, unknown);
- * throws when the backend can't be asked.
+ * Which workspace and thread hold a live node, asked of the backend that owns
+ * it (a `remote:` id goes to its connection; the answer comes back in that
+ * connection's scope). Null when there is none (deleted, in a deleted
+ * workspace, unknown); throws when the backend can't be asked.
  */
 export async function fetchNodeWorkspace(
   nodeId: string,
   signal?: AbortSignal,
 ): Promise<{ workspaceId: string; treeId: string | null } | null> {
-  const res = await fetch(`${backendApiBase()}/nodes/${encodeURIComponent(nodeId)}/workspace`, { signal });
+  const res = await backendFetch(`${nodeBackendApiBase(nodeId)}/nodes/${encodeURIComponent(nodeId)}/workspace`, { signal });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`fetchNodeWorkspace failed: ${res.status}`);
   const body = await res.json() as { workspaceId?: unknown; treeId?: unknown };

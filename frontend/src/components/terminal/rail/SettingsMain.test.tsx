@@ -205,7 +205,9 @@ describe('Settings list on a phone', () => {
     expect(within(within(sections()).getByRole('group', { name: 'Connections' })).getAllByRole('button').map((item) => item.getAttribute('aria-label'))).toEqual(['Machines']);
     expect(screen.queryByRole('button', { name: /shortcuts/i })).toBeNull();
     expect(screen.queryByRole('searchbox')).toBeNull();
-    expect(root().querySelectorAll('.settings-phone__chevron')).toHaveLength(10);
+    // A phone updates the machine it opened; the desktop window has no Update page.
+    expect(within(within(sections()).getByRole('group', { name: 'About' })).getAllByRole('button')[0].getAttribute('aria-label')).toBe('Update');
+    expect(root().querySelectorAll('.settings-phone__chevron')).toHaveLength(11);
   });
 
   it('names a machine with a connection issue, and the Meta agent when it needs attention', () => {

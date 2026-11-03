@@ -75,6 +75,11 @@ test("the service does not forward retired external Desk configuration", () => {
   assert.equal(spec.env.MICHI_REMOTE_ACCESS, "0");
 });
 
+test("a fresh service leaves runtime selection to onboarding", () => {
+  const spec = service.buildServiceLaunchSpec(baseSpecInput);
+  assert.equal(spec.env.MICHI_DEFAULT_RUNTIME, undefined);
+});
+
 test("an explicit default runtime wins over the pi fallback", () => {
   const spec = service.buildServiceLaunchSpec({
     ...baseSpecInput,

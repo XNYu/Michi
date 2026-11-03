@@ -1,11 +1,12 @@
 import type { AgentRuntimeOption } from '../services/api';
 import { RESTRICTED_RUNTIME_BUILD } from '../state/featureFlags';
 
-const RESTRICTED_RUNTIME_IDS = new Set(['kiro', 'crew', 'claude', 'codex', 'pi']);
+const RESTRICTED_RUNTIME_IDS = new Set(['kiro', 'crew', 'claude', 'codex', 'pi', 'antigravity']);
 
 /** Filter choices without changing a backend's runtime IDs or stored bindings. */
 export function filterAvailableRuntimes(runtimes: readonly AgentRuntimeOption[]): AgentRuntimeOption[] {
-  return runtimes.filter((runtime) => runtime.available);
+  return runtimes.filter((runtime) => runtime.available)
+    .sort((a, b) => a.label.localeCompare(b.label, 'en'));
 }
 
 /**

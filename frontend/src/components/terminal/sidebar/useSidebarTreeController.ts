@@ -11,6 +11,7 @@ import {
 } from '../../../state/sidebarSelectors';
 import { buildTree, findTreeIdForNode, type TreeNode } from '../../../state/tree';
 import { buildTreeContextMenu } from '../../../lib/treeContextMenu';
+import { prefersReducedMotion } from '../../../hooks/useReducedMotion';
 import type { MenuSection } from '../../ContextMenu';
 import type { Project, ProjectEdge, Tree } from '../../../state/chatTypes';
 
@@ -288,8 +289,8 @@ export function useSidebarTreeController({
   // becomes visible, then scroll it into view. Runs only when focusedPane
   // changes; the ref holds the latest projects so a manual collapse/expand by
   // the user isn't undone by unrelated updates (e.g. background streams).
-  const revealRef = useRef({ projects, activeProject, activeProjectId });
-  revealRef.current = { projects, activeProject, activeProjectId };
+  const revealRef = useRef({ projects, activeProject, activeProjectId, reduceMotion: prefs.reduceMotion });
+  revealRef.current = { projects, activeProject, activeProjectId, reduceMotion: prefs.reduceMotion };
   useEffect(() => {
     if (!focusedPane) return;
     const { projects: all, activeProject: active, activeProjectId: pid } = revealRef.current;
@@ -350,7 +351,9 @@ export function useSidebarTreeController({
         const el = document.querySelector(
           `[data-sidebar-row="${CSS.escape(focusedPane)}"]`,
         ) as HTMLElement | null;
-        el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        // Reduce motion (the OS setting or the app's) jumps instead of gliding.
+        const smooth = !prefersReducedMotion(revealRef.current.reduceMotion);
+        el?.scrollIntoView({ block: 'nearest', behavior: smooth ? 'smooth' : 'auto' });
       });
     });
     return () => {

@@ -123,17 +123,20 @@
   border: 1px solid var(--term-line); border-radius: var(--ui-radius);
   background: var(--term-surface); color: var(--term-fg); box-shadow: var(--term-float-shadow);
   cursor: pointer;
-  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+  /* Hover only: showing and hiding the pill (opacity, its morph with the window) is MetaChatArea's motion. */
+  transition: transform var(--t-enter) var(--t-ease), border-color var(--t-soft) ease, background var(--t-soft) ease;
 }
 .meta-chat-pill:hover { border-color: var(--term-line-s); background: var(--term-hover); transform: translateY(-2px); }
 .meta-chat-pill:focus-visible { outline: 2px solid color-mix(in srgb, var(--term-accent) 62%, transparent); outline-offset: 3px; }
-.meta-chat-pill__icon { transition: transform 160ms ease; }
+.meta-chat-pill__icon { transition: transform var(--t-enter) var(--t-ease); }
 .meta-chat-pill:hover .meta-chat-pill__icon { transform: rotate(8deg) scale(1.05); }
 .meta-chat-pill:active { transform: translateY(0); }
 @media (prefers-reduced-motion: reduce) {
   .meta-chat-pill, .meta-chat-pill__icon { transition: none; }
   .meta-chat-pill:hover, .meta-chat-pill:hover .meta-chat-pill__icon { transform: none; }
 }
+:root[data-reduce-motion='on'] .meta-chat-pill:hover,
+:root[data-reduce-motion='on'] .meta-chat-pill:hover .meta-chat-pill__icon { transform: none; }
 .meta-chat-pill__dot {
   position: absolute; right: 8px; top: -4px; width: 10px; height: 10px; border-radius: 50%;
   background: var(--term-accent); border: 2px solid var(--term-surface);

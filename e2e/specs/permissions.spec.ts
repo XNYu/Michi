@@ -192,8 +192,9 @@ test('Settings global switch hides Composer controls, saves the global mode, and
   const settings = await openSettings(page);
   await settings.getByRole('switch', { name: 'Use global permissions' }).click();
   await expect.poll(() => state.settings.global).toBe(true);
-  await settings.getByRole('button', { name: 'Permissions: Ask', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^YOLO\b/ }).click();
+  const mode = settings.getByRole('combobox', { name: 'Permission mode' });
+  await expect(mode).toHaveValue('ask');
+  await mode.selectOption('yolo');
   await expect.poll(() => state.settings.mode).toBe('yolo');
   await leaveSettings(page);
   await expect(settingsMain(page)).toHaveCount(0);
@@ -226,11 +227,10 @@ for (const runtimeId of ['kiro', 'pi']) {
   test(`${runtimeId}: global settings show legacy YOLO as Trust and offer only Ask / Trust`, async ({ page }) => {
     const state = await fixture(page, { global: true, mode: 'yolo' }, runtimeId);
     const settings = await openSettings(page);
-    await settings.getByRole('button', { name: 'Permissions: Trust', exact: true }).click();
-    await expect(page.getByRole('menuitem')).toHaveCount(2);
-    await expect(page.getByRole('menuitem', { name: /^Trust\b/ })).toContainText('✓');
-    await expect(page.getByRole('menuitem', { name: /^YOLO\b/ })).toHaveCount(0);
-    await page.getByRole('menuitem', { name: /^Ask\b/ }).click();
+    const mode = settings.getByRole('combobox', { name: 'Permission mode' });
+    await expect(mode).toHaveValue('trust');
+    await expect(mode.locator('option')).toHaveText(['Ask', 'Trust']);
+    await mode.selectOption('ask');
     await expect.poll(() => state.settings.mode).toBe('ask');
   });
 }
@@ -242,8 +242,9 @@ test('a mixed Backend keeps global YOLO for Claude/Codex while Pi chat controls 
   await page.keyboard.press('Escape');
   const settings = await openSettings(page);
   await settings.getByRole('switch', { name: 'Use global permissions' }).click();
-  await settings.getByRole('button', { name: 'Permissions: YOLO', exact: true }).click();
-  await expect(page.getByRole('menuitem', { name: /^YOLO\b/ })).toBeVisible();
+  const mode = settings.getByRole('combobox', { name: 'Permission mode' });
+  await expect(mode).toHaveValue('yolo');
+  await expect(mode.locator('option')).toHaveText(['Ask', 'Trust', 'YOLO']);
 });
 
 test('a YOLO draft becomes Trust when switched to Pi and sends the displayed mode', async ({ page }) => {

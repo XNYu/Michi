@@ -145,4 +145,21 @@ describe('MaintenanceStatus', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Queue this period' }));
     expect(state.maintenance.catchUp).toHaveBeenCalledWith('space-1', 10, 20);
   });
+
+  it('names the watch while one of its checks runs', () => {
+    state.maintenance.value = {
+      config: { workspaceId: 'w1', ownerUserId: 'u1', jobId: 'j1', enabled: true, paused: false, revision: 4, completionCursor: 5, runtimeId: null, providerId: null, modelId: null, reasoning: null, updatedAt: 1 },
+      status: null,
+      backlog: { plans: [], pendingSources: 0, attentionSources: 0 },
+      job: { id: 'j1', enabled: true, autoPaused: false, activeRunId: 'run-1' },
+      scheduler: 'available', excludedSpaceIds: [],
+      watches: [{ id: 'watch-1', title: 'Sev-2 tickets', instructions: 'Check tickets', intervalMinutes: 30, enabled: true, revision: 1,
+        pausedReason: null, runRequested: false, nextCheckAt: 1, createdAt: 1, updatedAt: 1,
+        lastRun: { state: 'running', startedAt: 1, finishedAt: null, summary: null, error: null } }],
+    };
+    render(<MaintenanceStatus backendConnectionId="local" workspaceId="w1" />);
+    expect(screen.getByRole('heading', { name: 'Updating' })).toBeTruthy();
+    expect(screen.getByText('The Meta agent is running the watch “Sev-2 tickets”.')).toBeTruthy();
+    expect(screen.getByText(/^Checking now/)).toBeTruthy();
+  });
 });

@@ -6,7 +6,7 @@
 // Asserts on inline style strings because jsdom doesn't resolve var()/color-mix()/calc().
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { act, render, fireEvent } from '@testing-library/react';
+import { act, render, fireEvent, waitFor } from '@testing-library/react';
 import { MessageBlock, TermThoughtBlock } from './MessageBlock';
 import { AgentBlockStyleOverride } from '../../state/prefs';
 import { recordBackendObservation, resetBackendClocksForTest } from '../../services/backendClock';
@@ -264,6 +264,48 @@ describe('MessageBlock — collapsed user text', () => {
     }
   });
 
+  it('opens and closes as a height disclosure that moves in the click’s own commit', async () => {
+    const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(500);
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400);
+    try {
+      const { container, getByRole } = renderMessage({ role: 'user', text: 'A long message that overflows the measured preview.' });
+      const toggle = getByRole('button', { name: 'Show more' });
+      const content = container.querySelector(`[id="${toggle.getAttribute('aria-controls')}"]`) as HTMLElement;
+      const clamp = parseFloat(content.style.maxHeight);
+      expect(clamp).toBeGreaterThan(0);
+      let shown = clamp;
+      const box = vi.spyOn(content, 'getBoundingClientRect').mockImplementation(
+        () => ({ height: shown, width: 400, top: 0, left: 0, right: 400, bottom: shown, x: 0, y: 0, toJSON() {} }) as DOMRect,
+      );
+      const probe = document.createElement('div');
+      const heights = new MutationObserver(() => {});
+      heights.observe(content, { attributes: true, attributeFilter: ['style'], attributeOldValue: true });
+      const heightsSoFar = () => heights.takeRecords().flatMap((r) => {
+        probe.setAttribute('style', r.oldValue ?? '');
+        return [probe.style.height, content.style.height].filter(Boolean);
+      });
+
+      fireEvent.click(toggle);
+      // The first frame is already 1px taller than the clamp: TPane sees the
+      // transcript change in this commit and leaves follow mode.
+      expect(heightsSoFar()).toContain(`${clamp + 1}px`);
+      expect(content.style.maxHeight).toBe('');
+      await waitFor(() => expect(content.style.height).toBe(''));
+
+      shown = 500;
+      fireEvent.click(getByRole('button', { name: 'Show less' }));
+      expect(heightsSoFar()).toContain('499px');
+      // Clamped again once the height has come down.
+      await waitFor(() => expect(content.style.maxHeight).toBe(`${clamp}px`));
+      expect(content.style.height).toBe('');
+      heights.disconnect();
+      box.mockRestore();
+    } finally {
+      height.mockRestore();
+      width.mockRestore();
+    }
+  });
+
   it('does not clamp while the pane has no width yet', () => {
     const height = vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockReturnValue(500);
     try {
@@ -272,6 +314,43 @@ describe('MessageBlock — collapsed user text', () => {
     } finally {
       height.mockRestore();
     }
+  });
+});
+
+describe('MessageBlock — branch anchors motion', () => {
+  const reply = { ...baseMsg, id: 'a1', role: 'assistant' as const, text: 'An answer' };
+  const anchor = (childNodeId: string, createdAt: number) =>
+    ({ childNodeId, title: `Branch ${childNodeId}`, messageCount: 1, createdAt, status: 'idle' as const });
+  const block = (anchors: ReturnType<typeof anchor>[]) => (
+    <MessageBlock
+      m={reply} index={0} isDark={false} onEdit={noop} onCopy={noop} showThoughts={false}
+      fontFamily="inherit" density="comfortable" turnAnchors={anchors} onOpenBranch={noop}
+    />
+  );
+  const sectionOf = (container: HTMLElement) =>
+    container.querySelector('section[aria-label="Branches from this reply"]') as HTMLElement;
+  const grows = (el: HTMLElement | null) => el?.parentElement?.style.display === 'flow-root';
+
+  it('renders branches made earlier settled', () => {
+    const { container } = render(block([anchor('b1', Date.now() - 60_000)]));
+    expect(grows(sectionOf(container))).toBe(false);
+  });
+
+  it('grows the list in when its first branch was made just now', () => {
+    const { container } = render(block([anchor('b1', Date.now())]));
+    expect(grows(sectionOf(container))).toBe(true);
+    // One entrance: the row inside the growing list does not grow again.
+    expect(grows(sectionOf(container).querySelector('.t-branch-anchor-row'))).toBe(false);
+  });
+
+  it('a new branch on an existing list grows in as its own row', () => {
+    const { container, rerender } = render(block([anchor('b1', Date.now() - 60_000)]));
+    rerender(block([anchor('b1', Date.now() - 60_000), anchor('b2', Date.now())]));
+    const rows = sectionOf(container).querySelectorAll<HTMLElement>('.t-branch-anchor-row');
+    expect(grows(sectionOf(container))).toBe(false);
+    expect(grows(rows[0])).toBe(false);
+    expect(grows(rows[1])).toBe(true);
+    expect(sectionOf(container).querySelector('h3')?.textContent).toBe('Branches 2');
   });
 });
 
@@ -650,5 +729,124 @@ describe('MessageBlock — durable agent timer', () => {
     expect(getByText('Ran 1 command')).not.toBeNull();
     expect(getByText('54s')).not.toBeNull();
     expect(queryByText('Working…')).toBeNull();
+  });
+});
+
+describe('MessageBlock — thought block motion', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const card = (node: React.ReactNode) => <AgentBlockStyleOverride.Provider value="card">{node}</AgentBlockStyleOverride.Provider>;
+  const block = (container: HTMLElement) => container.querySelector('[data-agent-block]') as HTMLElement;
+
+  it('finishes in place: the live label leaves unannounced while the summary arrives and the body closes', async () => {
+    const view = (streaming: boolean) => card(<TermThoughtBlock text="Weighing the options" streaming={streaming} />);
+    const { getByText, queryByText, rerender } = render(view(true));
+    expect(getByText('Weighing the options')).not.toBeNull();
+
+    rerender(view(false));
+    expect(getByText(/^Thought for /)).not.toBeNull();
+    expect(getByText('Thinking…').closest('[aria-hidden="true"]')).not.toBeNull();
+    await waitFor(() => expect(queryByText('Thinking…')).toBeNull());
+    await waitFor(() => expect(queryByText('Weighing the options')).toBeNull());
+  });
+
+  it('turns one chevron and opens/closes the body, reversing when clicked mid-way', async () => {
+    const { container, getByText, queryByText } = render(card(<TermThoughtBlock text="Earlier reasoning" durationMs={2_000} />));
+    expect(queryByText('Earlier reasoning')).toBeNull();
+    const chevron = () => Array.from(container.querySelectorAll('span')).find((s) => s.textContent === '▸')!;
+    expect(container.textContent).not.toContain('▾');
+
+    fireEvent.click(getByText('Thought for 2.0s'));
+    expect(getByText('Earlier reasoning')).not.toBeNull();
+    await waitFor(() => expect(chevron().style.transform).toContain('rotate(90deg)'));
+
+    // Close, then reopen before the close finishes: the same body comes back.
+    fireEvent.click(getByText('Thought for 2.0s'));
+    fireEvent.click(getByText('Thought for 2.0s'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getByText('Earlier reasoning')).not.toBeNull();
+
+    fireEvent.click(getByText('Thought for 2.0s'));
+    await waitFor(() => expect(queryByText('Earlier reasoning')).toBeNull());
+    await waitFor(() => expect(chevron().style.transform).not.toContain('90deg'));
+  });
+
+  it('grows a block that arrives while its message is on screen from the dots it replaces', async () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(28);
+    const pending: ChatMessage = { ...baseMsg, id: 'a1', role: 'assistant', text: '', streaming: true, blocks: [] };
+    const view = (m: ChatMessage) => card(
+      <MessageBlock m={m} index={0} isDark={false} onCopy={noop} showThoughts fontFamily="inherit" density="comfortable" />,
+    );
+    const { container, getByRole, queryByRole, rerender } = render(view(pending));
+    expect(getByRole('status', { name: 'loading' })).not.toBeNull();
+
+    // Every inline style the arriving block goes through.
+    const styles: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if ((record.target as HTMLElement).matches?.('[data-agent-block]')) styles.push(record.oldValue ?? '');
+      }
+    });
+    observer.observe(container, { subtree: true, attributes: true, attributeFilter: ['style'], attributeOldValue: true });
+    rerender(view({ ...pending, blocks: [{ id: 'a1-b-0', kind: 'thinking', rawText: 'First thought', streaming: true }] }));
+    // The leaving dots stop being a status at once.
+    expect(queryByRole('status', { name: 'loading' })).toBeNull();
+    // It starts clipped at the dots' height, then releases its height entirely.
+    await waitFor(() => expect(styles.some((style) => /height: 28px/.test(style) && /overflow: hidden/.test(style))).toBe(true));
+    await waitFor(() => expect(block(container).style.height).toBe(''));
+    expect(block(container).style.overflow).toBe('');
+    observer.disconnect();
+    await waitFor(() => expect(container.querySelector('.typing-dot')).toBeNull());
+  });
+
+  it('keeps the tail pinned while its content resizes after the render (a tool row growing in)', () => {
+    const observers: Array<{ callback: ResizeObserverCallback; targets: Element[] }> = [];
+    vi.stubGlobal('ResizeObserver', class {
+      private entry: { callback: ResizeObserverCallback; targets: Element[] };
+      constructor(callback: ResizeObserverCallback) {
+        this.entry = { callback, targets: [] };
+        observers.push(this.entry);
+      }
+      observe(target: Element) { this.entry.targets.push(target); }
+      unobserve() {}
+      disconnect() { this.entry.targets = []; }
+    });
+    let height = 300;
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => height);
+    const { getByText } = render(card(<TermThoughtBlock text="Running the tests" streaming />));
+    const tail = getByText('Running the tests').closest('div[style*="max-height"]') as HTMLElement;
+    expect(tail.scrollTop).toBe(300);
+
+    // No re-render: the content only grows (a row animating in).
+    height = 360;
+    const watcher = observers.find((o) => o.targets.some((t) => tail.contains(t) && t !== tail))!;
+    act(() => watcher.callback([], {} as ResizeObserver));
+    expect(tail.scrollTop).toBe(360);
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves a body present at mount unclipped, and takes a leaving body out of reach', async () => {
+    const view = (streaming: boolean) => card(<TermThoughtBlock text="Live reasoning" streaming={streaming} />);
+    const { getByText, queryByText, rerender } = render(view(true));
+    const reveal = () => getByText('Live reasoning').closest('div[style*="max-height"]')!.parentElement as HTMLElement;
+    // Present with its block: settled, so nothing clips its focus ring.
+    expect(reveal().style.overflow).toBe('visible');
+
+    rerender(view(false));
+    expect(reveal().getAttribute('aria-hidden')).toBe('true');
+    expect(reveal().hasAttribute('inert')).toBe(true);
+    await waitFor(() => expect(queryByText('Live reasoning')).toBeNull());
+  });
+
+  it('renders blocks that were there when the message mounted settled', () => {
+    const m: ChatMessage = {
+      ...baseMsg, id: 'a1', role: 'assistant', text: '', streaming: true,
+      blocks: [{ id: 'a1-b-0', kind: 'thinking', rawText: 'Resumed thought', streaming: true }],
+    };
+    const { container } = render(card(
+      <MessageBlock m={m} index={0} isDark={false} onCopy={noop} showThoughts fontFamily="inherit" density="comfortable" />,
+    ));
+    expect(block(container).style.height).toBe('');
+    expect(block(container).style.opacity).toBe('');
   });
 });

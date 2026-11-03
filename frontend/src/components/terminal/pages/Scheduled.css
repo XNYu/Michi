@@ -67,8 +67,15 @@
 .terminal-scheduled .sched-row + .sched-row::before {
   content: ''; position: absolute; top: 0; left: 51px; right: 12px; height: 1px; background: var(--trash-line); pointer-events: none;
 }
+/* Pausing or resuming dims the row over a moment rather than at once. */
+.sched-row .trash-row-title { transition: color 100ms ease; }
+.sched-row .trash-row-icon { transition: opacity 100ms ease; }
 .sched-row[data-paused] .trash-row-title { color: var(--term-mid); }
 .sched-row[data-paused] .trash-row-icon { opacity: .6; }
+/* A run's state swapping in place (ScheduledRunSwap): the old and new value share one cell. */
+.sched-swap { display: inline-grid; justify-items: end; align-items: center; }
+.sched-swap__layer { grid-area: 1 / 1; display: inline-flex; align-items: center; }
+.sched-swap__glyph { display: inline-flex; }
 .sched-next { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 .sched-next[data-tone='danger'] { color: var(--term-danger); }
 .sched-next[data-tone='active'] { color: var(--term-accent); }
@@ -80,8 +87,8 @@
 .sched-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--term-faint); flex-shrink: 0; }
 .sched-status-dot[data-tone='ok'] { background: var(--term-digest); }
 .sched-status-dot[data-tone='error'] { background: var(--term-danger); }
-.sched-status-dot[data-tone='active'] { background: var(--term-accent); animation: sched-pulse 1.4s ease-in-out infinite; }
-.sched-spin { animation: sched-spin 1s linear infinite; color: var(--term-accent); }
+.sched-status-dot[data-tone='active'] { background: var(--term-accent); animation: sched-pulse var(--t-loop) ease-in-out infinite; }
+.sched-spin { animation: sched-spin var(--t-loop-fast) linear infinite; color: var(--term-accent); }
 @keyframes sched-spin { to { transform: rotate(360deg); } }
 @keyframes sched-pulse { 50% { opacity: .35; } }
 
@@ -91,7 +98,8 @@
 .sched-empty p { max-width: 340px; margin: 7px 0 0; font-size: var(--fs-md); line-height: 1.6; color: var(--term-muted); }
 .sched-empty > .ui-btn { margin-top: 15px; }
 .sched-loading { display: grid; gap: 14px; padding: 16px 8px; }
-.sched-loading span { display: block; height: 48px; border-radius: var(--ui-radius); background: color-mix(in srgb, var(--term-fg) 6%, transparent); }
+/* Faint bars, so the softer skeleton pulse (index.css) rather than the message skeleton's .3 low. */
+.sched-loading span { display: block; height: 48px; border-radius: var(--ui-radius); background: color-mix(in srgb, var(--term-fg) 6%, transparent); animation: t-skeleton-pulse-soft var(--t-loop) ease-in-out infinite; }
 
 /* ── Editor ─────────────────────────────────────────────────────────────── */
 .sched-editor { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; color: var(--term-fg); font-family: var(--ui-font); }
@@ -201,7 +209,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sched-spin, .sched-status-dot[data-tone='active'] { animation: none; }
+  .sched-spin, .sched-status-dot[data-tone='active'], .sched-loading span { animation: none; }
+  .sched-row .trash-row-title, .sched-row .trash-row-icon { transition: none; }
 }
 
 @container (max-width: 640px) {

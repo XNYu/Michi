@@ -78,6 +78,10 @@ revision. It shares the desktop update's lock, so the two cannot run at once.
 `MICHI_REMOTE_SOURCE_URL` and `MICHI_REMOTE_SOURCE_REF` select another source,
 and `--data-dir` another installation.
 
+On a phone opened through [phone access](mobile-access.md), **Settings →
+Update** runs the same `michi update` on the machine serving the phone; see
+[Update from the phone](mobile-access.md#update-from-the-phone).
+
 Useful launch options:
 
 ```bash

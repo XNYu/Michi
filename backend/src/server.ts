@@ -13,6 +13,8 @@ import { tryForkChatSession } from './services/nativeFork';
 import { fromNodeHeaders, toNodeHandler } from 'better-auth/node';
 import { setupSpaFallback } from './routes/spaFallback';
 import { setupMobileAccessRoutes } from './routes/mobileAccess';
+import { setupSelfUpdateRoutes } from './routes/selfUpdate';
+import { SelfUpdater } from './services/selfUpdate';
 import { readMobileAccessChoice, saveMobileAccessChoice } from './services/mobileAccess';
 import { createMobileAccess, defaultMobileAccessProvider } from './services/mobileAccessManager';
 import { setupAssistantRoutes } from './routes/assistant';
@@ -548,7 +550,7 @@ warmPromise.catch(() => {});
 // Dynamic catalogs use stale-while-revalidate: runtime constructors load the
 // previous disk snapshot synchronously, while this refresh asks each CLI for
 // the current catalog without delaying Express readiness.
-refreshRuntimeModelsInBackground(listRuntimes(), (runtimeId, err) => {
+refreshRuntimeModelsInBackground(listRuntimes().filter(runtime => runtime.id === getAgentConfig().runtime), (runtimeId, err) => {
   log.warn('boot', 'runtime model refresh failed; using cached catalog', {
     runtimeId,
     err: err.message,
@@ -811,6 +813,14 @@ app.use('/api', setupMobileAccessRoutes(mobileAccess, {
     catch (error) { log.warn('http', 'could not save phone access choice', { error: (error as Error).message }); }
   },
 }));
+// Settings → Update: a remote backend replaces itself with the latest main branch.
+// Elsewhere the status explains why it cannot, and nothing runs.
+app.use('/api', setupSelfUpdateRoutes(new SelfUpdater({
+  repoRoot: path.resolve(__dirname, '../..'),
+  dataDir: getMichiDataDir(),
+  current: publicBuildInfo(runningBuild),
+  remoteAccess: remoteAccessEnabled() && !REQUIRE_AUTH && process.env.MICHI_CLOUD !== '1',
+})));
 // Saved credentials belong to the desktop gateway, not execution backends.
 if (!remoteAccessEnabled()) {
   app.use('/api', setupBackendConnectionRoutes());

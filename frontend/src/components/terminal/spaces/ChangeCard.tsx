@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { motion, useIsPresent } from 'motion/react';
 import { Sparkles } from 'lucide-react';
 import { pageBlockText, parsePageBlockInput } from 'michi-shared';
 import type { ChangeReadScope, PageBlockInput, PageChangeDto, PageDatabaseColumn, PageDatabaseRow, PageDatabaseView } from 'michi-shared';
@@ -6,6 +7,7 @@ import MarkdownContent from '../../MarkdownContent';
 import { MICHI_MARKDOWN_FEATURES, InlineMarkdownParagraphs } from '../content/page/blocks/text';
 import { joinMarkdown, splitMarkdown } from '../content/page/markdownSegments';
 import { SourceTrace, type ExactPageSource } from './SourceTrace';
+import { EASE } from '../../../motion/tokens';
 import './pageChanges.css';
 
 export type AcceptedPageEdit =
@@ -36,7 +38,63 @@ export interface ChangeCardProps {
    * keeps this change's own source.
    */
   shownSource?: PageChangeDto['source'] | null;
+  /** The person chose Accept or Dismiss on a waiting suggestion (inline): the card settles into its receipt. */
+  onChoose?: (change: PageChangeDto, action: ChangeChoice) => void;
 }
+
+export type ChangeChoice = 'accept' | 'dismiss';
+
+/** A handler that gives no promise to wait on (`void`): the buttons come back after this long if nothing resolved. */
+const CHOICE_FALLBACK_MS = 8000;
+
+/**
+ * The chosen action on a waiting suggestion: its button holds its colour
+ * while the others fade, until the suggestion resolves. The buttons come back
+ * when it does not: once the action's promise settles and the suggestion
+ * still waits (a refusal, however the error is reported), when a new error
+ * arrives, or when the suggestion's state moves on (dismissed, then shown
+ * again). A card on its way out keeps its receipt.
+ */
+function useChoice(change: PageChangeDto, error: string | null | undefined, onChoose: ChangeCardProps['onChoose']) {
+  const [chosen, setChosen] = useState<ChangeChoice | null>(null);
+  const state = `${change.proposalState}\n${change.resolvedAt ?? ''}`;
+  const [seen, setSeen] = useState({ error, state });
+  if (seen.error !== error || seen.state !== state) {
+    setSeen({ error, state });
+    if (chosen && (seen.state !== state || error)) setChosen(null);
+  }
+  const present = useIsPresent();
+  const live = useRef({ present, pending: change.proposalState === 'pending', mounted: true });
+  live.current.present = present;
+  live.current.pending = change.proposalState === 'pending';
+  useEffect(() => {
+    const current = live.current;
+    current.mounted = true;
+    return () => { current.mounted = false; };
+  }, []);
+  const choose = (action: ChangeChoice, run: () => void | Promise<void>) => {
+    setChosen(action);
+    onChoose?.(change, action);
+    // After the answer has been drawn (a frame later), not before: an answer that took is no longer waiting by then.
+    const settle = () => requestAnimationFrame(() => {
+      const { mounted, present: here, pending } = live.current;
+      if (mounted && here && pending) setChosen((now) => (now === action ? null : now));
+    });
+    const result = run();
+    if (result && typeof result.then === 'function') result.then(settle, settle);
+    else window.setTimeout(settle, CHOICE_FALLBACK_MS);
+  };
+  return { chosen: change.proposalState === 'pending' ? chosen : null, choose };
+}
+
+/** Drawn settled the first time; a later state (Undo, Restore) fades its words in. */
+function useSettledFirst() {
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; }, []);
+  return mounted;
+}
+
+const LEAD_FADE = { duration: 0.12, ease: EASE.out };
 
 export function isPageChangeRevertible(change: PageChangeDto): boolean {
   return change.applicationState === 'applied' && (change.proposalState === null || change.proposalState === 'accepted') && change.source.kind !== 'user';
@@ -263,7 +321,9 @@ function OriginLine({ origin, sourceLabel, onOpenSource, separator = true }: {
   </>;
 }
 
-export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, onRedo, onOpenSource, loading = false, error, variant = 'card', sourceLabel, showTarget = false, shownSource, quiet = false }: ChangeCardProps) {
+export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, onRedo, onOpenSource, loading = false, error, variant = 'card', sourceLabel, showTarget = false, shownSource, quiet = false, onChoose }: ChangeCardProps) {
+  const { chosen, choose } = useChoice(change, error, onChoose);
+  const mounted = useSettledFirst();
   const [editing, setEditing] = useState(false);
   const [blockDraft, setBlockDraft] = useState(() => {
     const value = proposedBlock(change);
@@ -280,6 +340,11 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
   const source = change.source;
   const blockValue = useMemo(() => proposedBlock(change), [change]);
   const rowValue = useMemo(() => proposedRow(change), [change]);
+  // Inline, an answer settles the card into its receipt; in a list it simply goes.
+  const answer = (action: ChangeChoice, run: () => void | Promise<void>) => {
+    if (variant === 'inline') choose(action, run);
+    else void run();
+  };
   const acceptEdited = () => {
     setDraftError(null);
     if (blockValue) {
@@ -287,7 +352,7 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
       try { parsed = JSON.parse(blockDraft); } catch { setDraftError('Enter valid block content.'); return; }
       const block = parsePageBlockInput(parsed);
       if (!block) { setDraftError('Only block content fields can be changed here.'); return; }
-      void onAccept(change, { kind: 'block', block });
+      answer('accept', () => onAccept(change, { kind: 'block', block }));
       return;
     }
     if (rowValue) {
@@ -297,7 +362,7 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
       const values = parsed as Record<string, PageDatabaseRow['values'][string]>;
       const allowed = new Set(change.target.kind === 'row' ? change.target.columnIds : []);
       if (Object.keys(values).some((key) => !allowed.has(key))) { setDraftError('Only fields included in this suggestion can be changed.'); return; }
-      void onAccept(change, { kind: 'row', values, ...(change.target.kind === 'row' && change.target.body ? { body: rowBodyDraft } : {}) });
+      answer('accept', () => onAccept(change, { kind: 'row', values, ...(change.target.kind === 'row' && change.target.body ? { body: rowBodyDraft } : {}) }));
     }
   };
 
@@ -310,13 +375,13 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
     const from = !quiet && origin && <OriginLine origin={origin} sourceLabel={sourceLabel} onOpenSource={onOpenSource} separator />;
     if (change.proposalState === 'pending' && showTarget && change.op !== 'schema') {
       return (
-        <div className="page-change-line" data-state="pending">
+        <div className="page-change-line" data-state="pending" data-chosen={chosen ?? undefined}>
           <Sparkles size={12} strokeWidth={1.7} aria-hidden="true" />
           <span className="page-change-line__lead">Waiting for you: {change.op === 'delete' ? 'remove' : 'rewrite'} {targetName(change)}</span>
           {from}
           <span aria-hidden="true">·</span>
-          <button type="button" className="page-change-link" disabled={loading} onClick={() => void onAccept(change)}>Accept</button>
-          <button type="button" className="page-change-link" disabled={loading} onClick={() => void onDismiss(change)}>Dismiss</button>
+          <button type="button" className="page-change-link" data-chosen={chosen === 'accept' || undefined} disabled={loading || !!chosen} onClick={() => answer('accept', () => onAccept(change))}>Accept</button>
+          <button type="button" className="page-change-link" data-chosen={chosen === 'dismiss' || undefined} disabled={loading || !!chosen} onClick={() => answer('dismiss', () => onDismiss(change))}>Dismiss</button>
         </div>
       );
     }
@@ -324,7 +389,7 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
       const before = change.before?.kind === 'block' && change.before.exists ? parsePageBlockInput((({ id: _i, rev: _r, sources: _s, edit: _e, ...rest }) => rest)(change.before.block)) : null;
       const diff = blockValue ? changedPieces(before, blockValue) : null;
       return (
-        <article className="page-change-prop" data-state="pending" aria-label={operationLabel(change)}>
+        <article className="page-change-prop" data-state="pending" data-chosen={chosen ?? undefined} aria-label={operationLabel(change)}>
           <header className="page-change-prop__head">
             <Sparkles size={13} strokeWidth={1.7} aria-hidden="true" />
             <strong>{change.op === 'schema' ? 'Suggested database configuration' : change.op === 'delete' ? 'Suggested removal' : change.op === 'move' ? 'Suggested move' : change.target.kind === 'row' ? 'Suggested field update' : 'Suggested rewrite'}</strong>
@@ -351,9 +416,11 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
           )}
           {(draftError || stale || (error && !stale)) && <p role="alert" className="page-change-card__error">{draftError ?? stale ?? error}</p>}
           <footer className="page-change-prop__actions">
-            <button type="button" className="page-change-primary" disabled={loading} onClick={() => editing ? acceptEdited() : void onAccept(change)}>Accept</button>
-            {canEditProposal(change) && <button type="button" disabled={loading} onClick={() => editing ? acceptEdited() : setEditing(true)}>Edit & accept</button>}
-            <button type="button" className="page-change-quiet" disabled={loading} onClick={() => void onDismiss(change)}>Dismiss</button>
+            <button type="button" className="page-change-primary" data-chosen={chosen === 'accept' || undefined} disabled={loading || !!chosen}
+              onClick={() => { if (editing) acceptEdited(); else answer('accept', () => onAccept(change)); }}>Accept</button>
+            {canEditProposal(change) && <button type="button" disabled={loading || !!chosen} onClick={() => editing ? acceptEdited() : setEditing(true)}>Edit & accept</button>}
+            <button type="button" className="page-change-quiet" data-chosen={chosen === 'dismiss' || undefined} disabled={loading || !!chosen}
+              onClick={() => answer('dismiss', () => onDismiss(change))}>Dismiss</button>
             <span className="page-change-prop__from">{from}</span>
           </footer>
         </article>
@@ -365,7 +432,9 @@ export function ChangeCard({ change, onAccept, onDismiss, onReopen, onRevert, on
     return (
       <div className="page-change-line" data-state={state} data-quiet={quiet || undefined}>
         {!quiet && <Sparkles size={12} strokeWidth={1.7} aria-hidden="true" />}
-        {(!quiet || state === 'dismissed' || state === 'reverted') && <span className="page-change-line__lead">{lead}</span>}
+        {(!quiet || state === 'dismissed' || state === 'reverted') && (
+          <motion.span key={state} className="page-change-line__lead" initial={mounted.current ? { opacity: 0 } : false} animate={{ opacity: 1 }} transition={LEAD_FADE}>{lead}</motion.span>
+        )}
         {!quiet && <><span aria-hidden="true">·</span><time dateTime={new Date(change.createdAt).toISOString()}>{relativeTime(change.createdAt)}</time></>}
         {state !== 'dismissed' && from}
         {(draftError || stale || error) && <span role="alert" className="page-change-card__error">{draftError ?? stale ?? error}</span>}

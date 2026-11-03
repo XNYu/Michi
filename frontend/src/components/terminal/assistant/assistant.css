@@ -16,7 +16,7 @@
   border-radius: var(--ui-radius);
   box-shadow: var(--ui-popover-shadow);
   overflow: hidden;
-  animation: fadeIn var(--t-enter) ease-out;
+  /* Enter and exit: motion in AssistantPanel.tsx (PANEL_VARIANTS). */
 }
 .assistant-panel__head {
   display: flex;

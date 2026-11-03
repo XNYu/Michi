@@ -340,6 +340,70 @@ describe('workflow approvals', () => {
     assert.deepEqual(written.at(-1), { jsonrpc: '2.0', id: 79, result: { outcome: { outcome: 'cancelled' } } });
   });
 
+  it('Kiro: a step request the launching chat already approves is answered at once and never shown', () => {
+    const hub = new WorkflowRunHub(memoryStore());
+    const answers: Array<[number, string | null]> = [];
+    const asked: Array<[string, unknown, unknown]> = [];
+    let verdict: boolean | 'throw' = true;
+    const bridge = createKiroWorkflowBridge({
+      hub: workflowSink(hub),
+      resolve: (sid) => sid === 'parent' ? PORT_CONTEXT : null,
+      control: async () => {},
+      answerPermission: (requestId, optionId) => { answers.push([requestId, optionId]); },
+      approves: (parentSessionId, request) => {
+        asked.push([parentSessionId, request.toolCall?.title, request.meta?.toolName]);
+        if (verdict === 'throw') throw new Error('policy unavailable');
+        return verdict;
+      },
+    });
+    bridge.handle('_kiro/workflow/run_start', { workflowId: 'wf_1', workflowName: 'edit', nodeTree: [{ nodeId: 'write', type: 'step' }], parentSessionId: 'parent' });
+    bridge.handle('_kiro/workflow/node_start', { workflowId: 'wf_1', nodeId: 'write', type: 'step', sessionId: 'step-1', parentSessionId: 'parent' });
+    const options = [
+      { optionId: 'always', name: 'Always allow', kind: 'allow_always' },
+      { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+      { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+    ];
+    const request = (requestId: number) => bridge.requestPermission({
+      sessionId: 'step-1', requestId, toolCall: { title: 'Write File' }, meta: { toolName: 'write' }, options,
+    });
+
+    assert.equal(request(1), true);
+    assert.deepEqual(answers, [[1, 'once']], "allow_once, never Kiro's own always-allow");
+    assert.deepEqual(asked, [['parent', 'Write File', 'write']], 'asked about the launching chat, with the tool name Kiro sent');
+    assert.equal(hub.list('owner-a', 'ws-a')[0].approvals, undefined, 'nothing shown');
+
+    verdict = false;
+    assert.equal(request(2), true);
+    assert.equal(answers.length, 1, 'a request the chat would ask about waits for the person');
+    assert.equal(hub.list('owner-a', 'ws-a')[0].approvals?.length, 1);
+
+    verdict = 'throw';
+    assert.equal(request(3), true);
+    assert.equal(answers.length, 1, 'a policy that cannot be read asks');
+    assert.equal(hub.list('owner-a', 'ws-a')[0].approvals?.length, 2);
+
+    verdict = true;
+    assert.equal(bridge.requestPermission({ sessionId: 'step-1', requestId: 4, toolCall: { title: 'Bash' },
+      options: [{ optionId: 'always', kind: 'allow_always' }, { optionId: 'no', kind: 'reject_once' }] }), true);
+    assert.equal(answers.length, 1, 'without a single-use option nothing is approved on its behalf');
+    assert.equal(hub.list('owner-a', 'ws-a')[0].approvals?.length, 3);
+  });
+
+  it('Kiro: the request _meta reaches the workflow router', () => {
+    const client = new AcpClient(undefined, os.tmpdir(), undefined, 'v3');
+    (client as any).proc = { stdin: { destroyed: false, write: () => true } };
+    const seen: unknown[] = [];
+    client.setWorkflowRouter({
+      onEvent: () => {},
+      isStepSession: (sid) => sid === 'step-1',
+      requestPermission: (request) => { seen.push(request.meta); return true; },
+    });
+    (client as any).dispatch({ jsonrpc: '2.0', id: 5, method: 'session/request_permission', params: {
+      sessionId: 'step-1', toolCall: { title: 'Write File' }, options: [{ optionId: 'allow_once', kind: 'allow_once' }], _meta: { toolName: 'write' },
+    } });
+    assert.deepEqual(seen, [{ toolName: 'write' }]);
+  });
+
   it('Claude: an approval asked while the chat is idle goes to the open workflow and times out cleanly', async () => {
     const hub = new WorkflowRunHub(memoryStore());
     const tap = createClaudeWorkflowTap({ hub: workflowSink(hub), context: () => PORT_CONTEXT, stopTask: async () => {} });

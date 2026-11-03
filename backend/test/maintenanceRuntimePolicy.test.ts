@@ -149,4 +149,17 @@ describe('maintenance context prompt', () => {
     assert.match(prefix, /an update keeps the block type, so delete it and insert one of a fitting type/);
     assert.match(prefix, /Replace only blocks no person edited/);
   });
+
+  test('a batch lets the page structure follow the conversations instead of only growing', () => {
+    const prefix = maintenancePromptPrefix(context([{ sourceTurnId: 't1', evidence: { nodeId: 'n1', turnId: 't1', assistantId: 'a1' } }]));
+    assert.match(prefix, /A new idea that stands alone lands small/);
+    assert.match(prefix, /When a list or markdown block has grown long or developed clear sub-themes, restructure it in the same write/);
+    assert.match(prefix, /replace that block with what was settled: the chosen option with its substance/);
+    assert.match(prefix, /do not keep a debate that has ended/);
+    assert.match(prefix, /turn that claim into a conflict holding both versions/);
+    assert.match(prefix, /mark the assistant's proposals as proposals and say whether the user answered/);
+    assert.match(prefix, /next-steps only for steps someone decided to take/);
+    // The new rules sit before the edit protection, which still bounds every replacement.
+    assert.ok(prefix.indexOf('Let the page\'s structure follow') < prefix.indexOf('Replace only blocks no person edited'));
+  });
 });

@@ -367,6 +367,28 @@ export function buildMessagesByNode(rawRows: unknown[]): Record<string, ChatMess
 }
 
 /**
+ * Server rows replacing a node's messages keep the `clientKey` of the row
+ * with the same id, so a realigned message stays mounted (keeps its expanded
+ * blocks and edit text, and does not replay its entrance). Returns `next`
+ * itself when nothing carries over.
+ */
+export function carryClientKeys(previous: readonly ChatMessage[] | undefined, next: ChatMessage[]): ChatMessage[] {
+  let keys: Map<string, string> | undefined;
+  for (const message of previous ?? []) {
+    if (message.clientKey) (keys ??= new Map()).set(message.id, message.clientKey);
+  }
+  if (!keys) return next;
+  let changed = false;
+  const carried = next.map((message) => {
+    const clientKey = keys.get(message.id);
+    if (!clientKey || message.clientKey) return message;
+    changed = true;
+    return { ...message, clientKey };
+  });
+  return changed ? carried : next;
+}
+
+/**
  * Install fetched message bodies onto placeholder nodes. Pure: returns a new
  * nodes map (only touched nodes get new object identities). Each node in
  * `messagesByNode` gets its messages replaced. Page metadata keeps partial
@@ -385,7 +407,7 @@ export function applyTreeMessages(
   for (const nodeId of ids) {
     const prev = next[nodeId];
     if (!prev) continue; // node not present locally (e.g. trimmed) — skip
-    const messages = messagesByNode[nodeId];
+    const messages = carryClientKeys(prev.messages, messagesByNode[nodeId]);
     const page = pages?.find(item => item.nodeId === nodeId);
     next[nodeId] = recoverRunningTurn({
       ...prev,

@@ -1,4 +1,5 @@
 import React from 'react';
+import { AnimatePresence } from 'motion/react';
 import type { ChatNodeState, Project, Tree } from '../../../state/chatTypes';
 import { deriveTreeRows, deriveArchivedTreeRows, firstUserSnippet, type TreeRow } from './derive';
 import { relativeTime } from '../../../lib/relativeTime';
@@ -312,14 +313,17 @@ export default function ChatTreeList({
         </div>
       )}
 
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          sections={menuSections}
-          onClose={closeMenu}
-        />
-      )}
+      <AnimatePresence>
+        {menu && (
+          <ContextMenu
+            key={`${menu.x}:${menu.y}`}
+            x={menu.x}
+            y={menu.y}
+            sections={menuSections}
+            onClose={closeMenu}
+          />
+        )}
+      </AnimatePresence>
     </>
   );
 }

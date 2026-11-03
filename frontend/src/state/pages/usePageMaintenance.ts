@@ -1,11 +1,17 @@
 import React from 'react';
 import {
+  createMaintenanceWatch,
+  deleteMaintenanceWatch,
   getPageMaintenance,
   queuePageMaintenanceCatchUp,
   reconsiderPageMaintenanceSources,
+  runMaintenanceWatch,
   runPageMaintenanceNow,
+  saveMaintenanceInstructions,
   setPageMaintenanceSpaceExcluded,
+  updateMaintenanceWatch,
   updatePageMaintenance,
+  type MaintenanceWatchInput,
   type PageMaintenanceConfigPatch,
   type PageMaintenanceIdentity,
   type PageMaintenanceWorkspace,
@@ -23,6 +29,12 @@ export interface PageMaintenanceState {
   runNow: () => Promise<void>;
   reconsider: (planId: string, sourceTurnIds: string[]) => Promise<void>;
   catchUp: (spaceId: string, after: number, through: number) => Promise<{ requestId: string; after: number; through: number; queued: true }>;
+  saveInstructions: (text: string) => Promise<void>;
+  addWatch: (input: MaintenanceWatchInput) => Promise<void>;
+  /** Saved against the watch's revision as last loaded. */
+  changeWatch: (watchId: string, patch: Partial<MaintenanceWatchInput>) => Promise<void>;
+  removeWatch: (watchId: string) => Promise<void>;
+  runWatch: (watchId: string) => Promise<void>;
 }
 
 function message(error: unknown): string {
@@ -98,5 +110,16 @@ export function usePageMaintenance(identity: PageMaintenanceIdentity): PageMaint
     }
   }, [backendConnectionId, refresh, workspaceId]);
 
-  return { value, loading, busy, error, refresh, update, setSpaceExcluded, runNow, reconsider, catchUp };
+  const instructionsRevision = value?.instructions?.revision ?? 0;
+  const saveInstructions = React.useCallback((text: string) => mutate((options) =>
+    saveMaintenanceInstructions(text, instructionsRevision, options)), [instructionsRevision, mutate]);
+  const addWatch = React.useCallback((input: MaintenanceWatchInput) => mutate((options) => createMaintenanceWatch(input, options)), [mutate]);
+  const watches = value?.watches;
+  const changeWatch = React.useCallback((watchId: string, patch: Partial<MaintenanceWatchInput>) => mutate((options) =>
+    updateMaintenanceWatch(watchId, { ...patch, expectedRevision: watches?.find((watch) => watch.id === watchId)?.revision ?? 0 }, options)), [mutate, watches]);
+  const removeWatch = React.useCallback((watchId: string) => mutate((options) => deleteMaintenanceWatch(watchId, options)), [mutate]);
+  const runWatch = React.useCallback((watchId: string) => mutate((options) => runMaintenanceWatch(watchId, options)), [mutate]);
+
+  return { value, loading, busy, error, refresh, update, setSpaceExcluded, runNow, reconsider, catchUp,
+    saveInstructions, addWatch, changeWatch, removeWatch, runWatch };
 }

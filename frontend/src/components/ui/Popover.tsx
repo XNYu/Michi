@@ -1,7 +1,51 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
+import {
+  animate,
+  motion,
+  MotionConfigContext,
+  MotionGlobalConfig,
+  useIsPresent,
+  type TargetAndTransition,
+  type Transition,
+} from 'motion/react';
 import { lastInputWasTouch } from '../../lib/inputModality';
+import { EASE } from '../../motion/tokens';
 import './Menu.css';
+
+// Menus are opened many times a day: barely-there growth in, a quick fade out.
+const MENU_IN_MS = 120;
+const MENU_IN: Transition = { duration: MENU_IN_MS / 1000, ease: EASE.out };
+const MENU_OUT: TargetAndTransition = { opacity: 0, transition: { duration: 0.08, ease: EASE.out } };
+const MENU_FROM_SCALE = 0.97;
+const EASE_OUT_CSS = `cubic-bezier(${EASE.out.join(', ')})`;
+/**
+ * Callers place a surface from its measured box: in their layout effects, and
+ * again when their ResizeObserver reports over the next frames. A scaled box
+ * would misplace it, so the growth holds transparent and unscaled this long.
+ */
+const PLACE_MS = 34;
+/** One native animation from mount: test and tooling waits see it as running. */
+const GROW_KEYFRAMES: Keyframe[] = [
+  { offset: 0, opacity: 0, transform: 'none', easing: 'step-end' },
+  { offset: PLACE_MS / (PLACE_MS + MENU_IN_MS), opacity: 0, transform: `scale(${MENU_FROM_SCALE})`, easing: EASE_OUT_CSS },
+  { offset: 1, opacity: 1, transform: 'none' },
+];
+const FADE_KEYFRAMES: Keyframe[] = [{ opacity: 0 }, { opacity: 1 }];
+/** Surfaces that open per keystroke or on hover keep their plain CSS fade. */
+const FADE_ONLY_MENUS: ReadonlySet<MenuKind> = new Set<MenuKind>(['mentions', 'slash', 'detail', 'usage']);
+/** A press this recent is what opened the menu, so the menu grows from it. */
+const OPENING_PRESS_MS = 1000;
+const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
+
+let lastPress: { x: number; y: number; at: number } | null = null;
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', (event) => {
+    lastPress = { x: event.clientX, y: event.clientY, at: performance.now() };
+  }, { capture: true, passive: true });
+  // A key after the press means the keyboard opened whatever comes next.
+  window.addEventListener('keydown', () => { lastPress = null; }, { capture: true, passive: true });
+}
 
 /**
  * Shared visual shell for every floating panel in the terminal UI
@@ -39,8 +83,14 @@ export interface PopoverSurfaceProps {
    *  preserve historical layering (some menus sit above modals etc). */
   zIndex?: React.CSSProperties['zIndex'];
   /** Animate in. Defaults to true; tooltip variant defaults to false to
-   *  avoid flicker on rapid hover-in/out. */
+   *  avoid flicker on rapid hover-in/out. A menu surface grows in from the
+   *  press that opened it (opacity + scale .97→1, 120ms) and, when the caller
+   *  renders it inside `<AnimatePresence>`, fades out (80ms) as an inert ghost.
+   *  Tooltips, hover cards and the @ / slash autocompletes only fade in. */
   animate?: boolean;
+  /** Replaces the default fade-out of a menu surface (a motion target with its
+   *  own transition). Plays only inside the caller's `<AnimatePresence>`. */
+  exit?: TargetAndTransition;
   /** Opt into the shared frosted-glass material (.term-glass): the surface
    *  drops its opaque bg/shadow so the glass primitive owns them (blur + wash +
    *  cast), matching the sidebar and Settings drawer. Border/radius/font stay. */
@@ -80,6 +130,7 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
       maxHeight,
       zIndex,
       animate = variant === 'menu',
+      exit,
       glass = false,
       role,
       style,
@@ -96,6 +147,10 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
     // Tuned menus share the frosted .term-glass with the Command Palette and
     // drawers; the right-click menu is the deliberate solid exception.
     const useGlass = glass || (menuKind !== undefined && menuKind !== 'context');
+    // Menus grow in with motion; everything else keeps the CSS fade below. A
+    // caller transform would fight the growth.
+    const grows = animate && !isTooltip && role !== 'tooltip'
+      && !(menuKind && FADE_ONLY_MENUS.has(menuKind)) && style?.transform === undefined;
 
     const baseStyle: React.CSSProperties = {
       position: 'fixed',
@@ -118,16 +173,38 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
       fontSize: menuKind ? undefined : isTooltip ? 'var(--fs-sm)' : 'var(--fs-md)',
       color: 'var(--term-fg)',
       zIndex: zIndex ?? defaultZ,
-      animation: animate && !menuKind ? 'fadeIn var(--t-soft) ease-out both' : undefined,
+      animation: animate && !menuKind && !grows ? 'fadeIn var(--t-soft) ease-out both' : undefined,
       ...style,
     };
+    const surfaceClassName = [menuKind && 'michi-menu', useGlass && 'term-glass', className].filter(Boolean).join(' ') || undefined;
+
+    if (grows) {
+      return createPortal(
+        <GrowingSurface
+          surfaceRef={ref}
+          sides={{ left, right, top, bottom }}
+          exit={exit ?? MENU_OUT}
+          role={role}
+          ariaLabel={ariaLabel}
+          className={surfaceClassName}
+          menuKind={menuKind}
+          style={baseStyle}
+          onMouseDown={onMouseDown}
+          onClick={onClick}
+          onContextMenu={onContextMenu}
+        >
+          {children}
+        </GrowingSurface>,
+        document.body,
+      );
+    }
 
     return createPortal(
       <div
         ref={ref}
         role={role}
         aria-label={ariaLabel}
-        className={[menuKind && 'michi-menu', useGlass && 'term-glass', className].filter(Boolean).join(' ') || undefined}
+        className={surfaceClassName}
         data-menu={menuKind}
         data-menu-animate={menuKind && animate ? 'true' : undefined}
         style={baseStyle}
@@ -141,6 +218,152 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
     );
   },
 );
+
+/**
+ * A surface's size as it settles, for callers that place it from a measured
+ * box: while a menu grows in (scale .97→1), its on-screen box is smaller.
+ * Returns the box too, for its position.
+ */
+export function measureSurface(surface: HTMLElement): { box: DOMRect; width: number; height: number; scaleY: number } {
+  const box = surface.getBoundingClientRect();
+  const match = /^matrix\(([^)]+)\)$/.exec(getComputedStyle(surface).transform);
+  const [a, b, c, d] = match ? match[1].split(',').map(Number) : [1, 0, 0, 1];
+  const scaleX = Math.hypot(a, b) || 1;
+  const scaleY = Math.hypot(c, d) || 1;
+  return { box, width: box.width / scaleX, height: box.height / scaleY, scaleY };
+}
+
+type Sides = Pick<PopoverSurfaceProps, 'left' | 'right' | 'top' | 'bottom'>;
+
+/** The corner a surface is anchored by. */
+function sideOrigin(sides: Sides): string {
+  const vertical = sides.bottom !== undefined && sides.top === undefined ? 'bottom' : 'top';
+  const horizontal = sides.right !== undefined && sides.left === undefined ? 'right' : 'left';
+  return `${vertical} ${horizontal}`;
+}
+
+/** The point the menu grows from: the press that opened it, else its anchored corner. */
+function growthOrigin(node: HTMLElement, sides: Sides): string {
+  const box = node.getBoundingClientRect();
+  if (lastPress && performance.now() - lastPress.at < OPENING_PRESS_MS && box.width > 0 && box.height > 0) {
+    const x = Math.min(Math.max(lastPress.x - box.left, 0), box.width);
+    const y = Math.min(Math.max(lastPress.y - box.top, 0), box.height);
+    return `${x}px ${y}px`;
+  }
+  return sideOrigin(sides);
+}
+
+function prefersReduced(config: string | undefined): boolean {
+  // MotionRoot: 'always' is the in-app Reduce motion preference, 'user' the OS.
+  return config === 'always' || (config === 'user' && (window.matchMedia?.(REDUCED_MOTION)?.matches ?? false));
+}
+
+function GrowingSurface({
+  surfaceRef,
+  sides,
+  exit,
+  role,
+  ariaLabel,
+  className,
+  menuKind,
+  style,
+  onMouseDown,
+  onClick,
+  onContextMenu,
+  children,
+}: {
+  surfaceRef: React.ForwardedRef<HTMLDivElement>;
+  sides: Sides;
+  exit: TargetAndTransition;
+  role?: string;
+  ariaLabel?: string;
+  className?: string;
+  menuKind?: MenuKind;
+  style: React.CSSProperties;
+  onMouseDown?: React.MouseEventHandler<HTMLDivElement>;
+  onClick?: React.MouseEventHandler<HTMLDivElement>;
+  onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
+  children: React.ReactNode;
+}) {
+  // Leaving (inside the caller's AnimatePresence): no longer a layer. The role
+  // goes too, because Esc routing matches menus and lists by role alone.
+  const leaving = !useIsPresent();
+  const reducedMotion = React.useContext(MotionConfigContext).reducedMotion;
+  const nodeRef = React.useRef<HTMLDivElement | null>(null);
+  const entranceRef = React.useRef<Animation | null>(null);
+  const live = React.useRef({ sides, reducedMotion });
+  live.current = { sides, reducedMotion };
+
+  const setNode = React.useCallback((node: HTMLDivElement | null) => {
+    nodeRef.current = node;
+    if (typeof surfaceRef === 'function') surfaceRef(node);
+    else if (surfaceRef) surfaceRef.current = node;
+  }, [surfaceRef]);
+
+  // Started before paint so the first frame is already transparent. The scale
+  // only begins after PLACE_MS, once the caller has measured and placed it.
+  React.useLayoutEffect(() => {
+    const node = nodeRef.current;
+    if (!node || MotionGlobalConfig.skipAnimations || typeof node.animate !== 'function') return;
+    const reduced = prefersReduced(live.current.reducedMotion);
+    const entrance = reduced
+      ? node.animate(FADE_KEYFRAMES, { duration: MENU_IN_MS, easing: EASE_OUT_CSS })
+      : node.animate(GROW_KEYFRAMES, { duration: PLACE_MS + MENU_IN_MS, easing: 'linear' });
+    entranceRef.current = entrance;
+    let frame = 0;
+    if (!reduced) {
+      node.style.transformOrigin = sideOrigin(live.current.sides);
+      frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(() => { node.style.transformOrigin = growthOrigin(node, live.current.sides); });
+      });
+    }
+    return () => {
+      cancelAnimationFrame(frame);
+      entrance.cancel();
+      entranceRef.current = null;
+    };
+  }, []);
+
+  const wasLeaving = React.useRef(leaving);
+  React.useLayoutEffect(() => {
+    const node = nodeRef.current;
+    if (node && leaving) {
+      // The exit takes over from wherever the entrance got to.
+      const entrance = entranceRef.current;
+      if (entrance?.playState === 'running') {
+        try { entrance.commitStyles(); } catch { /* not rendered: nothing to hold */ }
+        entrance.cancel();
+      }
+    } else if (node && wasLeaving.current) {
+      // Reopened while fading out: AnimatePresence brings the same surface back.
+      node.style.transform = '';
+      animate(node, { opacity: 1 }, MENU_IN);
+    }
+    wasLeaving.current = leaving;
+  }, [leaving]);
+
+  return (
+    <motion.div
+      ref={setNode}
+      role={leaving ? undefined : role}
+      aria-label={ariaLabel}
+      aria-hidden={leaving || undefined}
+      inert={leaving}
+      className={className}
+      data-menu={menuKind}
+      // Plays the shared menu entrance, in its own (motion) form.
+      data-menu-animate="true"
+      data-menu-motion="grow"
+      style={{ ...style, pointerEvents: leaving ? 'none' : style.pointerEvents }}
+      exit={exit}
+      onMouseDown={leaving ? undefined : onMouseDown}
+      onClick={leaving ? undefined : onClick}
+      onContextMenu={onContextMenu}
+    >
+      {children}
+    </motion.div>
+  );
+}
 
 export type TooltipSide = 'bottom' | 'right';
 

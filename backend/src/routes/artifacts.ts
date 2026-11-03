@@ -3,7 +3,12 @@ import express, { Request, Response } from "express";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { NotFoundError } from "../services/workspaceSandbox";
-import { resolveWorkspaceFileRoot as resolveRoot, resolveWorkspaceRegularFile, WORKSPACE_FILE_ID_RE } from "../services/workspaceFiles";
+import {
+  findWorkspaceFileBySuffix,
+  resolveWorkspaceFileRoot as resolveRoot,
+  resolveWorkspaceRegularFile,
+  WORKSPACE_FILE_ID_RE,
+} from "../services/workspaceFiles";
 import {
   declareArtifactWatchPaths,
   subscribeArtifactWatch,
@@ -52,7 +57,7 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
     }
   });
 
-  router.get("/artifacts/:workspaceId/read", (req: Request, res: Response) => {
+  router.get("/artifacts/:workspaceId/read", async (req: Request, res: Response) => {
     const workspaceId = req.params.workspaceId;
     if (typeof workspaceId !== "string" || !WORKSPACE_FILE_ID_RE.test(workspaceId)) {
       return res.status(404).end();
@@ -75,6 +80,7 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
     const preview = req.query.preview === '1';
     let real: string;
     let stat: fs.Stats;
+    let resolvedPath = relPath;
     try {
       // The owner desktop/remote API has host filesystem access, like the
       // Electron file viewer. Cloud previews always retain workspace isolation.
@@ -84,7 +90,17 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
         if (!stat.isFile()) return res.status(404).end();
       } else {
         const relative = preview && path.isAbsolute(relPath) ? path.relative(root, relPath) : relPath;
-        ({ realPath: real, stat } = resolveWorkspaceRegularFile(relative, root));
+        try {
+          ({ realPath: real, stat } = resolveWorkspaceRegularFile(relative, root));
+        } catch (error) {
+          // Chat file links often cite only a basename or trailing path. The
+          // match is sandboxed again; artifact reads keep exact paths.
+          const match = preview && !path.isAbsolute(relPath) && (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ? await findWorkspaceFileBySuffix(root, relative) : null;
+          if (!match) throw error;
+          ({ realPath: real, stat } = resolveWorkspaceRegularFile(match, root));
+          resolvedPath = match;
+        }
       }
     } catch {
       return res.status(404).end();
@@ -102,7 +118,7 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
     if (imageMime) {
       try {
         return res.json({ content: `data:${imageMime};base64,${fs.readFileSync(real).toString('base64')}`, imageMime,
-          path: relPath, basename: path.basename(real), extension: path.extname(real).slice(1), size: stat.size, modifiedAt: stat.mtimeMs });
+          path: resolvedPath, basename: path.basename(real), extension: path.extname(real).slice(1), size: stat.size, modifiedAt: stat.mtimeMs });
       } catch { return res.status(500).json({ error: 'Failed to read image' }); }
     }
 
@@ -121,7 +137,7 @@ export function setupArtifactRoutes(deps: ArtifactRouteDeps = {}): express.Route
 
     res.json({
       content,
-      path: relPath,
+      path: resolvedPath,
       basename,
       extension: ext,
       size: stat.size,

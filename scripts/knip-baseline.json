@@ -28,8 +28,6 @@
     "exports\tbackend/src/agents/hostEvents.ts\t__resetHostEventWarnings",
     "exports\tbackend/src/agents/hostText/claude.ts\tCLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION",
     "exports\tbackend/src/agents/michiClaudeOptions.ts\tmichiClaudeProfile",
-    "exports\tbackend/src/agents/pi/PiSdkSession.ts\tPiSdkSession",
-    "exports\tbackend/src/agents/pi/PiSdkSession.ts\tselectPiSessionKind",
     "exports\tbackend/src/agents/pi/mcpToolBridge.ts\tparseMcpToolName",
     "exports\tbackend/src/agents/pi/openrouterModels.ts\tinvalidateOpenRouterCache",
     "exports\tbackend/src/agents/runs/agentRunRecovery.ts\tstartupRecoveryAction",
@@ -169,9 +167,6 @@
     "exports\tfrontend/src/components/terminal/manage/ManageComposer.tsx\t__resetManageComposerSessionStateForTests",
     "exports\tfrontend/src/components/terminal/pages/Dashboard.tsx\tcenteredPaneScrollLeft",
     "exports\tfrontend/src/components/terminal/pages/homeContinue.ts\tcontinueItemsEqual",
-    "exports\tfrontend/src/components/terminal/paneMotion.ts\tPANE_STAGGER_MS",
-    "exports\tfrontend/src/components/terminal/paneMotion.ts\tisQuietPaneMotion",
-    "exports\tfrontend/src/components/terminal/paneMotion.ts\tpaneMotionName",
     "exports\tfrontend/src/components/terminal/primitives.tsx\tKBD",
     "exports\tfrontend/src/components/terminal/primitives.tsx\tTab",
     "exports\tfrontend/src/components/terminal/rail/AreaRail.tsx\tdefault",
@@ -331,13 +326,10 @@
     "unlisted\telectron/preload.ts\tmichi-shared",
     "unlisted\telectron/remoteAuthentication.ts\tmichi-shared",
     "unlisted\tfrontend/src/components/MentionEditor.markdownTyping.test.ts\t@tiptap/core",
-    "unlisted\tscripts/build-info.test.mjs\tesbuild",
     "unlisted\tscripts/prepare-electron-binary.mjs\t@electron/get",
-    "unlisted\tscripts/test-stream-transport.mjs\tesbuild",
     "unlisted\tscripts/test-stream-transport.mjs\texpress",
     "unlisted\tscripts/test-stream-transport.mjs\tplaywright",
     "unlisted\tscripts/verify-claude-sdk-sidecar.mjs\t@electron/asar",
-    "unlisted\tscripts/verify-claude-sdk-sidecar.mjs\tesbuild",
     "unresolved\tpackage.json\tts-node/register"
   ]
 }

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AnimatePresence } from 'motion/react';
 import {
   chatLabel,
   shallowArrayEqual,
@@ -141,8 +142,9 @@ export default function PaneTabStrip({ titleOverride, leftInset }: {
       </span>
     </div>
       {/* Outside the drag region so Electron doesn't swallow menu clicks. */}
-      {menu && (
+      <AnimatePresence>{menu && (
         <ContextMenu
+          key={`${menu.x}:${menu.y}`}
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
@@ -158,7 +160,7 @@ export default function PaneTabStrip({ titleOverride, leftInset }: {
             ],
           }]}
         />
-      )}
+      )}</AnimatePresence>
     </>
   );
 }

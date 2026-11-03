@@ -1,12 +1,24 @@
 import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { animate, motion, type AnimationPlaybackControls } from 'motion/react';
 import type { UserInputRequest } from '../../state/chatTypes';
 import type { UserInputAnswer } from '../../services/chatStreamEvents';
 import { usePrefs } from '../../state/prefs';
+import { prefersReducedMotion } from '../../hooks/useReducedMotion';
+import { DUR, EASE } from '../../motion/tokens';
+import { useFresh } from '../../motion/useFresh';
+import './UserInputBanner.css';
+
+/**
+ * What sending an answer returns. A promise that rejects or resolves `false`
+ * means it did not land: the card takes input again at once. Without one the
+ * card falls back to a timeout.
+ */
+type AnswerResult = void | boolean | PromiseLike<unknown>;
 
 interface UserInputBannerProps {
   userInput: UserInputRequest;
-  onSubmit: (answers: UserInputAnswer[]) => void;
-  onSkip: () => void;
+  onSubmit: (answers: UserInputAnswer[]) => AnswerResult;
+  onSkip: () => AnswerResult;
   readOnly?: boolean;
 }
 
@@ -67,32 +79,225 @@ const ADVANCE_MS = 320;
 /** Horizontal gap between questions in the sliding track. Must match `.ask-track` CSS. */
 const TRACK_GAP = 28;
 
-export function ResolvedUserInput({ userInput }: { userInput: UserInputRequest }) {
+// --- Answered → receipt hand-off ---------------------------------------------
+// Answering does not wait for anything: the answer is sent at once and the live
+// card marks it (the chosen options take an accent fill, the others fade). The
+// receipt replaces the card when the store resolves the request, which is a
+// different component (MessageBlock swaps them), so the live card leaves a
+// hand-off behind: its height, when the answer was sent, and a frozen copy of
+// itself taken as it unmounts. The receipt (in the same commit) finishes the
+// marking on that copy, fades it out and collapses from the card's height,
+// instead of popping in as if a new question had arrived. Receipts with no
+// fresh hand-off (history, remounts, answered elsewhere) render settled.
+//
+// The copy is visual only: inert, aria-hidden, without labels, and its text
+// is drawn as generated content (UserInputBanner.css), so text lookups (find
+// in page, Testing Library, Playwright getByText) see the receipt alone.
+
+/** The live card's entrance curve (was `ask-card-in`; also the track's slide). */
+const ASK_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+/** Strength of the chosen option's accent fill (the alert bar's 12% tint). */
+const FILL_OPACITY = 0.12;
+/** The chosen option fills over 120ms while the others fade over 100ms. */
+const FILL_S = 0.12;
+/** The receipt takes over this long after the answer was sent. */
+const MARK_S = 0.14;
+/** The receipt: the card collapses over 220ms, the old content leaves over 80ms. */
+const COLLAPSE_S = 0.22;
+const GHOST_OUT_S = 0.08;
+const RECEIPT_IN_S = 0.16;
+/** Without a send result to wait on, give the card back after this long. */
+const ANSWER_REVERT_MS = 3000;
+/** How long after sending a receipt may still take over from the live card. */
+const HANDOFF_TTL_MS = 10_000;
+/** The copy is taken in the commit that mounts the receipt; older ones are stale. */
+const GHOST_FRESH_MS = 250;
+const GHOST_TEXT_ATTR = 'data-ask-ghost-text';
+/** Attributes that would make the copy findable by label, placeholder, id or test id. */
+const GHOST_STRIPPED_ATTRS = ['id', 'aria-live', 'aria-label', 'aria-labelledby', 'aria-describedby', 'title', 'placeholder', 'data-testid'];
+
+interface AskHandoff {
+  /** Live card's border-box height when the answer was sent. */
+  height: number;
+  sentAt: number;
+  /** Frozen copy of the live card, taken as it unmounted. */
+  ghost?: HTMLElement;
+  capturedAt?: number;
+}
+
+const handoffs = new Map<string, AskHandoff>();
+
+/** One conversation's request: the pane it sits in (`[data-node-id]`) plus the request. */
+function handoffKey(el: Element, userInput: Pick<UserInputRequest, 'requestId' | 'interactionId'>): string {
+  const scope = el.closest('[data-node-id]')?.getAttribute('data-node-id') ?? '';
+  return `${scope}|${userInput.interactionId ?? `request:${userInput.requestId}`}`;
+}
+
+function recordHandoff(key: string, height: number) {
+  const now = Date.now();
+  for (const [k, entry] of handoffs) if (now - entry.sentAt > HANDOFF_TTL_MS) handoffs.delete(k);
+  if (height > 0) handoffs.set(key, { height, sentAt: now });
+  else handoffs.delete(key);
+}
+
+/** A copy of the live card that can sit over the receipt without being a live layer or findable text. */
+function freezeCard(card: HTMLElement, height: number): HTMLElement {
+  // motion runs the fades on WAAPI and writes the inline value only when an
+  // animation finishes; commit what is on screen so the copy starts from it.
+  if (typeof card.getAnimations === 'function') {
+    for (const animation of card.getAnimations({ subtree: true })) {
+      try { animation.commitStyles(); } catch { /* target not rendered */ }
+    }
+  }
+  const look = getComputedStyle(card);
+  const ghost = card.cloneNode(true) as HTMLElement;
+  // Not an `.ask-card`: lookups for the live card (focusPendingRequest, tests)
+  // must not find it. Its own box comes from the card's computed style.
+  ghost.className = 'ask-card-ghost';
+  ghost.setAttribute('aria-hidden', 'true');
+  ghost.setAttribute('inert', '');
+  ghost.removeAttribute('data-answering');
+  for (const attr of GHOST_STRIPPED_ATTRS) {
+    ghost.removeAttribute(attr);
+    for (const el of ghost.querySelectorAll(`[${attr}]`)) el.removeAttribute(attr);
+  }
+  const walker = document.createTreeWalker(ghost, NodeFilter.SHOW_TEXT);
+  const texts: Text[] = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node as Text);
+  for (const text of texts) {
+    if (!text.data.trim()) continue;
+    const drawn = document.createElement('span');
+    drawn.setAttribute(GHOST_TEXT_ATTR, text.data);
+    text.replaceWith(drawn);
+  }
+  Object.assign(ghost.style, {
+    position: 'absolute', top: '0', left: '0', right: '0', height: `${height}px`, margin: '0',
+    boxSizing: 'border-box', overflow: 'hidden', zIndex: '1', pointerEvents: 'none',
+    display: look.display, flexDirection: look.flexDirection, gap: look.gap, padding: look.padding,
+    borderRadius: look.borderRadius, backgroundColor: look.backgroundColor,
+    opacity: '1', transform: 'none', animation: 'none', boxShadow: 'none',
+  });
+  return ghost;
+}
+
+function captureGhost(key: string, card: HTMLElement) {
+  const entry = handoffs.get(key);
+  if (!entry) return;
+  entry.ghost = freezeCard(card, entry.height);
+  entry.capturedAt = Date.now();
+  // Unclaimed (the card left for another reason): let the copy go.
+  setTimeout(() => { if (handoffs.get(key) === entry) handoffs.delete(key); }, GHOST_FRESH_MS);
+}
+
+interface HandoffClaim {
+  entry: AskHandoff & { ghost: HTMLElement };
+  /** Seconds of the live card's marking still to play. */
+  delay: number;
+}
+
+/**
+ * Take this receipt's hand-off. Only the first claimant gets it; a stale one
+ * (sent too long ago, or copied in an earlier commit because the card left
+ * for another reason) is dropped with its copy.
+ */
+function takeHandoff(key: string): HandoffClaim | null {
+  const entry = handoffs.get(key);
+  if (!entry) return null;
+  handoffs.delete(key);
+  const now = Date.now();
+  const { ghost, capturedAt } = entry;
+  if (!ghost || capturedAt === undefined || now - capturedAt > GHOST_FRESH_MS || now - entry.sentAt > HANDOFF_TTL_MS) return null;
+  return { entry: { ...entry, ghost }, delay: Math.max(0, MARK_S - (now - entry.sentAt) / 1000) };
+}
+
+/** The hand-off itself, on the receipt's settled DOM. Returns its cleanup. */
+function playHandoff(card: HTMLElement, { entry, delay }: HandoffClaim): () => void {
+  const { ghost } = entry;
+  const body = card.querySelector<HTMLElement>('.ask-card-body');
+  const settledHeight = card.offsetHeight;
+  const reduce = prefersReducedMotion(document.documentElement.dataset.reduceMotion === 'on');
+  Object.assign(card.style, { position: 'relative', isolation: 'isolate', height: `${entry.height}px` });
+  if (body) body.style.opacity = '0';
+  card.appendChild(ghost);
+
+  const runs: AnimationPlaybackControls[] = [];
+  const fills = ghost.querySelectorAll<HTMLElement>('[data-ask-fill]');
+  const fades = ghost.querySelectorAll<HTMLElement>('[data-ask-fade]');
+  if (delay > 0 && fills.length) runs.push(animate(fills, { opacity: FILL_OPACITY }, { duration: delay, ease: EASE.out }));
+  if (delay > 0 && fades.length) runs.push(animate(fades, { opacity: 0 }, { duration: Math.min(delay, DUR.soft), ease: 'linear' }));
+  const out = animate(ghost, { opacity: 0 }, { duration: GHOST_OUT_S, delay, ease: 'linear' });
+  void out.then(() => ghost.remove());
+  const collapse = animate(card, { height: [`${entry.height}px`, `${settledHeight}px`] }, { duration: COLLAPSE_S, delay, ease: EASE.drawer });
+  void collapse.then(() => { card.style.height = ''; });
+  runs.push(out, collapse);
+  if (body) {
+    const reveal = animate(body, reduce ? { opacity: [0, 1] } : { opacity: [0, 1], y: [3, 0] },
+      { duration: RECEIPT_IN_S, delay: delay + GHOST_OUT_S, ease: EASE.out });
+    void reveal.then(() => { body.style.opacity = ''; body.style.transform = ''; });
+    runs.push(reveal);
+  }
+  return () => {
+    for (const run of runs) run.stop();
+    ghost.remove();
+    Object.assign(card.style, { position: '', isolation: '', height: '' });
+    if (body) Object.assign(body.style, { opacity: '', transform: '' });
+  };
+}
+
+/** A chosen option hosts its fill behind its own content. */
+const FILL_HOST = { position: 'relative', isolation: 'isolate' } as const;
+
+/** The chosen option's accent fill, laid under its content while answering. */
+function AnswerFill() {
+  return (
+    <motion.span
+      aria-hidden
+      data-ask-fill=""
+      style={{ position: 'absolute', inset: 0, zIndex: -1, borderRadius: 'inherit', background: 'var(--term-accent)', pointerEvents: 'none' }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: FILL_OPACITY }}
+      transition={{ duration: FILL_S, ease: EASE.out }}
+    />
+  );
+}
+
+function ReceiptBody({ userInput }: { userInput: UserInputRequest }) {
   const { questions, answers } = userInput;
   if (!answers.length) {
-    return (
-      <div className="ask-card ask-resolved">
-        <div className="ask-card-body">
-          {questions.map((q, i) => <div key={q.id ?? i} className="ask-qa-pair">
-            <div className="ask-qa-question">{q.header || q.question}</div>
-            <span className="ask-qa-answer skipped">{userInput.interrupted ? '(not answered before the turn ended)' : '(skipped)'}</span>
-          </div>)}
-        </div>
-      </div>
-    );
+    return questions.map((q, i) => <div key={q.id ?? i} className="ask-qa-pair">
+      <div className="ask-qa-question">{q.header || q.question}</div>
+      <span className="ask-qa-answer skipped">{userInput.interrupted ? '(not answered before the turn ended)' : '(skipped)'}</span>
+    </div>);
   }
-  return (
-    <div className="ask-card ask-resolved">
-      <div className="ask-card-body">
-        {questions.map((q, i) => (
-          <div key={i} className="ask-qa-pair">
-            <div className="ask-qa-question">{q.header || q.question}</div>
-            <div className={`ask-qa-answer${!answers[i]?.answer ? ' skipped' : ''}`}>
-              {(answers.find(answer => q.id && answer.id === q.id) ?? answers.find(answer => answer.question === q.question) ?? answers[i])?.answer || '(skipped)'}
-            </div>
-          </div>
-        ))}
+  return questions.map((q, i) => (
+    <div key={i} className="ask-qa-pair">
+      <div className="ask-qa-question">{q.header || q.question}</div>
+      <div className={`ask-qa-answer${!answers[i]?.answer ? ' skipped' : ''}`}>
+        {(answers.find(answer => q.id && answer.id === q.id) ?? answers.find(answer => answer.question === q.question) ?? answers[i])?.answer || '(skipped)'}
       </div>
+    </div>
+  ));
+}
+
+export function ResolvedUserInput({ userInput }: { userInput: UserInputRequest }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  /** The claim, once taken: StrictMode re-runs the effect on the same mount. */
+  const claimRef = useRef<HandoffClaim | null | undefined>(undefined);
+  const { requestId, interactionId } = userInput;
+
+  // Layout effect: the copy is taken while the live card unmounts in this same
+  // commit, and the hand-off must be in place before the first paint. Mount
+  // only: later renders of the same receipt never replay it.
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+    if (claimRef.current === undefined) claimRef.current = takeHandoff(handoffKey(card, { requestId, interactionId }));
+    return claimRef.current ? playHandoff(card, claimRef.current) : undefined;
+  }, [requestId, interactionId]);
+
+  return (
+    <div ref={cardRef} className="ask-card ask-resolved">
+      <div className="ask-card-body"><ReceiptBody userInput={userInput} /></div>
     </div>
   );
 }
@@ -114,6 +319,35 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
   const [qWidth, setQWidth] = useState<number | undefined>(undefined);
   const [viewH, setViewH] = useState<number | undefined>(undefined);
   const [slideAnim, setSlideAnim] = useState(false);
+
+  // --- answering (see the hand-off notes above ResolvedUserInput) ---
+  // `answering` holds from sending until the receipt replaces the card; the
+  // ref also stops a second send from Enter or a double click in between. A
+  // send that reports failure gives the card back at once; with no result to
+  // wait on, a timeout does.
+  const [answering, setAnswering] = useState(false);
+  const answeringRef = useRef(false);
+  const attemptRef = useRef(0);
+  const inFlightRef = useRef(false);
+  const fallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sentKeyRef = useRef<string | null>(null);
+  const cardElRef = useRef<HTMLDivElement | null>(null);
+  const cardRef = useCallback((el: HTMLDivElement | null) => {
+    cardElRef.current = el;
+    if (!el) return;
+    return () => {
+      cardElRef.current = null;
+      if (sentKeyRef.current) captureGhost(sentKeyRef.current, el);
+    };
+  }, []);
+
+  // Only a request that just arrived plays its entrance; hydrated ones (no
+  // stamp) and remounts render settled.
+  const enter = useFresh(userInput.receivedAt);
+
+  useEffect(() => () => {
+    if (fallbackTimer.current) clearTimeout(fallbackTimer.current);
+  }, []);
 
   const safeIdx = Math.min(currentIdx, Math.max(questions.length - 1, 0));
 
@@ -183,12 +417,13 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
   }, []);
 
   const goToStep = useCallback((next: number) => {
+    if (answeringRef.current) return;
     if (advanceTimer.current) clearTimeout(advanceTimer.current);
     setCurrentIdx(Math.min(Math.max(next, 0), questions.length - 1));
   }, [questions.length]);
 
   const toggleOption = useCallback((label: string) => {
-    if (readOnly || !q) return;
+    if (readOnly || !q || answeringRef.current) return;
     setSelections(prev => {
       const next = new Map(prev);
       const set = new Set(prev.get(safeIdx) ?? []);
@@ -213,6 +448,7 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
   }, [safeIdx, q, questions.length, readOnly, markAnswered]);
 
   const setOtherText = useCallback((text: string) => {
+    if (answeringRef.current) return;
     setOtherTexts(prev => {
       const next = new Map(prev);
       next.set(safeIdx, text);
@@ -229,14 +465,64 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
     return parts.join(', ');
   };
 
+  /** Give the card back after attempt `attempt` did not land (ignored once a newer one started). */
+  const releaseAnswer = (attempt: number) => {
+    if (attempt !== attemptRef.current) return;
+    if (fallbackTimer.current) clearTimeout(fallbackTimer.current);
+    fallbackTimer.current = null;
+    answeringRef.current = false;
+    setAnswering(false);
+  };
+
+  const armFallback = (attempt: number) => {
+    if (fallbackTimer.current) clearTimeout(fallbackTimer.current);
+    fallbackTimer.current = setTimeout(() => {
+      fallbackTimer.current = null;
+      if (!inFlightRef.current) releaseAnswer(attempt);
+    }, ANSWER_REVERT_MS);
+  };
+
+  /** Mark the card as answered, leave the receipt its hand-off, and send. */
+  const sendAnswer = (send: () => AnswerResult) => {
+    if (advanceTimer.current) clearTimeout(advanceTimer.current);
+    const attempt = ++attemptRef.current;
+    answeringRef.current = true;
+    setAnswering(true);
+    const card = cardElRef.current;
+    const key = card ? handoffKey(card, userInput) : null;
+    sentKeyRef.current = key;
+    if (key) recordHandoff(key, card?.offsetHeight ?? 0);
+    armFallback(attempt);
+    const result = send();
+    if (!result || typeof result !== 'object' || typeof result.then !== 'function') return;
+    inFlightRef.current = true;
+    result.then(
+      (outcome) => {
+        inFlightRef.current = false;
+        if (outcome === false) releaseAnswer(attempt);
+        else armFallback(attempt); // landed: the receipt should replace the card shortly
+      },
+      () => {
+        inFlightRef.current = false;
+        releaseAnswer(attempt);
+      },
+    );
+  };
+
   const handleSubmit = () => {
+    if (answeringRef.current) return;
     markAnswered(safeIdx);
     const answers: UserInputAnswer[] = questions.map((question, idx) => ({
       ...(question.id !== undefined ? { id: question.id } : {}),
       question: question.question,
       answer: buildAnswer(idx),
     }));
-    onSubmit(answers);
+    sendAnswer(() => onSubmit(answers));
+  };
+
+  const handleSkip = () => {
+    if (answeringRef.current) return;
+    sendAnswer(onSkip);
   };
 
   if (userInput.resolved) {
@@ -246,9 +532,18 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
 
   const isLastQuestion = safeIdx === questions.length - 1;
   const hasSelection = currentSelections.size > 0 || currentOtherText.trim().length > 0;
+  /** While the answer is on its way, the controls say so to AT (they ignore input). */
+  const busy = answering ? true : undefined;
 
   return (
-    <div className="ask-card">
+    <motion.div
+      ref={cardRef}
+      className="ask-card"
+      data-answering={answering ? 'true' : undefined}
+      initial={enter ? { opacity: 0, y: 6 } : false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: DUR.decay, ease: ASK_EASE }}
+    >
       <div className="ask-card-head">
         <span className="ask-head-icon" aria-hidden>?</span>
         <span className="ask-head-title">{isMultiQuestion ? 'Questions' : 'Question'}</span>
@@ -288,31 +583,48 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
                   {question.multiSelect && <span className="ask-card-hint">Select all that apply.</span>}
                 </div>
                 <div className="ask-card-options" role={question.multiSelect ? 'group' : 'radiogroup'} aria-label={question.question}>
-                  {question.options.map((opt) => (
-                    <button
-                      key={opt.label}
-                      type="button"
-                      role={question.multiSelect ? 'checkbox' : 'radio'}
-                      aria-checked={qSelections.has(opt.label)}
-                      tabIndex={active ? 0 : -1}
-                      className={`ask-card-opt${qSelections.has(opt.label) ? ' selected' : ''}`}
-                      onClick={() => { if (active) toggleOption(opt.label); }}
-                      disabled={readOnly}
-                    >
-                      <span className={`ask-card-indicator${question.multiSelect ? ' checkbox' : ''}`} />
-                      <span className="ask-card-opt-label">
-                        {opt.label}
-                        {opt.description && <span className="ask-card-opt-desc">{opt.description}</span>}
-                      </span>
-                    </button>
-                  ))}
-                  <div
+                  {question.options.map((opt) => {
+                    const chosen = qSelections.has(opt.label);
+                    const fading = answering && !chosen;
+                    return (
+                      <motion.button
+                        key={opt.label}
+                        type="button"
+                        role={question.multiSelect ? 'checkbox' : 'radio'}
+                        aria-checked={chosen}
+                        tabIndex={active ? 0 : -1}
+                        className={`ask-card-opt${chosen ? ' selected' : ''}`}
+                        onClick={() => { if (active) toggleOption(opt.label); }}
+                        disabled={readOnly}
+                        aria-disabled={busy}
+                        data-ask-fade={fading ? '' : undefined}
+                        style={answering ? (chosen ? FILL_HOST : { pointerEvents: 'none' }) : undefined}
+                        initial={false}
+                        animate={{ opacity: fading ? 0 : 1 }}
+                        transition={{ duration: DUR.soft, ease: 'linear' }}
+                      >
+                        {answering && chosen && <AnswerFill />}
+                        <span className={`ask-card-indicator${question.multiSelect ? ' checkbox' : ''}`} />
+                        <span className="ask-card-opt-label">
+                          {opt.label}
+                          {opt.description && <span className="ask-card-opt-desc">{opt.description}</span>}
+                        </span>
+                      </motion.button>
+                    );
+                  })}
+                  <motion.div
                     className={`ask-card-opt ask-card-opt-other${qOther.trim() ? ' selected' : ''}`}
                     onClick={(e) => {
                       if (!active) return;
                       (e.currentTarget.querySelector('input') as HTMLInputElement | null)?.focus();
                     }}
+                    data-ask-fade={answering && !qOther.trim() ? '' : undefined}
+                    style={answering ? (qOther.trim() ? FILL_HOST : { pointerEvents: 'none' }) : undefined}
+                    initial={false}
+                    animate={{ opacity: answering && !qOther.trim() ? 0 : 1 }}
+                    transition={{ duration: DUR.soft, ease: 'linear' }}
                   >
+                    {answering && qOther.trim() && <AnswerFill />}
                     <span className={`ask-card-indicator${question.multiSelect ? ' checkbox' : ''}`} />
                     <input
                       type="text"
@@ -328,8 +640,9 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
                         }
                       }}
                       disabled={readOnly}
+                      aria-disabled={busy}
                     />
-                  </div>
+                  </motion.div>
                 </div>
               </div>
             );
@@ -339,15 +652,15 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
 
       {!readOnly && (
         <div className="ask-card-footer">
-          <button type="button" className="ask-card-skip" onClick={onSkip}>
+          <button type="button" className="ask-card-skip" onClick={handleSkip} aria-disabled={busy}>
             {isMultiQuestion ? 'Skip all' : 'Skip'}
           </button>
           <div className="ask-card-footer-right">
             {isMultiQuestion && (
               <>
-                <button type="button" className="ask-nav-arrow" aria-label="Previous question"
+                <button type="button" className="ask-nav-arrow" aria-label="Previous question" aria-disabled={busy}
                   onClick={() => goToStep(safeIdx - 1)} disabled={safeIdx === 0}>‹</button>
-                <button type="button" className="ask-nav-arrow" aria-label="Next question"
+                <button type="button" className="ask-nav-arrow" aria-label="Next question" aria-disabled={busy}
                   onClick={() => goToStep(safeIdx + 1)} disabled={isLastQuestion}>›</button>
               </>
             )}
@@ -355,19 +668,20 @@ export default function UserInputBanner({ userInput, onSubmit, onSkip, readOnly 
               <button
                 type="button"
                 className="ask-card-submit"
+                aria-disabled={busy}
                 onClick={handleSubmit}
                 disabled={!hasSelection && !answered.size}
               >
                 {isMultiQuestion ? 'Submit all ✓' : q.multiSelect && currentSelections.size > 0 ? `Submit (${currentSelections.size})` : 'Submit'}
               </button>
             ) : (
-              <button type="button" className="ask-card-submit" onClick={() => goToStep(safeIdx + 1)} disabled={!hasSelection}>
+              <button type="button" className="ask-card-submit" aria-disabled={busy} onClick={() => goToStep(safeIdx + 1)} disabled={!hasSelection}>
                 Next →
               </button>
             )}
           </div>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }

@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { render, cleanup, act, fireEvent } from '@testing-library/react';
 
-const geom = vi.hoisted(() => ({ scrollHeight: 800 }));
+const geom = vi.hoisted(() => ({ scrollHeight: 800, userMessageHeight: 100 }));
 const observers = vi.hoisted(() => [] as Array<{ cb: () => void; targets: Element[] }>);
 
 if (typeof (globalThis as any).CSS === 'undefined') (globalThis as any).CSS = {};
@@ -104,7 +104,14 @@ vi.mock('../../services/api', () => ({
 vi.mock('./PaneMessageList', () => ({
   PaneMessageList: ({ onBranchFollowUp }: any) => (
     <div>
-      <div data-msg-id="u1">
+      {/* A row wrapper, so the pin's tail (direct children) still measures 0. */}
+      <div>
+      <div
+        data-msg-id="u1"
+        ref={(el) => {
+          if (el) Object.defineProperty(el, 'offsetHeight', { configurable: true, get: () => geom.userMessageHeight });
+        }}
+      >
         user message
         <button
           type="button"
@@ -112,11 +119,25 @@ vi.mock('./PaneMessageList', () => ({
             // Same as CollapsibleUserText: the toggle stops propagation.
             e.stopPropagation();
             geom.scrollHeight += 600;
+            geom.userMessageHeight += 600;
           }}
         >
           Show more
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            // A disclosure that animates its height from a later frame (motion).
+            setTimeout(() => {
+              geom.scrollHeight += 300;
+              geom.userMessageHeight += 300;
+            }, 80);
+          }}
+        >
+          Open later
+        </button>
         <button type="button">Copy</button>
+      </div>
       </div>
       <div data-msg-id="a1">assistant reply</div>
       <button type="button" onClick={() => {
@@ -174,6 +195,7 @@ async function mountFollowingPane() {
 describe('follow mode and user expand clicks', () => {
   beforeEach(() => {
     geom.scrollHeight = 800;
+    geom.userMessageHeight = 100;
     observers.length = 0;
     window.localStorage.clear();
     vi.stubGlobal('ResizeObserver', FakeResizeObserver);
@@ -232,5 +254,22 @@ describe('follow mode and user expand clicks', () => {
     geom.scrollHeight = 1400;
     resize();
     expect(scroller.scrollTop).toBe(900);
+  });
+
+  it('output streaming elsewhere right after a click is still followed', async () => {
+    const { scroller, resize, getByRole } = await mountFollowingPane();
+    fireEvent.click(getByRole('button', { name: 'Copy' }));
+    // Still inside the click's window: the clicked message did not change.
+    geom.scrollHeight = 1400;
+    resize();
+    expect(scroller.scrollTop).toBe(900);
+  });
+
+  it('an opening that animates from a later frame still leaves follow mode', async () => {
+    const { scroller, resize, getByRole } = await mountFollowingPane();
+    fireEvent.click(getByRole('button', { name: 'Open later' }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(80); });
+    resize();
+    expect(scroller.scrollTop).toBe(300);
   });
 });

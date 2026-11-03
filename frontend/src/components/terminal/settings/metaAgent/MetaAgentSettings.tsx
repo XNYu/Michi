@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Check, Shield, TriangleAlert } from 'lucide-react';
+import { Check, TriangleAlert } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   META_AGENT_DEFAULT_FIRST_RUN_DAYS,
   META_AGENT_FIRST_RUN_DAYS,
@@ -29,9 +30,10 @@ import { REASONING_LABELS } from '../../PaneComposerToolbarLeft';
 import { Button, Switch } from '../../../ui/controls';
 import { MetaAgentGuardAlert } from './MetaAgentGuardAlert';
 import { pauseMetaAgentMaintenance, refreshMetaAgentOverview, useMetaAgentOverview } from '../../scheduled/metaAgent/useMetaAgentOverview';
+import { META_AGENT_HEADLINE, metaAgentStatus } from '../../../../state/metaAgent/metaAgentStatus';
+import { runMetaAgentUpdate } from '../../../../state/metaAgent/metaAgentUpdate';
 import {
-  PI_EXPLAINED, isMetaAgentRuntimeSupported, metaAgentProfileText, metaAgentResolvedText, metaAgentRestriction, metaAgentRuntimeLabel,
-  runtimeUnavailableText, type MetaAgentProfile,
+  isMetaAgentRuntimeSupported, metaAgentProfileText, metaAgentRuntimeLabel, runtimeUnavailableText, type MetaAgentProfile,
 } from './runtimeCopy';
 import './metaAgentSettings.css';
 
@@ -122,7 +124,6 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
   const custom = settings.runtimeId !== null;
   const firstRunDays = settings.firstRunDays ?? META_AGENT_DEFAULT_FIRST_RUN_DAYS;
   const failures = metaAgentGuardFailures(info);
-  const restriction = metaAgentRestriction(resolved.runtimeId);
   const globalProfile: MetaAgentProfile | null = resolved.followsGlobal
     ? resolved
     : agentStatus ? { runtimeId: agentStatus.runtime, modelId: agentStatus.model ?? null, reasoning: agentStatus.reasoning ?? null } : null;
@@ -162,6 +163,7 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
     <>
       <ToolApprovals info={info} />
       <MetaAgentGuardAlert failures={failures} onRetry={retryMetaAgentGuard} onChangeRuntime={changeRuntime} />
+      <StoppedAlert info={info} onChangeRuntime={changeRuntime} />
 
       <section className="meta-set__sec" ref={runtimeRef} aria-labelledby={headingId}>
         <SectionHead id={headingId} title="Runtime" saved={saved === 'runtime'} />
@@ -194,17 +196,6 @@ function MetaAgentForm({ info }: { info: MetaAgentInfo }) {
             </span>
           </label>
           {custom && <CustomRuntime settings={settings} resolved={resolved} agentStatus={agentStatus} saving={saving} onSave={(patch) => { void save(patch); }} />}
-        </div>
-        <div className="meta-set__guard">
-          <Shield size={15} strokeWidth={1.75} aria-hidden="true" />
-          {isMetaAgentRuntimeSupported(resolved.runtimeId) ? (
-            <p>
-              <b>Now using {metaAgentResolvedText(resolved)}</b>{restriction ? `. Background maintenance: ${restriction}.` : '.'}{' '}
-              Background maintenance can change Michi content and use external read-only tools. Other external tools need your saved approval. Assistant chat runs on the global settings, or what you pick in its composer, with that AI service’s built-in and connected tools and ordinary chat permissions.
-            </p>
-          ) : (
-            <p><b>{metaAgentRuntimeLabel(resolved.runtimeId)}</b>: {restriction}.</p>
-          )}
         </div>
         <SectionError error={error} section="runtime" />
         </div>
@@ -401,6 +392,8 @@ function CustomRuntime({ settings, resolved, agentStatus, saving, onSave }: {
   const providerMissing = !!settings.providerId && !catalog.providers.some((provider) => provider.id === settings.providerId);
   const runtimeOption = (id: string) => agentStatus?.availableRuntimes.find((runtime) => runtime.id === id);
   const visibleRuntimeIds = new Set(filterAvailableRuntimes(agentStatus?.availableRuntimes ?? []).map((runtime) => runtime.id));
+  // Unavailable runtimes are hidden; only a saved choice that became unavailable is explained.
+  const unavailableIds = META_AGENT_RUNTIMES.filter((id) => id === runtimeId && runtimeOption(id)?.available === false);
   // "Default" names what it stands for, read from the resolved runtime of the same runtime only.
   const sameRuntime = resolved.runtimeId === runtimeId;
   const defaultOf = (value: string | null | undefined) => (sameRuntime && value ? `Default (${value})` : 'Default');
@@ -434,11 +427,11 @@ function CustomRuntime({ settings, resolved, agentStatus, saving, onSave }: {
             </Button>
         ))}
       </div>
-      <ul className="meta-set__hints">
-        {META_AGENT_RUNTIMES.filter((id) => id === runtimeId && runtimeOption(id)?.available === false)
-          .map((id) => <UnavailableHint key={id} id={id} reason={runtimeOption(id)?.unavailableReason} />)}
-        <li>{PI_EXPLAINED}</li>
-      </ul>
+      {unavailableIds.length > 0 && (
+        <ul className="meta-set__hints">
+          {unavailableIds.map((id) => <UnavailableHint key={id} id={id} reason={runtimeOption(id)?.unavailableReason} />)}
+        </ul>
+      )}
       <div className="meta-set__pickers">
         {(catalog.providers.length > 1 || providerMissing) && (
           <label className="meta-set__picker">
@@ -491,6 +484,52 @@ function CustomRuntime({ settings, resolved, agentStatus, saving, onSave }: {
             {catalog.error} · <button type="button" className="meta-set__link" onClick={catalog.retry}>Re-check</button>
           </span>
         )}
+      </div>
+    </div>
+  );
+}
+
+const sentence = (text: string) => (/[.!?…]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
+
+/**
+ * The rail's Settings dot when nothing else on this page explains it: errors
+ * stopped background maintenance, or the overview says the runtime cannot run
+ * it. A failed tool check and an unavailable runtime have their own blocks.
+ */
+function StoppedAlert({ info, onChangeRuntime }: { info: MetaAgentInfo; onChangeRuntime: () => void }) {
+  const { status: infoStatus } = useMetaAgent();
+  const load = useMetaAgentOverview();
+  const [busy, setBusy] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  if (load.kind !== 'ready') return null;
+  const status = metaAgentStatus({ info, infoStatus, overview: load.overview, runtimeLabel: metaAgentRuntimeLabel });
+  if (status.kind !== 'stopped' && !(status.kind === 'unsupported' && info.availability.available)) return null;
+  // Same path as Scheduled › Meta agent's Retry: resume what stopped, then run one round now.
+  const retry = () => {
+    setBusy(true);
+    pauseMetaAgentMaintenance(false)
+      .then(() => refreshMetaAgent())
+      .then(() => runMetaAgentUpdate('local'))
+      .catch((reason: unknown) => { toast.error(reason instanceof Error && reason.message ? reason.message : 'Couldn’t retry the Meta agent'); })
+      .finally(() => { if (mounted.current) setBusy(false); void refreshMetaAgentOverview(); });
+  };
+  return (
+    <div className="meta-set__alert" role="alert">
+      <TriangleAlert className="meta-set__alert-icon" size={16} strokeWidth={1.75} aria-hidden="true" />
+      <div className="meta-set__alert-body">
+        <b>{status.kind === 'stopped' ? META_AGENT_HEADLINE.stopped : META_AGENT_HEADLINE.unsupported}</b>
+        <p>{sentence(status.reason ?? 'The reason is unknown')} Pages won’t update in the background until it runs again.</p>
+        {status.stop?.detail && <p className="meta-set__alert-detail">{status.stop.detail}</p>}
+      </div>
+      <div className="meta-set__alert-actions">
+        {status.kind === 'stopped' && (
+          <Button variant="primary" size="sm" disabled={busy} onClick={retry}>{busy ? 'Retrying…' : 'Retry'}</Button>
+        )}
+        <Button size="sm" onClick={onChangeRuntime}>Change runtime</Button>
       </div>
     </div>
   );

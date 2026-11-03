@@ -17,6 +17,9 @@ import { useMetaChatDocked } from '../metaChat/MetaChatArea';
 import { blockItemTarget, NativePageDocument, openNewChatSheet, useMetaChatTargeting, useSpacesSourceNav, type MetaChatBlockTarget } from './homeLinks';
 import { homeChangesShown } from './homeFormat';
 import { homeWorkspaceCounts, useSpacesHomeSections } from './homeCounts';
+import { prefersReducedMotion } from '../../../../hooks/useReducedMotion';
+import { EASE } from '../../../../motion/tokens';
+import { FRESH_MS } from '../../../../motion/useFresh';
 // The targeted block's outline and the click cursor are the Space page's (`.space-doc`).
 import '../spaces.css';
 
@@ -65,14 +68,98 @@ function WorkspaceRowDots({ container, homes, backendConnectionId }: {
   return null;
 }
 
+const BLOCK_ID_PREFIX = 'page-block-';
+const REVEAL_MS = 200;
+const REVEAL_STAGGER_MS = 40;
+/** Past this many blocks the rest rise together, so a long home is not still arriving a second later. */
+const REVEAL_STAGGER_CAP = 6;
+
+/**
+ * Which of a home's blocks are new arrivals: blocks the Meta agent writes
+ * while the home is on screen. The blocks a page opens with (and any that
+ * come in while its own copy loads and settles), and the ones the person adds
+ * themselves, are simply there.
+ */
+export function blockRevealTracker(quietMs = FRESH_MS, graceMs = 600) {
+  let state: { pageId: string; seen: Set<string>; quietUntil: number | null } | null = null;
+  let editing = 0;
+  let ownUntil = 0;
+  return {
+    /**
+     * The ids among `ids` to reveal. The first look at a page (or at another
+     * page) only learns its blocks. The quiet window starts at the first look
+     * while the page's own copy is `live` (loaded, ready, not stale); nothing
+     * is revealed before it ends, nor while the person's own edit is in flight
+     * or just after.
+     */
+    claim(page: Pick<PageDto, 'id' | 'blocks'>, ids: readonly string[], live: boolean, now = Date.now()): string[] {
+      if (!state || state.pageId !== page.id) {
+        state = { pageId: page.id, seen: new Set(page.blocks.map((block) => block.id)), quietUntil: live ? now + quietMs : null };
+        return [];
+      }
+      const seen = state.seen;
+      const fresh = ids.filter((id) => !seen.has(id));
+      for (const id of fresh) seen.add(id);
+      if (!live) return [];
+      if (state.quietUntil === null) {
+        state.quietUntil = now + quietMs;
+        return [];
+      }
+      return now < state.quietUntil || editing > 0 || now < ownUntil ? [] : fresh;
+    },
+    /** The person's own edit starts: blocks that appear until it ends, and a moment after, are theirs. Returns its end. */
+    ownEdit() {
+      editing += 1;
+      let ended = false;
+      return (now = Date.now()) => {
+        if (ended) return;
+        ended = true;
+        editing -= 1;
+        ownUntil = Math.max(ownUntil, now + graceMs);
+      };
+    },
+  };
+}
+
+export type BlockReveal = {
+  claim(ids: readonly string[]): string[];
+  /** The place of the next revealed block in this commit, for the stagger. */
+  next(): number;
+};
+
+/** Rises a block in place. Leaves no style behind: `fill: backwards` holds only the delay. */
+function riseIn(el: HTMLElement, order: number) {
+  if (typeof el.animate !== 'function') return;
+  // Reduced motion keeps the fade and drops the rise, as motion's own components do.
+  const still = prefersReducedMotion(document.documentElement.dataset.reduceMotion === 'on');
+  el.animate(
+    still ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }],
+    { duration: REVEAL_MS, delay: Math.min(order, REVEAL_STAGGER_CAP) * REVEAL_STAGGER_MS, easing: `cubic-bezier(${EASE.out.join(',')})`, fill: 'backwards' },
+  );
+}
+
 /** One segment of a home's blocks; a segment holding a table marks its workspace rows. */
-function HomeSegment({ segment, homes, backendConnectionId, children }: {
+function HomeSegment({ segment, homes, backendConnectionId, blockIds, reveal, children }: {
   segment: string;
   homes: readonly WorkspaceHomeSummaryDto[] | null;
   backendConnectionId: string;
+  blockIds: readonly string[];
+  reveal: BlockReveal;
   children: React.ReactNode;
 }) {
   const ref = React.useRef<HTMLDivElement>(null);
+  // After each commit, so the blocks are drawn but not yet painted. A block not drawn yet is still counted as seen:
+  // it never rises in late.
+  React.useLayoutEffect(() => {
+    const root = ref.current;
+    const fresh = root ? reveal.claim(blockIds) : [];
+    if (!root || !fresh.length) return;
+    const drawn = new Map(Array.from(root.querySelectorAll<HTMLElement>(`[id^="${BLOCK_ID_PREFIX}"]`)).map((el) => [el.id.slice(BLOCK_ID_PREFIX.length), el] as const));
+    for (const id of fresh) {
+      const el = drawn.get(id);
+      if (el) riseIn(el, reveal.next());
+    }
+  });
   return <div ref={ref} className="spaces-home-blocks" data-segment={segment}>
     {children}
     {homes && homes.length > 0 && <WorkspaceRowDots container={ref} homes={homes} backendConnectionId={backendConnectionId} />}
@@ -169,10 +256,37 @@ export function useHomeDocument({ backendConnectionId, initial, allowEmptyEditor
   const canTarget = Boolean(targeting) && !readOnly;
   const narrow = useMetaChatDocked();
 
+  // Blocks the Meta agent writes while the home is on screen rise in; see blockRevealTracker.
+  const [tracker] = React.useState(() => blockRevealTracker());
+  const pageRef = React.useRef(page);
+  pageRef.current = page;
+  // The page's own copy, loaded and current: before it, what arrives is the page loading, not the Meta agent writing.
+  const live = !readOnly;
+  const liveRef = React.useRef(live);
+  liveRef.current = live;
+  const reveal = React.useMemo<BlockReveal>(() => {
+    let batch: { n: number } | null = null;
+    return {
+      claim: (ids) => (pageRef.current ? tracker.claim(pageRef.current, ids, liveRef.current) : []),
+      // Every segment's layout effect in one commit runs in one task: the count starts again after it.
+      next: () => {
+        if (!batch) {
+          batch = { n: 0 };
+          queueMicrotask(() => { batch = null; });
+        }
+        return batch.n++;
+      },
+    };
+  }, [tracker]);
+  // An empty home draws no segment; it still has to learn the page it opened with.
+  React.useLayoutEffect(() => { reveal.claim([]); });
+
   const applyEdits = React.useCallback(async (ops: PageEditOp[], revision: number): Promise<'ok' | 'stale' | 'gone' | 'failed'> => {
     const current = pageState.page;
     if (!current || readOnly) return 'failed';
     if (current.revision !== revision) { pageState.refresh(); return 'stale'; }
+    // The page draws the edit before it is saved: what appears meanwhile is the person's own.
+    const ended = tracker.ownEdit();
     try {
       await pageState.edit(ops);
       return 'ok';
@@ -181,8 +295,10 @@ export function useHomeDocument({ backendConnectionId, initial, allowEmptyEditor
       if (status === 409) { pageState.refresh(); return 'stale'; }
       if (status === 404 || status === 410) return 'gone';
       return 'failed';
+    } finally {
+      ended();
     }
-  }, [pageState, readOnly]);
+  }, [pageState, readOnly, tracker]);
 
   const renderBlocks = React.useCallback((blocks: readonly PageBlock[], key: string) => {
     if (!page) return null;
@@ -206,7 +322,8 @@ export function useHomeDocument({ backendConnectionId, initial, allowEmptyEditor
       />
     </>;
     // Sources live in the block menu, without a footer below the content.
-    return <HomeSegment key={key} segment={key} homes={workspaceHomes && blocks.some(hasTable) ? workspaceHomes : null} backendConnectionId={backendConnectionId}><NativePageDocument
+    return <HomeSegment key={key} segment={key} homes={workspaceHomes && blocks.some(hasTable) ? workspaceHomes : null} backendConnectionId={backendConnectionId}
+      blockIds={blocks.map((block) => block.id)} reveal={reveal}><NativePageDocument
       page={page}
       visibleBlocks={blocks}
       onOpenSource={(source) => openSource({ kind: 'chat', ...source })}
@@ -239,7 +356,7 @@ export function useHomeDocument({ backendConnectionId, initial, allowEmptyEditor
       selectOnClick={canTarget}
       readOnly={readOnly}
     /></HomeSegment>;
-  }, [allowEmptyEditor, applyEdits, askAssistant, backendConnectionId, canTarget, changes, narrow, openPage, openSource, page, pageState, readOnly, selectBlock, selectedBlockIds, shownChanges, sourceLabel, sourceNav, workspaceHomes, workspaceId]);
+  }, [allowEmptyEditor, applyEdits, askAssistant, backendConnectionId, canTarget, changes, narrow, openPage, openSource, page, pageState, readOnly, reveal, selectBlock, selectedBlockIds, shownChanges, sourceLabel, sourceNav, workspaceHomes, workspaceId]);
 
   return { page, pageState, readOnly, renderBlocks };
 }

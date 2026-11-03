@@ -6,7 +6,7 @@ import { backendFetch } from '../services/api/backendRequest';
 import { parseChatCommand, nextQueuedBatch, executeComposerCommand } from './chatCommands';
 import { chatPermissionChoiceParts, type ScheduledJobRunEvent, type SteerMessageOptions } from 'michi-shared';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
+import { allocateNodeIdsLocal, ensureSession, fetchAgentStatus, fetchNodeWorkspace, fetchReady, fetchWorkspace, listAgentModels, setChatMode, respondToPermission, cancelPermission, respondToUserInput, skipUserInput, cancelChatAndObserve, steerChat, subscribeChat } from '../services/api';
 import { bindPendingPrimaryAgent, type AgentStatus } from '../services/api';
 import { activeTreeRootNodeId, findTreeIdForNode, descendants } from './tree';
 import { useMessageHistory, type MessageHistoryActions } from './useMessageHistory';
@@ -187,6 +187,9 @@ export type {
  * folder-less home for ad-hoc conversations. Created lazily on first Skip.
  */
 export const CHATS_WORKSPACE_ID = 'chats-default';
+
+/** How long a chat the backend could not place is left alone before asking again. */
+const BACKEND_CHAT_DISCOVERY_RETRY_MS = 10_000;
 
 /**
  * High-frequency action types that throttle React renders to one per animation
@@ -618,6 +621,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
   const backendNodeInstallsRef = useRef(new Map<string, Promise<boolean>>());
   const backendNodeInstallRequestsRef = useRef(new Map<string, symbol>());
   useEffect(() => () => { backendNodeInstallRequestsRef.current.clear(); }, []);
+  // Background frames for a chat this window has never seen (a conversation
+  // started on a phone or another machine): handlers for it, while it installs.
+  const unknownBackendChatRef = useRef<(connectionId: string, chatId: string, nodeId?: string) => StreamHandlers>(() => ({}));
+  const discoveredTurnEndRef = useRef<(nodeId: string) => void>(() => {});
   const desktopOwnsScheduledNotice = (nodeId: string): boolean =>
     scheduledNodeIdsRef.current.has(nodeId) && !!getElectron()?.onScheduledNotice;
   const commandsInFlightRef = useRef(new Set<string>());
@@ -1034,7 +1041,9 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
             : Object.values(nodesRef.current).find(
                 (candidate) => candidate.chatId === chatId && belongsToConnection(candidate),
               );
-          if (!node) return {};
+          // A conversation another device started after this window loaded:
+          // install it from the backend so it shows up without a reload.
+          if (!node) return unknownBackendChatRef.current(connectionId, chatId, envelopeNodeId);
           const nodeId = node.nodeId;
           // Another device can start the first turn before this renderer has
           // ever opened a native session for this existing node.
@@ -1054,7 +1063,10 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
               set current(_value: number) {},
             },
             extraHandlers: sharedStreamHandlersRef.current(nodeId),
-            onTurnEnd: (reason, endedNodeId) => turnEndHandlerRef.current(reason, endedNodeId),
+            onTurnEnd: (reason, endedNodeId) => {
+              turnEndHandlerRef.current(reason, endedNodeId);
+              discoveredTurnEndRef.current(endedNodeId);
+            },
             onStreamComplete: () => streamCompleteHandlerRef.current(nodeId),
           }).createHandlers();
           bindings.set(chatId, { nodeId, handlers });
@@ -2227,22 +2239,24 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       .catch(() => toast.error('Failed to send permission denial'));
   }, [dispatch]);
 
-  const resolveUserInputRequest = useCallback((nodeId: string, answers: Array<{ question: string; answer: string }>) => {
+  // Both resolve whether the response landed (false after the failure toast),
+  // so the ask card can take input again at once instead of waiting it out.
+  const resolveUserInputRequest = useCallback((nodeId: string, answers: Array<{ question: string; answer: string }>): Promise<boolean> => {
     const node = nodesRef.current[nodeId];
-    if (!node?.chatId || !node.pendingUserInput) return;
+    if (!node?.chatId || !node.pendingUserInput) return Promise.resolve(false);
     const { requestId, interactionId } = node.pendingUserInput;
-    void respondToUserInput(node.chatId, requestId, answers, interactionId)
-      .then(() => dispatch({ type: 'user-input-resolved', nodeId, requestId, interactionId, answers, outcome: 'answered' }))
-      .catch(() => toast.error('Failed to send user input response'));
+    return respondToUserInput(node.chatId, requestId, answers, interactionId)
+      .then(() => { dispatch({ type: 'user-input-resolved', nodeId, requestId, interactionId, answers, outcome: 'answered' }); return true; })
+      .catch(() => { toast.error('Failed to send user input response'); return false; });
   }, [dispatch]);
 
-  const skipUserInputRequest = useCallback((nodeId: string) => {
+  const skipUserInputRequest = useCallback((nodeId: string): Promise<boolean> => {
     const node = nodesRef.current[nodeId];
-    if (!node?.chatId || !node.pendingUserInput) return;
+    if (!node?.chatId || !node.pendingUserInput) return Promise.resolve(false);
     const { requestId, interactionId } = node.pendingUserInput;
-    void skipUserInput(node.chatId, requestId, interactionId)
-      .then(() => dispatch({ type: 'user-input-resolved', nodeId, requestId, interactionId, answers: [], outcome: 'skipped' }))
-      .catch(() => toast.error('Failed to skip user input'));
+    return skipUserInput(node.chatId, requestId, interactionId)
+      .then(() => { dispatch({ type: 'user-input-resolved', nodeId, requestId, interactionId, answers: [], outcome: 'skipped' }); return true; })
+      .catch(() => { toast.error('Failed to skip user input'); return false; });
   }, [dispatch]);
 
   const setMinimized = useCallback(
@@ -2909,7 +2923,8 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
 
   /**
    * Install (or refresh) a thread the backend created without this renderer,
-   * e.g. a scheduled run. Resolves false when its workspace is not loaded.
+   * e.g. a scheduled run or a conversation started on another device.
+   * Resolves false when its workspace is not loaded.
    */
   const installBackendNode = useCallback((workspaceId: string, nodeId: string, refresh: boolean): Promise<boolean> => {
     const key = `${workspaceId}\u0000${nodeId}\u0000${refresh ? 'refresh' : 'install'}`;
@@ -2927,7 +2942,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
       if (nodesRef.current[nodeId] && !refresh) return true;
       while (isCurrentRequest()) {
         const projectBefore = projectsRef.current.find((candidate) => candidate.id === workspaceId && !candidate.deletedAt);
-        if (!projectBefore || projectBefore.backendConnectionId) return false;
+        if (!projectBefore) return false;
         // A foreground turn or host command owns its live state. Wait rather
         // than dropping the final refresh while that operation is pending.
         if (cancelFns.current[nodeId] || commandsInFlightRef.current.has(nodeId)) {
@@ -2948,8 +2963,12 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
           currentNodes: nodesRef.current,
           rawWorkspace,
           nodeId,
+          connectionId: projectBefore.backendConnectionId ?? LOCAL_BACKEND_CONNECTION_ID,
         });
         if (!result) return false;
+        // Already durable on the backend: the dirty tracker must not write it back.
+        const installed = backendInstalledEntities(projectsRef.current, nodesRef.current, result);
+        if (installed) noteBackendInstalled(installed);
         setProjects(result.projects);
         nodesRef.current = result.nodes;
         structureVersionRef.current += 1;
@@ -2963,7 +2982,7 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     });
     backendNodeInstallsRef.current.set(key, work);
     return work;
-  }, [setProjects]);
+  }, [noteBackendInstalled, setProjects]);
 
   /** Open a backend-created thread (from a notification), installing it first if needed. */
   const revealBackendNode = useCallback(async (workspaceId: string, nodeId: string): Promise<boolean> => {
@@ -2974,6 +2993,69 @@ export function ChatProvider({ children, userId }: { children: React.ReactNode; 
     revealNode(nodeId);
     return true;
   }, [installBackendNode, revealNode]);
+
+  // Per node: a discovery in flight (did its turn end meanwhile?), or when a
+  // failed one may be tried again. Discovered nodes wait for their turn's end.
+  const backendChatDiscoveriesRef = useRef(new Map<string, { ended: boolean } | { retryAt: number }>());
+  const discoveredBackendNodesRef = useRef(new Map<string, string>());
+
+  /**
+   * A background frame named a chat this window has never seen: a conversation
+   * started on a phone or another machine after this window loaded. Ask the
+   * backend where it lives and install it, as a reload would. Frames that
+   * arrive meanwhile are dropped, so its turn's end re-reads the exact
+   * transcript, as a scheduled run's finish does. The returned handlers only
+   * note that end, in case it comes before the install.
+   */
+  const discoverBackendChat = useCallback((connectionId: string, chatId: string, envelopeNodeId?: string): StreamHandlers => {
+    let nodeId: string;
+    try { nodeId = backendEntityId(connectionId, envelopeNodeId ?? chatId); } catch { return {}; }
+    if (nodesRef.current[nodeId]) return {};
+    const discoveries = backendChatDiscoveriesRef.current;
+    const markEnded = () => {
+      const current = discoveries.get(nodeId);
+      if (current && 'ended' in current) current.ended = true;
+    };
+    const handlers: StreamHandlers = { onDone: markEnded, onError: markEnded, onErrorPayload: markEnded };
+    const known = discoveries.get(nodeId);
+    if (known && ('ended' in known || Date.now() < known.retryAt)) return handlers;
+    const discovery = { ended: false };
+    discoveries.set(nodeId, discovery);
+    const settle = (installed: boolean) => {
+      if (discoveries.get(nodeId) !== discovery) return;
+      if (!installed) {
+        discoveredBackendNodesRef.current.delete(nodeId);
+        discoveries.set(nodeId, { retryAt: Date.now() + BACKEND_CHAT_DISCOVERY_RETRY_MS });
+        return;
+      }
+      discoveries.delete(nodeId);
+      // It ended while installing: no later frame will say so, re-read now.
+      if (discovery.ended) discoveredTurnEndRef.current(nodeId);
+    };
+    void (async () => {
+      const where = await fetchNodeWorkspace(nodeId);
+      if (!where) return false; // Not a live thread (deleted, or a chat without one).
+      if (nodesRef.current[nodeId]) return true;
+      discoveredBackendNodesRef.current.set(nodeId, where.workspaceId);
+      if (projectsRef.current.some((project) => project.id === where.workspaceId)) {
+        return installBackendNode(where.workspaceId, nodeId, false);
+      }
+      // Its workspace is new here too. A remote connection's new workspaces
+      // arrive with that connection's own load.
+      if (connectionId !== LOCAL_BACKEND_CONNECTION_ID) return false;
+      const readStartedAt = Date.now();
+      const raw = await fetchWorkspace(where.workspaceId);
+      return installWorkspaceSnapshot(raw, readStartedAt) && !!nodesRef.current[nodeId];
+    })().then(settle, () => settle(false));
+    return handlers;
+  }, [installBackendNode, installWorkspaceSnapshot]);
+  unknownBackendChatRef.current = discoverBackendChat;
+  discoveredTurnEndRef.current = (nodeId: string) => {
+    const workspaceId = discoveredBackendNodesRef.current.get(nodeId);
+    if (!workspaceId) return;
+    discoveredBackendNodesRef.current.delete(nodeId);
+    void installBackendNode(workspaceId, nodeId, true).catch(() => {});
+  };
 
   const handleScheduledJobRun = useCallback((event: ScheduledJobRunEvent) => {
     if (event.nodeId) scheduledNodeIdsRef.current.add(event.nodeId);

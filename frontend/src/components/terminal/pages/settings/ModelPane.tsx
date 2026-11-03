@@ -4,8 +4,8 @@ import { CrewAppSetupNotice } from '../../CrewIntegrationStatus';
 import { usePermissionPreferences } from '../../../../hooks/usePermissionPreferences';
 import { workspaceBackendApiBase } from '../../../../config/backendConnections';
 import { toast } from 'sonner';
-import { ComposerPermissionControl } from '../../ComposerPermissionControl';
-import React, { useEffect, useId, useMemo, useState } from 'react';
+import { APPROVE_FOR_ME_CHOICE, PERMISSION_CHOICES } from '../../ComposerPermissionControl';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useChatStore } from '../../../../state/chatStore';
 import { usePrefs } from '../../../../state/prefs';
 import {
@@ -21,8 +21,7 @@ import {
   type VerifyProviderKeyResult,
   type WebSearchProviderInfo,
 } from '../../../../services/api';
-import { BorderBtn } from '../../primitives';
-import { Switch } from '../../../ui/controls';
+import { Button, Switch } from '../../../ui/controls';
 import { confirmDialog } from '../../../ui/ConfirmDialog';
 import {
   providerModelLocked,
@@ -31,12 +30,12 @@ import {
   shouldPromptForProviderKey,
 } from '../../../../lib/providerCapabilities';
 import { useAgentModelCatalog } from '../../../../hooks/useAgentModelCatalog';
-import { filterModelCatalog } from './modelCatalogFilter';
 import { filterVisibleRuntimes } from '../../../../lib/runtimeVisibility';
 import { BedrockConfigPanel } from './BedrockConfigPanel';
 import { approveForMeRuntimeIds, supportsChatYolo } from '../../../../lib/chatPermissionModes';
-import { chatPermissionChoiceParts } from 'michi-shared';
+import { chatPermissionChoiceParts, type ChatPermissionChoice } from 'michi-shared';
 import { SettingsRow, SettingsSection } from './SettingsSection';
+import { ModelCombobox } from './ModelCombobox';
 
 export function ModelPane({
   activeProjectId,
@@ -269,10 +268,13 @@ function ProviderPicker({
   const providers = status.providers ?? [];
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectId = useId();
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>provider</div>
-      <select
+    <SettingsRow label="Provider" labelFor={selectId}
+      description="Switching provider also selects its default model."
+      control={<select
+        id={selectId}
+        className="ui-select settings-row__select"
         value={status.provider ?? ''}
         disabled={saving}
         onChange={async (e) => {
@@ -300,26 +302,15 @@ function ProviderPicker({
             onChanged();
           }
         }}
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-md)',
-          padding: '6px 8px',
-          border: '1px solid var(--term-line)',
-          background: 'var(--term-surface-glass)',
-          color: 'var(--term-fg)',
-          minWidth: 320,
-        }}
       >
         {providers.map((p) => (
           <option key={p.id} value={p.id}>
             {p.label}{providerOptionSuffix(p)}
           </option>
         ))}
-      </select>
-      {error && (
-        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{error}</div>
-      )}
-    </div>
+      </select>}>
+      {error && <p role="alert" className="settings-row__note">{error}</p>}
+    </SettingsRow>
   );
 }
 
@@ -332,7 +323,8 @@ function ProviderModelPicker({
 }) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [filterQuery, setFilterQuery] = useState('');
+  const labelId = useId();
+  const triggerId = useId();
   const activeProvider = (status.providers ?? []).find((p) => p.id === status.provider);
   const locked = activeProvider ? providerModelLocked(activeProvider) : false;
   const { models, loading, error: loadError, retry } = useAgentModelCatalog({
@@ -340,117 +332,47 @@ function ProviderModelPicker({
     runtime: status.runtime,
     provider: status.provider,
   });
-  const showFilter = status.runtime === 'pi' && !locked && models.length > 0;
-  const filteredModels = useMemo(
-    () => filterModelCatalog(models, filterQuery),
-    [filterQuery, models],
-  );
-  const selectedModel = status.model
-    ? models.find((model) => model.id === status.model)
-    : undefined;
-  const selectedIsFilteredOut = !!selectedModel
-    && !filteredModels.some((model) => model.id === selectedModel.id);
-  const visibleModels = selectedIsFilteredOut
-    ? [selectedModel, ...filteredModels]
-    : filteredModels;
-  const activeModelMissing = !!status.model
-    && !models.some((model) => model.id === status.model);
 
-  useEffect(() => {
-    setFilterQuery('');
-  }, [status.provider, status.runtime]);
+  const save = async (model: string) => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const result = await saveAgentOptions({ model, expectedRuntime: status.runtime });
+      if (!result.ok) setSaveError(result.error);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Unable to save model');
+    } finally {
+      setSaving(false);
+    }
+    onChanged();
+  };
 
   return (
-    <div style={{ fontFamily: 'var(--ui-font)', fontSize: 'var(--fs-lg)', color: 'var(--term-fg)', marginBottom: 18 }}>
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>model</div>
-      {showFilter && (
-        <input
-          type="search"
-          aria-label="Filter models"
-          autoComplete="off"
-          spellCheck={false}
-          value={filterQuery}
-          onChange={(event) => setFilterQuery(event.target.value)}
-          placeholder="Filter by name or ID…"
-          style={{
-            display: 'block',
-            width: 320,
-            boxSizing: 'border-box',
-            fontFamily: 'var(--ui-font)',
-            fontSize: 'var(--fs-md)',
-            padding: '6px 8px',
-            marginBottom: 6,
-            border: '1px solid var(--term-line)',
-            background: 'var(--term-surface-glass)',
-            color: 'var(--term-fg)',
-            outline: 'none',
-          }}
-        />
-      )}
-      <select
-        value={status.model ?? ''}
-        disabled={saving || loading || locked}
-        onChange={async (e) => {
-          setSaving(true);
-          setSaveError(null);
-          const result = await saveAgentOptions({ model: e.target.value, expectedRuntime: status.runtime });
-          setSaving(false);
-          if (!result.ok) setSaveError(result.error);
-          onChanged();
-        }}
-        style={{
-          fontFamily: 'var(--ui-font)',
-          fontSize: 'var(--fs-md)',
-          padding: '6px 8px',
-          border: '1px solid var(--term-line)',
-          background: 'var(--term-surface-glass)',
-          color: 'var(--term-fg)',
-          minWidth: 320,
-        }}
-      >
-        {/* Render the active model as its own option even if not in the list (rare race). */}
-        {(models.length === 0 || activeModelMissing) && status.model && (
-          <option value={status.model}>{status.model}</option>
-        )}
-        {models.length === 0 && !status.model && (
-          <option value="">{loading ? 'Loading models…' : 'No models available'}</option>
-        )}
-        {visibleModels.map((m) => (
-          <option key={m.id} value={m.id}>{m.label || m.id}</option>
-        ))}
-      </select>
-      {showFilter && filterQuery.trim() && (
-        <div
-          role="status"
-          style={{
-            fontSize: 'var(--fs-sm)',
-            color: filteredModels.length === 0 ? 'var(--term-danger)' : 'var(--term-muted)',
-            marginTop: 6,
-          }}
-        >
-          {filteredModels.length === 0
-            ? `No models match “${filterQuery.trim()}”.`
-            : `${filteredModels.length} of ${models.length} models`}
-        </div>
-      )}
-      {loading && (
-        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6 }}>Loading models…</div>
-      )}
+    <SettingsRow label="Model" labelId={labelId}
+      description={locked ? 'Model is managed by this built-in provider.' : undefined}
+      control={<ModelCombobox
+        // A new catalog closes the list and drops its filter.
+        key={`${status.runtime}:${status.provider ?? ''}`}
+        id={triggerId}
+        labelId={labelId}
+        value={status.model}
+        models={models}
+        // Pi lists every model its provider offers, often hundreds.
+        searchable={status.runtime === 'pi' || models.length > 7}
+        disabled={loading || locked}
+        busy={saving}
+        placeholder={loading ? 'Loading models…' : 'No models available'}
+        onSelect={(model) => void save(model)}
+      />}>
+      {loading && <p role="status" className="settings-row__note">Loading models…</p>}
       {loadError && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-          <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)' }}>{loadError}</span>
-          <BorderBtn onClick={retry} style={{ padding: '2px 7px', fontSize: 'var(--fs-sm)' }}>Retry</BorderBtn>
-        </div>
+        <p role="alert" className="settings-row__note">
+          {loadError}{' '}
+          <button type="button" className="settings-row__link" onClick={retry}>Retry</button>
+        </p>
       )}
-      {saveError && (
-        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{saveError}</div>
-      )}
-      {locked && (
-        <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginTop: 6, maxWidth: 420, lineHeight: 1.5 }}>
-          Model is managed by this built-in provider.
-        </div>
-      )}
-    </div>
+      {saveError && <p role="alert" className="settings-row__note">{saveError}</p>}
+    </SettingsRow>
   );
 }
 
@@ -679,9 +601,24 @@ function ProviderKeyControls({
   const [keySaving, setKeySaving] = useState(false);
   const [keyVerifying, setKeyVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<VerifyProviderKeyResult | null>(null);
+  const [replacing, setReplacing] = useState(false);
+  const inputId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const hasKey = !!provider.hasKey;
+  // A saved key is a status; the field appears only to add or replace one.
+  const editing = !hasKey || replacing;
   const canVerifyKey = hasKey || !!keyDraft.trim();
+
+  useEffect(() => {
+    if (replacing) inputRef.current?.focus();
+  }, [replacing]);
+
+  const resetDraft = () => {
+    setKeyDraft('');
+    setKeyError(null);
+    setVerifyResult(null);
+  };
 
   const saveKey = async () => {
     const key = keyDraft.trim();
@@ -695,6 +632,7 @@ function ProviderKeyControls({
       } else {
         setKeyDraft('');
         setVerifyResult(null);
+        setReplacing(false);
         onChanged();
       }
     } catch (err: any) {
@@ -733,125 +671,80 @@ function ProviderKeyControls({
       message: `Clear the saved ${provider.label} API key?`,
       confirmLabel: 'Clear',
     }))) return;
-    await clearProviderKey(provider.id);
+    setKeyError(null);
     setVerifyResult(null);
+    try {
+      const result = await clearProviderKey(provider.id);
+      if (!result.ok) setKeyError(result.error);
+    } catch (err: any) {
+      setKeyError(err?.message ?? 'Unable to clear API key');
+    }
     onChanged();
   };
 
+  const keyConsole = provider.keyUrl ? (
+    <a className="settings-row__link" href={provider.keyUrl} target="_blank" rel="noopener noreferrer">
+      Open {provider.label} key console
+    </a>
+  ) : null;
+  const verifyLabel = keyVerifying ? 'Verifying…' : 'Verify';
+
   return (
-    <div
-      style={{
-        fontFamily: 'var(--ui-font)',
-        fontSize: 'var(--fs-lg)',
-        color: 'var(--term-fg)',
-        marginTop: 18,
-        paddingTop: 14,
-        borderTop: '1px solid var(--term-line)',
-      }}
-    >
-      <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)', marginBottom: 4 }}>
-        {provider.label} {hasKey ? '(saved)' : '(missing)'}
-      </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input
-          type="password"
-          value={keyDraft}
-          onChange={(e) => {
-            setKeyDraft(e.target.value);
-            setKeyError(null);
-            setVerifyResult(null);
-          }}
-          placeholder="API key"
-          style={{
-            fontFamily: 'var(--ui-font)',
-            fontSize: 'var(--fs-md)',
-            padding: '6px 8px',
-            border: '1px solid var(--term-line)',
-            background: 'var(--term-surface-glass)',
-            color: 'var(--term-fg)',
-            minWidth: 320,
-            outline: 'none',
-          }}
-        />
-        <button
-          onClick={() => void saveKey()}
-          disabled={!keyDraft.trim() || keySaving}
-          style={{
-            fontFamily: 'var(--ui-font)',
-            fontSize: 'var(--fs-md)',
-            padding: '6px 12px',
-            border: '1px solid var(--term-line)',
-            background: 'var(--term-surface-glass)',
-            color: 'var(--term-fg)',
-            cursor: !keyDraft.trim() || keySaving ? 'default' : 'pointer',
-            opacity: !keyDraft.trim() || keySaving ? 0.55 : 1,
-          }}
-        >
-          {keySaving ? 'Saving...' : 'Save key'}
-        </button>
-        <button
-          onClick={() => void verifyKey()}
-          disabled={!canVerifyKey || keyVerifying}
-          style={{
-            fontFamily: 'var(--ui-font)',
-            fontSize: 'var(--fs-md)',
-            padding: '6px 12px',
-            border: '1px solid var(--term-line)',
-            background: verifyResult?.ok ? 'var(--term-alt)' : 'var(--term-surface)',
-            color: verifyResult?.ok ? 'var(--term-accent)' : 'var(--term-fg)',
-            cursor: !canVerifyKey || keyVerifying ? 'default' : 'pointer',
-            opacity: !canVerifyKey || keyVerifying ? 0.55 : 1,
-          }}
-        >
-          {keyVerifying ? 'Verifying...' : 'Verify'}
-        </button>
-        <button
-          onClick={() => void clearKey()}
-          disabled={!hasKey}
-          style={{
-            fontFamily: 'var(--ui-font)',
-            fontSize: 'var(--fs-md)',
-            padding: '6px 12px',
-            border: '1px solid var(--term-line)',
-            background: 'var(--term-surface-glass)',
-            color: 'var(--term-mid)',
-            cursor: hasKey ? 'pointer' : 'default',
-            opacity: hasKey ? 1 : 0.55,
-          }}
-        >
-          Clear
-        </button>
-      </div>
+    <SettingsRow label={`${provider.label} API key`} labelFor={editing ? inputId : undefined}
+      description={hasKey ? keyConsole : <>Add a key to use {provider.label}.{keyConsole && <> {keyConsole}</>}</>}
+      control={<>
+        {/* Same box as the buttons beside it: a status, not a control. */}
+        <span className="settings-key-status" data-tone={hasKey ? 'ok' : 'warn'}>
+          <span className="settings-key-status__dot" aria-hidden="true" />
+          {hasKey ? 'Key saved' : 'Key required'}
+        </span>
+        {hasKey && !replacing && <>
+          <Button disabled={keyVerifying} onClick={() => void verifyKey()}>{verifyLabel}</Button>
+          <Button onClick={() => { resetDraft(); setReplacing(true); }}>Replace…</Button>
+          <Button variant="ghost" onClick={() => void clearKey()}>Clear</Button>
+        </>}
+        {hasKey && replacing && (
+          <Button variant="ghost" disabled={keySaving} onClick={() => { resetDraft(); setReplacing(false); }}>Cancel</Button>
+        )}
+      </>}>
+      {editing && (
+        <div className="settings-key-editor">
+          <input
+            ref={inputRef}
+            id={inputId}
+            className="ui-input"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={keyDraft}
+            placeholder={provider.keyLabel || 'API key'}
+            onChange={(e) => {
+              setKeyDraft(e.target.value);
+              setKeyError(null);
+              setVerifyResult(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void saveKey();
+              }
+            }}
+          />
+          <Button disabled={!keyDraft.trim() || keyVerifying} onClick={() => void verifyKey()}>{verifyLabel}</Button>
+          <Button variant="primary" disabled={!keyDraft.trim() || keySaving} onClick={() => void saveKey()}>
+            {keySaving ? 'Saving…' : 'Save key'}
+          </Button>
+        </div>
+      )}
       {verifyResult && (
-        <div
-          style={{
-            fontSize: 'var(--fs-sm)',
-            color: verifyResult.ok ? 'var(--term-accent)' : 'var(--term-danger)',
-            marginTop: 6,
-          }}
-        >
+        <p role={verifyResult.ok ? 'status' : 'alert'} className="settings-row__note" data-tone={verifyResult.ok ? 'ok' : undefined}>
           {verifyResult.ok
             ? `Verified ${provider.label}${verifyResult.model ? ` / ${verifyResult.model}` : ''}${verifyResult.latencyMs ? ` in ${verifyResult.latencyMs}ms` : ''}.`
             : verifyResult.error ?? 'Verification failed.'}
-        </div>
+        </p>
       )}
-      {provider.keyUrl && (
-        <a
-          href={provider.keyUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{
-            display: 'inline-block',
-            fontSize: 'var(--fs-sm)',
-            color: 'var(--term-accent)',
-            marginTop: 8,
-          }}
-        >
-          Open {provider.label} key console
-        </a>
-      )}
-      {keyError && <div style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-danger)', marginTop: 6 }}>{keyError}</div>}
-    </div>
+      {keyError && <p role="alert" className="settings-row__note">{keyError}</p>}
+    </SettingsRow>
   );
 }
 
@@ -901,12 +794,10 @@ function PermissionSettings({ apiBase, runtimeIds, approveRuntimeIds }: { apiBas
     <SettingsRow label="Use global permissions"
       description={permissions.global ? 'One permission mode for all chats. Permission controls are hidden in the Composer.' : 'Set permissions separately in each chat’s Composer. New chats start in Ask.'}
       control={<Switch on={permissions.global} disabled={saving || permissions.loading}
-        onChange={(global) => { if (!saving && !permissions.loading) void save(global); }} aria-label="Use global permissions" />}>
-      {permissions.global && <ComposerPermissionControl scope="global" mode={permissions.choice} disabled={saving || permissions.loading}
-        runtimeIds={runtimeIds} approveForMeRuntimeIds={approveRuntimeIds}
-        yoloRestartHint={claudeAvailable ? CLAUDE_YOLO_RESTART_NOTE : undefined}
-        onChange={(choice) => save(true, choice)} />}
-    </SettingsRow>
+        onChange={(global) => { if (!saving && !permissions.loading) void save(global); }} aria-label="Use global permissions" />} />
+    {permissions.global && <GlobalPermissionModeRow choice={permissions.choice} disabled={saving || permissions.loading}
+      runtimeIds={runtimeIds} approveRuntimeIds={approveRuntimeIds}
+      onChange={(choice) => { void save(true, choice); }} />}
     {permissions.error && <p role="alert" className="settings-section__status">{permissions.error} <button type="button" className="settings-row__link" onClick={() => { void permissions.retry(); }} disabled={permissions.loading}>Retry</button></p>}
     <p className="settings-section__status model-pane__permissions-note">
       {supportsYolo
@@ -917,4 +808,45 @@ function PermissionSettings({ apiBase, runtimeIds, approveRuntimeIds }: { apiBas
       {claudeAvailable && supportsYolo ? ` ${CLAUDE_YOLO_RESTART_NOTE}` : null}
     </p>
   </SettingsSection>;
+}
+
+/** The Composer chip's choices, in its order: Approve for me is a kind of Ask. */
+const GLOBAL_PERMISSION_CHOICES = [PERMISSION_CHOICES[0], APPROVE_FOR_ME_CHOICE, ...PERMISSION_CHOICES.slice(1)];
+
+/**
+ * The mode every chat uses while permissions are global. It offers what the
+ * Composer chip offers for these runtimes: YOLO where one of them supports it,
+ * Approve for me where one of them has it, and shows a saved choice the way
+ * the runtimes run it (YOLO as Trust, Approve for me as Ask).
+ */
+function GlobalPermissionModeRow({ choice, disabled, runtimeIds, approveRuntimeIds, onChange }: {
+  choice: ChatPermissionChoice;
+  disabled: boolean;
+  runtimeIds: readonly string[];
+  approveRuntimeIds: readonly string[];
+  onChange: (choice: ChatPermissionChoice) => void;
+}) {
+  const selectId = useId();
+  const supportsYolo = runtimeIds.some(supportsChatYolo);
+  const supportsApprove = runtimeIds.some((id) => approveRuntimeIds.includes(id));
+  const shown: ChatPermissionChoice = choice === 'yolo' && !supportsYolo ? 'trust'
+    : choice === 'approve' && !supportsApprove ? 'ask' : choice;
+  const choices = GLOBAL_PERMISSION_CHOICES.filter((option) =>
+    (supportsYolo || option.mode !== 'yolo') && (supportsApprove || option.mode !== 'approve'));
+  const current = choices.find((option) => option.mode === shown) ?? choices[0];
+  const description = current.mode === 'trust' && !supportsYolo ? 'Approve tool requests automatically.'
+    : current.mode === 'approve' && runtimeIds.some((id) => !approveRuntimeIds.includes(id)) ? `${current.description} Other runtimes use Ask.`
+      : current.description;
+  return (
+    <SettingsRow label="Permission mode" labelFor={selectId} description={description}
+      control={<select
+        id={selectId}
+        className="ui-select settings-row__select"
+        value={current.mode}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value as ChatPermissionChoice)}
+      >
+        {choices.map((option) => <option key={option.mode} value={option.mode}>{option.label}</option>)}
+      </select>} />
+  );
 }

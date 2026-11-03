@@ -104,3 +104,13 @@ test('Pi SDK price-table cost has USD units and estimated provenance instead of 
   assert.equal(summary.totalCredits, undefined);
   assert.equal(summary.source, 'estimated');
 });
+
+
+test('successful SDK recovery clears a previous overflow error at the final durable boundary', () => {
+  const ctx = context();
+  [...mapAgentEvent({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'context overflow' } }, ctx)];
+  [...mapAgentEvent({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } }, ctx)];
+  const events = [...mapAgentEvent({ type: 'agent_end' }, ctx)];
+  assert.equal(events.some(event => event.kind === 'runtime_error'), false);
+  assert.deepEqual(events.at(-1), { kind: 'turn_end' });
+});

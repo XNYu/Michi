@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { parseAgentPageOps, parseChangeSource, type BlockSource, type ChangeEvidence, type ChangeReadScope, type ChangeSource, type PageWriteResult } from 'michi-shared';
+import { agentPageOpProblem, parseAgentPageOps, parseChangeSource, type BlockSource, type ChangeEvidence, type ChangeReadScope, type ChangeSource, type PageWriteResult } from 'michi-shared';
 import { PageWriteError, invalidatePages, newPageId, pagesTransaction } from '../pages/core';
 import { getPage, savePageContent } from '../pages/repository';
 import { planAgentEdits, writeChanges } from '../pages/pageWrites';
@@ -25,7 +25,11 @@ export function homeWritePayloadHash(pageId: string, ops: unknown): string {
 export function parseHomeWriteOps(raw: unknown) {
   if (!Array.isArray(raw) || raw.length < 1 || raw.length > MAX_OPS) throw new PageWriteError(400, 'invalid', 'Page operation set must contain 1-50 operations');
   const ops = parseAgentPageOps(raw);
-  if (!ops) throw new PageWriteError(400, 'invalid', 'Invalid page operations');
+  if (!ops) {
+    // Name the operation and its problem so the agent can correct the set.
+    const index = raw.findIndex((op) => agentPageOpProblem(op) !== '');
+    throw new PageWriteError(400, 'invalid', index < 0 ? 'Invalid page operations' : `Invalid page operation ${index}: ${agentPageOpProblem(raw[index])}`);
+  }
   return ops;
 }
 

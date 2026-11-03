@@ -64,6 +64,18 @@ describe('SpaceView components', () => {
     }]));
   });
 
+  it('opens a menu panel above the page and closes it out of reach while it goes', async () => {
+    render(<SpaceView route={{ type: 'space', pageId: 'page-1', workspaceId: 'workspace-1', backendConnectionId: 'backend-1' }} onBack={vi.fn()} onOpenPage={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Page actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Activity/ }));
+    const panel = screen.getByRole('region', { name: 'Activity' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    // Closing: no longer a region to reach while it collapses, then gone.
+    expect(screen.queryByRole('region', { name: 'Activity' })).toBeNull();
+    expect(panel.closest('[inert]') ?? panel.closest('[aria-hidden="true"]')).toBeTruthy();
+    await waitFor(() => expect(panel.isConnected).toBe(false));
+  });
+
   it('lists the page\'s layout rules from the Page actions menu', async () => {
     render(<SpaceView route={{ type: 'space', pageId: 'page-1', workspaceId: 'workspace-1', backendConnectionId: 'backend-1' }} onBack={vi.fn()} onOpenPage={vi.fn()} />);
     await waitFor(() => expect(mocks.layoutRules).toHaveBeenCalledWith('page-1', 'backend-1', expect.any(AbortSignal)));

@@ -75,6 +75,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                     ctx.latestContextTokens = m.usage.contextTokens;
                 }
             }
+            if (m?.role === "assistant" && m.stopReason !== "error") ctx.terminalError = undefined;
             if (m?.role === "assistant" && m.stopReason === "error") {
                 ctx.terminalError = formatAssistantError(m.errorMessage);
             }
@@ -208,6 +209,12 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
 
         case "compaction_end":
         case "session_compaction_end":
+            if (event.result?.usage) {
+                const usage = event.result.usage;
+                ctx.cumulative.inputTokens += usage.input ?? 0;
+                ctx.cumulative.outputTokens += usage.output ?? 0;
+                ctx.cumulative.totalCost += usage.cost?.total ?? 0;
+            }
             yield { kind: "compaction_end", detail: typeof event.detail === "string" ? event.detail : event.type };
             return;
 

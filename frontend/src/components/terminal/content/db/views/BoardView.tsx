@@ -1,10 +1,11 @@
-import React, { memo, useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import React, { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   DndContext, DragOverlay, KeyboardCode, KeyboardSensor, PointerSensor, closestCorners, pointerWithin, useDroppable, useSensor, useSensors,
   type Active, type Announcements, type CollisionDetection, type DragEndEvent, type Over,
 } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, type SortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { LayoutGroupContext, motion, useReducedMotionConfig } from 'motion/react';
 import { Plus } from 'lucide-react';
 import type { MichiDatabase, MichiDbColumn, MichiDbRow, DatabaseRowStatus } from 'michi-shared';
 import { isTaskDb } from 'michi-shared';
@@ -14,13 +15,14 @@ import { michiOneLine, michiSameText } from '../../michiPlainText';
 import { threadItemProps, type ThreadItemHandlers } from '../../threads/threadItem';
 import { AppTag } from '../CellView';
 import { composing } from '../CellEditor';
-import { cellEditable, cellOf, isDateValue, isThreadsDb, shownColumns, startValues, titleColumn, type CellValue } from '../dbModel';
+import { applyView, cellEditable, cellOf, isDateValue, isThreadsDb, shownColumns, startValues, titleColumn, type CellValue, type DbGroup } from '../dbModel';
 import { groupName, optionName, viewName } from '../dbLabels';
 import { linkedConversationWaits, useLiveThreads } from '../liveThreads';
 import { addRowOp, boardColumnTakes, boardDropOps, boardDropRefusal, boardKeyValue, boardReorderOps, cellEditLabel, rowMoveBackOp } from '../dbOps';
 import { TaskCardBody, taskCardDescribedBy } from './TaskCard';
 import { GroupHeading, groupSums, RowFacts, rowTitle, useReportDrawn } from './RowBits';
 import type { DbViewProps } from './viewTypes';
+import { EASE, SPRING } from '../../../../../motion/tokens';
 
 /** Cards drawn per column before "N more" (Michi pages a column past 200). */
 export const BOARD_PAGE = 200;
@@ -41,9 +43,120 @@ const CARRIED_KEYS = new Set(['Enter', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowL
 const slot = (key: string | null) => key ?? '\u0000';
 // A column and a card are told apart by their ids' first word, whatever the values.
 const columnId = (key: string | null) => `column:${slot(key)}`;
-const cardId = (key: string | null, rowId: string) => `card:${slot(key)}\n${rowId}`;
+/**
+ * A card keeps its id from column to column when every row is drawn once, so
+ * the drop settles the carried card where it went. A row with several values
+ * (a multi-select, or a list a column kept when it became a select) is drawn
+ * in each of its columns: there the id names the column too.
+ */
+const cardId = (key: string | null, rowId: string, once: boolean) => (once ? `card:\n${rowId}` : `card:${slot(key)}\n${rowId}`);
+/** Whether no row is in more than one group. */
+export function eachRowOnce(groups: readonly Pick<DbGroup, 'rows'>[]): boolean {
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const row of group.rows) {
+      if (seen.has(row.id)) return false;
+      seen.add(row.id);
+    }
+  }
+  return true;
+}
 /** Cards in a column that keeps its own order (All threads, a sorted view) make no room for a dragged one. */
 const still: SortingStrategy = () => null;
+
+/** The carried card settling into its place: as a sheet put down, not a spring. */
+const DROP = { duration: 180, easing: `cubic-bezier(${EASE.drawer.join(',')})` };
+/** Cards that change column travel there; the rest of each column closes up or makes room. */
+const CARD_MOTION = { layout: SPRING.soft };
+/** A card travelling to another column passes over the ones it leaves. */
+const LIFT: CSSProperties = { position: 'relative', zIndex: 1 };
+/** While a card is carried dnd-kit moves the slots; the cards inside do not measure themselves. */
+const CARRYING = 'carrying';
+/**
+ * The cards measure only for their own moves: no layout group, so neither a
+ * group around the board nor every card on it measures when one card leaves.
+ */
+const NO_LAYOUT_GROUP = {};
+const NO_LANDINGS: ReadonlyMap<string, BoardLanding> = new Map();
+/** A move Michi refused this soon was never seen where it went: the card is simply back, not travelling back. */
+const UNSEEN_MS = 100;
+
+/**
+ * A card put down on the board: drawn where it went until Michi has the edit.
+ * In another column `row` carries its new value; in its own `order` is the
+ * column's cards as drawn after the move. `at` is when it was put down.
+ */
+export type BoardLanding = { row: MichiDbRow; from: string | null; to: string | null; order?: readonly string[]; at?: number };
+
+const inGroup = (groups: readonly Pick<DbGroup, 'key' | 'rows'>[], key: string | null, rowId: string) =>
+  groups.find((g) => g.key === key)?.rows.some((row) => row.id === rowId) ?? false;
+
+/**
+ * Whether a card put down still describes the board: Michi has it where it came
+ * from, or already where it went (in its own column, still there). Moved
+ * elsewhere meanwhile, the card is drawn where Michi has it.
+ */
+export function landingHolds(groups: readonly Pick<DbGroup, 'key' | 'rows'>[], landing: BoardLanding): boolean {
+  const id = landing.row.id;
+  return landing.order ? inGroup(groups, landing.to, id) : inGroup(groups, landing.from, id) || inGroup(groups, landing.to, id);
+}
+
+/** How many cards each group gains or loses while cards put down are drawn where they went. */
+export function landingCounts(groups: readonly Pick<DbGroup, 'key' | 'rows'>[], landings: readonly BoardLanding[]): number[] {
+  return groups.map((g) => landings.reduce((n, l) => {
+    if (l.order || l.from === l.to) return n;
+    const here = g.rows.some((row) => row.id === l.row.id);
+    return n + (g.key === l.to && !here ? 1 : 0) - (g.key === l.from && here ? 1 : 0);
+  }, 0));
+}
+
+/** The cards in a column after a card is put down at `overId` in it (the last drawn without one); null when it does not move. */
+export function boardLandingOrder(list: readonly string[], rowId: string, overId: string | undefined): string[] | null {
+  const from = list.indexOf(rowId);
+  const to = overId === undefined ? list.length - 1 : list.indexOf(overId);
+  if (from < 0 || to < 0 || from === to) return null;
+  const next = list.filter((id) => id !== rowId);
+  next.splice(to, 0, rowId);
+  return next;
+}
+
+/**
+ * The board's columns with a card that was just put down drawn where it went.
+ * A card moved into another column goes where the view orders it (its sorts,
+ * else the database's order: `sortRows`) among that column's cards; past the
+ * cards a column draws (`limits`) it is one of the "N more", and in among them
+ * it pushes the last one there. Once Michi draws it there itself nothing changes.
+ */
+export function landCard(
+  groups: readonly Pick<DbGroup, 'key' | 'rows'>[],
+  columns: readonly MichiDbRow[][],
+  landing: BoardLanding,
+  sortRows: (rows: MichiDbRow[]) => readonly MichiDbRow[],
+  limits: readonly number[],
+): MichiDbRow[][] {
+  const id = landing.row.id;
+  return columns.map((rows, i) => {
+    const key = groups[i]?.key ?? null;
+    if (landing.order) {
+      if (key !== landing.to) return rows;
+      const byId = new Map(rows.map((row) => [row.id, row] as const));
+      const next = landing.order.flatMap((rowId) => byId.get(rowId) ?? []);
+      return next.length === rows.length ? next : rows;
+    }
+    if (key === landing.from && key !== landing.to) return rows.some((row) => row.id === id) ? rows.filter((row) => row.id !== id) : rows;
+    if (key !== landing.to || rows.some((row) => row.id === id)) return rows;
+    const all = groups[i]?.rows ?? rows;
+    const rank = new Map(sortRows([...all.filter((row) => row.id !== id), landing.row]).map((row, j) => [row.id, j] as const));
+    const at = rank.get(id) ?? Number.MAX_SAFE_INTEGER;
+    const found = rows.findIndex((row) => (rank.get(row.id) ?? Number.MAX_SAFE_INTEGER) > at);
+    const before = found < 0 ? rows.length : found;
+    const limit = limits[i] ?? Number.MAX_SAFE_INTEGER;
+    if (before >= limit) return rows;
+    const next = rows.slice();
+    next.splice(before, 0, landing.row);
+    return next.length > limit ? next.slice(0, limit) : next;
+  });
+}
 
 type CardData = { row: string; column: string | null };
 const dataOf = (x: Active | Over | null | undefined) => x?.data.current as Partial<CardData> | undefined;
@@ -99,8 +212,67 @@ const collide: CollisionDetection = (args) => {
  */
 export function BoardView({ db, view, config, groups, groupColumn: by, prefs, edit, handlers, threadOf, now, notice, onDrawn }: DbViewProps) {
   const [shown, setShown] = useState<Record<string, number>>({});
-  const columns = useMemo(() => groups.map((g) => g.rows.slice(0, shown[slot(g.key)] ?? BOARD_PAGE)), [groups, shown]);
+  const limits = useMemo(() => groups.map((g) => shown[slot(g.key)] ?? BOARD_PAGE), [groups, shown]);
+  const drawn = useMemo(() => groups.map((g, i) => g.rows.slice(0, limits[i])), [groups, limits]);
+  // Another view or grouping is another board: nothing put down, arriving or travelling carries over to it.
+  const scope = `${view.id}\n${by?.id ?? ''}`;
+  // Cards put down are drawn where they went at once, each until its own edit settles, so a drop settles
+  // there rather than back where it came from.
+  const [landed, setLanded] = useState<{ scope: string; byRow: ReadonlyMap<string, BoardLanding> }>(() => ({ scope, byRow: new Map() }));
+  const pending = landed.scope === scope ? landed.byRow : NO_LANDINGS;
+  // Only while Michi has not moved the card elsewhere meanwhile. Put in order where it was just moved to, it is there.
+  const live = useMemo(() => {
+    const all = [...pending.values()];
+    const moved = (l: BoardLanding) => all.some((m) => !m.order && m.row.id === l.row.id && m.to === l.to && landingHolds(groups, m));
+    return all.filter((l) => landingHolds(groups, l) || (!!l.order && moved(l)));
+  }, [pending, groups]);
+  useEffect(() => {
+    if (live.length === pending.size) return;
+    const kept = new Set(live);
+    setLanded((s) => (s.scope !== scope ? s : { scope, byRow: new Map([...s.byRow].filter(([id, l]) => kept.has(l) || pending.get(id) !== l)) }));
+  }, [live, pending, scope]);
+  const sortRows = useCallback(
+    (rows: MichiDbRow[]) => applyView({ id: db.id, kind: db.kind, columns: db.columns, rows }, { filters: [], match: 'all', sorts: config.sorts })[0]?.rows ?? rows,
+    [db.id, db.kind, db.columns, config.sorts],
+  );
+  const columns = useMemo(() => live.reduce<MichiDbRow[][]>((cols, l) => landCard(groups, cols, l, sortRows, limits), drawn), [drawn, groups, limits, live, sortRows]);
+  const counts = useMemo(() => (live.length ? landingCounts(groups, live) : null), [groups, live]);
+  const movedTo = useMemo(() => new Map(live.filter((l) => !l.order).map((l) => [l.row.id, l.to] as const)), [live]);
   useReportDrawn(onDrawn, columns);
+  // Every row in one column: its card keeps its sortable and layout ids from column to column.
+  const once = useMemo(() => eachRowOnce(groups), [groups]);
+  const boardLayout = useId();
+  // The OS setting or the in-app Reduce motion (MotionRoot's MotionConfig): the carried card is simply put down.
+  const reduced = useReducedMotionConfig() === true;
+  // A card dragged to another column is drawn anew there under the carried card: a new layout id keeps it from also travelling.
+  const flights = useRef(new Map<string, number>());
+  const flyAnew = (rowId: string) => { flights.current.set(rowId, (flights.current.get(rowId) ?? 0) + 1); };
+  const layoutIdOf = (rowId: string) => `${boardLayout}\n${scope}\n${rowId}~${flights.current.get(rowId) ?? 0}`;
+  // Where each card was drawn after the last commit, and whether only because it was put down there.
+  // A card now drawn in another column arrived there; one drawn back from where it was put down did not.
+  const placed = useRef<{ scope: string; at: Map<string, { key: string | null; landed: boolean }> }>({ scope, at: new Map() });
+  const arrivals = useMemo(() => {
+    const was = placed.current;
+    const into = new Map<string, string[]>();
+    if (!once || was.scope !== scope || !was.at.size) return into;
+    columns.forEach((rows, i) => {
+      const key = groups[i]?.key ?? null;
+      for (const row of rows) {
+        const prev = was.at.get(row.id);
+        if (!prev || prev.key === key || (prev.landed && movedTo.get(row.id) !== key)) continue;
+        into.set(slot(key), [...(into.get(slot(key)) ?? []), row.id]);
+      }
+    });
+    return into;
+  }, [columns, groups, movedTo, once, scope]);
+  useLayoutEffect(() => {
+    const at = new Map<string, { key: string | null; landed: boolean }>();
+    columns.forEach((rows, i) => {
+      const key = groups[i]?.key ?? null;
+      for (const row of rows) at.set(row.id, { key, landed: movedTo.has(row.id) && movedTo.get(row.id) === key });
+    });
+    placed.current = { scope, at };
+  }, [columns, groups, movedTo, scope]);
   const title = titleColumn(db);
   const tasks = isTaskDb(db);
   // A card shows the view's columns except its title and the grouping; All threads' cards keep to the short facts.
@@ -122,17 +294,39 @@ export function BoardView({ db, view, config, groups, groupColumn: by, prefs, ed
     if (!el) return;
     refocus.current = null;
     el.focus();
-  }, [groups]);
+  }, [columns]);
   const sensors = useSensors(useSensor(PointerSensor, POINTER), useSensor(KeyboardSensor, KEYBOARD));
   // Each column's sortable ids stay one array while they are the same ids, so its cards are not all drawn again.
   const sortRef = useRef(new Map<string, string[]>());
   const sortIds = useMemo(() => groups.map((g, i) => {
-    const ids = columns[i].map((row) => cardId(g.key, row.id));
+    const ids = columns[i].map((row) => cardId(g.key, row.id, once));
     const was = sortRef.current.get(slot(g.key));
     if (was && was.length === ids.length && was.every((id, j) => id === ids[j])) return was;
     sortRef.current.set(slot(g.key), ids);
     return ids;
-  }), [groups, columns]);
+  }), [groups, columns, once]);
+
+  /** Draws a card where it was put down until its edit settles; a refused edit puts it back, focus with it. */
+  const land = (to: BoardLanding, result: Promise<boolean>, keyboard = false) => {
+    const id = to.row.id;
+    // A card's move and its place in a column are kept apart: put in order just after it was moved, both are drawn.
+    const key = `${id}\n${to.order ? 'order' : 'move'}`;
+    setLanded((s) => ({ scope, byRow: new Map(s.scope === scope ? s.byRow : []).set(key, to) }));
+    const done = (ok: boolean) => {
+      if (!ok && to.from !== to.to) {
+        if (keyboard) refocus.current = { row: id, column: to.from };
+        // Refused before it could be seen where it went: simply back, not travelling back.
+        if (once && performance.now() - (to.at ?? 0) < UNSEEN_MS) flyAnew(id);
+      }
+      setLanded((s) => {
+        if (s.byRow.get(key) !== to) return s;
+        const byRow = new Map(s.byRow);
+        byRow.delete(key);
+        return { scope: s.scope, byRow };
+      });
+    };
+    void result.then(done, () => done(false));
+  };
 
   const label = useCallback((key: string | null) => {
     const group = groups.find((g) => g.key === key);
@@ -153,7 +347,10 @@ export function BoardView({ db, view, config, groups, groupColumn: by, prefs, ed
       }
       if (activatorEvent instanceof KeyboardEvent) refocus.current = { row: d.row.id, column: to.column };
       if (check.ops.length) {
-        void edit(check.ops, cellEditLabel(db, by, to.column), { undo: true }).then((ok) => { if (!ok) refocus.current = null; });
+        const values = check.ops.reduce<MichiDbRow['values']>((all, op) => (op.op === 'row.update' && op.id === d.row.id ? { ...all, ...op.values } : all), d.row.values);
+        if (once) flyAnew(d.row.id);
+        const at = performance.now();
+        land({ row: { ...d.row, values }, from: d.from, to: to.column, at }, edit(check.ops, cellEditLabel(db, by, to.column), { undo: true }), activatorEvent instanceof KeyboardEvent);
       } else refocus.current = null;
       return;
     }
@@ -167,7 +364,11 @@ export function BoardView({ db, view, config, groups, groupColumn: by, prefs, ed
       if (!last || !droppedBelow(last.getBoundingClientRect().bottom, activatorEvent, active.rect.current)) return;
     }
     const ops = boardReorderOps(db, list, d.row.id, overRow);
-    if (ops.length) void edit(ops, 'Moved a card', { undo: true, undoOps: [rowMoveBackOp(db, d.row.id)] });
+    const order = boardLandingOrder(list, d.row.id, overRow);
+    if (!ops.length) return;
+    const moved = edit(ops, 'Moved a card', { undo: true, undoOps: [rowMoveBackOp(db, d.row.id)] });
+    if (order) land({ row: d.row, from: to.column, to: to.column, order }, moved);
+    else void moved;
   };
 
   const add = (key: string | null, text: string) => {
@@ -223,35 +424,57 @@ export function BoardView({ db, view, config, groups, groupColumn: by, prefs, ed
       onDragEnd={drop}
       onDragCancel={() => setDrag(null)}
     >
-      <div ref={boardRef} className="michi-db-board" role="region" aria-label={viewName(db, view)}>
-        {groups.map((g, i) => {
-          const here = !!drag?.over && drag.over.column === g.key && drag.from !== g.key;
-          const refused = here ? boardDropRefusal(db, by, g.key) : null;
-          // Grouped by its own title column, a new card could not land in the column it was added to.
-          const addable = !!title && !isThreadsDb(db) && !db.merged && (!by || (by.id !== title.id && boardColumnTakes(db, by, g.key)));
-          return (
-            <BoardColumn
-              key={slot(g.key)}
-              columnKey={g.key}
-              name={label(g.key)}
-              head={<GroupHeading db={db} column={by} group={g} showCount={prefs.showCounts} sums={groupSums(db, g, db.columns, prefs.sums)} />}
-              over={here && !refused}
-              refused={refused}
-              rest={g.rows.length - columns[i].length}
-              onMore={() => setShown((s) => ({ ...s, [slot(g.key)]: (s[slot(g.key)] ?? BOARD_PAGE) + BOARD_PAGE }))}
-              addLabel={addable ? (tasks ? 'New task' : 'New') : undefined}
-              onAdd={(text) => add(g.key, text)}
-            >
-              <SortableContext items={sortIds[i]} strategy={reorder ? verticalListSortingStrategy : still}>
-                {columns[i].map((row) => (
-                  <BoardCard key={row.id} db={db} row={row} column={g.key} facts={facts} thread={threadOf(row.id)} now={now} handlers={handlers} movable={movable} />
-                ))}
-              </SortableContext>
-            </BoardColumn>
-          );
-        })}
-      </div>
-      <DragOverlay dropAnimation={null}>
+      {/* Layout ids carry this board's id and view; another board on screen, or a layout group around this one, is not involved. */}
+      <LayoutGroupContext.Provider value={NO_LAYOUT_GROUP}>
+        {/* Another view or grouping draws its cards afresh, settled. */}
+        <div key={scope} ref={boardRef} className="michi-db-board" role="region" aria-label={viewName(db, view)}>
+          {groups.map((g, i) => {
+            const here = !!drag?.over && drag.over.column === g.key && drag.from !== g.key;
+            const refused = here ? boardDropRefusal(db, by, g.key) : null;
+            // Grouped by its own title column, a new card could not land in the column it was added to.
+            const addable = !!title && !isThreadsDb(db) && !db.merged && (!by || (by.id !== title.id && boardColumnTakes(db, by, g.key)));
+            // A card just put down counts in its new column at once.
+            const count = g.count + (counts?.[i] ?? 0);
+            const group = count === g.count ? g : { ...g, count };
+            const arrived = arrivals.get(slot(g.key));
+            return (
+              <BoardColumn
+                key={slot(g.key)}
+                columnKey={g.key}
+                name={label(g.key)}
+                head={<GroupHeading db={db} column={by} group={group} showCount={prefs.showCounts} sums={groupSums(db, g, db.columns, prefs.sums)} roll cheer={arrived?.join(' ')} />}
+                over={here && !refused}
+                refused={refused}
+                rest={g.rows.length + (counts?.[i] ?? 0) - columns[i].length}
+                onMore={() => setShown((s) => ({ ...s, [slot(g.key)]: (s[slot(g.key)] ?? BOARD_PAGE) + BOARD_PAGE }))}
+                addLabel={addable ? (tasks ? 'New task' : 'New') : undefined}
+                onAdd={(text) => add(g.key, text)}
+              >
+                <SortableContext items={sortIds[i]} strategy={reorder ? verticalListSortingStrategy : still}>
+                  {columns[i].map((row, j) => (
+                    <BoardCard
+                      key={row.id}
+                      db={db}
+                      row={row}
+                      column={g.key}
+                      sortId={sortIds[i][j]}
+                      layoutId={once ? layoutIdOf(row.id) : undefined}
+                      layoutKey={drag ? CARRYING : sortIds[i]}
+                      lift={!!arrived?.includes(row.id) && !movedTo.has(row.id)}
+                      facts={facts}
+                      thread={threadOf(row.id)}
+                      now={now}
+                      handlers={handlers}
+                      movable={movable}
+                    />
+                  ))}
+                </SortableContext>
+              </BoardColumn>
+            );
+          })}
+        </div>
+      </LayoutGroupContext.Provider>
+      <DragOverlay dropAnimation={reduced ? null : DROP}>
         {drag && (
           <div className="michi-card michi-db-ghost" aria-hidden="true">
             <span className="michi-card__title"><span>{rowTitle(db, drag.row)}</span></span>
@@ -383,11 +606,20 @@ const CardBody = memo(function CardBody({ db, row, facts, now, agentDone, titleI
 /**
  * A card that can be carried. Its wrapper is what dnd-kit moves; the card is
  * what the keyboard picks up, so Space on a button inside stays that button's.
+ * The card inside is motion's: one that changes column (marked done in its
+ * details, or by an agent) travels there, and its neighbours close up.
  */
-const BoardCard = memo(function BoardCard({ db, row, column, facts, thread, now, handlers, movable }: {
+const BoardCard = memo(function BoardCard({ db, row, column, sortId, layoutId, layoutKey, lift, facts, thread, now, handlers, movable }: {
   db: MichiDatabase;
   row: MichiDbRow;
   column: string | null;
+  sortId: string;
+  /** Shared by the card's place in the column it leaves and the one it arrives in; none when a row is drawn in several columns. */
+  layoutId?: string;
+  /** Changes when the board's cards may have moved; constant while one is carried. */
+  layoutKey: unknown;
+  /** Arriving from another column: drawn above the cards it passes. */
+  lift: boolean;
   facts: MichiDbColumn[];
   thread?: DatabaseRowStatus;
   now: number;
@@ -395,11 +627,18 @@ const BoardCard = memo(function BoardCard({ db, row, column, facts, thread, now,
   movable: boolean;
 }) {
   const sortable = useSortable({
-    id: cardId(column, row.id),
+    id: sortId,
     data: { row: row.id, column } satisfies CardData,
     disabled: !movable,
     attributes: { roleDescription: 'draggable card' },
   });
+  // Lifted for the trip only; a trip that never starts (reduced motion) drops it soon after.
+  const [lifted, setLifted] = useState(lift);
+  useEffect(() => {
+    if (!lifted) return undefined;
+    const timer = window.setTimeout(() => setLifted(false), 600);
+    return () => window.clearTimeout(timer);
+  }, [lifted]);
   const item = threadItemProps(row.id, handlers, 'button');
   const titleId = useId();
   const agentDone = isThreadsDb(db) && cellOf(row, 'state') === 'done' && thread?.doneBy === 'agent';
@@ -418,8 +657,14 @@ const BoardCard = memo(function BoardCard({ db, row, column, facts, thread, now,
       onKeyDownCapture={(event) => { if (sortable.isDragging && CARRIED_KEYS.has(event.key)) event.preventDefault(); }}
       {...(movable && sortable.listeners ? sortable.listeners : {})}
     >
-      <div
+      <motion.div
         ref={sortable.setActivatorNodeRef}
+        layout="position"
+        layoutId={layoutId}
+        layoutDependency={layoutKey}
+        transition={CARD_MOTION}
+        style={lifted ? LIFT : undefined}
+        onLayoutAnimationComplete={lifted ? () => setLifted(false) : undefined}
         className="michi-card michi-item"
         data-column={column ?? ''}
         data-agent-done={agentDone ? 'true' : undefined}
@@ -437,7 +682,7 @@ const BoardCard = memo(function BoardCard({ db, row, column, facts, thread, now,
         {tasks
           ? <TaskCardBody db={db} row={row} now={now} attention={attention} titleId={titleId} />
           : <CardBody db={db} row={row} facts={facts} now={now} agentDone={agentDone} titleId={titleId} />}
-      </div>
+      </motion.div>
     </div>
   );
 });

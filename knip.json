@@ -18,6 +18,7 @@
         "src/server.ts!",
         "src/services/dbWorkerThread.ts!",
         "src/services/metaAgentMetricsWorker.ts!",
+        "src/agents/pi/piSdkBundle.ts!",
         "test/**/*.test.ts",
         "scripts/**/*.{ts,mjs,cjs}",
         "src/services/acp/index.ts!",
@@ -75,5 +76,8 @@
     "research/**"
   ],
   "ignoreExportsUsedInFile": true,
-  "includeEntryExports": false
+  "includeEntryExports": false,
+  "tags": [
+    "-testonly"
+  ]
 }

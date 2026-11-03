@@ -193,6 +193,18 @@ export interface ChatMessage {
   usageSummary?: UsageSummary;
   warnings?: import('michi-shared').RuntimeWarning[];
   id: string;
+  /**
+   * The id this message was rendered under before `realign-assistant-id`
+   * renamed it to the server's id. Only the transcript's React key uses it,
+   * so the bubble and its placeholder keep their state instead of remounting.
+   * In memory only.
+   */
+  clientKey?: string;
+  /**
+   * The queued entry (`PendingQueuedMessage.id`) a steered user message came
+   * from, so its bubble can fly in from the queued block. In memory only.
+   */
+  queueId?: string;
   role: 'user' | 'assistant';
   /** User-typed body for user messages; legacy assistant body for old data. */
   text: string;
@@ -261,6 +273,8 @@ export interface UserInputRequest {
   answers: UserInputAnswer[];
   resolved?: boolean;
   interrupted?: boolean;
+  /** When the live request reached this window (UI motion only); hydrated requests have none. */
+  receivedAt?: number;
 }
 
 /** Shared roster contract; folded by `mergeSubagentRoster` / `applySubagentActivity`. */
@@ -1234,10 +1248,10 @@ export interface ChatContextValue {
   resolvePermission: (nodeId: string, optionId: string) => void;
   /** Deny/cancel a pending tool-call permission request. */
   denyPermission: (nodeId: string) => void;
-  /** Submit answers to a pending AskUserQuestion request. */
-  resolveUserInputRequest: (nodeId: string, answers: Array<{ question: string; answer: string }>) => void;
-  /** Skip/dismiss a pending AskUserQuestion request. */
-  skipUserInputRequest: (nodeId: string) => void;
+  /** Submit answers to a pending AskUserQuestion request. Resolves whether the response landed. */
+  resolveUserInputRequest: (nodeId: string, answers: Array<{ question: string; answer: string }>) => Promise<boolean>;
+  /** Skip/dismiss a pending AskUserQuestion request. Resolves whether the response landed. */
+  skipUserInputRequest: (nodeId: string) => Promise<boolean>;
   /** Whether initial data has been loaded from backend/localStorage. */
   hydrated: boolean;
   /** Tree-level multi-select for bulk operations. */

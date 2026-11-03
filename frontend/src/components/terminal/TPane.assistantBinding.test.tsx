@@ -61,7 +61,10 @@ vi.mock('../MentionEditor', () => ({
 }));
 vi.mock('./PaneFind', () => ({ default: () => null }));
 vi.mock('./PermissionBanner', () => ({ default: () => null }));
-vi.mock('../ContextMenu', () => ({ default: () => null }));
+vi.mock('../ContextMenu', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../ContextMenu')>()),
+  default: () => null,
+}));
 vi.mock('../MarkdownContent', () => ({ default: ({ text }: { text: string }) => <span>{text}</span> }));
 
 import TPane from './TPane';

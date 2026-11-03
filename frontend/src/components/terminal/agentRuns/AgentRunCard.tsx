@@ -2,6 +2,7 @@ import React from 'react';
 import { AgentRunStatus } from 'michi-shared';
 import type { AgentRunAttemptDtoV1, AgentRunEventV1 } from 'michi-shared';
 import type { AgentResourceIdentity } from '../../../state/agentIdentity';
+import { FadeOnChange, RevealOnShow } from '../agentBlockMotion';
 import {
   compactRunHandoff,
   elapsedRunLabel,
@@ -31,6 +32,8 @@ export function AgentRunCard({ run: resource, attempts = [], events = [], now, o
   const handoff = compactRunHandoff(run);
   const recovered = hasRecoveredAttempt(attempts, events);
   const environment = run.executionEnvironment.kind === 'git_worktree' ? 'isolated worktree' : 'shared workspace';
+  const settled = run.status === AgentRunStatus.Completed || run.status === AgentRunStatus.Failed;
+  // A new status fades in in its colour; the handoff grows in when the run settles.
   return (
     <article
       data-testid="agent-run-card"
@@ -43,23 +46,26 @@ export function AgentRunCard({ run: resource, attempts = [], events = [], now, o
         <strong style={{ color: 'var(--term-fg)', fontSize: 'var(--fs-md)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {run.effectiveDefinition.name}
         </strong>
-        <span style={{ marginLeft: 'auto', color: STATUS_COLOR[run.status], fontSize: 'var(--fs-xs)', fontWeight: 700, letterSpacing: 'var(--ls-wide)', textTransform: 'uppercase' }}>
+        <FadeOnChange
+          k={run.status}
+          style={{ marginLeft: 'auto', color: STATUS_COLOR[run.status], fontSize: 'var(--fs-xs)', fontWeight: 700, letterSpacing: 'var(--ls-wide)', textTransform: 'uppercase' }}
+        >
           {run.status}
-        </span>
+        </FadeOnChange>
       </div>
       <div style={{ color: 'var(--term-fg)', fontSize: 'var(--fs-md)', lineHeight: 1.45, marginTop: 5 }}>{run.task}</div>
-      {handoff && (run.status === AgentRunStatus.Completed || run.status === AgentRunStatus.Failed) && (
+      <RevealOnShow show={!!handoff && settled}>
         <div data-testid="compact-handoff" style={{ color: 'var(--term-mid)', fontSize: 'var(--fs-sm)', lineHeight: 1.4, marginTop: 5 }}>
           {handoff}
         </div>
-      )}
+      </RevealOnShow>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>
         <span>{runtimeProfileLabel(run)}</span>
         <span aria-hidden>·</span>
         <span>{environment}</span>
         <span aria-hidden>·</span>
         <span>{elapsedRunLabel(run, now)}</span>
-        {recovered && <span style={{ color: 'var(--term-mauve)' }}>Recovered automatically</span>}
+        <FadeOnChange k={recovered ? 'recovered' : null} style={{ color: 'var(--term-mauve)' }}>Recovered automatically</FadeOnChange>
         <button
           type="button"
           onClick={() => onOpen(identity)}

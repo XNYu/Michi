@@ -1,4 +1,5 @@
 import React from 'react';
+import { AnimatePresence } from 'motion/react';
 import { useChatStore, useChatNodesSnapshot, useStructuralSelector } from '../../../state/chatStore';
 import { setManageWorkspaceId } from '../../../state/manageRoute';
 import { Dot } from '../primitives';
@@ -579,14 +580,17 @@ export default function TerminalWorkspaces({ onNav }: { onNav: (p: PageId) => vo
         </div>
       )}
 
-      {menu && menuSections.length > 0 && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          sections={menuSections}
-          onClose={() => setMenu(null)}
-        />
-      )}
+      <AnimatePresence>
+        {menu && menuSections.length > 0 && (
+          <ContextMenu
+            key={`${menu.x}:${menu.y}`}
+            x={menu.x}
+            y={menu.y}
+            sections={menuSections}
+            onClose={() => setMenu(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

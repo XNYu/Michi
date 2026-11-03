@@ -2,7 +2,7 @@ import { KiroSignedOutError, isKiroSignInError } from './kiroSignIn';
 import type { AcpPendingRequest } from '../acp/client';
 import { V3_COMMAND_METHODS, V3_COMPATIBILITY_METHODS, v3CommandNames, effortSelection } from './v3Commands';
 import { KiroSessionSnapshots } from './sessionSnapshots';
-import { nativeSessionExists } from "./nativeSessionLookup";
+import { nativeSessionExists, realCwd, type NativeSessionLookupOptions } from "./nativeSessionLookup";
 import type { RuntimeObservability } from "../../contract/host";
 import { AcpAgentTurns, type AcpAgentTurnHandler } from "./acpAgentTurns";
 import { kiroV2ApprovalCancelledUpdate } from "./kiroSubagents";
@@ -28,6 +28,7 @@ export type { AcpPromptBlock, AcpUpdate } from "../acp/types";
 import { AcpClient as AcpCoreClient, rpcErrorDataForLog } from "../acp/client";
 import { KiroAcpProfile, type AcpLaunch } from "./kiroAcpProfile";
 import { findKiroCli, type KiroCliLookup } from "./kiroCli";
+import type { KiroFlavor } from "./kiroFlavor";
 
 export type { AcpLaunch } from "./kiroAcpProfile";
 export { findKiroCli, probeKiroCli, type KiroCliLookup } from "./kiroCli";
@@ -42,6 +43,8 @@ export interface AcpWorkflowRouter {
         sessionId: string;
         requestId: number;
         toolCall?: Record<string, unknown>;
+        /** The request's `_meta` (Kiro names the tool there). */
+        meta?: Record<string, unknown>;
         options: Array<{ optionId: string; name?: string; kind?: string }>;
     }): boolean;
 }
@@ -86,6 +89,15 @@ export interface AcpClientOptions extends AcpProcessOptions {
      * stderr (Michi: its logger, kiro-cli.log). Default: none of them.
      */
     observability?: RuntimeObservability;
+    /**
+     * How a launch override reports that it is signed out (KiroFlavor.signIn):
+     * a matching RPC error, or stderr before the process exits, fails as
+     * KiroSignedOutError with its message. Ignored without a launch override,
+     * which uses kiro-cli's own detection. Default: none.
+     */
+    signIn?: KiroFlavor['signIn'];
+    /** The agent's name in user-visible errors of a standardAcp launch (KiroAcpProfileOptions.displayName). */
+    displayName?: string;
 }
 
 /** What Kiro has published about one session's tools. */
@@ -105,6 +117,7 @@ export class AcpClient extends AcpCoreClient {
     private readonly toolCatalogWaiters = new Map<string, Set<() => void>>();
     private readonly rejectPermissions: boolean;
     private readonly onSignedOut?: (binary: string) => void;
+    private readonly signIn?: KiroFlavor['signIn'];
 
     override start(): void {
         if (this.proc) return;
@@ -118,11 +131,14 @@ export class AcpClient extends AcpCoreClient {
         if (!this.launch && !this.initialization && isKiroSignInError(this.stderrTail)) {
             this.signInFailed = true;
             this.onSignedOut?.(this.binaryPath);
+        } else if (this.launch && this.signIn?.matches(this.stderrTail)) {
+            // A launch override may initialize while signed out (agy does).
+            this.signInFailed = true;
         }
     }
 
     protected override processExitError(code: number | null, signal: NodeJS.Signals | null): Error {
-        return this.signInFailed ? new KiroSignedOutError() : super.processExitError(code, signal);
+        return this.signInFailed ? this.signedOutError() : super.processExitError(code, signal);
     }
 
     protected override mapRpcError(_request: AcpPendingRequest, error: { code?: unknown; message?: unknown; data?: unknown }): Error | undefined {
@@ -131,7 +147,16 @@ export class AcpClient extends AcpCoreClient {
             this.onSignedOut?.(this.binaryPath);
             return new KiroSignedOutError();
         }
+        if (this.launch && this.signIn?.matches({
+            ...(typeof error.code === 'number' ? { code: error.code } : {}),
+            ...(typeof error.message === 'string' ? { message: error.message } : {}),
+            ...(error.data !== undefined ? { data: error.data } : {}),
+        })) return this.signedOutError();
         return undefined;
+    }
+
+    private signedOutError(): KiroSignedOutError {
+        return this.launch && this.signIn ? new KiroSignedOutError(this.signIn.message) : new KiroSignedOutError();
     }
 
     protected override notSentError(): Error {
@@ -273,9 +298,11 @@ export class AcpClient extends AcpCoreClient {
         super(new KiroAcpProfile({
             binaryPath: launch?.bin ?? binaryPath ?? findKiroCli(options.kiroCli?.()),
             cwd, model, engine, launch, runtimeId, preloadTools: options.preloadTools, extraArgs: options.extraArgs, childEnv: options.childEnv,
+            displayName: options.displayName,
         }), options);
         this.rejectPermissions = options.rejectPermissions === true;
         this.onSignedOut = options.onSignedOut;
+        this.signIn = options.signIn;
         this.snapshots = new KiroSessionSnapshots(runtimeId);
         this.agentTurns = new AcpAgentTurns({
             reserve: (sessionId) => this.reserveSession(sessionId),
@@ -297,6 +324,7 @@ export class AcpClient extends AcpCoreClient {
     }
 
     supportsExtension(method: string): boolean {
+        if (this.launch?.standardAcp) return false;
         if (this.engine !== 'v3') return true;
         return !this.unsupportedExtensions.has(method) && (
             this.capabilities?._meta?.kiro?.extensionMethods?.includes(method) === true
@@ -304,7 +332,7 @@ export class AcpClient extends AcpCoreClient {
     }
 
     private async sendExtension(method: string, params: Record<string, unknown>, timeoutMs: number, sessionId: string): Promise<any> {
-        if (!this.supportsExtension(method)) throw new ACPUnsupportedMethodError(`This Kiro server does not support ${method}`);
+        if (!this.supportsExtension(method)) throw new ACPUnsupportedMethodError(`This ${this.displayName} server does not support ${method}`);
         try { return await this.send(method, params, timeoutMs, sessionId, true); }
         catch (error) {
             if (this.engine === 'v3' && error instanceof ACPError && error.rpcCode === -32601) {
@@ -362,13 +390,13 @@ export class AcpClient extends AcpCoreClient {
         return this.agentTurns.deliver(sessionId, update);
     }
 
-    protected override routeUnqueuedPermission(sessionId: unknown, requestId: number, toolCall: unknown, options: unknown): boolean {
+    protected override routeUnqueuedPermission(sessionId: unknown, requestId: number, toolCall: unknown, options: unknown, meta?: unknown): boolean {
         if (this.rejectPermissions) {
             this.observability.log('warn', 'acp', 'kiro permission request rejected', { sessionId });
             this.respondToPermissionKind(requestId, 'reject_once');
             return true;
         }
-        return this.routeWorkflowPermission(sessionId, requestId, toolCall, options)
+        return this.routeWorkflowPermission(sessionId, requestId, toolCall, options, meta)
             || this.routeSubagentPermission(sessionId, requestId, toolCall, options);
     }
 
@@ -952,9 +980,12 @@ export class AcpClient extends AcpCoreClient {
     }
 
     override async setModel(sessionId: string, modelId: string, timeoutMs?: number): Promise<void> {
+        const option = this.sessionInfo.get(sessionId)?.configOptions?.find((c) => c.id === 'model' || c.category === 'model');
         if (this.engine === 'v3') {
-            const option = this.sessionInfo.get(sessionId)?.configOptions?.find((c) => c.id === 'model' || c.category === 'model');
             if (!option) throw new ACPError('This Kiro session does not expose a model config option');
+            await this.setConfigOption(sessionId, option.id, modelId, timeoutMs);
+        } else if (this.launch?.standardAcp && option) {
+            // A standard agent's set_model may answer without the new state (agy: `{}`).
             await this.setConfigOption(sessionId, option.id, modelId, timeoutMs);
         } else {
             await super.setModel(sessionId, modelId, timeoutMs);
@@ -962,12 +993,12 @@ export class AcpClient extends AcpCoreClient {
     }
 
     async setConfigOption(sessionId: string, configId: string, value: string | boolean, timeoutMs?: number): Promise<AcpConfigOption[]> {
-        if (this.engine !== 'v3') throw new ACPError('Generic config options require Kiro v3');
+        if (this.engine !== 'v3' && !this.launch?.standardAcp) throw new ACPError('Generic config options require Kiro v3');
         const result = await this.send('session/set_config_option', { sessionId, configId, value }, timeoutMs, sessionId, timeoutMs !== undefined);
-        if (!Array.isArray(result?.configOptions)) throw new ACPError('Kiro returned no config options after configuration');
+        if (!Array.isArray(result?.configOptions)) throw new ACPError(`${this.displayName} returned no config options after configuration`);
         this.rememberSessionInfo(sessionId, result);
         const applied = result.configOptions.find((c: AcpConfigOption) => c.id === configId);
-        if (applied && applied.currentValue !== value) throw new ACPError(`Kiro did not apply config option ${configId}`);
+        if (applied && applied.currentValue !== value) throw new ACPError(`${this.displayName} did not apply config option ${configId}`);
         return result.configOptions;
     }
 
@@ -995,6 +1026,7 @@ export class AcpClient extends AcpCoreClient {
     }
 
     async clearSteer(sessionId: string): Promise<{ cleared: boolean; messageIds?: string[] }> {
+        if (this.launch?.standardAcp) return { cleared: false };
         const result = await this.sendExtension('_session/steer/clear', { sessionId }, 10_000, sessionId);
         if (result?.cleared === true) this.steeredSessions.delete(sessionId);
         return { cleared: result?.cleared === true,
@@ -1044,6 +1076,8 @@ export class AcpClient extends AcpCoreClient {
      * v2's command response is only an acknowledgement; completion is a later
      * notification. v3's dedicated request resolves after compaction. */
     async compact(sessionId: string, instructions?: string, timeoutMs = this.idleTimeoutMs): Promise<{ success: boolean; message?: string }> {
+        // Answered before the session is reserved: an unsupported compaction never quarantines it.
+        if (this.launch?.standardAcp) return { success: false, message: `${this.displayName} does not support compaction` };
         this.assertSessionUsable(sessionId);
         const prompting = this.activePrompts.has(sessionId)
             && [...this.pending.values()].some((request) => request.sessionId === sessionId && request.method === 'session/prompt');
@@ -1142,13 +1176,14 @@ export class AcpClient extends AcpCoreClient {
     }
 
     /** A workflow step session's approval goes to its run; false to decline. */
-    private routeWorkflowPermission(sessionId: unknown, requestId: number, toolCall: unknown, options: unknown): boolean {
+    private routeWorkflowPermission(sessionId: unknown, requestId: number, toolCall: unknown, options: unknown, meta?: unknown): boolean {
         if (typeof sessionId !== 'string' || !this.isWorkflowStepSession(sessionId) || !Array.isArray(options)) return false;
         try {
             return this.workflowRouter?.requestPermission({
                 sessionId,
                 requestId,
                 toolCall: toolCall && typeof toolCall === 'object' ? toolCall as Record<string, unknown> : undefined,
+                ...(meta && typeof meta === 'object' ? { meta: meta as Record<string, unknown> } : {}),
                 options: options.filter((option): option is { optionId: string; name?: string; kind?: string } =>
                     !!option && typeof option.optionId === 'string'),
             }) === true;
@@ -1194,6 +1229,7 @@ export class AcpClient extends AcpCoreClient {
                 throw error;
             }
         }
+        if (this.launch?.standardAcp) return { success: false, message: `${this.displayName} does not support /${command}` };
         const payload: Record<string, unknown> = {
             sessionId,
             command: { command, args: args ?? {} },
@@ -1283,16 +1319,24 @@ export class AcpClient extends AcpCoreClient {
      */
     protected override beforeLoadSession(sessionId: string, cwd: string, timeoutMs: number | undefined): Promise<void> | undefined {
         if (this.reopeningSessions.has(sessionId)) return undefined;
-        return this.engine === 'v3' ? this.verifyNativeSession(sessionId, cwd, timeoutMs) : undefined;
+        if (this.engine === 'v3') return this.verifyNativeSession(sessionId, cwd, timeoutMs);
+        // A standard agent may load an id it does not know as a new, empty
+        // session (agy does), so its catalog decides, when it has one. agy
+        // lists every session whatever the cwd filter, with each cwd as it
+        // was given: compared with symlinks resolved.
+        if (this.launch?.standardAcp && this.capabilities?.loadSession && this.capabilities.sessionCapabilities?.list) {
+            return this.verifyNativeSession(sessionId, cwd, timeoutMs, { canonicalCwd: realCwd, meta: null });
+        }
+        return undefined;
     }
 
-    private async verifyNativeSession(sessionId: string, cwd: string, timeoutMs: number | undefined): Promise<void> {
+    private async verifyNativeSession(sessionId: string, cwd: string, timeoutMs: number | undefined, lookup?: NativeSessionLookupOptions): Promise<void> {
         if (!this.capabilities?.loadSession || !this.capabilities.sessionCapabilities?.list) {
             throw new ACPError('This Kiro server cannot verify native session history; original binding retained');
         }
         const exists = await nativeSessionExists(sessionId, cwd,
-            (params, timeout) => this.send('session/list', params, timeout, undefined, true), timeoutMs);
-        if (!exists) throw new ACPNativeSessionMissingError('Kiro native session is no longer available', {
+            (params, timeout) => this.send('session/list', params, timeout, undefined, true), timeoutMs, lookup);
+        if (!exists) throw new ACPNativeSessionMissingError(`${this.displayName} native session is no longer available`, {
             method: 'session/load', sessionId,
         });
     }
@@ -1340,6 +1384,12 @@ export class AcpClient extends AcpCoreClient {
 
     override destroySession(sessionId: string): void {
         this.compactions.get(sessionId)?.reject(new ACPError('Kiro session released during compaction'));
+        if (this.launch?.standardAcp && this.capabilities?.sessionCapabilities?.close && this.sessionQueues.has(sessionId)) {
+            // Best effort: the native session stays loadable after a close.
+            void this.send('session/close', { sessionId }, 10_000, undefined, true).catch((error) => {
+                this.observability.log('debug', 'acp', 'session/close failed', { sessionId, error: error instanceof Error ? error.message : String(error) });
+            });
+        }
         super.destroySession(sessionId);
     }
 

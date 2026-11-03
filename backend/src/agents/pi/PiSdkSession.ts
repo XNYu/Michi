@@ -1,24 +1,50 @@
+import { getRuntimeDeps } from "../runtimeDeps";
+import { isRunOwner } from "../ownerMapping";
 import type { AgentSession } from "../types";
 import { PiSession, type PiSessionDeps } from "./PiSession";
+import { createPiSdkHarness, invalidatePiSdkTranscript } from './piSdkHarness';
 
-/**
- * The optional coding-agent experiment never wired an SDK-owned conversation.
- * Keep the historical factory/module boundary, but use the complete agent-core
- * session until an SDK transport implements the full AgentSession contract.
- * Installing a package or setting MICHI_PI_SESSION_SDK must not silently swap
- * the engine, drop attachments, or change owner/permission/steering behavior.
- */
-export type PiSessionKind = "agent-core";
-export function selectPiSessionKind(_env: NodeJS.ProcessEnv = process.env): PiSessionKind {
-  return "agent-core";
+export type PiSessionKind = "sdk" | "agent-core";
+/** The old engine remains available for operational rollback. */
+export function selectPiSessionKind(env: NodeJS.ProcessEnv = process.env): PiSessionKind {
+  return env.MICHI_PI_SESSION_SDK === '0' ? 'agent-core' : 'sdk';
 }
 
-/** Michi branches never navigate or mutate the parent's native Pi tree. */
+/** Michi branches always own an independent transcript. */
 export function shouldNavigatePiTreeOnMichiBranch(): false { return false; }
 
-/** @deprecated Compatibility name; this is the real agent-core session. */
-export class PiSdkSession extends PiSession {}
+export class PiSdkSession extends PiSession {
+  private sdkHarness: any;
+  constructor(id: string, private readonly sdkDeps: PiSessionDeps) { super(id, sdkDeps); }
+
+  protected override async createHarness(core: any, options: any): Promise<any> {
+    return this.sdkHarness = await createPiSdkHarness(this.id, this.sdkDeps, core, options);
+  }
+
+  protected override async onTurnSettled(): Promise<void> {
+    if (!this.sdkHarness) return;
+    // ChatHub finalizes SQLite before returning the generator at turn_end.
+    // Read that canonical view: it includes displayText, steered users and
+    // finalized assistant sentinels, unlike the model-facing raw transcript.
+    if (!isRunOwner(this.owner)) {
+      const store = getRuntimeDeps().historyStore;
+      if (store.getNode(this.id)) {
+        this.sdkHarness.checkpoint(store.listMessages(this.id).filter(message =>
+          (message.role === 'user' || message.role === 'assistant') && !!message.content,
+        ).map(message => ({ role: message.role as 'user' | 'assistant', content: message.content ?? '' })));
+        return;
+      }
+    }
+    this.sdkHarness.checkpoint(this.getHistory());
+  }
+
+  override describeNativeState(): Record<string, unknown> {
+    return { ...super.describeNativeState(), kind: 'pi-sdk' };
+  }
+}
 
 export async function createPiSession(id: string, deps: PiSessionDeps): Promise<AgentSession> {
+  if (selectPiSessionKind() === 'sdk') return new PiSdkSession(id, deps);
+  invalidatePiSdkTranscript(id, deps);
   return new PiSession(id, deps);
 }

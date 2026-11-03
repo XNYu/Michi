@@ -47,10 +47,12 @@ test('Connections reads live remote membership, clears it on failure, and reread
   const settings = await openSettings(page, 'General');
   const desktop = settings.getByRole('listitem', { name: 'Build box', exact: true });
   const build = settings.getByRole('listitem', { name: 'Build server', exact: true });
-  await expect(desktop.getByText('Created from another device', { exact: true })).toBeVisible();
-  await expect(desktop.getByText('Old hydrated workspace', { exact: true })).toHaveCount(0);
   await expect(desktop.getByText('1 workspace', { exact: true })).toBeVisible();
   await expect(build.getByText('0 workspaces', { exact: true })).toBeVisible();
+  await expect(desktop.getByText('Created from another device', { exact: true })).toBeHidden();
+  await desktop.getByText('1 workspace', { exact: true }).click();
+  await expect(desktop.getByText('Created from another device', { exact: true })).toBeVisible();
+  await expect(desktop.getByText('Old hydrated workspace', { exact: true })).toHaveCount(0);
 
   inventory = [{ id: 'replacement', name: 'Updated remote workspace', cwd: '/srv/current' }];
   await desktop.getByRole('button', { name: 'Refresh workspaces', exact: true }).click();
@@ -78,6 +80,9 @@ test('Connections reads live remote membership, clears it on failure, and reread
   await openSettings(page, 'Appearance');
   const previousReads = inventoryReads;
   await openSettings(page, 'General');
+  await expect(desktop.getByText('1 workspace', { exact: true })).toBeVisible();
+  await expect(desktop.getByText('Created while pane was closed', { exact: true })).toBeHidden();
+  await desktop.getByText('1 workspace', { exact: true }).click();
   await expect(desktop.getByText('Created while pane was closed', { exact: true })).toBeVisible();
   expect(inventoryReads).toBeGreaterThan(previousReads);
   // A display refresh must not replace hydrated workspaces or live chat state.

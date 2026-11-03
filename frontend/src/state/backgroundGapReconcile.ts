@@ -1,4 +1,4 @@
-import { hydrateBackendWorkspaces, recoverPendingUserInput } from './chatHydration';
+import { carryClientKeys, hydrateBackendWorkspaces, recoverPendingUserInput } from './chatHydration';
 import { remoteEntityIdentity } from '../config/backendIdentity';
 import type { ChatMessage, ChatNodeState, ArtifactEntry, Project, ProjectEdge, Tree } from './chatTypes';
 
@@ -117,9 +117,10 @@ function mergeGapNode(
   gap: BackgroundReplayGap,
   status: ChatNodeState['status'],
 ): ChatNodeState {
+  const serverMessages = carryClientKeys(local?.messages, server.messages);
   const messages = status === 'streaming'
-    ? markLastAssistantStreaming(server.messages)
-    : server.messages;
+    ? markLastAssistantStreaming(serverMessages)
+    : serverMessages;
   return recoverPendingUserInput({
     ...server,
     chatId: server.chatId ?? local?.chatId ?? gap.chatId,
@@ -160,21 +161,25 @@ export interface BackendNodeInstallInput {
   currentNodes: Record<string, ChatNodeState>;
   rawWorkspace: unknown;
   nodeId: string;
+  /** Backend connection that served `rawWorkspace` (default: this machine). */
+  connectionId?: string;
 }
 
 /**
  * Install or refresh a thread the backend created without this renderer (a
- * scheduled run). Unknown trees/nodes are added; the target node takes the
- * server's messages and durable cursor, so later background frames continue
- * from there. Local-only fields (drafts, queue, view state) are kept.
+ * scheduled run, or a conversation started on another device). Unknown
+ * trees/nodes are added; the target node takes the server's messages and
+ * durable cursor, so later background frames continue from there.
+ * Local-only fields (drafts, queue, view state) are kept.
  */
 export function installBackendWorkspaceNode({
   currentProjects,
   currentNodes,
   rawWorkspace,
   nodeId,
+  connectionId = 'local',
 }: BackendNodeInstallInput): { projects: Project[]; nodes: Record<string, ChatNodeState> } | null {
-  const hydrated = hydrateBackendWorkspaces([rawWorkspace]);
+  const hydrated = hydrateBackendWorkspaces([rawWorkspace], null, connectionId);
   const serverProject = hydrated.projects[0];
   if (!serverProject) return null;
   const localProject = currentProjects.find((project) => project.id === serverProject.id);

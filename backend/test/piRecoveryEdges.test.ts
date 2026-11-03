@@ -203,11 +203,11 @@ test('Pi cancellation releases a pending permission broker without allowing a la
   assert.equal((session as any).pendingPermissions.size, 0);
 });
 
-test('legacy Pi SDK class uses the real session contract and status', () => {
+test('Pi SDK class retains the recovery contract and reports its engine', () => {
   const session = new PiSdkSession('pi-node', sessionDeps);
   (session as any).markUnavailable('Injected cleanup failure.');
   assert.equal(session.currentModelId, 'pi-model');
-  assert.equal(session.describeNativeState().kind, 'pi-agent-core');
+  assert.equal(session.describeNativeState().kind, 'pi-sdk');
   assert.equal(session.describeNativeState().status, 'unavailable');
   session.destroy();
 });

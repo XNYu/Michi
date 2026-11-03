@@ -71,6 +71,19 @@ describe('escapeIsForPage', () => {
     sliding.remove();
   });
 
+  it('ignores every layer inside one on its way out (inert or aria-hidden)', () => {
+    for (const ghost of [
+      '<div inert><div role="listbox"></div><div data-escape-layer="pane"></div></div>',
+      '<div aria-hidden="true"><div role="menu"></div><div data-escape-layer="over"></div></div>',
+      '<div role="menu" inert></div>',
+      '<div role="dialog" aria-hidden="true"><div role="dialog"></div><div aria-modal="true"></div></div>',
+    ]) {
+      const host = add(ghost);
+      expect(escape(document.body)).toEqual({ menus: true, all: true });
+      host.remove();
+    }
+  });
+
   it('counts a non-modal drawer, the find bar and the sidebar overlay only for the shell under everything', () => {
     for (const layer of ['<div role="dialog"></div>', '<div data-escape-layer="pane"></div>', '<div data-escape-layer="shell"></div>']) {
       const host = add(layer);

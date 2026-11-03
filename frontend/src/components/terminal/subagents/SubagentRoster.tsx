@@ -3,6 +3,7 @@ import type { SubagentInfo } from '../../../state/chatTypes';
 import { formatDurationMs, isFailedStatus, isRunningStatus, subagentStatusLabel } from '../toolCallGrouping';
 import { openBackgroundWork, useBackgroundWorkNodeId } from '../backgroundWork/backgroundWorkEvents';
 import { useConversationSubagent } from '../backgroundWork/useConversationSubagent';
+import { FadeOnChange, GlyphSwap, RevealList } from '../agentBlockMotion';
 import {
   SUBAGENT_TONE_COLOR,
   SUBAGENT_TONE_LABEL,
@@ -20,22 +21,29 @@ const MONO = 'var(--font-mono)';
 
 const ellipsis: React.CSSProperties = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 
-/** Running → breathing dot, failed → red ×, otherwise a muted dot. */
+/**
+ * Running → breathing dot, failed → red ×, otherwise a muted dot. A change
+ * of kind cross-scales.
+ */
 export function SubagentStatusGlyph({ status }: { status: string | undefined }) {
-  if (isFailedStatus(status)) {
-    return <span aria-hidden style={{ width: 8, flexShrink: 0, color: 'var(--term-danger)', fontSize: 'var(--fs-xs)', lineHeight: 1 }}>×</span>;
-  }
+  const failed = isFailedStatus(status);
+  const running = isRunningStatus(status);
   return (
-    <span aria-hidden style={{ width: 8, flexShrink: 0, display: 'inline-flex', alignSelf: 'center' }}>
-      <span className={isRunningStatus(status) ? 'term-dot-i term-dot-i--run' : 'term-dot-i'} />
-    </span>
+    <GlyphSwap glyph={failed ? 'failed' : running ? 'running' : 'done'} style={{ width: 8, ...(failed ? null : { alignSelf: 'center' }) }}>
+      {failed ? (
+        <span aria-hidden style={{ color: 'var(--term-danger)', fontSize: 'var(--fs-xs)', lineHeight: 1 }}>×</span>
+      ) : (
+        <span aria-hidden className={running ? 'term-dot-i term-dot-i--run' : 'term-dot-i'} />
+      )}
+    </GlyphSwap>
   );
 }
 
 /**
  * Status word in the tone color, plus how long it took. Nothing while it
  * still runs: a background agent's recorded end is its launch turn's, not
- * its own. `active` is the conversation's view (subagentTone).
+ * its own. `active` is the conversation's view (subagentTone). A new word,
+ * and the duration once it appears, fade in.
  */
 export function SubagentToneLabel({ subagent, active }: { subagent: SubagentInfo; active?: boolean }) {
   const tone = subagentTone(subagent, active);
@@ -44,10 +52,10 @@ export function SubagentToneLabel({ subagent, active }: { subagent: SubagentInfo
     : active === undefined ? subagentDurationMs(subagent) : subagentShownDurationMs(subagent, active, Date.now());
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, flexShrink: 0, fontSize: 'var(--fs-xs)' }}>
-      <span style={{ color: SUBAGENT_TONE_COLOR[tone] }}>{SUBAGENT_TONE_LABEL[tone]}</span>
-      {duration !== undefined && (
-        <span style={{ fontFamily: MONO, color: 'var(--term-muted)' }}>{formatDurationMs(duration)}</span>
-      )}
+      <FadeOnChange k={tone} style={{ color: SUBAGENT_TONE_COLOR[tone] }}>{SUBAGENT_TONE_LABEL[tone]}</FadeOnChange>
+      <FadeOnChange k={duration !== undefined ? 'duration' : null} style={{ fontFamily: MONO, color: 'var(--term-muted)' }}>
+        {duration !== undefined && formatDurationMs(duration)}
+      </FadeOnChange>
     </span>
   );
 }
@@ -139,6 +147,7 @@ export function SubagentSummaryLine({
   const failed = isFailedStatus(status);
   const summary = subagentSummary(subagent, { running, fallback });
   const statusColor = failed ? 'var(--term-danger)' : running ? 'var(--term-accent)' : 'var(--term-muted)';
+  const statusLabel = subagentStatusLabel(status);
   const content = (
     <>
       {glyph ?? <SubagentStatusGlyph status={status} />}
@@ -151,7 +160,7 @@ export function SubagentSummaryLine({
         {glyph && <SubagentStatusGlyph status={status} />}
         {subagent && status === subagentToolStatus(subagent, active)
           ? <SubagentToneLabel subagent={subagent} active={active} />
-          : <span style={{ fontSize: 'var(--fs-xs)', color: statusColor }}>{subagentStatusLabel(status)}</span>}
+          : <FadeOnChange k={statusLabel} style={{ fontSize: 'var(--fs-xs)', color: statusColor }}>{statusLabel}</FadeOnChange>}
       </span>
     </>
   );
@@ -198,6 +207,8 @@ export function SubagentRow({ subagent }: { subagent: SubagentInfo }) {
 export function MessageSubagents({ subagents }: { subagents: readonly SubagentInfo[] }) {
   if (subagents.length === 0) return null;
   const working = subagents.filter((subagent) => subagent.status === 'working').length;
+  // The counter fades to its new value; an agent joining the roster grows in.
+  const counter = working > 0 ? `${working} working` : `${subagents.length} done`;
   return (
     <section
       aria-label={`${subagents.length} subagents`}
@@ -209,13 +220,11 @@ export function MessageSubagents({ subagents }: { subagents: readonly SubagentIn
           subagents
         </span>
         <span aria-hidden style={{ flex: 1, borderTop: '1px solid var(--term-line)' }} />
-        <span style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: working > 0 ? 'var(--term-accent)' : 'var(--term-muted)' }}>
-          {working > 0 ? `${working} working` : `${subagents.length} done`}
-        </span>
+        <FadeOnChange k={counter} style={{ fontFamily: MONO, fontSize: 'var(--fs-xs)', color: working > 0 ? 'var(--term-accent)' : 'var(--term-muted)' }}>
+          {counter}
+        </FadeOnChange>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {subagents.map((subagent) => <SubagentRow key={subagent.sessionId} subagent={subagent} />)}
-      </div>
+      <RevealList gap={4} rows={subagents.map((subagent) => ({ key: subagent.sessionId, node: <SubagentRow subagent={subagent} /> }))} />
     </section>
   );
 }

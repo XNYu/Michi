@@ -57,6 +57,22 @@ describe('mergeWorkspaceSnapshot', () => {
     expect(merged.nodes.helper.deletedAt).toBe(123);
   });
 
+  it('keeps the render keys of a realigned turn: held nodes keep their own messages', () => {
+    const first = mergeWorkspaceSnapshot([user], {}, raw(['n1']))!;
+    const realigned = {
+      ...first.nodes.n1,
+      messages: [
+        { id: 'u-a-server', clientKey: 'u-a-local', role: 'user' as const, text: 'hi', toolCalls: [] },
+        { id: 'a-server', clientKey: 'a-local', role: 'assistant' as const, text: 'answer', toolCalls: [] },
+      ],
+    };
+    const deleted = raw(['n1']);
+    (deleted.nodes[0] as Record<string, unknown>).deleted_at = 5;
+    const merged = mergeWorkspaceSnapshot(first.projects, { n1: realigned }, deleted)!;
+    expect(merged.nodes.n1).not.toBe(realigned);
+    expect(merged.nodes.n1.messages.map((m) => m.clientKey)).toEqual(['u-a-local', 'a-local']);
+  });
+
   it('retires a tree the backend archived and a node it deleted (a reset)', () => {
     const first = mergeWorkspaceSnapshot([user], {}, raw(['n1']))!;
     const reset = raw(['n1', 'n2']);

@@ -36,6 +36,8 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['michi-shared'],
+    // Pre-bundle motion so the first dev load doesn't trigger a re-optimise reload.
+    include: ['motion/react'],
   },
   server: {
     port: 3001,

@@ -253,8 +253,21 @@ describe('runtime boundary scanner', () => {
   });
 
   test('runtime-id globs exempt each runtime\'s adapter directory by name, not the shared ACP core', () => {
-    assert.ok(boundary.RUNTIME_ID_GLOBS.includes('!runtime/src/adapters/{claude,codex,crew,kiro}/**'));
+    assert.ok(boundary.RUNTIME_ID_GLOBS.includes('!runtime/src/adapters/{claude,codex,crew,kiro,antigravity}/**'));
     assert.ok(!boundary.RUNTIME_ID_GLOBS.includes('!runtime/src/adapters/**'));
+  });
+
+  test('counts antigravity comparisons outside its own adapter directory', () => {
+    const repo = tempRepo('michi-runtime-boundary-antigravity-');
+    try {
+      writeTree(repo, {
+        'backend/src/routes/agent.ts': "export const a = (r: string) => r === 'antigravity';\n",
+        'runtime/src/adapters/antigravity/antigravityFlavor.ts': "export const a = (r: string) => r === 'antigravity';\n",
+      });
+      assert.deepEqual(boundary.scan(repo).runtimeIds, ['backend/src/routes/agent.ts\tantigravity\t1']);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   });
 
   test('candidate globs cover the runtime layer and reserve runtime/src', () => {

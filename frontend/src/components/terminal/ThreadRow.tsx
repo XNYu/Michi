@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useChatNode, useChatActions, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
-import ContextMenu from '../ContextMenu';
+import ContextMenu, { MenuPresence } from '../ContextMenu';
 import MoveThreadDialog from '../MoveThreadDialog';
 import { buildThreadRowContextMenu } from '../../lib/threadRowContextMenu';
 import type { MenuSection } from '../ContextMenu';
@@ -462,14 +462,17 @@ export default function ThreadRow({
           />
         )}
       </Row>
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          sections={sections}
-          onClose={() => setMenu(null)}
-        />
-      )}
+      <MenuPresence>
+        {menu && (
+          <ContextMenu
+            key={`${menu.x}:${menu.y}`}
+            x={menu.x}
+            y={menu.y}
+            sections={sections}
+            onClose={() => setMenu(null)}
+          />
+        )}
+      </MenuPresence>
       <MoveThreadDialog
         open={moveOpen}
         threadLabel={label}

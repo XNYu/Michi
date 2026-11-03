@@ -147,6 +147,9 @@ export interface DesktopBridge {
   setDarkMaterial(dark: boolean, backgroundColor?: string): void;
   /** Switch the sidebar's native vibrancy material (desktop see-through density). Absent in older builds / web. */
   setVibrancy(material: VibrancyMaterial): void;
+  /** The window's current pixels in `rect` (CSS px) as a downscaled PNG data URL, or null.
+   *  Frozen glass blurs it once instead of a live backdrop-filter. Absent in older builds / web. */
+  captureBackdrop(rect: BackdropRect): Promise<string | null>;
   /** Relaunch the app after self-update. Optional — absent in older builds. */
   relaunch(): void;
   getUpdateState(): Promise<AppUpdateState>;
@@ -191,12 +194,16 @@ export interface DesktopBridge {
 export type LegacyDesktopBridge = Pick<DesktopBridge, 'chooseFolder' | 'saveMarkdown'>
   & Partial<Omit<DesktopBridge, 'chooseFolder' | 'saveMarkdown'>>;
 
+/** A region of the window in CSS pixels, as getBoundingClientRect measures it. */
+export interface BackdropRect { x: number; y: number; width: number; height: number }
+
 /** Channel contract shared by preload invoke calls and main response handlers. */
 export interface DesktopInvokeContract {
   'app:getUpdateState': { args: []; result: AppUpdateState };
   'app:checkForUpdate': { args: []; result: AppUpdateState };
   'app:downloadUpdate': { args: []; result: AppUpdateState };
   'app:installUpdate': { args: []; result: AppUpdateState };
+  'app:captureBackdrop': { args: [rect: BackdropRect]; result: string | null };
   'app:chooseFolder': { args: []; result: ChooseFolderResult };
   'app:chooseFolders': { args: []; result: ChooseFoldersResult };
   'app:resolveSkipCwd': { args: [projectId: string]; result: { path: string } };

@@ -5,6 +5,7 @@ import { usePageMaintenance } from '../../../state/pages/usePageMaintenance';
 import type { PageMaintenanceIdentity, PageMaintenanceWorkspace } from '../../../services/api/pageMaintenance';
 import { requestMetaAgentSettings } from '../scheduled/metaAgent/metaAgentNav';
 import { metaAgentRuntimeLabel } from '../settings/metaAgent/runtimeCopy';
+import { MaintenanceWatches } from './MaintenanceWatches';
 
 export function MaintenanceEnrollmentCheckbox({ checked, onChange, disabled = false }: {
   checked: boolean;
@@ -55,6 +56,7 @@ export function MaintenanceStatus({ backendConnectionId, workspaceId, pendingPro
 
   const updating = Boolean(job?.activeRunId)
     || value?.backlog.plans.some((plan) => plan.state === 'routing' || plan.state === 'processing');
+  const checkingWatch = value?.watches?.find((watch) => watch.lastRun?.state === 'running');
   const pending = value?.backlog.pendingSources ?? value?.status?.pendingSources ?? 0;
   const attention = value?.backlog.attentionSources ?? value?.status?.attentionSources ?? 0;
   const lastStatus = typeof job?.lastStatus === 'string' ? job.lastStatus : value?.status?.lastRun?.status;
@@ -73,7 +75,9 @@ export function MaintenanceStatus({ backendConnectionId, workspaceId, pendingPro
     : failed
       ? (typeof job?.lastError === 'string' && job.lastError ? job.lastError : 'The last scheduled check did not finish successfully.')
       : updating
-        ? 'The Meta agent is reading completed conversations and updating the workspace’s pages.'
+        ? checkingWatch
+          ? `The Meta agent is running the watch “${checkingWatch.title}”.`
+          : 'The Meta agent is reading completed conversations and updating the workspace’s pages.'
         : notConfigured
           ? 'Enable updates to use new conversations in this workspace. Older conversations are not read automatically.'
           : paused
@@ -165,6 +169,7 @@ export function MaintenanceStatus({ backendConnectionId, workspaceId, pendingPro
           {catchUpQueued && <p role="status" style={{ margin: '6px 0 0', color: 'var(--term-muted)', fontSize: 'var(--fs-xs)' }}>{catchUpQueued}</p>}
         </div>}
       </div>}
+      <MaintenanceWatches maintenance={maintenance} />
       {maintenance.error && <p role="alert" style={{ marginBottom: 0, color: 'var(--term-danger)' }}>{maintenance.error}<button type="button" onClick={maintenance.refresh}>Retry</button></p>}
       {value?.backlog.plans.filter((plan) => plan.state === 'attention').map((plan) => {
         const sources = plan.sources.filter((source) => source.state === 'attention');

@@ -63,6 +63,14 @@ test('preload forwards typed service and terminal responses without wrapping or 
   ]);
 });
 
+test('backdrop capture forwards the rect and returns the image unchanged', async () => {
+  const { bridge, calls, responses } = loadPreload();
+  responses.set('app:captureBackdrop', 'data:image/png;base64,AAAA');
+  const rect = { x: 0, y: 0, width: 1440, height: 900 };
+  assert.equal(await bridge.captureBackdrop(rect), 'data:image/png;base64,AAAA');
+  assert.deepEqual(calls, [['app:captureBackdrop', rect]]);
+});
+
 test('remote authentication target crosses only its dedicated IPC channel', async () => {
   const { bridge, calls, responses } = loadPreload();
   const target = { host: 'example.test', user: 'test', port: 22, scope: 'remote' };

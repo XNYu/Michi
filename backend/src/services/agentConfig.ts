@@ -7,7 +7,7 @@ import type { RuntimeId, AgentReasoning } from "../agents/types";
 import { getUserAgentConfig, upsertUserAgentConfig } from "./dbRepository";
 import { DEFAULT_MODELS } from "../agents/agentConfig";
 import { resolveDefaultPiProvider } from "./resolveProvider";
-import { getProviderInfo } from "../agents/pi/piProviders";
+import { getProviderInfo, selectDefaultModelId } from "../agents/pi/piProviders";
 import { isWebSearchFeatureEnabled, isWebSearchProviderId, type WebSearchProviderId } from "./searchProviders";
 import { getMichiConfigPaths } from './configPaths';
 
@@ -70,7 +70,8 @@ const ENV_DEFAULT_WEB_SEARCH_PROVIDER = isWebSearchFeatureEnabled()
   : null;
 
 const DEFAULTS: AgentConfig = {
-  runtime: process.env.MICHI_DEFAULT_RUNTIME ?? "kiro",
+  // Public installs wait for a choice; explicit environment and saved config still win.
+  runtime: process.env.MICHI_DEFAULT_RUNTIME ?? "",
   provider: "anthropic",
   webSearchProvider: ENV_DEFAULT_WEB_SEARCH_PROVIDER,
   providerByRuntime: {},
@@ -422,8 +423,9 @@ export function updateAgentReasoningForRuntime(
 /**
  * Resolve the model id to use for a runtime. Priority:
  *   1. agentConfig.modelByRuntime[runtimeId]    (user override)
- *   2. BUILTIN_DEFAULT_MODEL_BY_RUNTIME[runtimeId]   (code-level default)
- *   3. ""                                       (let runtime decide)
+ *   2. the provider default: its floating alias, else the pinned entry
+ *   3. BUILTIN_DEFAULT_MODEL_BY_RUNTIME[runtimeId]   (code-level default)
+ *   4. ""                                       (let runtime decide)
  */
 export function resolveModel(runtimeId: string, userId?: string): string {
   const cfg = getAgentConfig(userId);
@@ -431,7 +433,8 @@ export function resolveModel(runtimeId: string, userId?: string): string {
   if (provider?.modelLocked) return provider.defaultModel;
   const userOverride = cfg.modelByRuntime[runtimeId];
   if (userOverride) return userOverride;
-  return provider?.defaultModel ?? BUILTIN_DEFAULT_MODEL_BY_RUNTIME[runtimeId] ?? "";
+  if (provider) return selectDefaultModelId(provider);
+  return BUILTIN_DEFAULT_MODEL_BY_RUNTIME[runtimeId] ?? "";
 }
 
 /**
@@ -470,22 +473,11 @@ export function getBuiltinDefaultReasoning(runtimeId: string): AgentReasoning | 
   return BUILTIN_DEFAULT_REASONING_BY_RUNTIME[runtimeId];
 }
 
-/**
- * Boot-time guard: if the persisted (or env-overridden) cfg.runtime is
- * not actually registered in this deployment (e.g. disk says 'kiro' but
- * MICHI_ENABLED_RUNTIMES=pi this run), migrate cfg.runtime to the first
- * registered runtime and persist it. Without this, /agent/status falls
- * back to a chip-less placeholder for the missing runtime, and Settings
- * won't auto-pick a working runtime — users get a stuck UI even though
- * the right runtime is registered.
- */
+/** Keep a registered saved choice. Public installs never select by registration order. */
 export function reconcileRuntimeWithRegistered(registeredIds: readonly string[]): void {
-  if (registeredIds.length === 0) return;
-  if (registeredIds.includes(current.runtime)) return;
-  const fallback = registeredIds[0];
-  console.warn(
-    `[agentConfig] persisted runtime '${current.runtime}' is not registered (registered: ${registeredIds.join(", ")}); falling back to '${fallback}'`,
-  );
+  if (!current.runtime || registeredIds.length === 0 || registeredIds.includes(current.runtime)) return;
+  const fallback = "";
+  console.warn(`[agentConfig] configured runtime '${current.runtime}' is not registered; ${fallback ? `using '${fallback}'` : 'waiting for a runtime choice'}`);
   updateAgentConfig({ runtime: fallback });
 }
 

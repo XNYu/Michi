@@ -4,12 +4,18 @@ import { DEFAULT_PREFS } from '../../../../state/prefs';
 import { ModelPane } from './ModelPane';
 
 const setPref = vi.fn();
+const setPermissionSettings = vi.fn();
 const refreshAgentStatus = vi.fn();
 const saveAgentOptions = vi.hoisted(() => vi.fn());
 const listAgentModels = vi.hoisted(() => vi.fn());
 const saveWebSearchKey = vi.hoisted(() => vi.fn());
 const clearWebSearchKey = vi.hoisted(() => vi.fn());
+const saveProviderKey = vi.hoisted(() => vi.fn());
+const clearProviderKey = vi.hoisted(() => vi.fn());
+const verifyProviderKey = vi.hoisted(() => vi.fn());
+const confirmDialog = vi.hoisted(() => vi.fn());
 let agentStatus: any = null;
+let prefsOverride: Partial<typeof DEFAULT_PREFS> = {};
 
 vi.mock('../../../../state/chatStore', () => ({
   useChatStore: () => ({ agentStatus, refreshAgentStatus }),
@@ -20,24 +26,45 @@ vi.mock('../../../../services/api', () => ({
   listAgentModels,
   saveWebSearchKey,
   clearWebSearchKey,
+  saveProviderKey,
+  clearProviderKey,
+  verifyProviderKey,
 }));
+
+vi.mock('../../../ui/ConfirmDialog', () => ({ confirmDialog }));
 
 vi.mock('../../../../state/prefs', async () => {
   const actual = await vi.importActual<typeof import('../../../../state/prefs')>('../../../../state/prefs');
   return {
     ...actual,
-    usePrefs: () => ({ prefs: actual.DEFAULT_PREFS, setPref }),
+    usePrefs: () => ({ prefs: { ...actual.DEFAULT_PREFS, ...prefsOverride }, setPref, setPermissionSettings }),
   };
 });
+
+function keyProvider(overrides: Record<string, unknown> = {}) {
+  return { id: 'google', label: 'Google AI', keyLabel: 'Gemini API key', envVars: [], defaultModel: 'gemini-4-argon',
+    keyUrl: 'https://aistudio.google.com/apikey', supportsReasoning: true, hasKey: true, ...overrides };
+}
+
+function keyStatus(provider = keyProvider()) {
+  return { runtime: 'pi', label: 'Pi', provider: provider.id, model: 'gemini-4-argon', providers: [provider], hasRequiredKey: true,
+    availableRuntimes: [], capabilities: { apiKeys: true } };
+}
 
 describe('ModelPane Kiro sidecar title setting', () => {
   beforeEach(() => {
     setPref.mockClear();
+    setPermissionSettings.mockReset().mockResolvedValue(undefined);
     refreshAgentStatus.mockClear();
     saveAgentOptions.mockReset().mockResolvedValue({ ok: true });
     saveWebSearchKey.mockReset().mockResolvedValue({ ok: true });
     clearWebSearchKey.mockReset().mockResolvedValue({ ok: true });
+    saveProviderKey.mockReset().mockResolvedValue({ ok: true });
+    clearProviderKey.mockReset().mockResolvedValue({ ok: true });
+    verifyProviderKey.mockReset().mockResolvedValue({ ok: true, model: 'gemini-4-argon', latencyMs: 142 });
+    confirmDialog.mockReset().mockResolvedValue(true);
     agentStatus = null;
+    prefsOverride = {};
   });
 
   function nativeResumeStatus(runtime = 'codex') {
@@ -83,10 +110,122 @@ describe('ModelPane Kiro sidecar title setting', () => {
       availableRuntimes: [], capabilities: { models: true, reasoning: true, supportedReasoningLevels: ['low', 'high'] } };
     listAgentModels.mockResolvedValue({ models: [{ id: 'opus-5.5', label: 'Opus 5.5' }, { id: 'sonnet-5.5', label: 'Sonnet 5.5' }], sanitizedModel: null });
     render(<ModelPane activeProjectId={null} />);
-    fireEvent.change(await screen.findByDisplayValue('Opus 5.5'), { target: { value: 'sonnet-5.5' } });
+    const model = screen.getByRole('combobox', { name: 'Model' });
+    await waitFor(() => expect(model.textContent).toContain('Opus 5.5'));
+    fireEvent.click(model);
+    // A short catalog is a plain list: no filter field.
+    expect(screen.queryByRole('searchbox', { name: 'Filter models' })).toBeNull();
+    const list = screen.getByRole('listbox', { name: 'Models' });
+    expect(within(list).getByRole('option', { name: /Opus 5\.5/ }).getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(within(list).getByRole('option', { name: /Sonnet 5\.5/ }));
     await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ model: 'sonnet-5.5', expectedRuntime: 'kiro' }));
+    expect(screen.queryByRole('listbox', { name: 'Models' })).toBeNull();
     fireEvent.change(screen.getByDisplayValue('low'), { target: { value: 'high' } });
     await waitFor(() => expect(saveAgentOptions).toHaveBeenLastCalledWith({ reasoning: 'high', expectedRuntime: 'kiro' }));
+  });
+
+  it('filters the Pi catalog inside the model list and picks with the keyboard', async () => {
+    agentStatus = { runtime: 'pi', label: 'Pi', provider: 'openrouter', model: 'stealth/ox-alpha', hasRequiredKey: true,
+      providers: [keyProvider({ id: 'openrouter', label: 'OpenRouter', requiresUserKey: false })],
+      availableRuntimes: [], capabilities: { models: true, providerModels: true } };
+    listAgentModels.mockResolvedValue({ sanitizedModel: null, models: [
+      { id: 'stealth/ox-alpha', label: 'Ox Alpha' },
+      { id: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6' },
+      { id: 'google/gemini-3-pro', label: 'Gemini 3 Pro' },
+    ] });
+    render(<ModelPane activeProjectId={null} />);
+    const model = screen.getByRole('combobox', { name: 'Model' });
+    await waitFor(() => expect(model.textContent).toContain('Ox Alpha'));
+    // One control: the filter lives in the list, not above it.
+    expect(screen.queryByRole('searchbox', { name: 'Filter models' })).toBeNull();
+    fireEvent.click(model);
+    expect(model.getAttribute('aria-expanded')).toBe('true');
+    const filter = screen.getByRole('searchbox', { name: 'Filter models' });
+    expect(document.activeElement).toBe(filter);
+    fireEvent.change(filter, { target: { value: 'gemini' } });
+    const list = screen.getByRole('listbox', { name: 'Models' });
+    expect(within(list).getAllByRole('option').map((option) => option.textContent)).toEqual([expect.stringContaining('Gemini 3 Pro')]);
+    expect(screen.getByRole('status').textContent).toBe('1 of 3 models');
+    fireEvent.keyDown(filter, { key: 'Enter' });
+    await waitFor(() => expect(saveAgentOptions).toHaveBeenCalledExactlyOnceWith({ model: 'google/gemini-3-pro', expectedRuntime: 'pi' }));
+    expect(document.activeElement).toBe(model);
+
+    fireEvent.click(model);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Filter models' }), { target: { value: 'nothing' } });
+    expect(screen.getByRole('status').textContent).toBe('No models match “nothing”.');
+    fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Filter models' }), { key: 'Escape' });
+    expect(screen.queryByRole('listbox', { name: 'Models' })).toBeNull();
+    expect(document.activeElement).toBe(model);
+    expect(saveAgentOptions).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a saved key as a status beside Verify, Replace and Clear, and asks for a key only when replacing', async () => {
+    agentStatus = keyStatus();
+    render(<ModelPane activeProjectId={null} />);
+    expect(screen.getByText('Key saved')).toBeTruthy();
+    expect(screen.queryByLabelText('Google AI API key')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open Google AI key console' }).getAttribute('href')).toBe('https://aistudio.google.com/apikey');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+    await waitFor(() => expect(verifyProviderKey).toHaveBeenCalledExactlyOnceWith('google', { key: undefined, model: 'gemini-4-argon' }));
+    expect((await screen.findByText(/^Verified Google AI/)).textContent).toBe('Verified Google AI / gemini-4-argon in 142ms.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replace…' }));
+    const input = screen.getByLabelText('Google AI API key') as HTMLInputElement;
+    expect(input.type).toBe('password');
+    expect(document.activeElement).toBe(input);
+    expect(screen.queryByRole('button', { name: 'Replace…' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByLabelText('Google AI API key')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Replace…' }));
+    fireEvent.change(screen.getByLabelText('Google AI API key'), { target: { value: 'new-key' } });
+    fireEvent.keyDown(screen.getByLabelText('Google AI API key'), { key: 'Enter' });
+    await waitFor(() => expect(saveProviderKey).toHaveBeenCalledExactlyOnceWith('google', 'new-key'));
+    await waitFor(() => expect(screen.queryByLabelText('Google AI API key')).toBeNull());
+    expect(refreshAgentStatus).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(clearProviderKey).toHaveBeenCalledExactlyOnceWith('google'));
+    expect(confirmDialog).toHaveBeenCalledOnce();
+  });
+
+  it('asks for the key when none is saved', async () => {
+    agentStatus = keyStatus(keyProvider({ hasKey: false }));
+    render(<ModelPane activeProjectId={null} />);
+    expect(screen.getByText('Key required')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Replace…' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull();
+    const save = screen.getByRole('button', { name: 'Save key' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('Google AI API key'), { target: { value: 'first-key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+    await waitFor(() => expect(verifyProviderKey).toHaveBeenCalledExactlyOnceWith('google', { key: 'first-key', model: 'gemini-4-argon' }));
+    fireEvent.click(save);
+    await waitFor(() => expect(saveProviderKey).toHaveBeenCalledExactlyOnceWith('google', 'first-key'));
+  });
+
+  it('sets the global permission mode in its own row, offering the modes its runtimes support', async () => {
+    prefsOverride = { globalPermissions: true, permissionMode: 'yolo' };
+    agentStatus = { runtime: 'kiro', label: 'Kiro', capabilities: {}, hasRequiredKey: true,
+      availableRuntimes: [{ id: 'kiro', label: 'Kiro', available: true }] };
+    const view = render(<ModelPane activeProjectId={null} />);
+    const mode = screen.getByRole('combobox', { name: 'Permission mode' }) as HTMLSelectElement;
+    // Kiro has no YOLO; a saved YOLO shows (and runs) as Trust.
+    expect(mode.value).toBe('trust');
+    expect(within(mode).getAllByRole('option').map((option) => option.textContent)).toEqual(['Ask', 'Trust']);
+    expect(screen.queryByRole('button', { name: /^Permissions:/ })).toBeNull();
+    fireEvent.change(mode, { target: { value: 'ask' } });
+    await waitFor(() => expect(setPermissionSettings).toHaveBeenCalledExactlyOnceWith({ global: true, mode: 'ask' }));
+
+    agentStatus = { ...agentStatus, availableRuntimes: [{ id: 'kiro', label: 'Kiro', available: true, approveForMe: true }, { id: 'claude', label: 'Claude', available: true }] };
+    view.rerender(<ModelPane activeProjectId={null} />);
+    expect(within(screen.getByRole('combobox', { name: 'Permission mode' })).getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['Ask', 'Approve for me', 'Trust', 'YOLO']);
+
+    prefsOverride = { globalPermissions: false };
+    view.rerender(<ModelPane activeProjectId={null} />);
+    expect(screen.queryByRole('combobox', { name: 'Permission mode' })).toBeNull();
   });
 
   it('switches provider for the runtime Settings shows', async () => {
