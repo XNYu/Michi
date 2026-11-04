@@ -159,7 +159,7 @@ export interface KiroNewSessionMemory {
  * history, local v3 chats share an MCP catalog, and the agent keeps no
  * per-chat memory. Both engines settle a cancelled prompt with stopReason
  * "cancelled" and report credits and context usage (kiro-cli 2.35.1,
- * docs/kiro-acp-validation.md).
+ * docs/validation/2026-09-24-kiro-acp.md).
  */
 export const KIRO_FLAVOR: AcpAgentFlavor = {
     hostPorts: [],

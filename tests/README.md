@@ -1,10 +1,9 @@
-# Runtime Harness Tests
+# Standalone checks
 
-This directory contains standalone harnesses for inspecting runtime and
-subagent event behavior against a running Michi backend. They complement the
-unit suites in `frontend/` and `backend/test/` and the browser workflows in
-`e2e/`.
+- `install.test.mjs` checks the public installer contract without installing Michi.
+- `integration/isolation.sh` is an opt-in, two-account hosted-isolation check;
+  read its setup instructions before running it.
 
-The harness scripts use port `52249` by default. Override it with `PORT`, and
-provide `MICHI_TEST_WORKSPACE_ID` or `MICHI_TEST_CWD` when an isolated target is
-needed.
+Automated runtime and subagent regressions live in `../backend/test/` and
+`../runtime/test/`. The isolated browser suite lives in `../e2e/`. Real-runtime
+acceptance is documented in `../scripts/verification/README-reuse-consistency-live.md`.

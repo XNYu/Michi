@@ -86,7 +86,7 @@ frontend/.omc/
 # itself first, then re-ignore everything in it, then unignore the
 # specific file.
 #
-# Every tracked file under docs/ and mocks/ is listed here, so a new file
+# Every tracked file under docs/ is listed here, so a new file
 # next to them stays ignored until it is added to this list. Check with
 # `git ls-files | git check-ignore --no-index --stdin` (prints nothing).
 docs/
@@ -96,8 +96,10 @@ docs/*
 !docs/user-guide.md
 !docs/harness-p0-p3-tasks.md
 !docs/remote-backend.md
-!docs/kiro-acp-validation.md
 !docs/internal-usage-telemetry.md
+!docs/validation/
+docs/validation/*
+!docs/validation/2026-09-24-kiro-acp.md
 !docs/features/
 docs/features/*
 !docs/features/*.md
@@ -151,16 +153,11 @@ artifacts-state.png
 cfn-template.json
 extension/
 feasibility-of-background-execution-during-sleep-*.md
-# Mocks stay local, except the tracked files listed here.
-mocks/
-!/mocks/
-/mocks/*
-!/mocks/streaming-reveal-explainer.html
-!/mocks/streaming-reveal-lab.html
-!/mocks/terminal-motion.html
-!/mocks/typography-lab.html
-!/mocks/ui-font-lab.html
-!/mocks/ui-mono-units.html
+# Design mocks stay local.
+/mocks/
+# Retired experiments may still have local generated results.
+/benchmarks/markdown-streaming/
+/prototypes/michi-touch/
 
 # Stitch design snapshots and metadata
 /.stitch/
@@ -179,3 +176,6 @@ mocks/
 /plans/
 /*.png
 /*.html
+
+# Local design tooling configuration
+/.impeccable/

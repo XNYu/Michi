@@ -27,7 +27,7 @@ export const KIRO_HARNESS: CapabilityDescriptor = {
     sessionFork: slot('native', 'native', 'Kiro rewind for compatible idle conversation parents'),
     nativeResume: slot('native', 'native', 'loadSession'),
     permissions: slot('native', 'native', 'acp_permission'),
-    // kiro-cli 2.35.1 reports no sandbox over ACP (docs/kiro-acp-validation.md).
+    // kiro-cli 2.35.1 reports no sandbox over ACP (docs/validation/2026-09-24-kiro-acp.md).
     sandbox: invisibleSlot(),
     subagents: slot('experimental', 'unknown', 'Roster: v2 _kiro.dev/subagent/list_update, v3 delegation tool calls. Control (v2 _session/spawn, _kiro.dev/session/terminate): native_unwired'),
     usage: slot('native', 'native', 'Kiro metering: credits and context %, no token counts or cost'),

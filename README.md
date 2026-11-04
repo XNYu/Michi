@@ -1098,8 +1098,9 @@ native fork, same-turn steering, completed compaction, and history recall after
 refresh, and captures desktop/mobile screenshots.
 It uses temporary database/config/workspace directories, not the user's Michi
 data. `MICHI_KIRO_SMOKE_OUTPUT` optionally selects an evidence directory.
-See [Kiro ACP validation](docs/kiro-acp-validation.md) for the verified scope,
-regression coverage, and remaining boundaries.
+See [Runtime capabilities](backend/src/docs/runtime-capabilities.md) for current
+integration limits. The [historical Kiro ACP validation](docs/validation/2026-09-24-kiro-acp.md)
+records the tested versions and results of earlier runs.
 
 ### Electron
 

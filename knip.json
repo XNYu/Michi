@@ -6,7 +6,6 @@
         "src/index.tsx!",
         "src/**/*.test.{ts,tsx}",
         "src/setupTests.ts",
-        "src/components/terminal/spaces/metaChat/harness/main.tsx",
         "src/services/api/version.ts!"
       ],
       "project": [
