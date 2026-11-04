@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModalShell } from './ModalShell';
 
@@ -10,7 +10,7 @@ const blurSnapshot = vi.hoisted(() => vi.fn());
 vi.mock('./frozenGlassBitmap', () => ({ blurSnapshot }));
 
 // As the command palette mounts it: an entrance, no exit.
-function Palette({ glass = 'frozen' as 'frozen' | 'live' }) {
+function Palette({ glass }: { glass?: 'frozen' | 'live' }) {
   return (
     <ModalShell open onClose={() => {}} title="Command palette" motion="enter" glass={glass}>
       <input aria-label="query" autoFocus />
@@ -31,6 +31,7 @@ beforeEach(() => {
 afterEach(() => {
   delete (window as unknown as { electron?: unknown }).electron;
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('frozen glass', () => {
@@ -53,10 +54,12 @@ describe('frozen glass', () => {
     expect(layer?.querySelector('.ui-frozen-glass__dim')).toBeTruthy();
   });
 
-  it('opens with live glass when the capture fails', async () => {
-    capture.mockResolvedValueOnce(null);
+  it.each(['empty', 'rejected', 'decode'] as const)('opens solid when capture fails (%s)', async (failure) => {
+    if (failure === 'empty') capture.mockResolvedValueOnce(null);
+    if (failure === 'rejected') capture.mockRejectedValueOnce(new Error('capture failed'));
+    if (failure === 'decode') blurSnapshot.mockResolvedValueOnce(null);
     render(<Palette />);
-    await waitFor(() => expect(panel().hasAttribute('data-glass')).toBe(false));
+    await waitFor(() => expect(panel().getAttribute('data-glass')).toBe('solid'));
     expect(panel().querySelector('.ui-frozen-glass')).toBeNull();
   });
 
@@ -65,11 +68,25 @@ describe('frozen glass', () => {
     capture.mockImplementationOnce(() => new Promise<string>((r) => { resolve = r; }));
     render(<Palette />);
     expect(panel().getAttribute('data-glass')).toBe('capturing');
-    await waitFor(() => expect(panel().hasAttribute('data-glass')).toBe(false), { timeout: FROZEN_GLASS_BUDGET_MS + 500 });
+    await waitFor(() => expect(panel().getAttribute('data-glass')).toBe('solid'), { timeout: FROZEN_GLASS_BUDGET_MS + 500 });
     // The open panel would be in a capture taken now.
     await act(async () => { resolve('data:image/png;base64,LATE'); });
-    expect(panel().hasAttribute('data-glass')).toBe(false);
+    expect(panel().getAttribute('data-glass')).toBe('solid');
     expect(blurSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('rejects a blur that finishes past the deadline before the timer can run', async () => {
+    const now = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const canvas = document.createElement('canvas');
+    blurSnapshot.mockImplementationOnce(async () => {
+      now.mockReturnValue(FROZEN_GLASS_BUDGET_MS + 1);
+      return canvas;
+    });
+    render(<Palette />);
+    await waitFor(() => expect(panel().getAttribute('data-glass')).toBe('solid'));
+    expect(panel().querySelector('canvas')).toBeNull();
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
   });
 
   it('is live glass on the web and for modals that do not ask for it', () => {
@@ -84,28 +101,102 @@ describe('frozen glass', () => {
     expect(capture).not.toHaveBeenCalled();
   });
 
+  it('opens solid with an older desktop bridge, or when frozen glass is requested without a bridge', () => {
+    (window as unknown as { electron?: unknown }).electron = {};
+    const view = render(<Palette />);
+    expect(panel().getAttribute('data-glass')).toBe('solid');
+    view.unmount();
+    delete (window as unknown as { electron?: unknown }).electron;
+    render(<Palette glass="frozen" />);
+    expect(panel().getAttribute('data-glass')).toBe('solid');
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it('keeps the same panel, input and snapshot through streaming parent updates', async () => {
+    const view = render(<Palette />);
+    await waitFor(() => expect(panel().getAttribute('data-glass')).toBe('frozen'));
+    const original = panel();
+    const canvas = original.querySelector('canvas');
+    const input = screen.getByLabelText('query') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'in progress' } });
+    input.focus();
+    input.setSelectionRange(3, 5);
+    for (let i = 0; i < 20; i += 1) view.rerender(<Palette />);
+    expect(panel()).toBe(original);
+    expect(panel().querySelector('canvas')).toBe(canvas);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('in progress');
+    expect(input.selectionStart).toBe(3);
+    expect(input.selectionEnd).toBe(5);
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a nested dialog solid immediately, without capturing the dialog below', async () => {
+    const pair = (confirm: boolean) => <>
+      <ModalShell open title="Settings" onClose={() => {}}>Settings content</ModalShell>
+      <ModalShell open={confirm} title="Confirm" onClose={() => {}}>Confirm content</ModalShell>
+    </>;
+    const view = render(pair(false));
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Settings' }).getAttribute('data-glass')).toBe('frozen'));
+    view.rerender(pair(true));
+    expect(screen.getByRole('dialog', { name: 'Confirm' }).getAttribute('data-glass')).toBe('solid');
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
+  it('owns the bitmap through the frozen phase, then clears its backing on unmount even under StrictMode', async () => {
+    const view = render(<React.StrictMode><Palette /></React.StrictMode>);
+    await waitFor(() => expect(panel().getAttribute('data-glass')).toBe('frozen'));
+    const canvas = panel().querySelector('canvas')!;
+    expect(canvas.width).toBeGreaterThan(0);
+    expect(canvas.height).toBeGreaterThan(0);
+    view.unmount();
+    expect(canvas.isConnected).toBe(false);
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
+  });
+
+  it('releases a decode result arriving after the modal was closed', async () => {
+    let resolve!: (canvas: HTMLCanvasElement) => void;
+    blurSnapshot.mockImplementationOnce(() => new Promise<HTMLCanvasElement>(r => { resolve = r; }));
+    const view = render(<Palette />);
+    await waitFor(() => expect(blurSnapshot).toHaveBeenCalled());
+    view.unmount();
+    const canvas = document.createElement('canvas');
+    await act(async () => resolve(canvas));
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
+  });
+
   it('leaves the solid surface alone when glass is off', async () => {
     const matchMedia = window.matchMedia;
     window.matchMedia = ((query: string) => ({ matches: query.includes('reduced-transparency'), media: query })) as unknown as typeof window.matchMedia;
     try {
       render(<Palette />);
-      expect(panel().hasAttribute('data-glass')).toBe(false);
+      expect(panel().getAttribute('data-glass')).toBe('solid');
       expect(capture).not.toHaveBeenCalled();
     } finally {
       window.matchMedia = matchMedia;
     }
   });
 
-  it('goes back to live glass when the window resizes', async () => {
+  it('stays solid after resize, even when the old viewport size returns', async () => {
     render(<Palette />);
     await waitFor(() => expect(panel().getAttribute('data-glass')).toBe('frozen'));
+    const canvas = panel().querySelector('canvas')!;
     const width = window.innerWidth;
     act(() => {
       Object.defineProperty(window, 'innerWidth', { configurable: true, value: width + 40 });
       window.dispatchEvent(new Event('resize'));
     });
-    expect(panel().hasAttribute('data-glass')).toBe(false);
+    expect(panel().getAttribute('data-glass')).toBe('solid');
     expect(panel().querySelector('.ui-frozen-glass')).toBeNull();
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
+    act(() => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+      window.dispatchEvent(new Event('resize'));
+    });
+    expect(panel().getAttribute('data-glass')).toBe('solid');
+    expect(capture).toHaveBeenCalledTimes(1);
   });
 });

@@ -10,7 +10,9 @@ export const PI_HARNESS: CapabilityDescriptor = {
   // HTTP route, so it stays unwired rather than claiming native.
   followUp: slot("native_unwired", "unknown", "Agent.followUp exists; no Michi caller or route"),
   interruptAck: slot("native", "native", "Agent.abort()"),
-  compact: slot("native_unwired", "unknown", "SDK auto-compaction is active; manual compact has no host route"),
+  // SDK auto-compaction stays active; manual compact runs between turns and
+  // resolves on completion (CompactResult.completed).
+  compact: slot("native", "native", "AgentSession.compact() between turns via POST /chats/:chatId/compact"),
   retry: invisibleSlot("SDK automatic retries disabled; Michi owns retry policy"),
   sessionFork: slot("michi_simulated", "projected", "Michi node tree is authoritative; Pi JSONL is resume detail"),
   nativeResume: slot("native", "native", "Scoped SDK JSONL restored only when its checkpoint matches authoritative SQLite history"),

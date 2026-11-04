@@ -1,8 +1,8 @@
 import { getRuntimeDeps } from "../runtimeDeps";
 import { isRunOwner } from "../ownerMapping";
-import type { AgentSession } from "../types";
+import type { AgentSession, CompactResult } from "../types";
 import { PiSession, type PiSessionDeps } from "./PiSession";
-import { createPiSdkHarness, invalidatePiSdkTranscript } from './piSdkHarness';
+import { createPiSdkHarness, invalidatePiSdkTranscript, type PiSdkFeatures } from './piSdkHarness';
 
 export type PiSessionKind = "sdk" | "agent-core";
 /** The old engine remains available for operational rollback. */
@@ -17,9 +17,11 @@ export class PiSdkSession extends PiSession {
   private sdkHarness: any;
   constructor(id: string, private readonly sdkDeps: PiSessionDeps) { super(id, sdkDeps); }
 
-  protected override async createHarness(core: any, options: any): Promise<any> {
-    return this.sdkHarness = await createPiSdkHarness(this.id, this.sdkDeps, core, options);
+  protected override async createHarness(core: any, options: any, features: PiSdkFeatures): Promise<any> {
+    return this.sdkHarness = await createPiSdkHarness(this.id, this.sdkDeps, core, options, features);
   }
+
+  protected override supportsToolSearch(): boolean { return true; }
 
   protected override async onTurnSettled(): Promise<void> {
     if (!this.sdkHarness) return;
@@ -40,6 +42,11 @@ export class PiSdkSession extends PiSession {
 
   override describeNativeState(): Record<string, unknown> {
     return { ...super.describeNativeState(), kind: 'pi-sdk' };
+  }
+
+  /** SDK manual compaction between turns (POST /chats/:chatId/compact). The agent-core rollback has none. */
+  compact(instructions?: string): Promise<CompactResult> {
+    return this.compactBetweenTurns(instructions);
   }
 }
 

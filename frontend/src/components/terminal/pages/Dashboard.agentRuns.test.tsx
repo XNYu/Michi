@@ -37,7 +37,7 @@ vi.mock('../../../state/chatStore', () => ({
   }),
   useChatActions: () => ({ closePane: mocks.closePane, setPaneWidth: vi.fn(), openAgentRunPane: vi.fn() }),
   useStructuralSelector: (selector: (nodes: Record<string, never>) => unknown) => selector({}),
-  shallowArrayEqual: vi.fn(),
+  shallowArrayEqual: <T,>(a: readonly T[], b: readonly T[]) => a.length === b.length && a.every((value, index) => Object.is(value, b[index])),
 }));
 vi.mock('../../../state/agentDomain', () => ({
   useAgentDomain: () => ({

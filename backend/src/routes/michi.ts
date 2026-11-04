@@ -254,6 +254,19 @@ function turnBusy(nodeId: string): boolean {
  * silently retry with the same request, not a restore failure. */
 class TurnBusyError extends Error {}
 
+/**
+ * A resent turn ID whose turn already began (it has a durable receipt, in any
+ * state) is never run again: a second run would repeat its tool calls and
+ * replace its saved answer. Turn begin itself is idempotent for that ID.
+ */
+function turnAlreadyBegan(turnId: string | undefined): boolean {
+    return !!turnId && chatHub.requestedTurnStatus(turnId) !== null;
+}
+const TURN_ALREADY_BEGAN = {
+    error: 'This message was already sent, so it was not sent again.',
+    code: 'turn_begin_failed',
+} as const;
+
 async function retireLiveSession(session: AgentSession | undefined): Promise<void> {
     if (!session) return;
     const runtime = getRuntime(session.runtimeId);
@@ -1732,6 +1745,9 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                 code: "IDENTITY_MISMATCH",
             });
         }
+        // A turn ID with a receipt already began. Checked before the busy
+        // answers below: 409 turn_active must mean this turn never began.
+        if (turnAlreadyBegan(turnId)) return res.status(409).json(TURN_ALREADY_BEGAN);
         if (chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId)) {
             // Only an explicit Stop may wait for cancellation cleanup. A new
             // message from another window must never interrupt the active turn.
@@ -1759,6 +1775,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
         try {
             const currentSession = getSessionByIdentifier(requestedIdentifier, req.user?.id ?? null);
             if (!currentSession || currentSession.id !== nodeId) throw new Error('Session changed before turn start; retry the message');
+            // A duplicate of this request may have started it while this one waited.
+            if (turnAlreadyBegan(turnId)) return res.status(409).json(TURN_ALREADY_BEGAN);
             // Another request may have started while this one waited for the
             // restore lock, or its iterator may still be releasing the runtime.
             if (chatHub.isActive(nodeId) || chatHub.isOwnerTurnActive(nodeId) || chatHub.hasPendingSelfTurn(nodeId)) {
@@ -2330,6 +2348,8 @@ export function setupMichiRoutes(chatManager: ChatManager) {
                     return res.json({ ...result, sessionState: session.getSessionState?.() });
                 } finally { releaseRestore(); }
             }
+            // A native command (an in-place /clear, /compact) may drop the Michi Memory block from the context.
+            chatHub.forgetInjectedMemory(session);
             const result = await session.executeCommand(command, args ?? undefined);
             res.json({ ...result, sessionState: session.getSessionState?.() });
         } catch (err) {

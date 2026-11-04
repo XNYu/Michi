@@ -80,7 +80,7 @@ test('search provider selection and key presence are isolated to the signed-in u
   assert.equal(disabled.webSearchProvider, null);
 });
 
-test('non-Railway deployments hide search configuration and reject search mutations', async () => {
+test('hosted deployments outside Railway hide search configuration and reject search mutations', async () => {
   const projectId = process.env.RAILWAY_PROJECT_ID;
   const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
   const serviceId = process.env.RAILWAY_SERVICE_ID;

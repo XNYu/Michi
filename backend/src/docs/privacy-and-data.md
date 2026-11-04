@@ -20,7 +20,7 @@ Defaults can change through deployment/directory configuration. The public sourc
 
 ## What leaves the machine?
 
-The selected runtime/provider receives model input and tool results needed for a request. Reading a file with an agent can send its contents into model context. Calling an external MCP or website can send that tool's arguments and associated data to its service.
+The selected runtime/provider receives model input and tool results needed for a request. Reading a file with an agent can send its contents into model context. Calling an external MCP or website can send that tool's arguments and associated data to its service. With Pi web search configured, search queries go to the chosen search provider (Jina or Tavily), and `fetch_content` requests public pages from the backend machine.
 
 Local-first history does not mean all inference is offline. An available model, a tool permission and a service's data policy are separate questions. Review the actual provider/tool configuration for sensitive work.
 

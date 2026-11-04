@@ -12,6 +12,7 @@ import {
   searchWeb,
   setWebSearchApiKey,
 } from '../src/services/webSearch';
+import { isWebSearchFeatureEnabled } from '../src/services/searchProviders';
 
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
@@ -97,6 +98,32 @@ test('Tavily search sends a bounded basic-search request and keeps only source f
     include_answer: false,
     include_raw_content: false,
   });
+});
+
+test('web search is offered on local backends and Railway, not on other hosted deployments', () => {
+  const railway = { RAILWAY_PROJECT_ID: 'test-project' };
+  const cloud = { MICHI_CLOUD: '1', MICHI_REQUIRE_AUTH: 'true' };
+  const localAuth = { MICHI_REQUIRE_AUTH: 'true', MICHI_LOCAL_AUTH_EMAIL: 'me@example.com' };
+  const cases: Array<[string, NodeJS.ProcessEnv, boolean]> = [
+    ['local desktop', {}, true],
+    ['local desktop with MICHI_CLOUD=0', { MICHI_CLOUD: '0' }, true],
+    ['remote access to a desktop backend', { MICHI_REMOTE_ACCESS: '1', MICHI_REMOTE_TOKEN: 'x'.repeat(16) }, true],
+    ['local authenticated mode', localAuth, true],
+    ['Railway cloud', { ...cloud, ...railway }, true],
+    ['Railway cloud by environment id', { ...cloud, RAILWAY_ENVIRONMENT_ID: 'env' }, true],
+    ['Railway cloud by service id', { ...cloud, RAILWAY_SERVICE_ID: 'svc' }, true],
+    ['hosted cloud outside Railway', cloud, false],
+    ['hosted cloud outside Railway asking for it', { ...cloud, MICHI_WEB_SEARCH_ENABLED: '1' }, false],
+    ['an access configuration the server rejects', { MICHI_CLOUD: '1' }, false],
+  ];
+  for (const [name, env, expected] of cases) {
+    assert.equal(isWebSearchFeatureEnabled(env), expected, name);
+  }
+  for (const off of ['0', 'false', 'OFF', ' no ']) {
+    for (const [name, env] of cases) {
+      assert.equal(isWebSearchFeatureEnabled({ ...env, MICHI_WEB_SEARCH_ENABLED: off }), false, `${name} with kill switch ${off}`);
+    }
+  }
 });
 
 test('clearing a search key disables the selected search provider for that user', () => {

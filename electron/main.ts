@@ -1753,20 +1753,40 @@ onDesktopCommand('app:setVibrancy', (_ev, material: string) => {
 
 // Frozen glass: one downscaled capture of the window, blurred by the renderer
 // in place of a live backdrop-filter (see backdropCapture.ts). Null when the
-// window or the rect is gone, or the capture fails; the renderer then keeps
-// its live glass.
+// window or the rect is gone, or the capture fails; the renderer then uses
+// an opaque theme surface rather than returning to live backdrop sampling.
 handleDesktopInvoke('app:captureBackdrop', async (event, rect) => {
+  const diagnostics = process.env.MICHI_GLASS_DIAGNOSTICS === '1';
+  const start = diagnostics ? performance.now() : 0;
   const win = BrowserWindow.fromWebContents(event.sender);
-  if (!win || win.isDestroyed()) return null;
+  if (!win || win.isDestroyed()) {
+    if (diagnostics) elog('INFO', 'glass', 'backdrop timing', { outcome: 'window-gone' });
+    return null;
+  }
   const [width, height] = win.getContentSize();
   const bounds = backdropCaptureBounds(rect, event.sender.getZoomFactor(), { width, height });
-  if (!bounds) return null;
+  if (!bounds) {
+    if (diagnostics) elog('INFO', 'glass', 'backdrop timing', { outcome: 'invalid-bounds' });
+    return null;
+  }
   try {
     const image = await event.sender.capturePage(bounds);
-    if (image.isEmpty()) return null;
-    return image.resize({ width: backdropImageWidth(bounds), quality: 'good' }).toDataURL();
+    const captured = diagnostics ? performance.now() : 0;
+    if (image.isEmpty()) {
+      if (diagnostics) elog('INFO', 'glass', 'backdrop timing', { outcome: 'empty', captureMs: captured - start });
+      return null;
+    }
+    const resized = image.resize({ width: backdropImageWidth(bounds), quality: 'good' });
+    const scaled = diagnostics ? performance.now() : 0;
+    const url = resized.toDataURL();
+    if (diagnostics) elog('INFO', 'glass', 'backdrop timing', {
+      outcome: 'success', captureMs: captured - start, resizeMs: scaled - captured,
+      encodeMs: performance.now() - scaled, dataUrlChars: url.length,
+      sourceSize: image.getSize(), outputSize: resized.getSize(),
+    });
+    return url;
   } catch (err) {
-    elog('WARN', 'glass', 'backdrop capture failed', { error: String(err) });
+    elog('WARN', 'glass', 'backdrop capture failed', { error: String(err), ...(diagnostics ? { elapsedMs: performance.now() - start } : {}) });
     return null;
   }
 });

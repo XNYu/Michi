@@ -328,6 +328,26 @@ export function treeHasUnread(
   return false;
 }
 
+/**
+ * True iff any branch below `children`, at any depth, is unread. Drives the
+ * unread ring on a COLLAPSED branch row, whose sub-branches are hidden; an
+ * expanded row's children show their own dots instead.
+ */
+export function branchSubtreeHasUnread(
+  children: readonly TreeNode[],
+  nodes: Record<string, ChatNodeState>,
+  focusedNodeId: string | null,
+): boolean {
+  const stack = [...children];
+  while (stack.length > 0) {
+    const child = stack.pop()!;
+    const node = nodes[child.nodeId];
+    if (node && isVisibleConversationNode(node) && isNodeUnread(node, focusedNodeId)) return true;
+    for (const grandchild of child.children) stack.push(grandchild);
+  }
+  return false;
+}
+
 export function workspaceHasUnread(
   project: Project,
   nodes: Record<string, ChatNodeState>,

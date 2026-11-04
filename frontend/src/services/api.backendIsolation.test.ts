@@ -7,6 +7,7 @@ import { hydrateBackendWorkspaces } from '../state/chatHydration';
 import { importWorkspaceFile } from './api/uploads';
 
 import { fetchStream } from './api/streamTransport';
+import { subscribeWorkflowRuns } from './api/workflowRuns';
 
 describe('remote connection data isolation', () => {
   const connectionId = 'remote-isolation';
@@ -82,6 +83,31 @@ describe('remote connection data isolation', () => {
     markBackendConnectionReady(connectionId);
     resolve(new Response('event: chunk\ndata: {"nodeId":"n1","text":"late"}\n\n'));
     await expect((await pending).text()).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('scopes the node ids that key background subagent liveness, so a remote agent reads as running after its turn', async () => {
+    const frames = [
+      { version: 1, event: 'background_subagents', run: null, backgroundSubagents: { snapshot: true, nodes: { n1: ['toolu_a'] } }, emittedAt: 1 },
+      { version: 1, event: 'background_subagents', run: null, backgroundSubagents: { snapshot: false, nodes: { n1: [] } }, emittedAt: 2 },
+      { version: 1, event: 'background_subagents_ended', run: null,
+        backgroundSubagentsEnded: { nodeId: 'n1', subagents: [{ sessionId: 'toolu_a', outcome: 'cancelled' }] }, emittedAt: 3 },
+    ];
+    const body = frames.map((frame) => `event: ${frame.event}\ndata: ${JSON.stringify(frame)}\n\n`).join('');
+    const fetch = vi.fn(async (_url: string) => new Response(body));
+    vi.stubGlobal('fetch', fetch);
+    const liveness = vi.fn();
+    const ended = vi.fn();
+    await new Promise<void>((resolve) => subscribeWorkflowRuns(workspaceId, {
+      onRun: vi.fn(), onBackgroundSubagents: liveness, onBackgroundSubagentsEnded: ended, onDisconnect: () => resolve(),
+    }));
+    expect(new URL(fetch.mock.calls[0][0], 'http://renderer').searchParams.get('workspaceId')).toBe('ws');
+    expect(liveness.mock.calls.map(([update]) => update)).toEqual([
+      { snapshot: true, nodes: { [nodeId]: ['toolu_a'] } },
+      { snapshot: false, nodes: { [nodeId]: [] } },
+    ]);
+    expect(ended).toHaveBeenCalledWith({ nodeId, subagents: [{ sessionId: 'toolu_a', outcome: 'cancelled' }] });
+    const raw = frames[0];
+    expect(mapBackendPayload(mapBackendPayload(raw, connectionId, 'renderer'), connectionId, 'server')).toEqual(raw);
   });
 
   it('marks a broken stream unavailable but preserves intentional observer cancellation', async () => {

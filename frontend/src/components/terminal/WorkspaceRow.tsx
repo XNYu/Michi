@@ -8,6 +8,7 @@ import ThreadRow, { CARD_FILL } from './ThreadRow';
 import { rowGeom, spinePadding, branchBlockGap, WORKSPACE_ICON_GAP, WORKSPACE_ICON_SIZE, type RowGeom } from './sidebarRowStyle';
 import { FolderIcon, FolderOpenIcon } from './icons';
 import BranchRow from './BranchRow';
+import { UnreadDot, UNREAD_DOT_LEAD } from './UnreadDot';
 import ContextMenu, { MenuPresence, type MenuSection } from '../ContextMenu';
 import { HoverTip } from '../ui/Popover';
 import { buildTree } from '../../state/tree';
@@ -254,6 +255,9 @@ export default function WorkspaceRow({
   const wsUnread = useStructuralSelector(
     (nodes) => workspaceHasUnread(project, nodes, focusedNodeId),
   );
+  // A workspace is never unread itself: it carries a ring while collapsed over
+  // an unread thread, and nothing once open (its rows show their own dots).
+  const wsUnreadMark = wsUnread && !(workspaceExpanded || forceExpand) ? 'within' : 'none';
   // When filter mode is on, compute which trees have unread so we can show only those.
   const unreadTreeIds = useStructuralSelector(
     (nodes) =>
@@ -419,6 +423,12 @@ export default function WorkspaceRow({
             workspace is collapsed, open when its threads are showing. Neutral
             ink rather than a per-workspace hue; the active workspace's glyph is
             the darker one. */}
+        {/* Card modes: in the gutter left of the folder glyph, on the same
+            column as the thread dots. Classic has no gutter here (the folder
+            glyph starts 4px in), so it shows the ring after the name instead. */}
+        {geom.workspaceAsHeader && (
+          <UnreadDot mark={wsUnreadMark} left={geom.titleX - geom.inset - UNREAD_DOT_LEAD} />
+        )}
         {geom.workspaceAsHeader && (
           <span
             aria-hidden
@@ -486,11 +496,11 @@ export default function WorkspaceRow({
             >
               <span
                 style={{
-                  // Card modes inherit the header's size and medium weight;
-                  // unread still bumps the weight, same idea as classic.
+                  // Card modes inherit the header's size and medium weight.
+                  // Unread no longer bumps the weight; the unread dot carries it.
                   fontSize: geom.workspaceAsHeader ? 'inherit' : 'var(--sb-fs, var(--fs-xl))',
-                  // The workspace of the open Michi project page reads as the open page (600), unread still first.
-                  fontWeight: wsUnread ? 900 : false ? 600 : geom.workspaceAsHeader ? 500 : 450,
+                  // The workspace of the open Michi project page reads as the open page (600).
+                  fontWeight: false ? 600 : geom.workspaceAsHeader ? 500 : 450,
                   color: geom.workspaceAsHeader ? 'inherit' : 'var(--term-fg)',
                   fontFamily: 'var(--ui-font)',
                   overflow: 'hidden',
@@ -500,6 +510,9 @@ export default function WorkspaceRow({
               >
                 {project.name}
               </span>
+              {!geom.workspaceAsHeader && wsUnreadMark !== 'none' && (
+                <UnreadDot mark={wsUnreadMark} inline />
+              )}
               {project.backendConnectionId && (
                 <span
                   title={`Remote backend: ${getKnownBackendConnections().find((connection) => connection.id === project.backendConnectionId)?.name ?? project.backendConnectionId}`}

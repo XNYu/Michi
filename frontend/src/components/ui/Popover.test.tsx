@@ -5,6 +5,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HoverTip, PopoverSurface, Tooltip } from './Popover';
 
 describe('menu surface isolation', () => {
+  it('uses solid desktop material for growing menus, fading lists and glass popovers', () => {
+    (window as unknown as { electron?: unknown }).electron = {};
+    try {
+      render(<>
+        <PopoverSurface menuKind="workspace" role="menu">Workspaces</PopoverSurface>
+        <PopoverSurface menuKind="slash" role="listbox">Commands</PopoverSurface>
+        <PopoverSurface glass animate={false} role="dialog">Details</PopoverSurface>
+      </>);
+      for (const role of ['menu', 'listbox', 'dialog']) {
+        expect(screen.getByRole(role).getAttribute('data-glass')).toBe('solid');
+        expect(screen.getByRole(role).classList.contains('ui-overlay-surface')).toBe(true);
+      }
+    } finally {
+      delete (window as unknown as { electron?: unknown }).electron;
+    }
+  });
+
   it('only opts the requested surface into the exported menu tokens', () => {
     render(<>
       <PopoverSurface menuKind="workspace" role="menu">Workspace options</PopoverSurface>

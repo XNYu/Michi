@@ -6,12 +6,14 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { abortable, withDeadline } from '../runtimeLifecycle';
+import type { UserInputAnswer, UserInputQuestion } from 'michi-shared';
 import type {
     AgentReasoning,
     AgentSession,
     AgentTurnInput,
     CancelAck,
     ChatMessage,
+    CompactResult,
     RuntimePermissionBroker,
     RuntimeSessionOwner,
     RuntimeToolProfile,
@@ -20,15 +22,19 @@ import type {
 } from "../types";
 import { imageMimeType, prepareAttachments, type ResolvedAttachment } from "../attachments";
 import type { NormalizedEvent, PermissionOption } from "../../services/chatEvents";
+import type { PlanEntry } from "michi-shared";
 import type { AgentToolBridge } from "../toolBridge";
 import { resolveAgentRunToolsForSession } from "../toolBridge";
 import { getRuntimeDeps } from "../runtimeDeps";
 import { getProviderInfo, providerUsesAwsCredentials } from "./piProviders";
 import { getModelAttemptIds, getUpstreamProviderId, resolvePiModel } from "./piProviders";
-import { loadPiAi, loadPiAgentCore } from "./piAi";
-import { streamPiModel } from './geminiArgonStream';
+import { loadPiAi, loadPiAgentCore, loadPiTypebox } from "./piAi";
 import { isGeminiArgon, isOpenRouterArgon } from './geminiArgonModel';
 import { buildPiTools, piToolResultErrorOverride } from "./piTools";
+import { PiTodoList } from "./piTodoTool";
+import { PI_ASK_USER_INSTRUCTION, PI_ASK_USER_TOOL } from "./piAskUser";
+import { interruptedToolResult } from "./piToolInterruption";
+import type { PiExtensionUiHost } from "./piExtensionUi";
 import {
     SEND_TO_THREAD_TOOL,
     threadMessageApprovalTitle,
@@ -46,6 +52,8 @@ import { makeTurnImageQuota, type TurnImageQuota } from "../tools/read";
 import { chatPermissionMode } from "../permissionPolicy";
 import { isAssistantProfile, piAssistantToolDecision } from "../../assistant/policy";
 import { isMaintenanceProfile, META_AGENT_MAINTENANCE_TOOL_NAMES, maintenancePromptPrefix } from '../maintenancePolicy';
+import { isMemoryExtractionToolName } from '../../services/memory/extractionProfile';
+import { createMemoryExtractionTools } from '../../services/memory/extractionTools';
 import { assertMetaAgentToolCatalog, isMetaAgentProfile } from '../metaAgentGuard';
 import { createMaintenanceTools } from '../../services/pages/maintenanceTools';
 import { followUpReminder } from "../preamble";
@@ -54,7 +62,8 @@ import { resolveBedrockCredentials } from "../../services/bedrockCredentials";
 import { refreshBedrockCredentialsIfNeeded, refreshOnAuthFailure, isBedrockAuthError } from "../../services/bedrockCredentialManager";
 import { McpClientManager } from "../../services/mcpClientManager";
 import { readPiMcpServers } from "../../services/piMcpConfig";
-import { buildMcpToolsForPi, mcpInputSchemaToTypebox } from "./mcpToolBridge";
+import { buildMcpToolsForPi, deferMcpTools, mcpInputSchemaToTypebox, PI_TOOL_SEARCH_TOOL_NAME, shouldDeferMcpTools } from "./mcpToolBridge";
+import type { PiSdkFeatures } from "./piSdkHarness";
 
 /**
  * pi-agent-core accepts images as `prompt(text, ImageContent[])` with
@@ -119,6 +128,8 @@ export interface PiSessionDeps {
     sdkExtensionFactories?: Array<(pi: any) => void | Promise<void>>;
     /** Allow native recovery only with the host-provided history replay. */
     restoreNative?: boolean;
+    /** Persisted plan the todo list starts from (own latest, else the branch parent's at the cut). */
+    initialPlan?: PlanEntry[] | null;
 }
 
 /**
@@ -154,6 +165,30 @@ function openRawDump(sessionId: string): {
         },
         close: () => {},
     };
+}
+
+// Question IDs must not repeat when a node gets a replacement Session, or
+// after a backend restart, so a renderer's stale reply never answers a newer
+// question. Same scheme as the Claude adapter's interaction IDs.
+let lastUserInputRequestId = Date.now() * 1_000;
+function nextUserInputRequestId(): number {
+    lastUserInputRequestId = Math.max(lastUserInputRequestId + 1, Date.now() * 1_000);
+    if (!Number.isSafeInteger(lastUserInputRequestId)) throw new Error('Pi user input request ID exhausted');
+    return lastUserInputRequestId;
+}
+
+/** How long ask_user waits for an answer; the other runtimes share MICHI_APPROVE_TIMEOUT_MS. */
+function userInputTimeoutMs(): number {
+    const parsed = Number.parseInt(process.env.MICHI_APPROVE_TIMEOUT_MS ?? '', 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 5 * 60 * 1000;
+}
+
+function describeCompaction(result: { tokensBefore?: unknown; estimatedTokensAfter?: unknown } | undefined): string {
+    const count = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : null;
+    const before = count(result?.tokensBefore);
+    const after = count(result?.estimatedTokensAfter);
+    return before && after ? `Compacted the conversation from about ${before} to about ${after} tokens.`
+        : 'Compaction completed.';
 }
 
 /**
@@ -205,8 +240,12 @@ export class PiSession implements AgentSession {
      * seen, subsequent edits in later turns are unblocked.
      */
     private readonly seenPaths: Set<string> = new Set();
+    /** Session-scoped todo list; its changes reach the UI as plan events. */
+    private readonly todoList: PiTodoList;
     private agent: any | undefined;
     private hostTools: any[] = [];
+    /** MCP tools are deferred behind tool_search (sticky; see applyMcpExposure). */
+    private mcpToolSearch = false;
     private destroyed = false;
     /**
      * Lazily created on first turn when piMcpServers config is non-empty.
@@ -249,6 +288,27 @@ export class PiSession implements AgentSession {
         }
     >();
     private nextRequestId = 1;
+    /** Outstanding ask_user questions keyed by requestId; answered, skipped, timed out or cancelled. */
+    private readonly pendingUserInputs = new Map<number, {
+        resolve: (answers: UserInputAnswer[] | null) => void;
+        timer: NodeJS.Timeout;
+    }>();
+    /** ChatHub tracks one pending question per turn, so a later question waits for the current one. */
+    private userInputGate: Promise<void> = Promise.resolve();
+    /** Pi extension notices raised before the turn's stream was ready (session_start); sent when it is. */
+    private readonly extensionNotices: NormalizedEvent[] = [];
+    /** Pi SDK extension dialogs use ask_user's channel; their notices are turn warnings (piExtensionUi). */
+    private readonly extensionUi: PiExtensionUiHost = {
+        activeTurn: () => this.activePush && this.turnAbort && !this.turnAbort.signal.aborted ? this.turnAbort.signal : undefined,
+        requestUserInput: (questions, dismiss) => this.requestUserInput(questions, undefined, dismiss),
+        notify: (notice) => {
+            const event: NormalizedEvent = { kind: 'warning', ...notice };
+            if (this.activePush) this.activePush(event);
+            else if (this.extensionNotices.length < 10) this.extensionNotices.push(event);
+        },
+    };
+    /** A manual compaction between turns; turns and other compactions are declined while it runs. */
+    private compaction: { controller: AbortController; work: Promise<unknown> } | undefined;
     private readonly approvals = new ChatApprovalState();
     private turnPermissionMode: import('michi-shared').ChatPermissionMode | undefined;
 
@@ -273,6 +333,7 @@ export class PiSession implements AgentSession {
         this.requestedModel = deps.requestedModel ?? null;
         this.currentModelId = this.requestedModel;
         this.requestedReasoning = deps.requestedReasoning ?? null;
+        this.todoList = new PiTodoList(deps.initialPlan);
 
         // Seed history from SQLite-rehydrated messages (text-only).
         const seed = deps.initialMessages ?? [];
@@ -327,7 +388,7 @@ export class PiSession implements AgentSession {
             kind: 'pi-agent-core',
             status: this.destroyed ? 'destroyed' : this.recoveryError ? 'unavailable'
                 : this.turnAbort?.signal.aborted || this.mcpCleanup ? 'stopping'
-                : this.turnAbort ? 'running' : 'idle',
+                : this.turnAbort ? 'running' : this.compaction ? 'compacting' : 'idle',
             recoveryRequired: !!this.recoveryError,
             recoveryAction: this.recoveryError ? 'restart_backend_if_still_unavailable' : undefined,
             detail: this.recoveryError?.message,
@@ -336,6 +397,9 @@ export class PiSession implements AgentSession {
 
     async *send(rawUserText: string, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
         this.assertAvailable();
+        if (this.compaction) {
+            throw new Error('Pi is compacting this conversation. Please retry after it finishes; no new request was sent.');
+        }
         if (this.turnAbort || this.inFlightPrompt || this.mcpInitialization || this.mcpCleanup) {
             throw new Error('The previous Pi task is still stopping. Please retry after it finishes; no new request was sent.');
         }
@@ -385,7 +449,12 @@ export class PiSession implements AgentSession {
 
     protected async onTurnSettled(): Promise<void> {}
 
-    private async *runTurn(rawText: string, signal: AbortSignal, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
+    /**
+     * Ready the live Agent for a model request: current model, credentials,
+     * reasoning and tools, building the Agent on first use. Turns run it before
+     * prompting; manual compaction runs it between turns. Yields setup warnings.
+     */
+    private async *prepareTurn(signal: AbortSignal): AsyncGenerator<NormalizedEvent, { model: any }> {
         // Runtime ownership is required for durable Agent Runs even on local
         // desktop installs (where the synthetic owner is "local-user"). Do
         // not confuse that audit identity with a cloud BYOK credential owner:
@@ -438,7 +507,7 @@ export class PiSession implements AgentSession {
 
         const piMod: any = await abortable(loadPiAi(), signal);
         const piAgentCore: any = await abortable(loadPiAgentCore(), signal);
-        const { Type } = piMod;
+        const { Type } = await abortable(loadPiTypebox(), signal);
         const modelIds = modelAttemptIds.length > 0
             ? modelAttemptIds
             : [requestedModel];
@@ -467,7 +536,7 @@ export class PiSession implements AgentSession {
 
         // Retry only failed MCP setup on later turns. Connected servers remain
         // session-scoped; a partial first catalog must not become permanent.
-        const mcpTools = isMetaAgentProfile(this.toolProfile) ? [] : await this.initMcpTools(Type, signal);
+        const mcpTools = this.applyMcpExposure(isMetaAgentProfile(this.toolProfile) ? [] : await this.initMcpTools(Type, signal));
         signal.throwIfAborted();
         for (const warning of this.mcpWarnings.splice(0)) yield warning;
         if (this.agent) {
@@ -501,6 +570,7 @@ export class PiSession implements AgentSession {
                 emitImage: (ev) => this.activePush?.(ev),
                 requestThreadMessageApproval: (request, signal) => this.requestThreadMessageApproval(request, signal),
                 requestScheduledJobApproval: (request, signal) => this.requestScheduledJobApproval(request, signal),
+                requestUserInput: (questions, signal) => this.requestUserInput(questions, signal),
                 agentRunTools: resolveAgentRunToolsForSession(this.bridge, {
                     runtimeId: this.runtimeId,
                     sessionId: this.id,
@@ -512,6 +582,7 @@ export class PiSession implements AgentSession {
                 owner: this.owner,
                 toolProfile: this.toolProfile,
                 getActivePageTurnAttribution: () => this.getActivePageTurnAttribution(),
+                todoList: this.todoList,
             }).filter((tool) => this.isToolAllowed(tool.name));
 
             if (isMaintenanceProfile(this.toolProfile)) {
@@ -526,9 +597,10 @@ export class PiSession implements AgentSession {
                         name: tool.name, description: tool.description, inputSchema: tool.parameters,
                         execute: (args: Record<string, unknown>, signal?: AbortSignal) => tool.execute('maintenance', args, signal),
                     })),
-                })];
+                }), ...createMemoryExtractionTools(getContext)];
                 for (const tool of maintenanceTools) {
-                    if (!META_AGENT_MAINTENANCE_TOOL_NAMES.includes(tool.name) || !this.isToolAllowed(tool.name)) continue;
+                    // The profile's allow-list picks one closed toolset: Pages maintenance or automatic memory.
+                    if (!(META_AGENT_MAINTENANCE_TOOL_NAMES.includes(tool.name) || isMemoryExtractionToolName(tool.name)) || !this.isToolAllowed(tool.name)) continue;
                     const parameters = mcpInputSchemaToTypebox(tool.parameters as unknown as Record<string, unknown>, Type);
                     tools.push({
                         name: tool.name,
@@ -557,10 +629,15 @@ export class PiSession implements AgentSession {
             const workspaceInstructions = !isMaintenanceProfile(this.toolProfile) && this.workspaceId
                 ? deps.historyStore.getWorkspaceInstructions(this.workspaceId)
                 : null;
-            const systemPrompt = [this.preamble, workspaceInstructions]
+            const askUser = tools.some((tool: { name: string }) => tool.name === PI_ASK_USER_TOOL) ? PI_ASK_USER_INSTRUCTION : null;
+            const systemPrompt = [this.preamble, workspaceInstructions, askUser]
                 .filter(Boolean)
                 .join("\n\n");
             this.hostTools = tools;
+            // Restricted, meta-agent and maintenance sessions get only the
+            // host prompt. Cloud cwd is not a user's project.
+            const projectContext = process.env.MICHI_CLOUD !== '1' && this.toolProfile?.restricted !== true
+                && !isMetaAgentProfile(this.toolProfile) && !isMaintenanceProfile(this.toolProfile) && !isAssistantProfile(this.toolProfile);
             this.agent = await this.createHarness(piAgentCore, {
                 initialState: {
                     systemPrompt,
@@ -570,6 +647,7 @@ export class PiSession implements AgentSession {
                     messages: this.collectSeed(),
                 },
                 streamFn: turnStreamFn,
+                extensionUi: this.extensionUi,
                 beforeToolCall: async (
                     bcCtx: { toolCall: { name: string }; args: unknown },
                     signal?: AbortSignal,
@@ -589,6 +667,9 @@ export class PiSession implements AgentSession {
                     if (!this.isToolAllowed(bcCtx.toolCall.name)) {
                         return { block: true, reason: "tool is not enabled for this Agent Run" };
                     }
+                    // Only declares already-registered, already-filtered tools;
+                    // each loaded tool's own call still goes through the policy.
+                    if (bcCtx.toolCall.name === PI_TOOL_SEARCH_TOOL_NAME && this.mcpToolSearch) return undefined;
                     if (this.permissionBroker) {
                         const permission = this.permissionBroker.requestPermission({
                             owner: this.owner,
@@ -600,12 +681,15 @@ export class PiSession implements AgentSession {
                         const decision = signal ? await abortable(Promise.resolve(permission), signal) : await permission;
                         signal?.throwIfAborted();
                         if (decision === "deny") return { block: true, reason: "denied by Run permission policy" };
-                        if (decision !== "ask") return undefined;
+                        // The question is itself the interaction; do not ask permission to ask it.
+                        if (decision !== "ask" || bcCtx.toolCall.name === PI_ASK_USER_TOOL) return undefined;
                         const answer = await this.requestPermission(bcCtx.toolCall.name, bcCtx.args, signal);
                         return answer?.startsWith("allow")
                             ? undefined
                             : { block: true, reason: "denied by Run permission policy" };
                     }
+                    // Michi's user channel, like send_to_thread: no permission card in front of a question.
+                    if (bcCtx.toolCall.name === PI_ASK_USER_TOOL) return undefined;
                     const policy = this.approvals.policy(this.owner, this.ownerUserId, bcCtx.toolCall.name, false, this.turnPermissionMode);
                     if (policy === "allow") return undefined;
                     if (policy === "deny") return { block: true, reason: "denied by policy" };
@@ -620,8 +704,12 @@ export class PiSession implements AgentSession {
                     }
                     return undefined;
                 },
-                afterToolCall: piToolResultErrorOverride,
-            });
+                // A call cut off by Stop tells the model its outcome is unknown.
+                // dispose() marks the session destroyed before it aborts, so a
+                // restart or release is not reported as the user's Stop.
+                afterToolCall: (context: { result: unknown; isError: boolean }, signal?: AbortSignal) =>
+                    interruptedToolResult(context, signal, this.destroyed ? 'session' : 'user') ?? piToolResultErrorOverride(context),
+            }, { projectContext });
         }
 
         // Model configuration and credentials can change between turns. Never
@@ -630,6 +718,11 @@ export class PiSession implements AgentSession {
         this.agent.state.thinkingLevel = thinkingLevel;
         this.agent.streamFunction = turnStreamFn;
         if (this.agent.configureAuth) await this.agent.configureAuth(model.provider, apiKey);
+        return { model };
+    }
+
+    private async *runTurn(rawText: string, signal: AbortSignal, input?: AgentTurnInput): AsyncIterableIterator<NormalizedEvent> {
+        const { model } = yield* this.prepareTurn(signal);
 
         const promptText = this.firstUserPrimed || !this.firstUserGlue
             ? rawText
@@ -643,29 +736,28 @@ export class PiSession implements AgentSession {
             runStartMs: Date.now(),
         };
 
+        // Events always enter the queue; the reader is only woken. A Stop that
+        // interrupts the wait therefore never drops an event already reported.
         const queue: NormalizedEvent[] = [];
-        let resolveNext: ((v: NormalizedEvent | null) => void) | undefined;
+        let wakeReader: (() => void) | undefined;
         let done = false;
         let terminated = false;
+        const wake = () => {
+            const resolve = wakeReader;
+            wakeReader = undefined;
+            resolve?.();
+        };
 
         const push = (ev: NormalizedEvent) => {
-            if (resolveNext) {
-                const r = resolveNext;
-                resolveNext = undefined;
-                r(ev);
-            } else {
-                queue.push(ev);
-            }
+            queue.push(ev);
+            wake();
         };
         this.activePush = push;
+        for (const notice of this.extensionNotices.splice(0)) push(notice);
         const finish = () => {
             terminated = true;
             done = true;
-            if (resolveNext) {
-                const r = resolveNext;
-                resolveNext = undefined;
-                r(null);
-            }
+            wake();
         };
 
         const dump = openRawDump(this.id);
@@ -699,6 +791,7 @@ export class PiSession implements AgentSession {
         const imageBlocks = buildPiImageBlocks(images);
         const textWithReminder =
             maintenancePromptPrefix(input?.maintenanceContext)
+            + (input?.memoryContext ? `${input.memoryContext}\n\n---\n\n` : '')
             + (input?.pageContext ? `${input.pageContext}\n\n---\n\n` : '')
             + promptText + promptNote + followUpReminder(userTurnCount, this.enableFollowUps);
 
@@ -730,16 +823,28 @@ export class PiSession implements AgentSession {
 
         try {
             while (true) {
-                signal.throwIfAborted();
-                let ev: NormalizedEvent | null;
-                if (queue.length > 0) {
-                    ev = queue.shift()!;
-                } else if (done) {
-                    break;
-                } else {
-                    ev = await abortable(new Promise<NormalizedEvent | null>((r) => (resolveNext = r)), signal);
+                if (signal.aborted) {
+                    // Stop ends the turn, but what the SDK reported before it
+                    // (a finished tool, its plan, the call now cut off) is part
+                    // of this turn's record. The subscriber queues nothing after
+                    // the abort, so flushing cannot leak into a later turn.
+                    while (queue.length > 0) {
+                        const ev = queue.shift()!;
+                        yield ev;
+                        if (ev.kind === "turn_end") return;
+                    }
+                    signal.throwIfAborted();
                 }
-                if (ev === null) break;
+                if (queue.length === 0) {
+                    if (done) break;
+                    try {
+                        await abortable(new Promise<void>((resolve) => (wakeReader = resolve)), signal);
+                    } catch (error) {
+                        if (!signal.aborted) throw error;
+                    }
+                    continue;
+                }
+                const ev = queue.shift()!;
                 yield ev;
                 if (ev.kind === "turn_end") break;
                 // Local tools complete in <1ms, so tool_execution_start and tool_execution_end
@@ -765,8 +870,24 @@ export class PiSession implements AgentSession {
     }
 
     /** Full SDK sessions override this seam; tools and host policy stay shared. */
-    protected async createHarness(core: any, options: any): Promise<any> {
+    protected async createHarness(core: any, options: any, _features: PiSdkFeatures): Promise<any> {
         return new core.Agent(options);
+    }
+
+    /** agent-core declares every tool it holds; only the SDK has tool_search. */
+    protected supportsToolSearch(): boolean { return false; }
+
+    /**
+     * Put MCP tools behind tool_search when the session supports it and the
+     * catalog is large. Once on, it stays on for the session, so servers that
+     * connect on a later turn do not flip the loadout back.
+     */
+    private applyMcpExposure(tools: any[]): any[] {
+        if (!this.supportsToolSearch()) return tools;
+        this.mcpToolSearch ||= shouldDeferMcpTools({
+            tools, mode: process.env.MICHI_PI_TOOL_SEARCH, allowlisted: !!this.toolProfile?.allowedToolNames,
+        });
+        return this.mcpToolSearch ? deferMcpTools(tools) : tools;
     }
 
     private isToolAllowed(toolName: string): boolean {
@@ -888,6 +1009,104 @@ export class PiSession implements AgentSession {
         entry.resolve(null);
     }
 
+    /**
+     * ask_user's channel: push user_input_request onto the active turn and wait
+     * for respondToUserInput / skipUserInput, the timeout, or the turn stopping.
+     * ChatHub keeps the request pending for replay, so a refreshed renderer can
+     * still answer it while this session waits. `dismiss` (a Pi extension's
+     * own signal or timeout) withdraws the question like a skip while the turn
+     * goes on.
+     */
+    private async requestUserInput(questions: UserInputQuestion[], signal?: AbortSignal, dismiss?: AbortSignal): Promise<UserInputAnswer[] | null> {
+        const push = this.activePush;
+        const turn = this.turnAbort?.signal;
+        if (!push || !turn || turn.aborted || signal?.aborted || dismiss?.aborted) return null;
+        let release!: () => void;
+        const mine = new Promise<void>((resolve) => { release = resolve; });
+        const previous = this.userInputGate;
+        this.userInputGate = previous.then(() => mine);
+        try {
+            const stopped = AbortSignal.any([turn, ...(signal ? [signal] : []), ...(dismiss ? [dismiss] : [])]);
+            await abortable(previous, stopped).catch(() => {});
+            if (stopped.aborted || this.activePush !== push) return null;
+            const requestId = nextUserInputRequestId();
+            const answers = await new Promise<UserInputAnswer[] | null>((resolve) => {
+                const stop = () => this.skipUserInput(requestId);
+                const finish = (value: UserInputAnswer[] | null) => {
+                    stopped.removeEventListener('abort', stop);
+                    resolve(value);
+                };
+                const timer = setTimeout(() => {
+                    this.pendingUserInputs.delete(requestId);
+                    finish(null);
+                }, userInputTimeoutMs());
+                this.pendingUserInputs.set(requestId, { resolve: finish, timer });
+                stopped.addEventListener('abort', stop, { once: true });
+                push({ kind: 'user_input_request', requestId, questions });
+            });
+            // A cancelled turn ends without resuming the model; ChatHub closes the card.
+            if (turn.aborted || signal?.aborted) return null;
+            // Timeouts have no route receipt; record the outcome for every path.
+            if (this.activePush === push) {
+                push({ kind: 'user_input_resolved', requestId, answers: answers ?? [], outcome: answers ? 'answered' : 'skipped' });
+            }
+            return answers;
+        } finally {
+            release();
+        }
+    }
+
+    respondToUserInput(requestId: number, answers: UserInputAnswer[]): void {
+        const entry = this.pendingUserInputs.get(requestId);
+        if (!entry) return;
+        clearTimeout(entry.timer);
+        this.pendingUserInputs.delete(requestId);
+        entry.resolve(answers);
+    }
+
+    skipUserInput(requestId: number): void {
+        const entry = this.pendingUserInputs.get(requestId);
+        if (!entry) return;
+        clearTimeout(entry.timer);
+        this.pendingUserInputs.delete(requestId);
+        entry.resolve(null);
+    }
+
+    /**
+     * Manual compaction between turns through the harness's native compact().
+     * The Agent is prepared exactly as for a turn (current model, credentials,
+     * tools), and built first if this session has not run a turn yet. It
+     * resolves on completion, so the result reports `completed`. The SDK's
+     * compact() aborts a running turn, so a busy session declines instead.
+     */
+    protected async compactBetweenTurns(instructions?: string): Promise<CompactResult> {
+        if (this.recoveryError) return { started: false, detail: this.recoveryError.message };
+        if (this.destroyed) return { started: false, detail: 'This Pi session has been closed.' };
+        if (this.compaction) return { started: false, detail: 'Pi is already compacting this conversation.' };
+        if (this.turnAbort || this.inFlightPrompt || this.mcpInitialization || this.mcpCleanup) {
+            return { started: false, detail: 'Pi is still working on this conversation. Run /compact again after the current turn finishes.' };
+        }
+        const controller = new AbortController();
+        const work = (async () => {
+            const setup = this.prepareTurn(controller.signal);
+            // Setup warnings belong to the next turn's stream.
+            for (let step = await setup.next(); !step.done; step = await setup.next()) this.mcpWarnings.push(step.value);
+            controller.signal.throwIfAborted();
+            if (typeof this.agent?.compact !== 'function') throw new Error('This Pi engine cannot compact.');
+            return this.agent.compact(instructions?.trim() || undefined);
+        })();
+        this.compaction = { controller, work };
+        try {
+            return { started: true, completed: true, detail: describeCompaction(await work) };
+        } catch (error) {
+            if (controller.signal.aborted) return { started: false, detail: 'Compaction was cancelled.' };
+            const message = error instanceof Error ? error.message : String(error);
+            return { started: false, detail: message.startsWith('Compaction') ? message : `Compaction failed: ${message}` };
+        } finally {
+            if (this.compaction?.work === work) this.compaction = undefined;
+        }
+    }
+
     private collectSeed(): MinimalAgentMessage[] {
         // Reconstruct seed messages from this.history. The constructor already
         // primed history from initialMessages; on first turn we project that
@@ -953,8 +1172,9 @@ export class PiSession implements AgentSession {
     }
 
     cancel(): CancelAck {
-        const acknowledged = !!this.turnAbort || !!this.agent;
+        const acknowledged = !!this.turnAbort || !!this.agent || !!this.compaction;
         this.turnAbort?.abort();
+        this.compaction?.controller.abort();
         if (this.mcpInitialization) void this.disposeMcpManager().catch(() => {});
         try {
             this.agent?.abort();
@@ -986,9 +1206,15 @@ export class PiSession implements AgentSession {
             entry.resolve(null);
         }
         this.pendingPermissions.clear();
+        for (const [, entry] of this.pendingUserInputs) {
+            clearTimeout(entry.timer);
+            entry.resolve(null);
+        }
+        this.pendingUserInputs.clear();
         try {
             await withDeadline(Promise.all([
                 this.inFlightPrompt,
+                this.compaction?.work.catch(() => {}),
                 this.mcpInitialization?.catch(() => {}),
                 this.disposeMcpManager(),
             ]), 5_000, 'Pi resources did not stop in time');
@@ -1146,7 +1372,7 @@ export function streamSimpleWithFallback(
 
             try {
                 options?.signal?.throwIfAborted();
-                const inner = streamPiModel(piMod, model, context, options);
+                const inner = piMod.streamSimple(model, context, options);
                 let terminalSeen = false;
                 for await (const ev of inner) {
                     if (ev?.type === 'error' && (options?.signal?.aborted || ev.reason === 'aborted' || ev.error?.stopReason === 'aborted')) {

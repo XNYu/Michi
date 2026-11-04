@@ -22,7 +22,9 @@
 }
 .ui-modal-panel[data-glass='frozen'] {
   isolation: isolate;
-  background: transparent;
+  /* Captures can contain transparent native chrome. The bitmap must still
+     have an opaque base rather than reveal live pixels through those areas. */
+  background: var(--term-surface);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }

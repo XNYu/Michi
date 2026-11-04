@@ -5,7 +5,7 @@ import path from 'path';
 import { PiSession, type PiSessionDeps } from '../src/agents/pi/PiSession';
 import { PiSdkSession, createPiSession, selectPiSessionKind, shouldNavigatePiTreeOnMichiBranch } from '../src/agents/pi/PiSdkSession';
 import { createPiSdkHarness, piSdkSessionDirectory, invalidatePiSdkTranscript } from '../src/agents/pi/piSdkHarness';
-import { loadPiAi, loadPiAgentCore } from '../src/agents/pi/piAi';
+import { loadPiAi, loadPiAgentCore, loadPiTypebox } from '../src/agents/pi/piAi';
 import { runOwner } from './helpers/owners';
 
 const deps: PiSessionDeps = {
@@ -45,6 +45,7 @@ test('SDK transcript paths isolate user, workspace, owner, profile and branch', 
 test('real SDK persists tool context, applies host denial, restores independently and accepts post-cancel prompts', async () => {
   const ai: any = await loadPiAi();
   const core: any = await loadPiAgentCore();
+  const { Type } = await loadPiTypebox();
   const model = ai.getModel('openai', 'gpt-4.1-mini');
   let executions = 0;
   let requests = 0;
@@ -55,7 +56,7 @@ test('real SDK persists tool context, applies host denial, restores independentl
   let started = new Promise<void>(resolve => { waitStarted = resolve; });
   let releaseWait: () => void = () => {};
   const tool = {
-    name: 'probe', label: 'Probe', description: 'A synthetic host tool', parameters: ai.Type.Object({}),
+    name: 'probe', label: 'Probe', description: 'A synthetic host tool', parameters: Type.Object({}),
     async execute(_id: string, _args: any, signal?: AbortSignal) {
       executions++;
       if (wait) {
@@ -117,7 +118,7 @@ test('real SDK persists tool context, applies host denial, restores independentl
     try { assert(!branch.state.messages.some((message: any) => message.role === 'toolResult')); }
     finally { await branch.dispose(); }
     await harness.updateTools([{ ...tool, description: 'Refreshed schema and implementation',
-      parameters: ai.Type.Object({ revision: ai.Type.Optional(ai.Type.String()) }),
+      parameters: Type.Object({ revision: Type.Optional(Type.String()) }),
       async execute() { return { content: [{ type: 'text', text: 'UPDATED-HANDLER' }], details: {} }; },
     }]);
     assert(harness.state.tools.some((t: any) => t.name === 'extension_probe'), 'Extension tools survive host refresh');

@@ -31,7 +31,7 @@ export async function openArea(page: Page, area: ShellArea): Promise<void> {
 }
 
 /** A Settings page, or one of the older sections whose names specs still use. */
-export type SettingsSection = 'General' | 'Runtime (global)' | 'Meta agent' | 'Components' | 'Appearance' | 'Data & backup'
+export type SettingsSection = 'General' | 'Runtime (global)' | 'Meta agent' | 'Memory' | 'Components' | 'Appearance' | 'Data & backup'
   | 'Runtime & model' | 'Machines' | 'Notifications' | 'Links' | 'Backup & restore'
   | 'Scheduled jobs' | 'Keyboard shortcuts' | 'Account';
 

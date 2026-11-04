@@ -1,8 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { setKnownBackendConnections } from '../../../config/backendConnections';
 import { AuthSessionContext } from '../../../services/auth';
+import { notePendingMemories, resetMemoryNotifications } from '../../../state/memory/memoryNotifications';
 import SettingsMain, { type SettingsLevel } from './SettingsMain';
 import type { SettingsPage } from './settingsPages';
 
@@ -15,6 +16,7 @@ const store = vi.hoisted(() => ({
 vi.mock('../../../state/metaAgent/useMetaAgentOverview', () => ({ useMetaAgentSettingsAlert: () => store.metaAgentAlert }));
 vi.mock('../settings/metaAgent/MetaAgentSettings', () => ({ MetaAgentSettings: () => <div>Meta agent settings</div> }));
 vi.mock('../pages/settings/ModelPane', () => ({ ModelPane: () => <div>Model pane</div> }));
+vi.mock('../pages/settings/MemoryPane', () => ({ MemoryPane: () => <div>Memory pane</div> }));
 vi.mock('./GeneralTopicPage', () => ({ default: ({ page }: { page: string }) => <div>Topic page: {page}</div> }));
 vi.mock('../../../state/prefs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../state/prefs')>();
@@ -66,6 +68,7 @@ beforeEach(() => {
   };
   store.agentStatus = { runtime: 'claude', label: 'Claude Code', model: 'claude-opus-5-5' };
   setKnownBackendConnections([]);
+  resetMemoryNotifications();
 });
 
 describe('Settings window', () => {
@@ -105,6 +108,27 @@ describe('Settings window', () => {
     expect(button('Meta agent, needs attention')).toBeTruthy();
     expect(button('Machines, connection issue')).toBeTruthy();
     expect(document.querySelectorAll('.settings-window__alert')).toHaveLength(2);
+  });
+
+  it('counts the memories waiting for approval beside Memory, and opens its page once workspaces load', async () => {
+    notePendingMemories(3);
+    const view = render(<Host workspaceReady={false} />);
+    expect(button('Memory').hasAttribute('aria-describedby')).toBe(false);
+    view.rerender(<Host workspaceReady />);
+    expect(description(button('Memory'))).toBe('3');
+    fireEvent.click(button('Memory'));
+    expect(await screen.findByText('Memory pane')).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: 'Memory' })).toBeTruthy();
+    act(() => notePendingMemories(200, true));
+    expect(description(button('Memory'))).toBe('200+');
+    act(() => notePendingMemories(0));
+    expect(button('Memory').hasAttribute('aria-describedby')).toBe(false);
+  });
+
+  it('waits for workspaces before showing Memory', () => {
+    render(<Host initial="memory" workspaceReady={false} />);
+    expect(screen.getByRole('status').textContent).toContain('Loading workspaces');
+    expect(screen.queryByText('Memory pane')).toBeNull();
   });
 
   it('lists Account only for a signed-in user', () => {
@@ -194,7 +218,7 @@ describe('Settings list on a phone', () => {
     render(<Host stacked />);
     expect(root().getAttribute('data-view')).toBe('menu');
     const agent = within(sections()).getByRole('group', { name: 'Agent' });
-    expect(within(agent).getAllByRole('button').map((item) => item.getAttribute('aria-label'))).toEqual(['Runtime & model', 'Meta agent']);
+    expect(within(agent).getAllByRole('button').map((item) => item.getAttribute('aria-label'))).toEqual(['Runtime & model', 'Meta agent', 'Memory']);
     expect(description(row('Runtime & model'))).toBe('Claude · Opus 5.5');
     expect(description(row('Appearance'))).toBe('Bone · Rust');
     expect(description(row('Notifications'))).toBe('Approval only');
@@ -207,7 +231,7 @@ describe('Settings list on a phone', () => {
     expect(screen.queryByRole('searchbox')).toBeNull();
     // A phone updates the machine it opened; the desktop window has no Update page.
     expect(within(within(sections()).getByRole('group', { name: 'About' })).getAllByRole('button')[0].getAttribute('aria-label')).toBe('Update');
-    expect(root().querySelectorAll('.settings-phone__chevron')).toHaveLength(11);
+    expect(root().querySelectorAll('.settings-phone__chevron')).toHaveLength(12);
   });
 
   it('names a machine with a connection issue, and the Meta agent when it needs attention', () => {
@@ -216,6 +240,12 @@ describe('Settings list on a phone', () => {
     render(<Host stacked />);
     expect(description(row('Machines, connection issue'))).toBe('Connection issue');
     expect(description(row('Meta agent, needs attention'))).toBe('Needs attention');
+  });
+
+  it('says how many memories wait for approval', () => {
+    notePendingMemories(2);
+    render(<Host stacked />);
+    expect(description(row('Memory, 2 waiting for confirmation'))).toBe('2 waiting');
   });
 
   it('opens a page alone, focuses its heading, and returns focus to its row on Back', async () => {

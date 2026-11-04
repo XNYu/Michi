@@ -1,0 +1,79 @@
+/* PaneArrivalTabs: background branches that opened off screen, pinned to the
+   strip's right edge until their pane is focused or scrolled into view.
+   Centred on the edge: the top right is where the Streaming finished notice
+   for that same branch appears. Pane chrome, not a floating card: square,
+   hairline, no shadow; the raised surface alone separates it from the text. */
+.pane-arrivals {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-pane-overlay);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.pane-arrivals__list {
+  pointer-events: auto;
+  position: relative;
+  width: 264px;
+  max-width: calc(100% - 24px);
+  border: 1px solid var(--term-line);
+  border-right: 0;
+  background: var(--term-float-bg, var(--term-surface));
+  font-family: var(--ui-font);
+}
+/* Straight accent tick, like the sidebar's active row. It is its own edge, so
+   no corner radius can bend it. */
+.pane-arrivals__list::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: -1px;
+  width: 2px;
+  background: var(--term-accent);
+}
+.pane-arrivals__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 12px 0 14px;
+  color: var(--term-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: var(--ls-caps);
+  text-transform: uppercase;
+}
+.pane-arrivals__count { letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.pane-arrival {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 12px 0 14px;
+  border: 0;
+  border-top: 1px solid var(--term-line);
+  background: transparent;
+  color: var(--term-mid);
+  font: inherit;
+  font-family: var(--ui-font);
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-quick) var(--t-ease), color var(--t-quick) var(--t-ease);
+  /* Same arrival wash as a background pane's caption cell. Runs once, on mount. */
+  animation: pane-entrance-bg var(--t-slow) ease-out;
+}
+.pane-arrival__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-arrival__status { flex: none; color: var(--term-muted); font-size: var(--fs-xs); }
+.pane-arrival__status--error { color: var(--term-danger-text, var(--term-danger)); }
+.pane-arrival--more { color: var(--term-muted); font-size: var(--fs-sm); }
+.pane-arrival:focus-visible { outline: 2px solid var(--term-accent); outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) {
+  .pane-arrival:hover { background: var(--term-hover-bg, var(--term-alt)); color: var(--term-fg); }
+}

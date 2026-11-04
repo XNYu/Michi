@@ -19,11 +19,13 @@ import type { KiroEngine } from 'michi-runtime/internal/adapters/kiro/kiroProtoc
 export const KIRO_META_AGENT_NAMES: Readonly<Record<MetaAgentToolset, string>> = Object.freeze({
     maintenance: 'michi-meta-agent-maintenance',
     chat: 'michi-meta-agent-chat',
+    memory: 'michi-meta-agent-memory',
 });
 
 const DESCRIPTIONS: Readonly<Record<MetaAgentToolset, string>> = {
     maintenance: 'Michi Meta agent: background maintenance of Space pages',
     chat: 'Michi Meta agent: the Spaces chat window',
+    memory: 'Michi Meta agent: automatic memory extraction',
 };
 
 const PROMPT = 'You are Michi. Only the michi tools exist: you cannot read or write files, run commands or reach the network.';

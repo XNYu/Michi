@@ -10,8 +10,7 @@ import {
 import { getProviderApiKey } from "../../services/secrets";
 import type { PiModelInfo } from "./piModelTypes";
 import { isReasoningLevel, type ModelReasoningCapabilities } from 'michi-shared';
-import { GEMINI_ARGON_ID, argonThinkingLevelMap, geminiArgonModel, isGeminiArgon, isOpenRouterArgon } from './geminiArgonModel';
-import { streamPiModel } from './geminiArgonStream';
+import { GEMINI_ARGON_ID, GEMINI_ARGON_MAX_OUTPUT, argonThinkingLevelMap, geminiArgonModel, isGeminiArgon, isOpenRouterArgon } from './geminiArgonModel';
 
 export interface PiProviderInfo {
     id: string;
@@ -130,8 +129,8 @@ export const PI_PROVIDERS: PiProviderInfo[] = [
         apiKeyLabel: "Gemini API key",
         envVars: ["GEMINI_API_KEY"],
         defaultModel: GEMINI_ARGON_ID,
-        // Argon stays the default on purpose (custom streaming + thinking map);
-        // discovery adds the Gemini releases pi-ai has not published yet.
+        // Argon is the default on purpose (Low/Medium/High thinking, pricing
+        // cutoff); discovery adds the Gemini releases pi-ai has not published yet.
         discovery: "gemini",
         supportsReasoning: true,
         keyUrl: "https://aistudio.google.com/app/apikey",
@@ -864,14 +863,15 @@ export async function verifyPiProviderKey(
             },
         ];
 
-        for await (const ev of streamPiModel(piMod,
+        for await (const ev of piMod.streamSimple(
             model,
             { messages, tools: [] },
             {
                 ...(apiKey ? { apiKey } : {}),
                 ...bedrockOpts,
                 reasoning: "low",
-                maxTokens: argon ? 32_768 : 16,
+                // Argon always thinks; a 16-token budget ends before it answers.
+                maxTokens: argon ? GEMINI_ARGON_MAX_OUTPUT : 16,
                 maxRetries: 0,
                 timeoutMs,
                 signal: controller.signal,

@@ -13,6 +13,20 @@ export function michiMcpToolName(toolName: string): string | null {
 }
 
 /**
+ * A Claude tool call's identity for host policy (NormalizedEvent toolName,
+ * mcpServer, hostTool): an MCP tool is mcp__<server>__<tool>, Michi's
+ * mcp____michi_internal____<tool>; any other name is a built-in.
+ */
+export function claudeToolIdentity(name: string): { toolName?: string; mcpServer?: string; hostTool?: boolean } {
+  if (!name) return {};
+  const michi = michiMcpToolName(name);
+  if (michi) return { toolName: michi, mcpServer: MICHI_INTERNAL_MCP_NAME, hostTool: true };
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
+  if (mcp) return { toolName: mcp[2], mcpServer: mcp[1], hostTool: false };
+  return { toolName: name };
+}
+
+/**
  * MCP servers a Claude system/init envelope lists besides Michi's own, which
  * a session restricted to Michi's server may not have. A missing list counts
  * as one, so a caller that refuses on any fails closed.

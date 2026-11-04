@@ -85,12 +85,14 @@ function PhoneGroup({ title, children }: { title: string; children: React.ReactN
  * Trash and Archived open their pages; every other row opens its page here.
  * The account sits above the groups; keyboard shortcuts stay on desktop.
  */
-export function PhoneSettingsMenu({ onOpen, onNav, history, metaAgentAlert, rowRef }: {
+export function PhoneSettingsMenu({ onOpen, onNav, history, metaAgentAlert, memoryPending = '', rowRef }: {
   onOpen: (page: SettingsPage) => void;
   onNav: (page: PageId) => void;
   /** Counts for Trash and Archived; zero shows none. */
   history: { trash: number; archived: number };
   metaAgentAlert: boolean;
+  /** Memories waiting for approval ("" for none). */
+  memoryPending?: string;
   rowRef: (id: string, button: HTMLButtonElement | null) => void;
 }) {
   const { prefs } = usePrefs();
@@ -101,6 +103,7 @@ export function PhoneSettingsMenu({ onOpen, onNav, history, metaAgentAlert, rowR
   const values: Partial<Record<SettingsPage, Partial<PhoneRowProps>>> = {
     runtime: { value: runtime },
     'meta-agent': metaAgentAlert ? { value: 'Needs attention', tone: 'error', status: 'needs attention' } : {},
+    memory: memoryPending ? { value: `${memoryPending} waiting`, status: `${memoryPending} waiting for confirmation` } : {},
     machines: { ...machines, status: machines.tone === 'error' ? 'connection issue' : undefined },
     appearance: { value: appearance },
     notifications: { value: NOTIFICATION_OPTIONS.find((option) => option.value === prefs.notifications)?.label },

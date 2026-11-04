@@ -33,7 +33,7 @@ import {
   saveBedrockConfig,
   clearBedrockConfig,
 } from "../services/bedrockCredentials";
-import { resolveAccessPolicy } from "../services/accessPolicy";
+import { isOwnerScopedAccess } from "../services/accessPolicy";
 import { requireAdmin } from "./middleware/admin";
 import { isWebSearchFeatureEnabled, isWebSearchProviderId } from "../services/searchProviders";
 import {
@@ -97,14 +97,9 @@ async function isModelListed(runtime: AgentRuntime, modelId: string, providerId:
   return !!canonical && ids.includes(canonical);
 }
 
-/** Cloud mode isolates accounts; an invalid access configuration counts as cloud. */
-function isOwnerScoped(): boolean {
-  try { return resolveAccessPolicy().ownerScoped; } catch { return true; }
-}
-
 /** Bedrock credentials are shared by every account: in cloud mode only an admin manages them. */
 function requireOperatorInCloud(req: Request, res: Response, next: NextFunction): void {
-  if (!isOwnerScoped()) { next(); return; }
+  if (!isOwnerScopedAccess()) { next(); return; }
   requireAdmin(req, res, next);
 }
 
@@ -615,7 +610,7 @@ export function setupAgentRoutes(opts?: AgentRouteOptions): Router {
       res.status(400).json({ ok: false, error: "Missing request body" });
       return;
     }
-    saveBedrockConfig(body, { keepAuthRefreshCommand: isOwnerScoped() });
+    saveBedrockConfig(body, { keepAuthRefreshCommand: isOwnerScopedAccess() });
     res.json({ ok: true });
   });
 

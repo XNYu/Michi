@@ -101,7 +101,7 @@
     "id": "configuration",
     "title": "Configure Michi, credentials and updates",
     "summary": "Installation paths, environment precedence, settings timing, CLI PATH, credentials and updates.",
-    "keywords": "configuration config settings env PATH CLI credential auth update sync precedence 配置 设置 环境变量 找不到CLI 终端能用 桌面不能用 生效 优先级 更新",
+    "keywords": "configuration config settings env PATH CLI credential auth update sync precedence web search jina tavily fetch_content 配置 设置 环境变量 找不到CLI 终端能用 桌面不能用 生效 优先级 更新 联网搜索",
     "source": "docs/configuration.md"
   },
   {

@@ -491,7 +491,6 @@ export default function CommandPalette({
       width={620}
       anchor="top"
       motion="enter"
-      glass="frozen"
     >
         <div style={PROMPT_ROW}>
           <PaletteSearchGlyph />

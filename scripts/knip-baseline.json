@@ -28,7 +28,6 @@
     "exports\tbackend/src/agents/hostEvents.ts\t__resetHostEventWarnings",
     "exports\tbackend/src/agents/hostText/claude.ts\tCLAUDE_FOLLOW_UPS_HOOK_POC_INSTRUCTION",
     "exports\tbackend/src/agents/michiClaudeOptions.ts\tmichiClaudeProfile",
-    "exports\tbackend/src/agents/pi/mcpToolBridge.ts\tparseMcpToolName",
     "exports\tbackend/src/agents/pi/openrouterModels.ts\tinvalidateOpenRouterCache",
     "exports\tbackend/src/agents/runs/agentRunRecovery.ts\tstartupRecoveryAction",
     "exports\tbackend/src/agents/runs/agentRunStateMachine.ts\tassertAgentRunTransition",

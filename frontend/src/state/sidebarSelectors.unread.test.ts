@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectUnreadTotal, treeHasUnread } from './sidebarSelectors';
+import { branchSubtreeHasUnread, selectUnreadTotal, treeHasUnread } from './sidebarSelectors';
 import type { ChatNodeState, Project, Tree, ProjectEdge } from './chatTypes';
 
 function n(over: Partial<ChatNodeState>): ChatNodeState {
@@ -63,5 +63,19 @@ describe('treeHasUnread / workspaceHasUnread', () => {
       b: n({ nodeId: 'b', projectId: 'p1', lastAssistantAt: 5, viewedAt: 1 }),
     };
     expect(treeHasUnread(tree, edges, nodes, null)).toBe(true);
+  });
+});
+
+describe('branchSubtreeHasUnread', () => {
+  const sub = { nodeId: 'b', depth: 1, children: [{ nodeId: 'c', depth: 2, children: [] }] };
+
+  it('finds an unread node at any depth below, ignoring the focused one', () => {
+    const nodes = {
+      b: n({ nodeId: 'b', lastAssistantAt: 5, viewedAt: 5 }),
+      c: n({ nodeId: 'c', lastAssistantAt: 5, viewedAt: 1 }),
+    };
+    expect(branchSubtreeHasUnread([sub], nodes, null)).toBe(true);
+    expect(branchSubtreeHasUnread([sub], nodes, 'c')).toBe(false);
+    expect(branchSubtreeHasUnread([], nodes, null)).toBe(false);
   });
 });

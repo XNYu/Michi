@@ -1,4 +1,6 @@
 import React from 'react';
+import { getElectron } from '../../lib/electronBridge';
+import './OverlaySurface.css';
 import { createPortal } from 'react-dom';
 import {
   animate,
@@ -91,9 +93,8 @@ export interface PopoverSurfaceProps {
   /** Replaces the default fade-out of a menu surface (a motion target with its
    *  own transition). Plays only inside the caller's `<AnimatePresence>`. */
   exit?: TargetAndTransition;
-  /** Opt into the shared frosted-glass material (.term-glass): the surface
-   *  drops its opaque bg/shadow so the glass primitive owns them (blur + wash +
-   *  cast), matching the sidebar and Settings drawer. Border/radius/font stay. */
+  /** Use the shared glass border/shadow. On desktop its background is opaque
+   *  so opening a menu never samples the streaming transcript underneath. */
   glass?: boolean;
   role?: string;
   'aria-label'?: string;
@@ -144,9 +145,10 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
 
     const isTooltip = variant === 'tooltip';
     const defaultZ = isTooltip ? 'var(--z-tooltip)' : 'var(--z-popover)';
-    // Tuned menus share the frosted .term-glass with the Command Palette and
-    // drawers; the right-click menu is the deliberate solid exception.
+    // Keep the shared elevation, but use opaque material on desktop. Unlike
+    // modals, short-lived menus should never wait for a window capture.
     const useGlass = glass || (menuKind !== undefined && menuKind !== 'context');
+    const solidGlass = useGlass && getElectron() !== null;
     // Menus grow in with motion; everything else keeps the CSS fade below. A
     // caller transform would fight the growth.
     const grows = animate && !isTooltip && role !== 'tooltip'
@@ -176,7 +178,7 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
       animation: animate && !menuKind && !grows ? 'fadeIn var(--t-soft) ease-out both' : undefined,
       ...style,
     };
-    const surfaceClassName = [menuKind && 'michi-menu', useGlass && 'term-glass', className].filter(Boolean).join(' ') || undefined;
+    const surfaceClassName = ['ui-overlay-surface', menuKind && 'michi-menu', useGlass && 'term-glass', className].filter(Boolean).join(' ');
 
     if (grows) {
       return createPortal(
@@ -188,6 +190,7 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
           ariaLabel={ariaLabel}
           className={surfaceClassName}
           menuKind={menuKind}
+          solidGlass={solidGlass}
           style={baseStyle}
           onMouseDown={onMouseDown}
           onClick={onClick}
@@ -206,6 +209,7 @@ export const PopoverSurface = React.forwardRef<HTMLDivElement, PopoverSurfacePro
         aria-label={ariaLabel}
         className={surfaceClassName}
         data-menu={menuKind}
+        data-glass={solidGlass ? 'solid' : undefined}
         data-menu-animate={menuKind && animate ? 'true' : undefined}
         style={baseStyle}
         onMouseDown={onMouseDown}
@@ -266,6 +270,7 @@ function GrowingSurface({
   ariaLabel,
   className,
   menuKind,
+  solidGlass,
   style,
   onMouseDown,
   onClick,
@@ -279,6 +284,7 @@ function GrowingSurface({
   ariaLabel?: string;
   className?: string;
   menuKind?: MenuKind;
+  solidGlass: boolean;
   style: React.CSSProperties;
   onMouseDown?: React.MouseEventHandler<HTMLDivElement>;
   onClick?: React.MouseEventHandler<HTMLDivElement>;
@@ -351,6 +357,7 @@ function GrowingSurface({
       inert={leaving}
       className={className}
       data-menu={menuKind}
+      data-glass={solidGlass ? 'solid' : undefined}
       // Plays the shared menu entrance, in its own (motion) form.
       data-menu-animate="true"
       data-menu-motion="grow"

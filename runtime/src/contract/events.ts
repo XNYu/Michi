@@ -25,6 +25,22 @@ export type NormalizedEvent =
           detail?: string;
           inputJson?: string;
           output?: string;
+          /**
+           * What the tool is, for host policy (not for display; `title` is
+           * display text and can be prose): the runtime's own name for it,
+           * or the adapter's name (shell, web_search, ...) when the runtime
+           * reports only a kind of call. For an MCP tool, its name on its
+           * server. Absent when the runtime does not say.
+           */
+          toolName?: string;
+          /** The MCP server the tool belongs to, as the runtime names it. Absent for a tool of the runtime itself. */
+          mcpServer?: string;
+          /**
+           * Set when the adapter knows whose tool it is: true for the host's
+           * own tools (its MCP server's, or tools the host runs in process),
+           * false for a tool of any other MCP server.
+           */
+          hostTool?: boolean;
       }
     | { kind: "heartbeat"; idleMs: number }
     | { kind: "title"; title: string }

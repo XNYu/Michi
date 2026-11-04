@@ -48,6 +48,7 @@ describe('SelectionActions', () => {
     });
     window.getSelection()?.removeAllRanges();
     pointerDown('mouse');
+    mouseDown(1);
     vi.useRealTimers();
   });
 
@@ -555,6 +556,63 @@ describe('SelectionActions', () => {
     expect(bar.style.left).toBe('330px');
   });
 
+  describe('after a double click', () => {
+    let lineRects: DOMRect[];
+    const bar = () => document.body.querySelector('.sel-actions-popup') as HTMLElement | null;
+    function renderClickSelect() {
+      lineRects = [rect(300, 200, 40, 18)];
+      Object.defineProperty(Range.prototype, 'getClientRects', {
+        configurable: true,
+        value: vi.fn(() => lineRects as unknown as DOMRectList),
+      });
+      function Harness() {
+        const ref = React.useRef<HTMLDivElement>(null);
+        React.useEffect(() => {
+          if (ref.current) ref.current.getBoundingClientRect = () => rect(0, 0, 1000, 600);
+        }, []);
+        return (
+          <div ref={ref}>
+            hello world foobar
+            <SelectionActions containerRef={ref} onBranch={vi.fn()} onQuote={vi.fn()} onComment={vi.fn()} />
+          </div>
+        );
+      }
+      render(<Harness />);
+      const textNode = screen.getByText('hello world foobar').firstChild!;
+      return (clicks: number, start: number, end: number) => act(() => {
+        mouseDown(clicks);
+        const range = document.createRange();
+        range.setStart(textNode, start);
+        range.setEnd(textNode, end);
+        window.getSelection()?.removeAllRanges();
+        window.getSelection()?.addRange(range);
+        document.dispatchEvent(new Event('selectionchange'));
+      });
+    }
+
+    it('waits out a third click, so a triple click shows the bar once, on the block', () => {
+      const clickSelect = renderClickSelect();
+      clickSelect(2, 6, 11);
+      act(() => { vi.advanceTimersByTime(150); });
+      expect(bar()).toBeNull();
+
+      // Block 300..700 → centre 500 − half the 280px bar → left 360.
+      lineRects = [rect(300, 200, 400, 18)];
+      clickSelect(3, 0, 18);
+      act(() => { vi.advanceTimersByTime(80); });
+      expect(bar()?.style.left).toBe('360px');
+    });
+
+    it('shows the bar on the word once no third click came', () => {
+      const clickSelect = renderClickSelect();
+      clickSelect(2, 6, 11);
+      act(() => { vi.advanceTimersByTime(299); });
+      expect(bar()).toBeNull();
+      act(() => { vi.advanceTimersByTime(1); });
+      expect(bar()).not.toBeNull();
+    });
+  });
+
   it('follows scroll 1:1 even when the shift is inside the dead-zone', () => {
     // Regression guard: the selection-edit dead-zone must not apply to
     // scroll-driven repositioning, or the bar visibly lags a slow scroll and
@@ -847,6 +905,10 @@ describe('placeDock', () => {
     expect(placeDock({ left: 12, bottom: 762, width: 366, height: 30 }).height).toBe(44);
   });
 });
+
+function mouseDown(clicks: number) {
+  document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, detail: clicks }));
+}
 
 function pointerDown(pointerType: string) {
   const event = new Event('pointerdown', { bubbles: true });

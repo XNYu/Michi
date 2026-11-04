@@ -1,5 +1,5 @@
 import {
-  Archive, Bell, CalendarClock, CircleUser, Cpu, ExternalLink, HardDriveDownload, Keyboard, Palette, RefreshCw, Server,
+  Archive, Bell, Brain, CalendarClock, CircleUser, Cpu, ExternalLink, HardDriveDownload, Keyboard, Palette, RefreshCw, Server,
   Sparkles, Trash2, type LucideIcon,
 } from 'lucide-react';
 import type { PageId } from '../../../state/commands';
@@ -11,7 +11,7 @@ import { SETTINGS_AREA_SECTIONS, type SettingsAreaSection } from '../../../state
  * tests still name (General holds several pages).
  */
 export type SettingsPage =
-  | 'account' | 'runtime' | 'meta-agent' | 'machines' | 'appearance'
+  | 'account' | 'runtime' | 'meta-agent' | 'memory' | 'machines' | 'appearance'
   | 'notifications' | 'links' | 'backup' | 'scheduled' | 'shortcuts' | 'update';
 
 export interface SettingsPageInfo {
@@ -25,6 +25,8 @@ export interface SettingsPageInfo {
 export const SETTINGS_PAGES: Readonly<Record<SettingsPage, SettingsPageInfo>> = {
   runtime: { label: 'Runtime & model', icon: Cpu, section: 'runtime' },
   'meta-agent': { label: 'Meta agent', icon: Sparkles, section: 'meta-agent' },
+  /** What agents remember across runtimes, and memories waiting for approval. */
+  memory: { label: 'Memory', icon: Brain, section: 'general' },
   /** Connected machines, and phone access, which opens one of them on a phone. */
   machines: { label: 'Machines', icon: Server, section: 'general' },
   appearance: { label: 'Appearance', icon: Palette, section: 'appearance' },
@@ -49,7 +51,7 @@ export type SettingsGroupItem = { kind: 'page'; page: SettingsPage } | { kind: '
 
 /** The groups both layouts list, in order. Data mixes the two places with backup. */
 export const SETTINGS_GROUPS: ReadonlyArray<{ title: string; items: readonly SettingsGroupItem[] }> = [
-  { title: 'Agent', items: [{ kind: 'page', page: 'runtime' }, { kind: 'page', page: 'meta-agent' }] },
+  { title: 'Agent', items: [{ kind: 'page', page: 'runtime' }, { kind: 'page', page: 'meta-agent' }, { kind: 'page', page: 'memory' }] },
   { title: 'Connections', items: [{ kind: 'page', page: 'machines' }] },
   { title: 'App', items: [{ kind: 'page', page: 'appearance' }, { kind: 'page', page: 'notifications' }, { kind: 'page', page: 'links' }] },
   { title: 'Data', items: [...SETTINGS_PLACES.map((place) => ({ kind: 'place' as const, place })), { kind: 'page', page: 'backup' }] },

@@ -88,6 +88,7 @@ import { configureRuntimeDeps } from './agents/runtimeDeps';
 import { resolveChatPermissionMode, resolveChatApproveForMe, hasChatToolGrant, grantChatTool, chatPermissionResetToken } from './services/chatPermissions';
 import { getNode, getNodeSessionBinding, listMessages, listTrees, getWorkspace, getWorkspaceInstructions, recoverInterruptedTurns, updateNodeResumeBinding, upsertAgentContextMetadata } from './services/dbRepository';
 import { ensureDurableGraphNode, rollbackProvisionalSpawnNode } from './services/graphCommands';
+import { sessionPlanSnapshot } from './services/planSnapshot';
 import { getMichiDataDir } from './services/dataDir';
 import {
   createRemoteAccessMiddleware,
@@ -108,6 +109,9 @@ import { acquireSessionRestoreLock } from './services/nativeResume';
 import { AgentRunAdministrativeLifecycle } from './services/agentRunAdministrativeLifecycle';
 import { createStreamTransport } from './services/streamTransport';
 import { setupScheduledJobRoutes } from './routes/scheduledJobs';
+import { setupMemoryRoutes } from './routes/memories';
+import { setupMemoryExtractionRoutes } from './routes/memoryExtraction';
+import { attachMemoryExtractionScheduler, installMemoryExtractionHooks } from './services/memory/extractionService';
 import { createLocalOriginGuard, isLoopbackListenHost } from './routes/middleware/localControl';
 import { ScheduledJobsRepository } from './services/scheduledJobs/repository';
 import { ScheduledJobScheduler } from './services/scheduledJobs/scheduler';
@@ -233,7 +237,7 @@ log.info('boot', 'agent config loaded');
 configureRuntimeDeps({
   onSessionStateChanged: persistSessionState,
   chatPermissions: { getMode: resolveChatPermissionMode, getApproveForMe: resolveChatApproveForMe, hasGrant: hasChatToolGrant, grant: grantChatTool, resetToken: chatPermissionResetToken },
-  historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions },
+  historyStore: { getNode, listMessages, getWorkspace, getWorkspaceInstructions, getPlanSnapshot: sessionPlanSnapshot },
   dataDir: getMichiDataDir(),
   providerKeys: { getProviderApiKey },
   globalContext: { listThreads, searchMessages, readNode, readNodeOverview },
@@ -488,6 +492,9 @@ const scheduledJobScheduler = scheduledJobExecutor
       serviceMode: SERVICE_MODE,
     })
   : null;
+// Tombstones for deleted/rejected memories are written on every backend; extraction runs only with the scheduler.
+installMemoryExtractionHooks();
+if (scheduledJobScheduler) attachMemoryExtractionScheduler(scheduledJobScheduler);
 configureScheduledJobTools(scheduledJobScheduler && scheduledJobExecutor
   ? {
       scheduler: scheduledJobScheduler,
@@ -868,6 +875,8 @@ if (process.env.MICHI_CLOUD !== '1') {
   app.use('/api', setupMetaAgentOverviewRoutes({ scheduler: scheduledJobScheduler }));
 }
 app.use('/api', setupScheduledJobRoutes({ scheduler: scheduledJobScheduler, events: scheduledJobEvents }));
+app.use('/api', setupMemoryRoutes());
+app.use('/api', setupMemoryExtractionRoutes({ scheduler: scheduledJobScheduler }));
 
 const frontendBuild = path.join(__dirname, '../../frontend/build');
 const indexHtml = path.join(frontendBuild, 'index.html');

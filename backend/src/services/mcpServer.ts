@@ -61,6 +61,7 @@ import {
     isScheduledJobToolName,
     scheduledJobTool,
 } from "../agents/scheduledJobTools";
+import { MEMORY_TOOL_NAMES, memoryTool, type MemoryToolName } from "../agents/memoryTools";
 import {
     AGENT_RUN_TOOL_NAMES,
     SUBMIT_AGENT_RESULT_TOOL,
@@ -79,6 +80,8 @@ import type { MichiHostEvent } from "../agents/hostEvents";
 import type { RuntimeSessionOwner, MaintenanceExecutionContext } from "../agents/types";
 import { createMaintenanceTools } from './pages/maintenanceTools';
 import { META_AGENT_MAINTENANCE_TOOL_NAMES } from '../agents/maintenancePolicy';
+import { isMemoryExtractionToolName } from './memory/extractionProfile';
+import { createMemoryExtractionTools } from './memory/extractionTools';
 import { log } from "./logger";
 import { JSON_BODY_LIMIT_BYTES } from "./requestBodyLimit";
 import { isLoopbackAddress } from "./remoteAccess";
@@ -469,9 +472,10 @@ function registerMaintenanceTools(registerTool: AddTool, slot: McpSlot): void {
                 return await tool.handler(parsed.data, { signal }) as import('@modelcontextprotocol/sdk/types.js').CallToolResult;
             },
         })),
-    })];
+    }), ...createMemoryExtractionTools(getContext)];
     for (const tool of tools) {
-        if (!META_AGENT_MAINTENANCE_TOOL_NAMES.includes(tool.name) || !isToolExposed(slot, tool.name)) continue;
+        // The slot's allow-list (its profile) picks one closed toolset: Pages maintenance or automatic memory.
+        if (!(META_AGENT_MAINTENANCE_TOOL_NAMES.includes(tool.name) || isMemoryExtractionToolName(tool.name)) || !isToolExposed(slot, tool.name)) continue;
         const properties = Object.fromEntries(Object.entries(tool.parameters.properties).map(([key, schema]) =>
             [key, maintenanceJsonSchemaToZod(schema as Record<string, unknown>)]));
         const required = new Set(tool.parameters.required);
@@ -1009,6 +1013,28 @@ function michiToolCatalog(slot: McpSlot): MichiTool[] {
         }
     }
 
+    // Michi Memory: ordinary chat threads only (not Agent Runs, the assistant
+    // or maintenance), owner and workspace from the slot binding, and turn
+    // trust from the bound node. See agents/memoryTools.ts.
+    if (!isRunOwner(slot.owner)) {
+        for (const name of MEMORY_TOOL_NAMES) {
+            if (!exposes(name)) continue;
+            registerTool(
+                name,
+                { ...builtinRegistration(name), annotations: MEMORY_TOOL_ANNOTATIONS[name] },
+                async (args) => {
+                    const binding = resolveSlotBinding(slot);
+                    return memoryTool(name, {
+                        ownerUserId: slot.ownerUserId,
+                        workspaceId: binding.workspaceId,
+                        nodeId: binding.nodeId,
+                        isAgentRun: false,
+                    }, args);
+                },
+            );
+        }
+    }
+
     if (slot.onAskUser && isToolExposed(slot, "ask_user")) registerTool(
         "ask_user",
         {
@@ -1064,6 +1090,14 @@ function michiToolCatalog(slot: McpSlot): MichiTool[] {
 
     return tools;
 }
+
+/** Hints for MCP clients; Michi's own policy (agents/permissionPolicy.ts) decides approvals. */
+const MEMORY_TOOL_ANNOTATIONS: Record<MemoryToolName, ToolAnnotations> = {
+    memory_search: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    memory_save: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    memory_update: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    memory_delete: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+};
 
 function registerAgentRunTools(registerTool: AddTool, invoker: AgentRunToolInvoker,
     allowedNames?: readonly AgentRunToolName[]): void {

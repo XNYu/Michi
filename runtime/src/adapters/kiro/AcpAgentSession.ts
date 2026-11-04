@@ -1,5 +1,5 @@
 import { ApprovalCoordinator, chatApprovalOptions } from '../../core/approvals';
-import { acpPermissionToolName, kiroBrokerToolName, KiroToolCallNames, type KiroToolNameResolver } from './kiroToolNames';
+import { acpPermissionToolName, acpToolIdentity, kiroBrokerToolName, KiroToolCallNames, type KiroToolNameResolver } from './kiroToolNames';
 import { isHeadlessOwner, isInteractiveOwner } from './kiroOwner';
 import { interactiveOwner } from '../../contract/types';
 import * as fs from "node:fs";
@@ -450,6 +450,7 @@ export class AcpAgentSession implements AgentSession {
             owner: this.owner,
         });
         const textForModel = (this.runtime.host.profile.maintenancePromptPrefix?.(maintenanceContext) ?? '')
+            + (input?.memoryContext ? `${input.memoryContext}\n\n---\n\n` : '')
             + (input?.pageContext ? `${input.pageContext}\n\n---\n\n` : '')
             + text + promptNote + (linkImages ? describeLinkedImages(imageAttachments) : '') + turnSuffix
             + (this.runtime.getMcpSessionReminder?.(this.nativeSessionId) ?? '');
@@ -882,6 +883,11 @@ export class AcpAgentSession implements AgentSession {
                     detail: purpose,
                     inputJson: inputStr && inputStr.length > MAX_PAYLOAD ? inputStr.slice(0, MAX_PAYLOAD) : inputStr,
                     output: outputStr && outputStr.length > MAX_PAYLOAD ? outputStr.slice(0, MAX_PAYLOAD) : outputStr,
+                    ...acpToolIdentity(update, {
+                        resolveName: resolveToolName,
+                        calledAs: toolCallNames.get(update.toolCallId),
+                        mcpName: this.flavor.tools?.mcpName,
+                    }),
                 };
                 if (delegation) {
                     const entry = kiroV3DelegationEntry(update);

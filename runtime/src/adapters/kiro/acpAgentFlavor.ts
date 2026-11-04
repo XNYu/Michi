@@ -59,6 +59,8 @@ export interface AcpAgentFlavor {
         title?(update: AcpUpdate): string | undefined;
         /** The tool's name for approvals, grants and brokers; undefined falls back to Kiro's lookup. */
         name?(toolCall: Record<string, any> | undefined): string | undefined;
+        /** A tool name as an MCP server and the tool's name there; undefined: not an MCP tool. Absent: Kiro's `@<server>/<tool>`. */
+        mcpName?(name: string): { server: string; tool: string } | undefined;
     };
     /**
      * How a launch-override agent reports that it is signed out. Absent: no

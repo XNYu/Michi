@@ -1,0 +1,46 @@
+/* Settings › Memory. Sections, rows and notes come from SettingsSection. */
+.memory-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.memory-toolbar .settings-row__select { flex: none; }
+.memory-toolbar__search.ui-input { flex: 1 1 200px; width: auto; min-width: 0; }
+
+.memory-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.memory-add--open { flex-direction: column; align-items: stretch; padding: 12px; border: 1px solid var(--term-line); border-radius: var(--ui-radius-sm); }
+
+.memory-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.memory-item { padding: 12px 0; min-width: 0; }
+.memory-item + .memory-item { border-top: 1px solid var(--term-line); }
+.memory-item[aria-busy='true'] { opacity: 0.7; }
+.memory-item__row { display: flex; align-items: flex-start; gap: 8px; }
+.memory-item__check { flex: none; margin-top: 3px; accent-color: var(--term-accent); }
+.memory-item__body { margin: 0; color: var(--term-fg); font-size: var(--fs-md); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-item__meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-top: 4px; color: var(--term-muted); font-size: var(--fs-sm); }
+.memory-item__meta .settings-row__link { font-size: inherit; }
+.memory-item__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.memory-item__scope.ui-select { width: auto; max-width: 220px; padding-top: 2px; padding-bottom: 2px; font-size: var(--fs-sm); }
+.memory-item__editor { display: flex; flex-direction: column; }
+.memory-item__textarea.ui-input { resize: vertical; min-height: 56px; line-height: 1.5; }
+.memory-item__notice { margin: 8px 0 0; color: var(--term-muted); font-size: var(--fs-sm); line-height: 1.5; }
+.memory-item__notice.is-error { color: var(--term-danger); }
+.memory-item__warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.memory-item__warning svg { flex: none; margin-top: 2px; }
+
+.memory-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.memory-bulk__all { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; color: var(--term-mid); font-size: var(--fs-sm); cursor: pointer; }
+.memory-bulk__all input { accent-color: var(--term-accent); }
+.memory-more { margin-top: 12px; }
+
+/* A phone stacks the controls under the text, full width. */
+.terminal-settings[data-stacked] .memory-toolbar .settings-row__select { flex: 1 1 100%; }
+.terminal-settings[data-stacked] .memory-bulk__all { flex-basis: 100%; }

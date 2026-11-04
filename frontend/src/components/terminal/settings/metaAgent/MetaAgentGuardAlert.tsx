@@ -10,6 +10,7 @@ import './metaAgentSettings.css';
 const TOOLSET_LABELS: Record<MetaAgentToolset, string> = {
   maintenance: 'Background maintenance',
   chat: 'Chat window',
+  memory: 'Automatic memory',
 };
 
 function joinWords(words: string[]): string {

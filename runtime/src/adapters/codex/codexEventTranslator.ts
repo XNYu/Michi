@@ -10,6 +10,7 @@ import {
   codexCollabRoster,
   codexCollabTitle,
 } from './codexCollab';
+import { CODEX_HOST_MCP_SERVER } from './codexProtocol';
 
 // Wire names are checked against the pinned official schema by codexContract.test.
 const N = {
@@ -270,6 +271,47 @@ function toolPresentation(item: Record<string, unknown>): ToolPresentation {
   return { title: itemType, kindType: 'tool', detail: '' };
 }
 
+type ToolIdentity = Pick<Extract<NormalizedEvent, { kind: 'tool_call' | 'tool_call_update' }>, 'toolName' | 'mcpServer' | 'hostTool'>;
+
+/** The read-only command actions codex parses a shell command into, by the name of the tool that does the same. */
+const READ_ONLY_COMMAND_ACTIONS: Record<string, string> = { read: 'read', listFiles: 'ls', search: 'grep' };
+
+/**
+ * What a tool item is, for host policy. codex reports kinds of call, not
+ * tool names: a shell command codex parsed entirely into read-only actions
+ * (cat, ls, rg, ...) is named after the action, any other is `shell`. An MCP
+ * call names its server; the host's own is CODEX_HOST_MCP_SERVER.
+ */
+function toolIdentity(item: Record<string, unknown>): ToolIdentity {
+  const itemType = stringField(item, 'type') ?? '';
+  if (itemType === 'commandExecution') {
+    const actions = Array.isArray(item['commandActions']) ? item['commandActions'] : [];
+    const names = actions.map((action) => isRecord(action) ? READ_ONLY_COMMAND_ACTIONS[stringField(action, 'type') ?? ''] : undefined);
+    return { toolName: names.length > 0 && names.every(Boolean) ? names[0] : 'shell' };
+  }
+  if (itemType === 'fileChange') return { toolName: 'apply_patch' };
+  if (itemType === 'webSearch') return { toolName: 'web_search' };
+  if (itemType === 'mcpToolCall') {
+    const tool = stringField(item, 'tool');
+    const server = stringField(item, 'server');
+    return {
+      ...(tool ? { toolName: tool } : {}),
+      ...(server ? { mcpServer: server, hostTool: server === CODEX_HOST_MCP_SERVER } : {}),
+    };
+  }
+  if (itemType === 'dynamicToolCall') {
+    const tool = stringField(item, 'tool');
+    const namespace = stringField(item, 'namespace');
+    return tool ? { toolName: namespace ? `${namespace}.${tool}` : tool } : {};
+  }
+  if (itemType === CODEX_COLLAB_ITEM) {
+    const tool = stringField(item, 'tool');
+    return tool ? { toolName: tool } : {};
+  }
+  if (itemType === CODEX_SUBAGENT_ACTIVITY_ITEM) return { toolName: 'spawnAgent' };
+  return itemType ? { toolName: itemType } : {};
+}
+
 export interface CodexTranslatorHandle {
   feed: (method: string, params: Record<string, unknown>) => void;
   startTurn: () => void;
@@ -381,6 +423,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
               status: 'in_progress',
               kindType: 'subagent',
               inputJson: truncatePayload(codexSubagentSpawnInput(item)),
+              ...toolIdentity(item),
             });
           }
           break;
@@ -393,6 +436,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
             status: 'in_progress',
             kindType: codexCollabKind(item),
             inputJson: truncatePayload(codexCollabInput(item)),
+            ...toolIdentity(item),
           });
           break;
         }
@@ -411,6 +455,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
           kindType: presentation.kindType,
           detail: extractCodexPurpose(item) ?? presentation.detail,
           inputJson: truncatePayload(item),
+          ...toolIdentity(item),
         });
         break;
       }
@@ -431,6 +476,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
               status: 'completed',
               kindType: 'subagent',
               inputJson: truncatePayload(codexSubagentSpawnInput(item)),
+              ...toolIdentity(item),
             });
             emit({ kind: 'subagent_list_update', subagents: codexSubagentSpawnRoster(item) });
           }
@@ -448,6 +494,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
             kindType: codexCollabKind(item),
             inputJson: truncatePayload(codexCollabInput(item)),
             ...(failed && errors ? { output: truncatePayload(errors) } : {}),
+            ...toolIdentity(item),
           });
           if (roster.length > 0) emit({ kind: 'subagent_list_update', subagents: roster });
           break;
@@ -476,6 +523,7 @@ export function createCodexTranslator(emit: (ev: NormalizedEvent) => void): Code
           kindType: presentation.kindType,
           detail,
           output: truncatePayload(rawOutput),
+          ...toolIdentity(item),
         });
         break;
       }

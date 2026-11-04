@@ -5,11 +5,12 @@ import path from 'path';
 import { PiRuntime } from '../src/agents/pi/PiRuntime';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import { clearAllSessions } from '../src/agents/sessionRegistry';
-import { loadPiAi } from '../src/agents/pi/piAi';
+import { loadPiAi, loadPiTypebox } from '../src/agents/pi/piAi';
 import { chatOwner } from './helpers/owners';
 
 test('PiRuntime default SDK send keeps host policy, attachments, display history and native recovery', async (t) => {
   const ai: any = await loadPiAi();
+  const { Type } = await loadPiTypebox();
   const piAi = require('../src/agents/pi/piAi');
   const piTools = require('../src/agents/pi/piTools');
   const mcp = require('../src/services/piMcpConfig');
@@ -32,7 +33,7 @@ test('PiRuntime default SDK send keeps host policy, attachments, display history
       resolveModel: () => 'gpt-4.1-mini', resolveReasoning: () => undefined },
   });
   mcp.readPiMcpServers = () => [];
-  piTools.buildPiTools = () => [{ name: 'probe', label: 'Probe', description: 'Host probe', parameters: ai.Type.Object({}),
+  piTools.buildPiTools = () => [{ name: 'probe', label: 'Probe', description: 'Host probe', parameters: Type.Object({}),
     async execute() { executions++; return { content: [{ type: 'text', text: 'HOST-TOOL-7391' }], details: {} }; } }];
   piAi.loadPiAi = async () => ({ ...ai, streamSimple: (model: any, context: any, options: any) => {
     captured = context;

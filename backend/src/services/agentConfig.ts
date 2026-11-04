@@ -64,16 +64,20 @@ const BUILTIN_DEFAULT_REASONING_BY_RUNTIME: Record<string, AgentReasoning> = {
   kiro: "high",
 };
 
-const ENV_DEFAULT_WEB_SEARCH_PROVIDER = isWebSearchFeatureEnabled()
-  && isWebSearchProviderId(process.env.MICHI_DEFAULT_WEB_SEARCH_PROVIDER)
-  ? process.env.MICHI_DEFAULT_WEB_SEARCH_PROVIDER
-  : null;
+/**
+ * Read when defaults are built, not at import: server.ts loads backend/.env,
+ * and ~/.michi/.env for the background service, after its imports run.
+ */
+function envDefaultWebSearchProvider(): WebSearchProviderId | null {
+  const provider = process.env.MICHI_DEFAULT_WEB_SEARCH_PROVIDER;
+  return isWebSearchFeatureEnabled() && isWebSearchProviderId(provider) ? provider : null;
+}
 
 const DEFAULTS: AgentConfig = {
   // Public installs wait for a choice; explicit environment and saved config still win.
   runtime: process.env.MICHI_DEFAULT_RUNTIME ?? "",
   provider: "anthropic",
-  webSearchProvider: ENV_DEFAULT_WEB_SEARCH_PROVIDER,
+  webSearchProvider: null,
   providerByRuntime: {},
   modelByRuntime: {},
   reasoningByRuntime: {},
@@ -81,6 +85,16 @@ const DEFAULTS: AgentConfig = {
   nativeForkByRuntime: {},
   workflowsByRuntime: {},
 };
+
+function defaultAgentConfig(): AgentConfig {
+  return {
+    ...DEFAULTS,
+    webSearchProvider: envDefaultWebSearchProvider(),
+    providerByRuntime: { ...DEFAULTS.providerByRuntime },
+    modelByRuntime: { ...DEFAULTS.modelByRuntime },
+    reasoningByRuntime: { ...DEFAULTS.reasoningByRuntime },
+  };
+}
 
 
 function booleanRuntimeMap(value: unknown): Record<string, boolean> {
@@ -101,12 +115,7 @@ export function isWorkflowsEnabled(runtimeId: string, userId?: string | null): b
   return getAgentConfig(userId ?? undefined).workflowsByRuntime?.[runtimeId] === true;
 }
 
-let current: AgentConfig = {
-  ...DEFAULTS,
-  providerByRuntime: { ...DEFAULTS.providerByRuntime },
-  modelByRuntime: { ...DEFAULTS.modelByRuntime },
-  reasoningByRuntime: { ...DEFAULTS.reasoningByRuntime },
-};
+let current: AgentConfig = defaultAgentConfig();
 
 let warnedAboutLegacy = false;
 
@@ -158,12 +167,7 @@ function persist(config: AgentConfig = current): void {
 
 export function loadAgentConfig(): AgentConfig {
   const disk = readDiskFile();
-  let next: AgentConfig = {
-    ...DEFAULTS,
-    providerByRuntime: { ...DEFAULTS.providerByRuntime },
-    modelByRuntime: { ...DEFAULTS.modelByRuntime },
-    reasoningByRuntime: { ...DEFAULTS.reasoningByRuntime },
-  };
+  let next: AgentConfig = defaultAgentConfig();
   let migratedFromLegacy = false;
 
   if (disk && typeof disk === "object") {
@@ -255,12 +259,7 @@ export function getAgentConfig(userId?: string): AgentConfig {
     if (!row) {
       // First access — return built-in defaults; the row will be created on
       // first write via updateAgentConfig.
-      return {
-        ...DEFAULTS,
-        providerByRuntime: { ...DEFAULTS.providerByRuntime },
-        modelByRuntime: { ...DEFAULTS.modelByRuntime },
-        reasoningByRuntime: { ...DEFAULTS.reasoningByRuntime },
-      };
+      return defaultAgentConfig();
     }
     let providerByRuntime: Record<string, string> = {};
     let modelByRuntime: Record<string, string> = {};

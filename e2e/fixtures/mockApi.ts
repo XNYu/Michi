@@ -1,6 +1,7 @@
 import { expect, type Page, type Route } from '@playwright/test';
 import { composerEditor } from './shell';
 import { createSpacesHomeMock } from './spacesHomeFixtures';
+import { createMemoryMock } from './memoryFixtures';
 import {
   AgentDefinitionStatus,
   AgentRunCompletionMode,
@@ -450,6 +451,7 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
   chatIdCounter = 0;
   nodeIdCounter = 0;
   const spacesHome = createSpacesHomeMock();
+  const memory = createMemoryMock();
 
   // Match only real backend calls: `<origin>/api/...`. A plain `**/api/**`
   // glob also matches Vite dev module URLs like
@@ -644,6 +646,8 @@ export async function installMockApi(page: Page, overrides: MockOverrides = {}) 
 
     // Spaces Home, Meta agent, Home cards and Scheduled jobs: empty, well-formed answers.
     if (await spacesHome.handle(route)) return;
+    // Michi Memory: no memories, explicit mode, a quiet change feed, no automatic memory.
+    if (await memory.handle(route)) return;
 
     // Default: empty 200. Loud enough to find in traces if we missed something.
     return json({ __unmocked: path });

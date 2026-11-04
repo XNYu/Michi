@@ -50,18 +50,28 @@ function permissionDeps(): RuntimeDeps | undefined {
 
 const READ_TOOLS = new Set(['read', 'ls', 'grep', 'find', 'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
     'michi_docs', 'list_threads', 'search_messages', 'read_node', 'read_node_overview', 'read_conversation_updates', 'report_conversation_no_change', 'set_follow_ups',
-    'spawn_branches', 'save_artifact', 'update_artifact']);
+    'spawn_branches', 'save_artifact', 'update_artifact',
+    // Pi's session-local todo list: no file, command, network or workspace effect.
+    'todo']);
 
 // The tool enforces its workspace/owner scope and optional requestApproval.
 // Do not add a second runtime prompt, including for the known native MCP names.
 const THREAD_MESSAGE_TOOLS = new Set(['send_to_thread', 'mcp____michi_internal____send_to_thread', '@michi/send_to_thread']);
 
+// Michi Memory reads and writes (agents/memoryTools.ts) under every runtime's
+// name for them: Pi's, Claude's and Codex's MCP name, Kiro's. They reach only
+// the user's own memories and the thread's workspace, a write from a turn that
+// read untrusted content waits for the user's confirmation, and the user can
+// undo a save. memory_delete is not here: it asks like other destructive tools.
+const MEMORY_SELF_SCOPED_TOOLS = new Set(['memory_search', 'memory_save', 'memory_update']
+    .flatMap((name) => [name, `mcp____michi_internal____${name}`, `@michi/${name}`]));
+
 /** Ordinary chat approvals ignore legacy workspace-wide grants. Apart from
- * scoped thread messaging, native requests ask in Ask mode; Pi also gates
- * unknown/MCP tools before execution. */
+ * scoped thread messaging and Memory reads and writes, native requests ask in
+ * Ask mode; Pi also gates unknown/MCP tools before execution. */
 export function resolveChatPolicy(owner: RuntimeSessionOwner, ownerUserId: string | null, toolName: string, nativeRequest = false, mode = chatPermissionMode(owner, ownerUserId)): PermissionDecision {
     const nodeId = permissionNodeId(owner);
-    if (nodeId !== undefined && THREAD_MESSAGE_TOOLS.has(toolName)) return 'allow';
+    if (nodeId !== undefined && (THREAD_MESSAGE_TOOLS.has(toolName) || MEMORY_SELF_SCOPED_TOOLS.has(toolName))) return 'allow';
     if (mode !== 'ask') return 'allow';
     if (nodeId !== undefined && permissionDeps()?.chatPermissions?.hasGrant(nodeId, michiGrantKey(toolName), permissionOwnerUserId(owner, ownerUserId))) return 'allow';
     return !nativeRequest && READ_TOOLS.has(toolName) ? 'allow' : 'ask';

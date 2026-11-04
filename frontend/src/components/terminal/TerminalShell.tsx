@@ -56,6 +56,7 @@ import { CreateSpaceDialog, OPEN_NATIVE_PAGE_EVENT, type NativePageRoute, type O
 import { SpacesSidebar, type SpacesSidebarCurrent } from './spaces/SpacesSidebar';
 import { SpacesSettings } from './spaces/SpacesSettings';
 import { SpaceConversationWatcher } from './spaces/conversation/SpaceConversationWatcher';
+import { MemoryNotifications } from './settings/memory/MemoryNotifications';
 import { AreaRail, AreaTabs } from './rail/AreaRail';
 import { useRailBadges } from './rail/useRailBadges';
 import { ScheduledSidebar } from './rail/AreaSidebars';
@@ -998,6 +999,7 @@ export default function TerminalShell() {
       )}
       {hydrated && <SourcePopoverHost />}
       {hydrated && <SpaceConversationWatcher page={page} />}
+      {hydrated && <MemoryNotifications />}
       {hydrated && backgroundWork && (backgroundWorkShown || backgroundWorkPresent) && (
         <React.Suspense fallback={null}>
           <BackgroundWorkDrawer

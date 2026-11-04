@@ -41,6 +41,14 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
     { label: 'Workspace homes', description: 'Keeps each workspace’s home page up to date.', keywords: ['pages', 'home page'] },
     { label: 'Pages home', description: 'Keeps the overview on the Pages Home up to date.', keywords: ['overview'] },
   ]),
+  ...entries('memory', 'Memory', [
+    { label: 'Memory mode', description: 'Off, explicit only, or automatic.', keywords: ['remember', 'memories', 'forget', 'automatic memory', 'explicit'] },
+  ]),
+  ...entries('memory', undefined, [
+    { label: 'Saved memories', description: 'Search, edit, delete or change the scope of what agents remember.', keywords: ['remember', 'preferences', 'conventions', 'forget', 'global', 'workspace'] },
+    { label: 'Waiting for confirmation', description: 'Approve or reject memories agents suggested.', keywords: ['pending', 'approve', 'reject', 'memories'] },
+    { label: 'Automatic memory', description: 'Pause or resume suggestions from your conversations.', keywords: ['extraction', 'pause', 'resume', 'tokens'] },
+  ]),
   ...entries('machines', 'Connected machines', [
     { label: 'Connected machines', description: 'Work locally or connect a remote machine.', keywords: ['remote', 'ssh', 'devdesktop', 'dev desktop', 'server', 'connect remote', 'tunnel'] },
   ]),

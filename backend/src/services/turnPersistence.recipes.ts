@@ -133,7 +133,9 @@ export function durableMessageMetadata(message: DurableMessage): string | null {
   if (message.role === 'assistant') {
     const metadata = {
       ...message.metadata,
-      ...(message.plan?.length ? { plan: message.plan } : {}),
+      // A turn that cleared its plan keeps `plan: []`, so a restored session
+      // does not fall back to an older plan.
+      ...(Array.isArray(message.plan) ? { plan: message.plan } : {}),
       ...(message.subagents?.length ? { subagents: message.subagents } : {}),
     };
     return Object.keys(metadata).length > 0 ? jsonOrNull(metadata) : null;

@@ -106,6 +106,32 @@ test('Pi SDK price-table cost has USD units and estimated provenance instead of 
 });
 
 
+test('usage counts cache reads and writes as input, like the Claude adapter', () => {
+  const ctx = context();
+  // DeepSeek-shaped: most of each request's prompt comes from the provider cache.
+  for (const usage of [
+    { input: 120, cacheRead: 9_800, cacheWrite: 0, output: 40, totalTokens: 9_960, cost: { total: 0.001 } },
+    { input: 80, cacheRead: 10_100, cacheWrite: 300, output: 60, totalTokens: 10_540, cost: { total: 0.002 } },
+  ]) [...mapAgentEvent({ type: 'message_end', message: { role: 'assistant', stopReason: 'toolUse', content: [], usage } }, ctx)];
+  [...mapAgentEvent({ type: 'compaction_end', result: { usage: { input: 500, cacheRead: 0, cacheWrite: 0, output: 200, cost: { total: 0.0005 } } } }, ctx)];
+  const summary = Array.from(mapAgentEvent({ type: 'agent_end' }, ctx)).find(event => event.kind === 'usage_summary');
+  assert.ok(summary?.kind === 'usage_summary');
+  assert.equal(summary.inputTokens, 120 + 9_800 + 80 + 10_100 + 300 + 500);
+  assert.equal(summary.cachedInputTokens, 9_800 + 10_100);
+  assert.equal(summary.outputTokens, 40 + 60 + 200);
+  assert.equal(summary.totalTokens, 20_900 + 300);
+  assert.ok(Math.abs((summary.charge?.amount ?? 0) - 0.0035) < 1e-9);
+});
+
+test('a run without cache hits reports no cachedInputTokens', () => {
+  const ctx = context();
+  [...mapAgentEvent({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', content: [], usage: { input: 10, cacheRead: 0, cacheWrite: 0, output: 5, totalTokens: 15, cost: { total: 0 } } } }, ctx)];
+  const summary = Array.from(mapAgentEvent({ type: 'agent_end' }, ctx)).find(event => event.kind === 'usage_summary');
+  assert.ok(summary?.kind === 'usage_summary');
+  assert.equal(summary.cachedInputTokens, undefined);
+  assert.equal(summary.totalTokens, 15);
+});
+
 test('successful SDK recovery clears a previous overflow error at the final durable boundary', () => {
   const ctx = context();
   [...mapAgentEvent({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'context overflow' } }, ctx)];

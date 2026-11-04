@@ -60,19 +60,16 @@ async function loadPiAgentCoreModule(): Promise<PiAgentCoreModule> {
     return nativeDynamicImport("@earendil-works/pi-agent-core") as Promise<PiAgentCoreModule>;
 }
 
-// Keep the exported Pi converters rather than duplicating their signature,
-// tool schema and cross-provider history rules. Both imports must be statically
-// visible to esbuild, while ts-node needs native ESM imports.
-export async function loadPiGoogleHelpers(): Promise<any> {
-    if (typeof __MICHIBUNDLE__ !== 'undefined' && __MICHIBUNDLE__) {
-        const bundle = await loadPiBundle();
-        return { ...bundle.google, ...bundle.simple };
-    }
-    const [google, simple] = await Promise.all([
-        nativeDynamicImport('@earendil-works/pi-ai/api/google-shared'),
-        nativeDynamicImport('@earendil-works/pi-ai/api/simple-options'),
-    ]);
-    return { ...(google as object), ...(simple as object) };
+/**
+ * Pi 1.5 no longer re-exports TypeBox's `Type` from pi-ai; tool authors import
+ * it from `typebox` (the version pi-coding-agent pins). The bundle carries the
+ * same instance the SDK uses.
+ */
+let typeboxPromise: Promise<{ Type: any }> | null = null;
+export function loadPiTypebox(): Promise<{ Type: any }> {
+    return typeboxPromise ??= typeof __MICHIBUNDLE__ !== "undefined" && __MICHIBUNDLE__
+        ? loadPiBundle().then((bundle) => bundle.typebox)
+        : nativeDynamicImport("typebox") as Promise<{ Type: any }>;
 }
 
 let bundledPi: Promise<any> | undefined;

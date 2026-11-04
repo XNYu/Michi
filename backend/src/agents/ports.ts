@@ -1,5 +1,6 @@
 // backend/src/agents/ports.ts
 import type { RuntimeId, AgentReasoning } from "./types";
+import type { PlanEntry } from "michi-shared";
 
 /** Minimal structural shapes the runtime layer reads. Michi's richer DB rows
  *  are structurally assignable to these. `parent_node_id` / `owner_user_id`
@@ -26,6 +27,18 @@ export interface HistoryStore {
   listMessages(nodeId: string): MessageRowLike[];
   getWorkspace(id: string, userId?: string): WorkspaceRowLike | null;
   getWorkspaceInstructions(workspaceId: string): string | null;
+  /**
+   * The persisted plan a node's session starts from: the node's own latest,
+   * else its branch parent's at the cut (`branch`, when the host resolved it).
+   * Read-only. null when there is none; optional for embedders without plans.
+   */
+  getPlanSnapshot?(input: PlanSnapshotQuery): PlanEntry[] | null;
+}
+
+export interface PlanSnapshotQuery {
+  nodeId: string;
+  userId?: string | null;
+  branch?: { parentNodeId: string; boundaryMessageId?: string };
 }
 
 /** Result shape returned by the Pi read-only global-context tools. */

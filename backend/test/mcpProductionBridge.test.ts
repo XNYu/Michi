@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { McpClientManager } from '../src/services/mcpClientManager';
 import { buildMcpToolsForPi } from '../src/agents/pi/mcpToolBridge';
-import { loadPiAi } from '../src/agents/pi/piAi';
+import { loadPiAi, loadPiTypebox } from '../src/agents/pi/piAi';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import { JSON_BODY_LIMIT_BYTES } from '../src/services/requestBodyLimit';
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from '@modelcontextprotocol/sdk/shared/stdio.js';
@@ -26,8 +26,7 @@ test('real stdio manager preserves full MCP result and production Pi bridge proj
   assert.deepEqual(raw.content[0].annotations, { audience: ['assistant'], priority: 0.7 });
   assert.deepEqual(raw.content[0]._meta, { text: true });
   assert.equal((raw.content[5] as any).size, 6);
-  const pi = await loadPiAi();
-  const wrapped = buildMcpToolsForPi({ mcpManager: manager, Type: pi.Type }).find(tool => tool.label === 'rich');
+  const wrapped = buildMcpToolsForPi({ mcpManager: manager, Type: (await loadPiTypebox()).Type }).find(tool => tool.label === 'rich');
   const result = await wrapped.execute('call-1', {});
   assert.deepEqual(result.details.mcpResult, raw);
   assert.deepEqual(result.content[1], { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' });
@@ -63,8 +62,7 @@ test('a stdio server result above the SDK default read buffer reaches the manage
 test('real image-only, resource-only and structured-only results stay useful through the production bridge', async t => {
   const manager = new McpClientManager(); t.after(() => manager.dispose());
   await manager.connect(config('content', 'complete'));
-  const pi = await loadPiAi();
-  const tool = buildMcpToolsForPi({ mcpManager: manager, Type: pi.Type }).find(tool => tool.label === 'rich');
+  const tool = buildMcpToolsForPi({ mcpManager: manager, Type: (await loadPiTypebox()).Type }).find(tool => tool.label === 'rich');
   for (const mode of ['image-only', 'resource-only', 'structured-only']) {
     const result = await tool.execute(mode, { result: mode });
     assert.doesNotMatch(JSON.stringify(result.content), /no text content/);
@@ -78,19 +76,21 @@ test('production bridge preserves JSON Schema constraints and actual Pi validati
   const manager = new McpClientManager(); t.after(() => manager.dispose());
   await manager.connect(config('schema'));
   const pi: any = await loadPiAi();
-  const tool = buildMcpToolsForPi({ mcpManager: manager, Type: pi.Type }).find(tool => tool.label === 'rich');
+  const tool = buildMcpToolsForPi({ mcpManager: manager, Type: (await loadPiTypebox()).Type }).find(tool => tool.label === 'rich');
   assert.deepEqual(JSON.parse(JSON.stringify(tool.parameters)), manager.listTools('schema').find(tool => tool.name === 'rich')!.inputSchema);
   const valid = { count: 2, query: 'abc', tags: ['a'], choice: 'auto', __tool_use_purpose: 'server-owned' };
   const validate = (args: unknown) => pi.validateToolArguments(tool, { name: tool.name, arguments: args });
   assert.deepEqual(validate(valid), valid);
+  // Pi 1.5 (pi-schema) coerces loose arguments first: a fractional integer is truncated.
+  assert.equal(validate({ ...valid, count: 1.5 }).count, 1);
   for (const args of [
-    { ...valid, count: 1.5 }, { ...valid, count: 0 }, { ...valid, count: 5 },
+    { ...valid, count: 0 }, { ...valid, count: 5 },
     { ...valid, query: 'A' }, { ...valid, query: 'abcde' }, { ...valid, tags: [] },
     { ...valid, tags: ['a', 'b', 'c'] }, { ...valid, choice: false },
     { ...valid, unrelated: true }, { ...valid, mode: 'strict' },
   ]) assert.throws(() => validate(args), /Validation failed/);
   assert.doesNotThrow(() => validate({ ...valid, mode: 'strict', extra: 'required' }));
-  const echo = buildMcpToolsForPi({ mcpManager: manager, Type: pi.Type }).find(tool => tool.label === 'echo');
+  const echo = buildMcpToolsForPi({ mcpManager: manager, Type: (await loadPiTypebox()).Type }).find(tool => tool.label === 'echo');
   const echoResult = await echo.execute('echo', valid);
   assert.deepEqual(JSON.parse(echoResult.content[0].text), valid, 'server-owned purpose property must not be stripped');
   assert.deepEqual(JSON.parse(JSON.stringify(echo.parameters)), { type: 'object', additionalProperties: true });
@@ -174,8 +174,7 @@ test('real paginated first-page output schema and required-task metadata remain 
   assert.notEqual(valid.isError, true); assert.deepEqual(valid.structuredContent, { answer: 42 });
   const toolError = await manager.callTool('metadata', 'output-first', { error: true });
   assert.equal(toolError.isError, true); assert.equal((toolError.content[0] as any).text, 'tool-level error');
-  const pi = await loadPiAi();
-  assert.equal(buildMcpToolsForPi({ mcpManager: manager, Type: pi.Type }).some(tool => tool.label === 'task-first'), false, 'unsupported task-only tools must not be advertised to Pi');
+  assert.equal(buildMcpToolsForPi({ mcpManager: manager, Type: (await loadPiTypebox()).Type }).some(tool => tool.label === 'task-first'), false, 'unsupported task-only tools must not be advertised to Pi');
   const task = await manager.callTool('metadata', 'task-first', {});
   assert.equal(task.isError, true); assert.match((task.content[0] as any).text, /task-based execution/);
   const log = await manager.callTool('metadata', 'call-log', {});

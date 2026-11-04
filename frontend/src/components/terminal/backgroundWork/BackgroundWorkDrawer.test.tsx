@@ -482,4 +482,35 @@ describe('BackgroundWorkDrawer', () => {
     expect(screen.getByText('Nothing is running in this conversation.')).toBeTruthy();
     expect(screen.queryByTestId('background-work-running')).toBeNull();
   });
+
+  describe('on a phone', () => {
+    const desktopWidth = window.innerWidth;
+    beforeEach(() => { Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 }); });
+    afterEach(() => { Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth }); });
+
+    it('steps the type scale up and gives each row two lines: name and status, then summary and meta', () => {
+      setup({ nodeId: 'root' });
+      const body = screen.getByTestId('background-work-body');
+      expect(body.style.getPropertyValue('--fs-sm')).toBe('13px');
+      expect(body.style.getPropertyValue('--fs-xs')).toBe('12px');
+
+      const running = subagentRows().find((row) => row.getAttribute('data-subagent-id') === 'latest-running')!;
+      expect(running.getAttribute('data-stacked')).toBe('true');
+      const [head, sub] = Array.from(running.querySelectorAll('[data-row-line]'));
+      expect(head.textContent).toContain('Explore');
+      expect(head.textContent).toContain('working');
+      expect(sub.textContent).toContain('now ❯ Read src/auth.ts');
+      expect(sub.textContent).toContain('1 tool');
+
+      const workflow = screen.getByTestId('background-workflow-row');
+      const [workflowHead, workflowSub] = Array.from(workflow.querySelectorAll('[data-row-line]'));
+      expect(workflowHead.textContent).toContain('probe');
+      expect(workflowHead.textContent).toContain('running');
+      expect(workflowSub.textContent).toContain('1/2 steps');
+
+      // Still one button per item, expanding in place.
+      fireEvent.click(within(running).getByRole('button', { expanded: false }));
+      expect(within(running).getByTestId('subagent-detail')).toBeTruthy();
+    });
+  });
 });

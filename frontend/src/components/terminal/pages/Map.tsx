@@ -19,8 +19,7 @@ import { branchRibbonText } from '../../../state/mapOverviewSelectors';
 import { isNodeUnread } from '../../../state/sidebarSelectors';
 import Branches from './Branches';
 import { MAP_VIEWS, MAP_VIEW_LABELS, type MapView } from './mapView';
-import { useElkLayout, elkEdgePathD, type ElkRoutingStyle } from './useElkLayout';
-import { useOrbitLayout, autoSelectVariant, type OrbitVariant } from './useOrbitLayout';
+import { useElkLayout, elkEdgePathD } from './useElkLayout';
 import type { PageId } from '../../../state/commands';
 import type { Tree, ProjectEdge } from '../../../state/chatTypes';
 import { DUR } from '../../../motion/tokens';
@@ -179,13 +178,7 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     });
   };
 
-  // Layout engine toggle: 'dagre' (default) vs 'elk'.
-  // Stored in session state so the user can A/B compare.
-  const [layoutEngine, setLayoutEngine] = useState<'dagre' | 'elk' | 'orbit'>('elk');
-  const [elkRouting, setElkRouting] = useState<ElkRoutingStyle>('ORTHOGONAL');
-  const [orbitVariant, setOrbitVariant] = useState<OrbitVariant | 'auto'>('auto');
-
-  // Measured DOM heights feed every layout engine so boxes match the real
+  // Measured DOM heights feed the layout so boxes match the real
   // cards. `headHeights` is the collapsed part of each card (stable while the
   // expand area animates); `measuredHeights` is the whole card, recorded only
   // while it is expanded.
@@ -454,9 +447,11 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     // so neighbors slide to make room.
   }, [hasActiveProject, layoutTrees, activeTree, edges, graphChildren, liveSet, mode, cardHeights]);
 
-  // ELK layout (async). Only runs when layoutEngine === 'elk'.
+  // The Map's one layout: ELK layered, orthogonal edge routing. ELK loads and
+  // lays out asynchronously, so the synchronous dagre pass above stands in
+  // until its first result lands (and keeps the Map usable if it never does).
   const elkResult = useElkLayout({
-    enabled: view === 'graph' && layoutEngine === 'elk',
+    enabled: view === 'graph',
     trees: layoutTrees,
     activeTree,
     edges,
@@ -464,35 +459,9 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
     mode,
     cardHeights,
     graphChildren,
-    routingStyle: elkRouting,
   });
 
-  // Orbit layout. Only runs when layoutEngine === 'orbit'.
-  // Resolve 'auto' variant to a concrete one based on the active tree's shape.
-  const resolvedOrbitVariant: OrbitVariant = (() => {
-    if (orbitVariant !== 'auto') return orbitVariant;
-    if (!activeTree) return 'orbit-right';
-    return autoSelectVariant(activeTree.rootNodeId, graphChildren, liveSet);
-  })();
-
-  const orbitResult = useOrbitLayout({
-    enabled: view === 'graph' && layoutEngine === 'orbit',
-    trees: layoutTrees,
-    activeTree,
-    edges,
-    liveSet,
-    mode,
-    cardHeights,
-    graphChildren,
-    variant: resolvedOrbitVariant,
-  });
-
-  // Unified layout: pick the active engine's result.
-  // ELK is async so we fall back to dagre while it computes.
-  const layout =
-    layoutEngine === 'orbit' && orbitResult ? orbitResult :
-    layoutEngine === 'elk' && elkResult ? elkResult :
-    dagreLayout;
+  const layout = elkResult ?? dagreLayout;
 
   // Detect freshly-appeared graph nodes → play grow-in once, then drop the flag.
   const layoutIds = layout?.ids;
@@ -818,33 +787,10 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
                 const dx = Math.max(42, (tx - sx) * 0.5);
 
                 // ELK edge routing: use computed bend points when available.
-                const elkEdgeKey = `${e.source}->${e.target}`;
-                const elkRoute = layoutEngine === 'elk' && elkResult?.edgeRoutes?.get(elkEdgeKey);
-                const orbitRoute = layoutEngine === 'orbit' && orbitResult?.edgeRoutes?.get(elkEdgeKey);
-                let pathD: string;
-                if (elkRoute) {
-                  pathD = elkEdgePathD(elkRoute.sections, src, tgt, elkRouting);
-                } else if (orbitRoute) {
-                  // Orbit routes are stored in final canvas coordinates (no PAD offset needed).
-                  const s = orbitRoute.sections[0];
-                  if (s) {
-                    const osx = s.startPoint.x;
-                    const osy = s.startPoint.y;
-                    const oex = s.endPoint.x;
-                    const oey = s.endPoint.y;
-                    if (s.bendPoints && s.bendPoints.length > 0) {
-                      const bp = s.bendPoints[0];
-                      pathD = `M${osx},${osy} Q${bp.x},${bp.y} ${oex},${oey}`;
-                    } else {
-                      const cdx = Math.max(30, Math.abs(oex - osx) * 0.4);
-                      pathD = `M${osx},${osy} C${osx + cdx},${osy} ${oex - cdx},${oey} ${oex},${oey}`;
-                    }
-                  } else {
-                    pathD = `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`;
-                  }
-                } else {
-                  pathD = `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`;
-                }
+                const elkRoute = elkResult?.edgeRoutes.get(`${e.source}->${e.target}`);
+                const pathD = elkRoute
+                  ? elkEdgePathD(elkRoute.sections, src, tgt)
+                  : `M${sx},${sy} C${sx + dx},${sy} ${tx - dx},${ty} ${tx},${ty}`;
 
                 const streamingEdge = streamingIds.has(e.target);
                 const growEdge = isBranchEdge(e) && growIds.has(e.target);
@@ -976,16 +922,6 @@ export default function TerminalMap({ onNav }: { onNav?: (p: PageId) => void } =
         {/* Floating zoom pill — graph view only, bottom-right. */}
         <ZoomPill camera={camera} />
 
-        {/* Layout engine toggle — bottom-left, for A/B comparison. */}
-        <LayoutEnginePill
-          engine={layoutEngine}
-          routing={elkRouting}
-          orbitVariant={orbitVariant}
-          onToggleEngine={() => setLayoutEngine((e) => (e === 'elk' ? 'orbit' : e === 'orbit' ? 'dagre' : 'elk'))}
-          onSetRouting={setElkRouting}
-          onSetOrbitVariant={setOrbitVariant}
-        />
-
         {selectedMapIds.length > 0 && (
           <MapSelectionBar
             count={selectedMapIds.length}
@@ -1085,111 +1021,6 @@ function ZoomPill({ camera }: { camera: MapCameraController }) {
           fontFamily: 'var(--message-code-font)', fontSize: 'var(--fs-xs)', letterSpacing: 'var(--ls-caps)',
         }}
       >FIT</button>
-    </div>
-  );
-}
-
-function LayoutEnginePill({
-  engine,
-  routing,
-  orbitVariant,
-  onToggleEngine,
-  onSetRouting,
-  onSetOrbitVariant,
-}: {
-  engine: string;
-  routing: ElkRoutingStyle;
-  orbitVariant: OrbitVariant | 'auto';
-  onToggleEngine: () => void;
-  onSetRouting: (r: ElkRoutingStyle) => void;
-  onSetOrbitVariant: (v: OrbitVariant | 'auto') => void;
-}) {
-  const btn: React.CSSProperties = {
-    border: 'none',
-    background: 'transparent',
-    padding: '4px 10px',
-    fontFamily: 'var(--message-code-font)',
-    fontSize: 'var(--fs-xs)',
-    letterSpacing: 'var(--ls-wide)',
-    cursor: 'pointer',
-    height: 28,
-  };
-  const routingOptions: ElkRoutingStyle[] = ['SPLINES', 'POLYLINE', 'ORTHOGONAL'];
-  const orbitOptions: (OrbitVariant | 'auto')[] = ['auto', 'orbit-full', 'orbit-semi', 'orbit-right'];
-  const orbitLabels: Record<OrbitVariant | 'auto', string> = {
-    'auto': 'auto',
-    'orbit-full': 'ring',
-    'orbit-semi': 'dual',
-    'orbit-right': 'fan',
-  };
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        left: 18,
-        bottom: 18,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 0,
-        background: GLASS_BG,
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
-        border: GLASS_BORDER,
-        boxShadow: GLASS_SHADOW,
-      }}
-    >
-      <button
-        type="button"
-        onClick={onToggleEngine}
-        title="Toggle layout engine (ELK → Orbit → dagre)"
-        style={{
-          ...btn,
-          color: 'var(--term-accent)',
-          fontWeight: 700,
-        }}
-      >
-        {engine === 'elk' ? 'ELK' : engine === 'orbit' ? 'ORBIT' : 'DAGRE'}
-      </button>
-      {engine === 'elk' && (
-        <>
-          <span style={{ width: 1, height: 16, background: 'var(--term-line)' }} />
-          {routingOptions.map((r) => (
-            <button
-              key={r}
-              type="button"
-              onClick={() => onSetRouting(r)}
-              style={{
-                ...btn,
-                color: routing === r ? 'var(--term-accent)' : 'var(--term-mid)',
-                fontWeight: routing === r ? 700 : 400,
-                fontSize: 'var(--fs-2xs)',
-              }}
-            >
-              {r === 'SPLINES' ? 'spline' : r === 'POLYLINE' ? 'poly' : 'ortho'}
-            </button>
-          ))}
-        </>
-      )}
-      {engine === 'orbit' && (
-        <>
-          <span style={{ width: 1, height: 16, background: 'var(--term-line)' }} />
-          {orbitOptions.map((v) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => onSetOrbitVariant(v)}
-              style={{
-                ...btn,
-                color: orbitVariant === v ? 'var(--term-accent)' : 'var(--term-mid)',
-                fontWeight: orbitVariant === v ? 700 : 400,
-                fontSize: 'var(--fs-2xs)',
-              }}
-            >
-              {orbitLabels[v]}
-            </button>
-          ))}
-        </>
-      )}
     </div>
   );
 }

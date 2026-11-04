@@ -1,0 +1,9 @@
+/* Desktop overlays must not sample a repainting transcript. Frozen modals
+   use a bitmap; menus and capture failures use this opaque theme surface.
+   Keep this more specific than .michi-menu.term-glass and .term-glass so
+   lazy stylesheet order cannot restore the live backdrop filter. */
+.ui-overlay-surface.term-glass[data-glass='solid'] {
+  background: var(--term-surface);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}

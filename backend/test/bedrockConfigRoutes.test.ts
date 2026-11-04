@@ -193,7 +193,7 @@ describe('Provider and search key routes', () => {
   });
 
   test('on the desktop keys go to the disk store', async () => {
-    process.env.RAILWAY_PROJECT_ID = 'test-project';
+    // Desktop backends offer web search without Railway.
     assert.equal((await call('POST', '/agent/provider-key', { body: { provider: 'deepseek', key: 'sk-desktop-key' } })).status, 200);
     assert.equal((await call('POST', '/agent/search-key', { body: { provider: 'tavily', key: 'tvly-desktop-key' } })).status, 200);
     const disk = JSON.parse(fs.readFileSync(credentialConfig, 'utf8'));

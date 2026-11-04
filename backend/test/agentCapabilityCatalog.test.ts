@@ -79,33 +79,35 @@ describe('AgentCapabilityCatalog', () => {
     assert.equal(snapshot.entries[0].id, 'spawn_agent');
   });
 
-  test('web search capability is visible only on Railway deployments', () => {
-    const projectId = process.env.RAILWAY_PROJECT_ID;
-    const environmentId = process.env.RAILWAY_ENVIRONMENT_ID;
-    const serviceId = process.env.RAILWAY_SERVICE_ID;
-    const searchEnabled = process.env.MICHI_WEB_SEARCH_ENABLED;
-    delete process.env.RAILWAY_PROJECT_ID;
-    delete process.env.RAILWAY_ENVIRONMENT_ID;
-    delete process.env.RAILWAY_SERVICE_ID;
+  test('web capabilities are visible on local backends and Railway, not on other hosted deployments', () => {
+    const names = ['RAILWAY_PROJECT_ID', 'RAILWAY_ENVIRONMENT_ID', 'RAILWAY_SERVICE_ID', 'MICHI_WEB_SEARCH_ENABLED',
+      'MICHI_CLOUD', 'MICHI_REQUIRE_AUTH'] as const;
+    const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+    for (const name of names) delete process.env[name];
     const source = new BuiltinAgentCapabilitySource();
+    const visible = () => {
+      const ids = source.list({ ownerUserId: 'owner-a', workspaceId: null }).map((item) => item.id);
+      assert.equal(ids.includes('fetch_content'), ids.includes('web_search'), 'fetch_content follows web_search');
+      return ids.includes('web_search');
+    };
     try {
-      assert.equal(source.list({ ownerUserId: 'owner-a', workspaceId: null })
-        .some((item) => item.id === 'web_search'), false);
+      assert.equal(visible(), true, 'a local backend');
+      process.env.MICHI_CLOUD = '1';
+      process.env.MICHI_REQUIRE_AUTH = 'true';
+      assert.equal(visible(), false, 'a hosted deployment outside Railway');
       process.env.RAILWAY_PROJECT_ID = 'test-project';
-      assert.equal(source.list({ ownerUserId: 'owner-a', workspaceId: null })
-        .some((item) => item.id === 'web_search'), true);
+      assert.equal(visible(), true, 'Railway');
       process.env.MICHI_WEB_SEARCH_ENABLED = '0';
-      assert.equal(source.list({ ownerUserId: 'owner-a', workspaceId: null })
-        .some((item) => item.id === 'web_search'), false);
+      assert.equal(visible(), false, 'the kill switch on Railway');
+      delete process.env.MICHI_CLOUD;
+      delete process.env.MICHI_REQUIRE_AUTH;
+      delete process.env.RAILWAY_PROJECT_ID;
+      assert.equal(visible(), false, 'the kill switch on a local backend');
     } finally {
-      if (searchEnabled !== undefined) process.env.MICHI_WEB_SEARCH_ENABLED = searchEnabled;
-      else delete process.env.MICHI_WEB_SEARCH_ENABLED;
-      if (projectId) process.env.RAILWAY_PROJECT_ID = projectId;
-      else delete process.env.RAILWAY_PROJECT_ID;
-      if (environmentId) process.env.RAILWAY_ENVIRONMENT_ID = environmentId;
-      else delete process.env.RAILWAY_ENVIRONMENT_ID;
-      if (serviceId) process.env.RAILWAY_SERVICE_ID = serviceId;
-      else delete process.env.RAILWAY_SERVICE_ID;
+      for (const name of names) {
+        if (saved[name] !== undefined) process.env[name] = saved[name];
+        else delete process.env[name];
+      }
     }
   });
 });

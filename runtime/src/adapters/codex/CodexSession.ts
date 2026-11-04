@@ -412,6 +412,7 @@ export class CodexSession implements AgentSession {
       const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
       // Spaces chat and maintenance do not participate in ordinary chat metadata.
       const textForModel = (this.host.profile.maintenancePromptPrefix?.(maintenanceContext) ?? '')
+        + (input?.memoryContext ? `${input.memoryContext}\n\n---\n\n` : '')
         + (input?.pageContext ? `${input.pageContext}\n\n---\n\n` : '')
         + outgoingText
         + promptNote

@@ -45,7 +45,9 @@ import {
     type ScheduledJobApprovalResult,
     type ScheduledJobToolName,
 } from "../scheduledJobTools";
+import { isMemoryToolName, memoryTool, type MemoryToolName } from "../memoryTools";
 import { formatWebSearchForAgent, isWebSearchEnabled, searchWeb } from "../../services/webSearch";
+import { fetchContent, formatFetchContentForAgent } from "../../services/webFetch";
 
 const SCHEDULED_JOB_TOOL_LABELS: Record<ScheduledJobToolName, string> = {
     list_scheduled_jobs: "List scheduled jobs",
@@ -53,6 +55,13 @@ const SCHEDULED_JOB_TOOL_LABELS: Record<ScheduledJobToolName, string> = {
     update_scheduled_job: "Change scheduled job",
     run_scheduled_job: "Run scheduled job",
     delete_scheduled_job: "Delete scheduled job",
+};
+
+const MEMORY_TOOL_LABELS: Record<MemoryToolName, string> = {
+    memory_search: "Search memory",
+    memory_save: "Save memory",
+    memory_update: "Correct memory",
+    memory_delete: "Delete memory",
 };
 import type { NormalizedEvent } from "../../services/chatEvents";
 import type { RuntimeSessionOwner, RuntimeToolProfile } from "../types";
@@ -65,6 +74,8 @@ import { assistantPurposeOf, isAssistantWorkspace } from "../../assistant/identi
 import { PAGE_TOOL_NAMES, type ActivePageTurnAttributionGetter, type PageToolName } from '../pageToolNames';
 import { runPageTool } from '../pageTools';
 import { isMaintenanceProfile } from '../maintenancePolicy';
+import { buildPiTodoTool, type PiTodoList } from './piTodoTool';
+import { buildPiAskUserTool, type PiUserInputRequester } from './piAskUser';
 
 /**
  * Build the AgentTool[] array fed to pi-agent-core.
@@ -125,12 +136,19 @@ export interface BuildPiToolsOpts {
         request: ScheduledJobApprovalRequest,
         signal?: AbortSignal,
     ) => Promise<ScheduledJobApprovalResult>;
+    /**
+     * The session's user question channel. Present → the catalog offers
+     * ask_user; absent (maintenance access, internal catalogs) → it does not.
+     */
+    requestUserInput?: PiUserInputRequester;
     /** Session-bound generic Agent tools resolved by PiSession. */
     agentRunTools?: AgentRunToolInvoker | null;
     owner?: RuntimeSessionOwner;
     toolProfile?: RuntimeToolProfile;
     /** Canonical attribution for this session's currently owning send. */
     getActivePageTurnAttribution?: ActivePageTurnAttributionGetter;
+    /** The session's todo list. Absent: no todo tool (assistant and restricted catalogs never get one). */
+    todoList?: PiTodoList;
 }
 
 /**
@@ -236,14 +254,14 @@ function buildPiAssistantTools(opts: BuildPiToolsOpts): any[] {
 }
 
 /** Pi's own tools for files and commands; the Scheduled window keeps these beside its Michi catalog. */
-const PI_NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set(["read", "ls", "grep", "find", "write", "edit", "bash", "web_search"]);
+const PI_NATIVE_TOOL_NAMES: ReadonlySet<string> = new Set(["read", "ls", "grep", "find", "write", "edit", "bash", "web_search", "fetch_content"]);
 
 export function buildPiTools(opts: BuildPiToolsOpts): any[] {
     // The assistant's catalog needs the profile and a chat in the assistant's
     // workspace; a profile session anywhere else gets no tools at all.
     if (opts.toolProfile?.restricted) {
         const home = chatNodeOf(opts.owner) !== undefined && isAssistantWorkspace(opts.workspaceId);
-        return home ? buildPiAssistantTools(opts) : [];
+        return home ? withAskUser(buildPiAssistantTools(opts), opts) : [];
     }
     const { bridge, cwd, parentChatId, workspaceId, enableFollowUps, imageQuota, seenPaths, Type, ownerUserId, emitImage } = opts;
 
@@ -251,7 +269,8 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
         if (PAGE_TOOL_NAMES.includes(t.name as PageToolName) && ((!opts.owner || hostOwner(opts.owner).kind !== 'chat_node') || isMaintenanceProfile(opts.toolProfile))) return null;
         // Search is opt-in. Omitting the tool entirely keeps an unconfigured
         // provider from causing the model to attempt a network request.
-        if (t.name === "web_search" && !isWebSearchEnabled(ownerUserId ?? undefined)) return null;
+        // fetch_content needs no key, but it opens the same door to the web, so it follows the same setting.
+        if ((t.name === "web_search" || t.name === "fetch_content") && !isWebSearchEnabled(ownerUserId ?? undefined)) return null;
         const parameters = withPurposeField(t.parameters, Type);
 
         switch (t.name) {
@@ -482,6 +501,39 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                     },
                 };
 
+            case "fetch_content":
+                return {
+                    name: t.name,
+                    label: "Fetch web content",
+                    description: t.description,
+                    parameters,
+                    execute: async (_id: string, args: any, signal?: AbortSignal) => {
+                        try {
+                            const result = await fetchContent({
+                                url: String(args?.url ?? ""),
+                                offset: typeof args?.offset === "number" ? args.offset : undefined,
+                                maxChars: typeof args?.maxChars === "number" ? args.maxChars : undefined,
+                                cacheScope: ownerUserId ?? null,
+                                signal,
+                            });
+                            // The text goes to the model once; details keep only provenance and paging.
+                            const { content: _content, ...details } = result;
+                            return {
+                                content: [{ type: "text", text: formatFetchContentForAgent(result) }],
+                                details,
+                            };
+                        } catch (error) {
+                            if (signal?.aborted) throw error;
+                            const message = error instanceof Error ? error.message : "Fetching the URL failed.";
+                            return {
+                                content: [{ type: "text", text: `fetch_content failed: ${message}` }],
+                                details: { error: message },
+                                isError: true,
+                            };
+                        }
+                    },
+                };
+
             case "read_node": {
                 const gc = getRuntimeDeps().globalContext;
                 if (!gc) return null;
@@ -696,6 +748,28 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
                 };
             }
 
+            case "memory_search":
+            case "memory_save":
+            case "memory_update":
+            case "memory_delete": {
+                // Chat-only: the owner, workspace and turn trust come from the calling thread.
+                const nodeId = chatNodeOf(opts.owner);
+                if (nodeId === undefined) return null;
+                const toolName = t.name;
+                return {
+                    name: toolName,
+                    label: MEMORY_TOOL_LABELS[toolName],
+                    description: t.description,
+                    parameters,
+                    ...(toolName === "memory_search" ? {} : { executionMode: "sequential" as const }),
+                    execute: async (_id: string, args: any) => {
+                        const { __tool_use_purpose: _purpose, ...input } = (args ?? {}) as Record<string, unknown>;
+                        const result = memoryTool(toolName, { ownerUserId: ownerUserId ?? null, workspaceId, nodeId, isAgentRun: false }, input);
+                        return { ...result, details: result };
+                    },
+                };
+            }
+
             case "read":
                 return {
                     name: t.name,
@@ -836,11 +910,19 @@ export function buildPiTools(opts: BuildPiToolsOpts): any[] {
         // catalog: none of the ordinary Michi tools (Pages, artifacts, branches,
         // Agent Runs) bound to the assistant's hidden workspace.
         const scheduling = assistantPurposeOf(chatNodeOf(opts.owner)) === "schedule";
-        const kept = tools.filter((tool) => !names.has(tool.name) && (!scheduling || PI_NATIVE_TOOL_NAMES.has(tool.name)));
-        return [...kept, ...assistantTools];
+        // Memory belongs to the user's own conversations, not the assistant's hidden workspace.
+        const kept = tools.filter((tool) => !names.has(tool.name) && !isMemoryToolName(tool.name)
+            && (!scheduling || PI_NATIVE_TOOL_NAMES.has(tool.name)));
+        return withAskUser([...kept, ...assistantTools], opts);
     }
     const worker = runWorkerProfile(opts.owner, opts.toolProfile);
-    return worker ? [...tools, buildSubmitAgentResultTool(opts.owner!, worker, Type)] : tools;
+    const withTodo = opts.todoList ? [...tools, buildPiTodoTool(opts.todoList, Type)] : tools;
+    return withAskUser(worker ? [...withTodo, buildSubmitAgentResultTool(opts.owner!, worker, Type)] : withTodo, opts);
+}
+
+/** Michi's user channel: every catalog offered with one gets ask_user, as on the MCP runtimes. */
+function withAskUser(tools: any[], opts: BuildPiToolsOpts): any[] {
+    return opts.requestUserInput ? [...tools, buildPiAskUserTool(opts.Type, opts.requestUserInput)] : tools;
 }
 
 function runWorkerProfile(owner: RuntimeSessionOwner | undefined,

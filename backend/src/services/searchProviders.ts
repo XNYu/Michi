@@ -5,6 +5,8 @@
  * appear in the model selector or be sent to an LLM provider.
  */
 
+import { isOwnerScopedAccess } from "./accessPolicy";
+
 export const WEB_SEARCH_PROVIDER_IDS = ["jina", "tavily"] as const;
 
 export type WebSearchProviderId = (typeof WEB_SEARCH_PROVIDER_IDS)[number];
@@ -42,22 +44,35 @@ export function isWebSearchProviderId(value: unknown): value is WebSearchProvide
 }
 
 /**
- * Web search is a Railway-only deployment feature. Railway injects these
- * identifiers into every service, so local, Electron, and other hosted builds
- * stay feature-off without needing a second frontend build flag.
+ * Whether this deployment offers web search: Pi's web_search and
+ * fetch_content tools and the Settings → Model → Web Search configuration.
+ * Each user still has to choose a provider and save its key before a chat
+ * receives the tools.
  *
- * MICHI_WEB_SEARCH_ENABLED=0 is an emergency kill switch for Railway. Setting
- * it to 1 outside Railway deliberately does not enable the feature.
+ * - Local and desktop backends (MICHI_CLOUD unset: Electron, the web
+ *   launcher, local authenticated mode, and a desktop backend reached through
+ *   remote or phone access): on. The key is kept in the backend's local
+ *   credential store, and the configuration routes sit behind the same access
+ *   guards as model-provider keys.
+ * - Railway, detected from the service identifiers Railway injects: on.
+ * - Other hosted multi-user deployments (MICHI_CLOUD=1 outside Railway): off.
+ *   An access configuration resolveAccessPolicy rejects counts as hosted.
+ *
+ * MICHI_WEB_SEARCH_ENABLED=0 (or false/off/no) turns it off everywhere.
+ * Setting it to 1 does not enable it on a hosted deployment outside Railway.
+ * The frontend has no build flag: it shows the section only when
+ * /agent/status reports search providers.
  */
 export function isWebSearchFeatureEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const explicitlyDisabled = ["0", "false", "off", "no"]
     .includes(String(env.MICHI_WEB_SEARCH_ENABLED ?? "").trim().toLowerCase());
   if (explicitlyDisabled) return false;
-  return Boolean(
+  const railway = Boolean(
     env.RAILWAY_PROJECT_ID
     || env.RAILWAY_ENVIRONMENT_ID
     || env.RAILWAY_SERVICE_ID,
   );
+  return railway || !isOwnerScopedAccess(env);
 }
 
 export function getWebSearchProvider(id: WebSearchProviderId): WebSearchProviderDefinition {

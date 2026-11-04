@@ -156,6 +156,34 @@ test('send includes existing image attachments as native localImage inputs', asy
   }
 });
 
+test('send puts the Michi Memory block ahead of the Pages context for the model only', async () => {
+  const texts: string[] = [];
+  const { session, client } = makeSession({
+    request: async (method: string, params: any) => {
+      if (method === 'turn/start') texts.push(params.input.find((part: { type: string }) => part.type === 'text').text);
+      return {};
+    },
+  });
+  const drain = async (text: string, input?: Parameters<typeof session.send>[1]) => {
+    const turn = (async () => { for await (const _ev of session.send(text, input)) { /* drain */ } })();
+    await new Promise((resolve) => setImmediate(resolve));
+    client._emit('thread-1', 'turn/completed', { threadId: 'thread-1', turn: { status: 'completed' } });
+    await turn;
+  };
+  try {
+    await drain('first question', {
+      memoryContext: '<michi-memory>\n- Reply in Chinese. (preference)\n</michi-memory>',
+      pageContext: 'Michi Pages manifest (JSON): {}',
+    });
+    await drain('second question');
+    assert.ok(texts[0]!.startsWith('<michi-memory>\n- Reply in Chinese. (preference)\n</michi-memory>\n\n---\n\nMichi Pages manifest (JSON): {}\n\n---\n\nfirst question'));
+    assert.ok(texts[1]!.startsWith('second question'), 'a turn without a block sends none');
+    assert.deepEqual(session.getHistory().filter((m) => m.role === 'user').map((m) => m.content), ['first question', 'second question']);
+  } finally {
+    await session.dispose();
+  }
+});
+
 test('first Codex request streams reasoning immediately and delivers title whenever it finishes', async () => {
   const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
   let client!: ReturnType<typeof makeStubClient> & { _emit: (...args: any[]) => void };

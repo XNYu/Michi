@@ -36,6 +36,8 @@ const ACP_BUILTIN_TOOL_NAMES = new Set([
     'read', 'write', 'edit', 'bash', 'Bash', 'Read', 'Write', 'Edit',
     'fs_read', 'fs_write', 'execute_bash', 'use_aws',
     '@michi/send_to_thread',
+    // Michi Memory: the host's chat policy runs all but delete without a prompt.
+    '@michi/memory_search', '@michi/memory_save', '@michi/memory_update', '@michi/memory_delete',
 ]);
 
 /**
@@ -100,6 +102,45 @@ export function kiroBrokerToolName(toolCall: any, meta?: any, calledAs?: string,
 
 function kiroBuiltinName(name: string | undefined): string | undefined {
     return name !== undefined && CANONICAL_NAMES.has(name) ? name : undefined;
+}
+
+/** An MCP tool's name split into its server and its name there. */
+export interface AcpMcpToolName { server: string; tool: string }
+
+/** The MCP server Michi registers with an ACP agent (kiroProtocol michiMcpServer). */
+const HOST_MCP_SERVER = 'michi';
+
+/** Kiro names a tool of MCP server `s` `@s/<tool>` (v3 tool ids: `s::<tool>`). */
+function kiroMcpToolName(name: string): AcpMcpToolName | undefined {
+    const match = /^@([^/\s]+)\/(.+)$/.exec(name) ?? /^([^:\s]+)::(.+)$/.exec(name);
+    return match ? { server: match[1], tool: match[2] } : undefined;
+}
+
+/** A title that is an identifier rather than prose: Kiro titles some calls with the bare tool name. */
+const IDENTIFIER_TITLE = /^[A-Za-z_@][\w@/.:-]*$/;
+
+/**
+ * What an ACP tool call is, for host policy (NormalizedEvent toolName,
+ * mcpServer, hostTool). The name comes from the agent's own naming
+ * (resolveName), provider metadata, Kiro's tool id, the name an earlier
+ * update of the call gave it (calledAs, see KiroToolCallNames), then a title
+ * that is an identifier. An MCP tool's name is split by `mcpName` (absent:
+ * Kiro's `@<server>/<tool>`); Michi's server is `michi`. Without any of
+ * these the call has no name, and only its ACP `kind` describes it.
+ */
+export function acpToolIdentity(update: any, opts: {
+    resolveName?: KiroToolNameResolver;
+    calledAs?: string;
+    mcpName?: (name: string) => AcpMcpToolName | undefined;
+} = {}): { toolName?: string; mcpServer?: string; hostTool?: boolean } {
+    const meta = update?._meta;
+    const metaName = typeof meta?.kiro?.toolName === 'string' && meta.kiro.toolName.trim() ? meta.kiro.toolName.trim() : undefined;
+    const title = typeof update?.title === 'string' && IDENTIFIER_TITLE.test(update.title) ? update.title : undefined;
+    const name = agentToolName(update, opts.resolveName) ?? providerToolName(update, meta) ?? kiroToolId(meta)
+        ?? metaName ?? opts.calledAs ?? title;
+    if (!name) return {};
+    const mcp = (opts.mcpName ?? kiroMcpToolName)(name);
+    return mcp ? { toolName: mcp.tool, mcpServer: mcp.server, hostTool: mcp.server === HOST_MCP_SERVER } : { toolName: name };
 }
 
 /** How many tool calls of one turn KiroToolCallNames keeps. */

@@ -7,6 +7,7 @@ import {
 } from 'michi-shared';
 import { workspaceOwnerMatches } from '../agentOwner';
 import { getDb } from '../db';
+import { memoryExtractionJobIds } from '../memory/extractionRepository';
 
 export interface MaintenanceConfigRow {
   workspace_id: string; job_id: string; paused: number; revision: number; completion_cursor: number;
@@ -92,12 +93,17 @@ function tokensSince(jobIds: string[], dayStart: number, database: DatabaseSync)
   return row.reported > 0 ? Math.round(row.total ?? 0) : null;
 }
 
-/** Settings › Meta agent › Usage: the same checks and model calls as Scheduled › Meta agent, plus reported tokens. */
+/** The execution identities whose sessions count as Meta agent background usage: Pages maintenance and automatic memory. */
+function usageJobIds(ownerUserId: string, configs: MaintenanceConfigRow[], database: DatabaseSync): string[] {
+  return [...configs.map((config) => config.job_id), ...memoryExtractionJobIds(ownerUserId, database)];
+}
+
+/** Settings › Meta agent › Usage: the same checks and model calls as Scheduled › Meta agent, plus reported tokens (automatic memory included). */
 export function metaAgentUsageToday(ownerUserId: string, now: number, database: DatabaseSync = getDb()): MetaAgentUsageToday {
   const configs = listMaintenanceConfigs(ownerUserId, database);
   const dayStart = startOfLocalDay(now);
   const today = todayMetrics(ownerUserId, configs, dayStart, database);
-  return { checks: today.checks, modelCalls: today.modelCalls, tokens: tokensSince(configs.map((config) => config.job_id), dayStart, database) };
+  return { checks: today.checks, modelCalls: today.modelCalls, tokens: tokensSince(usageJobIds(ownerUserId, configs, database), dayStart, database) };
 }
 
 /** One read transaction in the background statistics worker, shared by both status APIs. */
@@ -106,6 +112,6 @@ export function metaAgentMetricsSnapshot(ownerUserId: string, now: number, datab
   const dayStart = startOfLocalDay(now);
   const today = todayMetrics(ownerUserId, configs, dayStart, database);
   const usage = { checks: today.checks, modelCalls: today.modelCalls,
-    tokens: tokensSince(configs.map(config => config.job_id), dayStart, database) };
+    tokens: tokensSince(usageJobIds(ownerUserId, configs, database), dayStart, database) };
   return { dayStart, today, usage };
 }

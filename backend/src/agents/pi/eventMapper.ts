@@ -1,6 +1,8 @@
 import { extractToolUsePurpose } from "michi-shared";
 import type { NormalizedEvent } from "../../services/chatEvents";
 import type { SpawnedBranch } from "../toolBridge";
+import { PI_TODO_TOOL_NAME, todoPlanFromResult } from "./piTodoTool";
+import { parseMcpToolName } from "./mcpToolBridge";
 
 /**
  * Translate a single pi-agent-core AgentEvent into 0+ michi NormalizedEvents.
@@ -15,6 +17,7 @@ import type { SpawnedBranch } from "../toolBridge";
  *   chunk / thought (assistant text/reasoning streamed)
  *   tool_call / tool_call_update (chips for tool calls)
  *   host events spawn_branches / artifact_saved / artifact_updated (tool side effects with payload)
+ *   plan (the todo tool's list after each change)
  *   context_usage / usage_summary (one-shot at run end)
  *   turn_end (closes SSE)
  *
@@ -32,10 +35,36 @@ function truncatePayload(value: unknown): string | undefined {
     return str.length > MAX_TOOL_PAYLOAD ? str.slice(0, MAX_TOOL_PAYLOAD) : str;
 }
 
+/**
+ * A Pi tool's identity for host policy: every Pi tool is Michi's own
+ * (buildPiTools), except a bridged MCP tool, `mcp__<server>__<tool>`.
+ */
+function toolIdentity(name: unknown): { toolName?: string; mcpServer?: string; hostTool?: boolean } {
+    if (typeof name !== "string" || !name) return {};
+    const mcp = parseMcpToolName(name);
+    return mcp ? { toolName: mcp.toolName, mcpServer: mcp.serverName, hostTool: false } : { toolName: name, hostTool: true };
+}
+
 export interface MappedTurnUsage {
+    /** Every prompt token the provider processed: fresh input plus cache reads and writes, as for Claude. */
     inputTokens: number;
+    /** Of inputTokens, those read from the provider's prompt cache. */
+    cachedInputTokens?: number;
     outputTokens: number;
     totalCost: number;
+}
+
+/**
+ * pi-ai reports cache reads and writes beside `input`, not inside it, so
+ * counting `input` alone undercounts every cached request (DeepSeek and
+ * Anthropic cache most of a long turn's prompt).
+ */
+function addUsage(cumulative: MappedTurnUsage, usage: { input?: number; cacheRead?: number; cacheWrite?: number; output?: number; cost?: { total?: number } }): void {
+    const cacheRead = usage.cacheRead ?? 0;
+    cumulative.inputTokens += (usage.input ?? 0) + cacheRead + (usage.cacheWrite ?? 0);
+    cumulative.cachedInputTokens = (cumulative.cachedInputTokens ?? 0) + cacheRead;
+    cumulative.outputTokens += usage.output ?? 0;
+    cumulative.totalCost += usage.cost?.total ?? 0;
 }
 
 export interface MapperContext {
@@ -47,8 +76,6 @@ export interface MapperContext {
     runStartMs: number;
     /** Provider error captured from the terminal assistant message. */
     terminalError?: string;
-    /** Argon continuation bills repeated prompts; use its actual context size. */
-    latestContextTokens?: number;
 }
 
 export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<NormalizedEvent> {
@@ -68,12 +95,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
         case "message_end": {
             const m = event.message;
             if (m?.role === "assistant" && m.usage) {
-                ctx.cumulative.inputTokens += m.usage.input ?? 0;
-                ctx.cumulative.outputTokens += m.usage.output ?? 0;
-                ctx.cumulative.totalCost += m.usage.cost?.total ?? 0;
-                if (typeof m.usage.contextTokens === 'number' && Number.isFinite(m.usage.contextTokens)) {
-                    ctx.latestContextTokens = m.usage.contextTokens;
-                }
+                addUsage(ctx.cumulative, m.usage);
             }
             if (m?.role === "assistant" && m.stopReason !== "error") ctx.terminalError = undefined;
             if (m?.role === "assistant" && m.stopReason === "error") {
@@ -93,6 +115,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 status: "pending",
                 kindType: "execute",
                 inputJson: truncatePayload(args),
+                ...toolIdentity(event.toolName),
             };
             return;
         }
@@ -134,6 +157,10 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                         },
                     };
                 }
+            } else if (name === PI_TODO_TOOL_NAME && !isError) {
+                // The whole list after the change, like ACP's session/update plan.
+                const entries = todoPlanFromResult(result);
+                if (entries) yield { kind: "plan", entries };
             }
 
             yield {
@@ -143,6 +170,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 status: isError ? "failed" : "completed",
                 detail: isError ? extractErrorText(result) : undefined,
                 output: truncatePayload(result),
+                ...toolIdentity(name),
             };
             return;
         }
@@ -150,13 +178,14 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
         case "agent_end": {
             // One-shot end-of-run summary, then the SSE-closing turn_end.
             const ctxPct = ctx.contextWindow
-                ? ((ctx.latestContextTokens ?? (ctx.cumulative.inputTokens + ctx.cumulative.outputTokens)) / ctx.contextWindow) * 100
+                ? ((ctx.cumulative.inputTokens + ctx.cumulative.outputTokens) / ctx.contextWindow) * 100
                 : 0;
             yield { kind: "context_usage", contextUsagePercentage: ctxPct };
             yield {
                 kind: "usage_summary",
                 contextUsagePercentage: ctxPct,
                 inputTokens: ctx.cumulative.inputTokens,
+                ...(ctx.cumulative.cachedInputTokens ? { cachedInputTokens: ctx.cumulative.cachedInputTokens } : {}),
                 outputTokens: ctx.cumulative.outputTokens,
                 totalTokens: ctx.cumulative.inputTokens + ctx.cumulative.outputTokens,
                 charge: { amount: ctx.cumulative.totalCost, unit: "USD", provenance: "sdk_estimate" },
@@ -199,6 +228,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
                 status: "in_progress",
                 kindType: "execute",
                 output: truncatePayload(event.args ?? event.partialResult ?? event.result),
+                ...toolIdentity(event.toolName),
             };
             return;
 
@@ -209,12 +239,7 @@ export function* mapAgentEvent(event: any, ctx: MapperContext): Iterable<Normali
 
         case "compaction_end":
         case "session_compaction_end":
-            if (event.result?.usage) {
-                const usage = event.result.usage;
-                ctx.cumulative.inputTokens += usage.input ?? 0;
-                ctx.cumulative.outputTokens += usage.output ?? 0;
-                ctx.cumulative.totalCost += usage.cost?.total ?? 0;
-            }
+            if (event.result?.usage) addUsage(ctx.cumulative, event.result.usage);
             yield { kind: "compaction_end", detail: typeof event.detail === "string" ? event.detail : event.type };
             return;
 

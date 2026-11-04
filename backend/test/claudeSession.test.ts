@@ -503,6 +503,33 @@ describe('ClaudeSession', () => {
     }
   });
 
+  test('the Michi Memory block reaches the model ahead of the Pages context and stays out of history', async () => {
+    const child = new MockClaudeChild();
+    stubSpawnClaude(() => child);
+    setTimeout(() => child.emitInit('ext-memory'), 20);
+    const { ClaudeSession } = freshClaudeSession();
+    const session = new ClaudeSession('session-memory', makeSessionDeps() as any);
+    await session.spawnFresh();
+    const lines: string[] = [];
+    child.stdin.on('data', (chunk: Buffer) => lines.push(...chunk.toString().split('\n').filter(Boolean)));
+    try {
+      setTimeout(() => child.emitResult('success'), 20);
+      for await (const _event of session.send('first question', {
+        memoryContext: '<michi-memory>\n- Reply in Chinese. (preference)\n</michi-memory>',
+        pageContext: 'Michi Pages manifest (JSON): {}',
+      })) void _event;
+      setTimeout(() => child.emitResult('success'), 20);
+      for await (const _event of session.send('second question')) void _event;
+      const prompts = lines.map((line) => JSON.parse(line)).filter((message) => message.type === 'user')
+        .map((message) => String(message.message.content));
+      assert.ok(prompts[0]!.startsWith('<michi-memory>\n- Reply in Chinese. (preference)\n</michi-memory>\n\n---\n\nMichi Pages manifest (JSON): {}\n\n---\n\nfirst question'));
+      assert.ok(prompts[1]!.startsWith('second question'), 'a turn without a block sends none');
+      assert.deepEqual(session.getHistory().filter((m) => m.role === 'user').map((m) => m.content), ['first question', 'second question']);
+    } finally {
+      await session.dispose();
+    }
+  });
+
   test('a workflow Stop goes through the SDK control channel, and fails without a process', async () => {
     const child = new MockClaudeChild();
     stubSpawnClaude(() => child);

@@ -214,6 +214,13 @@ CLI runtime needs only its own installation/sign-in, and Pi uses provider
 credentials without a separate agent CLI. Existing choices and explicit runtime
 environment settings are preserved. Change your choice later in Settings.
 
+For Pi, choose a provider and configure its credentials in Settings → Model.
+Amazon Bedrock supports an AWS Profile, Bearer Token, Access Keys, or the SDK
+default credential chain, plus a region and optional refresh command. Existing
+AWS credential environment variables take precedence over saved configuration.
+Google AI supports Low / Medium / High thinking for Gemini 4 Argon; see
+[Pi Gemini Argon setup](docs/features/pi-gemini-argon.md) for output limits and pricing.
+
 Supported runtimes:
 
 | Runtime | Notes |
@@ -222,7 +229,7 @@ Supported runtimes:
 | **Kiro-CLI** | Kiro agent runtime. |
 | **Kiro Crew** | Local official Crew Gateway with required App/MCP setup. See the [setup guide](runtime/src/adapters/crew/GETTING_STARTED.md). |
 | **Codex** | Codex app-server runtime. |
-| **Pi** | Multi-provider — Anthropic, Gemini, DeepSeek via API keys. [Gemini 4 Argon](docs/features/pi-gemini-argon.md) supports streaming continuation. |
+| **Pi** | Multi-provider — Anthropic, Gemini, DeepSeek via API keys. [Gemini 4 Argon](docs/features/pi-gemini-argon.md) streams through Pi’s Google provider with a 32,768-token response limit, including thinking. |
 | **Antigravity** | Antigravity agent runtime. |
 | **Cursor** | Cursor CLI (`~/.local/bin/agent acp` — never Grok's `~/.grok/bin/agent`). Auth via `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` or an existing `agent login` cache. Official ACP modes: agent / plan / ask. |
 | **Grok** | Official xAI Grok CLI (`grok --no-auto-update agent stdio`). Prefers `grok login` cache, then `XAI_API_KEY` if set, then `grok.com`. Default model `grok-4.6`. |
@@ -509,16 +516,23 @@ chain also supports IAM roles. Local provider keys and saved Bedrock credentials
 are stored in `~/.michi/config.json`; the encrypted per-user vault described
 below applies to hosted API keys.
 
-Pi uses the pinned 1.4.0 session SDK by default, including native tool transcripts
+Pi uses the pinned 1.5.0 session SDK by default, including native tool transcripts
 and automatic context compaction. Michi retains tool permissions, Agent Runs and
 owner/workspace isolation. SDK sessions live under `MICHI_DATA_DIR/pi-sessions`;
 SQLite remains authoritative, and native recovery requires a matching host history
 checkpoint. Each Michi branch owns an independent SDK session. The SDK does not
 load global or project Pi extensions, skills, MCP servers or auth files; Michi's
-explicit MCP/skills configuration remains in effect. `MICHI_PI_SESSION_SDK=0`
-selects the agent-core rollback engine and invalidates its native checkpoint.
-Restart the backend after changing this setting. Third-party plugins are not
-enabled by this integration.
+explicit MCP/skills configuration remains in effect. Unrestricted desktop
+sessions also read `AGENTS.md` / `CLAUDE.md` from the working folder and its
+ancestors, as the Claude and Codex runtimes do; restricted, meta-agent and
+maintenance sessions and cloud mode do not. When the MCP tool definitions are
+large (about 10k tokens or more), Pi declares them only after its `tool_search`
+tool loads them, and the system prompt names the deferred servers.
+`MICHI_PI_TOOL_SEARCH=1` always defers MCP tools, `0` never does; Agent Runs
+with a tool allowlist always declare theirs. `MICHI_PI_SESSION_SDK=0`
+selects the agent-core rollback engine, which has neither feature, and
+invalidates its native checkpoint. Restart the backend after changing these
+settings. Third-party plugins are not enabled by this integration.
 
 Custom Agents and Agent Runs are experimental and disabled by default. They are
 enabled only by starting the backend with `MICHI_CUSTOM_AGENTS=1`; there is no
@@ -580,14 +594,24 @@ When no app is connected, the background service starts Michi hidden (no window
 or Dock icon) to show the notification, and that hidden instance quits after
 15 idle minutes.
 
-Web search is deployment-gated and disabled by default. It is exposed only on
-Railway, detected from Railway's injected service identifiers. On Railway,
-**Settings → Model → Web Search** lets each user choose Jina Search or Tavily
-and save a server-side key. New Pi chats receive the source-aware `web_search`
-tool only after a provider and key are configured. Set
-`MICHI_WEB_SEARCH_ENABLED=0` to hide the configuration and tool on Railway.
-`MICHI_DEFAULT_WEB_SEARCH_PROVIDER=jina` or `tavily` can select the initial
-provider for operator-managed deployments.
+Web search is offered by local and desktop backends (Electron, the web
+launcher, and a desktop backend reached through remote or phone access) and by
+Railway, detected from Railway's injected service identifiers. Other hosted
+multi-user deployments (`MICHI_CLOUD=1` outside Railway) do not offer it.
+**Settings → Model → Web Search** chooses Jina Search or Tavily and saves its
+key on the backend: a desktop backend keeps it in `~/.michi/config.json` with
+the model-provider keys (`JINA_API_KEY` / `TAVILY_API_KEY` take precedence),
+and cloud mode on Railway keeps each user's key in the encrypted per-user
+vault. The UI only learns whether a key is saved. New Pi chats receive the source-aware
+`web_search` tool only after a provider and key are configured. Set
+`MICHI_WEB_SEARCH_ENABLED=0` to hide the configuration and tools on any
+backend. `MICHI_DEFAULT_WEB_SEARCH_PROVIDER=jina` or `tavily` can select the
+initial provider.
+The same chats also receive `fetch_content`, which reads a public page or PDF
+as text in offset-paged parts (backend/src/services/webFetch/). It refuses
+non-http(s) URLs and any host that resolves to a loopback, private,
+link-local, CGNAT or other reserved address, connects only to the address it
+checked, re-checks every redirect, and caps redirects, size and time.
 
 Frontend variables are declared in `frontend/src/vite-env.d.ts` and each one
 is documented in `frontend/.env.example`; copy it to `frontend/.env.local` for

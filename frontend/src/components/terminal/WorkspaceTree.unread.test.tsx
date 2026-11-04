@@ -1,6 +1,6 @@
 /**
- * Visual tests: workspace header bolds (font-weight 600) when any node in the
- * project is unread, and returns to normal (400) when all nodes are read.
+ * Unread in the workspace tree: the collapsed workspace header's unread ring,
+ * and filter mode (only unread threads, "Read all").
  *
  * Mounts WorkspaceRow directly with a seeded ChatProvider so we control
  * focusedNodeId precisely, avoiding the auto-focus side-effect from
@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React, { useEffect } from 'react';
-import { act, render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { act, render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import WorkspaceRow from './WorkspaceRow';
 import WorkspaceTree from './WorkspaceTree';
 import { ChatProvider, useChatStore } from '../../state/chatStore';
@@ -97,6 +97,67 @@ function seedAndRenderTree(
 afterEach(() => {
   cleanup();
   localStorage.clear();
+});
+
+describe('WorkspaceRow unread ring', () => {
+  const project: Project = {
+    id: 'p1', name: 'Ring Workspace', cwd: '~/x',
+    chatIds: ['r1'],
+    edges: [],
+    trees: [{ id: 't1', rootNodeId: 'r1', createdAt: 0, lastActiveAt: NOW }],
+    activeTreeId: 't1', createdAt: 0,
+  };
+  const nodes: Record<string, ChatNodeState> = {
+    r1: {
+      nodeId: 'r1', chatId: null, projectId: 'p1', kind: 'chat',
+      title: 'Unread thread', messages: [], followUps: [], status: 'idle',
+      lastAssistantAt: NOW, viewedAt: BEFORE,
+    },
+  };
+
+  function renderHeader(workspaceExpanded: boolean) {
+    localStorage.setItem(
+      'michi:v1:state',
+      JSON.stringify({ version: 2, projects: [project], nodes, activeProjectId: 'p1' }),
+    );
+    localStorage.setItem('michi:migrated', '1');
+    return render(
+      <PrefsProvider>
+        <ChatProvider>
+          <WorkspaceRow
+            project={project}
+            workspaceExpanded={workspaceExpanded}
+            activeProjectId={project.id}
+            activeTreeId={project.activeTreeId}
+            focusedNodeId={null}
+            isThreadExpanded={() => false}
+            isBranchExpanded={() => false}
+            isBranchSelected={() => false}
+            isNodeAlive={() => true}
+            sortedTrees={project.trees}
+            edges={project.edges}
+            actions={NOOP_ACTIONS}
+          />
+        </ChatProvider>
+      </PrefsProvider>,
+    );
+  }
+
+  const headerDot = () =>
+    screen.getByText('Ring Workspace').closest('.t-row-hover')!.querySelector('.sb-unread-dot') as HTMLElement | null;
+
+  it('rings a collapsed workspace that holds an unread thread', async () => {
+    renderHeader(false);
+    await waitFor(() => expect(headerDot()?.dataset.unread).toBe('within'));
+  });
+
+  it('drops the ring once the workspace is open and its threads show their own dots', async () => {
+    renderHeader(true);
+    const title = await screen.findByText('Unread thread');
+    const threadDot = title.closest('[data-sidebar-row]')!.querySelector('.sb-unread-dot') as HTMLElement;
+    await waitFor(() => expect(threadDot.dataset.unread).toBe('self'));
+    expect(headerDot()?.dataset.unread).toBe('none');
+  });
 });
 
 describe('WorkspaceTree filter mode', () => {

@@ -45,6 +45,25 @@ if (typeof document !== 'undefined') {
 }
 const touchSelection = () => lastPointerType === 'touch';
 
+/** The selected text must hold still this long before the bar appears. */
+const SELECTION_SETTLE_MS = 80;
+/**
+ * After a double click selects a word, a third click can still widen it to the
+ * whole block. The bar waits until this long after the double click's press, so
+ * a triple click shows it once, on the block, instead of on the word first.
+ */
+const TRIPLE_CLICK_WINDOW_MS = 300;
+let lastMouseDown = { clicks: 0, at: 0 };
+if (typeof document !== 'undefined') {
+  document.addEventListener('mousedown', (event) => {
+    lastMouseDown = { clicks: event.detail, at: Date.now() };
+  }, { capture: true, passive: true });
+}
+function selectionSettleDelay(): number {
+  if (lastMouseDown.clicks !== 2) return SELECTION_SETTLE_MS;
+  return Math.max(SELECTION_SETTLE_MS, lastMouseDown.at + TRIPLE_CLICK_WINDOW_MS - Date.now());
+}
+
 export interface SelectionActionsProps {
   containerRef: React.RefObject<HTMLElement | null>;
   /** Opt-in resource identity for serializable file drafts; callers must also key this component. */
@@ -200,9 +219,10 @@ export default function SelectionActions({
 
   // Track native selection while the composer is closed.
   // Uses content-stability detection: the bar only appears once the selected
-  // text stops changing for STABLE_THRESHOLD ms. This naturally debounces
-  // double/triple-click intermediate states without needing an isDragging
-  // state machine, and doesn't conflict with scroll events.
+  // text stops changing for SELECTION_SETTLE_MS (longer right after a double
+  // click, see TRIPLE_CLICK_WINDOW_MS). This debounces double/triple-click
+  // intermediate states without needing an isDragging state machine, and
+  // doesn't conflict with scroll events.
   const stableTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSelTextRef = useRef('');
   // Last placement actually rendered, tagged with the mode it was computed
@@ -237,8 +257,6 @@ export default function SelectionActions({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
-    const STABLE_THRESHOLD = 80; // ms — content must be unchanged this long
 
     const updateFromSelection = () => {
       if (composerOpenRef.current || hiddenDraftRef.current) { return; }
@@ -314,7 +332,7 @@ export default function SelectionActions({
               context: captureContextRef.current?.(freshText, freshRange),
               hasContext: !!captureContextRef.current,
             });
-          }, STABLE_THRESHOLD);
+          }, selectionSettleDelay());
         }
       }
     };

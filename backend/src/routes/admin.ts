@@ -18,6 +18,7 @@ import {
   type AgentOwnerCleanupResult,
   type PreparedAgentOwnerDeletion,
 } from '../services/agentRunAdministrativeLifecycle';
+import { purgeOwnerMemories } from '../services/memory/memoryRepository';
 
 export interface AdminRouteDeps {
   agentRunLifecycle?: AgentRunAdministrativeLifecycle;
@@ -394,6 +395,7 @@ router.delete('/users/:id', async (req, res) => {
 
       dataDb.prepare('DELETE FROM user_agent_configs WHERE user_id = ?').run(targetId);
       dataDb.prepare('DELETE FROM user_provider_keys WHERE user_id = ?').run(targetId);
+      purgeOwnerMemories(targetId);
       dataDb.prepare('DELETE FROM workspaces WHERE owner_user_id = ?').run(targetId);
 
       dataDb.exec('COMMIT');

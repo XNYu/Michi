@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useMetaAgentSettingsAlert } from '../../../state/metaAgent/useMetaAgentOverview';
+import { useMemoryBadge } from '../../../state/memory/memoryNotifications';
 import { firstRunActive, firstRunProgress, subscribeFirstRunFinished, useSpacesFirstRun } from '../../../state/metaAgent/spacesFirstRun';
 import { useSpaceConversationBadges } from '../spaces/home/homeLinks';
 import { NO_RAIL_BADGES, type RailBadges } from './AreaRail';
@@ -19,10 +20,11 @@ let toastOwner: object | null = null;
  * dot while the Meta agent's first run reads the history or a conversation
  * started from a Space runs, Conversations a green dot once such a
  * conversation finished unseen; Settings shows a red dot while a Meta agent
- * restriction check failed.
+ * restriction check failed, else how many memories wait for approval.
  */
 export function useRailBadges(): RailBadges {
   const settingsAlert = useMetaAgentSettingsAlert();
+  const memoryPending = useMemoryBadge().pendingCount;
   const conversations = useSpaceConversationBadges();
   const firstRun = useSpacesFirstRun('local');
   const scheduledRunning = conversations.scheduledRunning || firstRunActive(firstRun.data);
@@ -40,7 +42,7 @@ export function useRailBadges(): RailBadges {
     };
   }, []);
   return useMemo(
-    () => ({ ...NO_RAIL_BADGES, ...conversations, spacesWaiting: 0, scheduledRunning, settingsAlert }),
-    [conversations, scheduledRunning, settingsAlert],
+    () => ({ ...NO_RAIL_BADGES, ...conversations, spacesWaiting: 0, scheduledRunning, settingsAlert, memoryPending }),
+    [conversations, scheduledRunning, settingsAlert, memoryPending],
   );
 }

@@ -77,6 +77,79 @@ export function parseMcpToolName(name: string): { serverName: string; toolName: 
     return { serverName: match[1], toolName: match[2] };
 }
 
+/** Name of Pi's tool-discovery tool (pi-coding-agent createToolSearchExtension). */
+export const PI_TOOL_SEARCH_TOOL_NAME = "tool_search";
+
+/**
+ * MCP definitions at or above this estimate are deferred in "auto" mode. A
+ * few small servers stay declared, since deferral costs one search call; a
+ * large catalog (spec-studio alone is 100+ tools) is resent every request.
+ */
+export const MCP_TOOL_SEARCH_AUTO_TOKENS = 10_000;
+
+/** Rough token estimate of the declarations a model request carries. */
+export function estimateToolDefinitionTokens(tools: readonly any[]): number {
+    let chars = 0;
+    for (const tool of tools) chars += JSON.stringify({ name: tool.name, description: tool.description, parameters: tool.parameters }).length;
+    return Math.ceil(chars / 4);
+}
+
+/**
+ * Whether a session's MCP tools go behind tool_search. MICHI_PI_TOOL_SEARCH:
+ * "0"/"off" never, "1"/"on" always, otherwise (auto) when the definitions
+ * are large. An Agent Run tool allowlist is an explicit loadout and stays
+ * declared: tool_search is not on it.
+ */
+export function shouldDeferMcpTools(opts: { tools: readonly any[]; mode?: string; allowlisted: boolean }): boolean {
+    const mode = (opts.mode ?? "auto").trim().toLowerCase();
+    if (opts.allowlisted || opts.tools.length === 0 || mode === "0" || mode === "off" || mode === "false") return false;
+    if (mode === "1" || mode === "on" || mode === "true" || mode === "always") return true;
+    return estimateToolDefinitionTokens(opts.tools) >= MCP_TOOL_SEARCH_AUTO_TOKENS;
+}
+
+/**
+ * The same MCP tools with Pi's `deferred` exposure: registered and callable,
+ * declared to the model only after tool_search loads them. The namespace lets
+ * a search for the server name find its tools.
+ */
+export function deferMcpTools(tools: readonly any[]): any[] {
+    return tools.map((tool) => {
+        const parsed = parseMcpToolName(tool.name);
+        if (!parsed) return tool;
+        return {
+            ...tool, exposure: "deferred",
+            namespace: { name: `mcp__${parsed.serverName}`, aliases: [parsed.serverName], description: `MCP server ${parsed.serverName}` },
+        };
+    });
+}
+
+/** Maximum characters of the deferred-server system prompt section. */
+const MAX_DEFERRED_SECTION_CHARS = 4096;
+
+/**
+ * The system prompt section naming the servers whose tools are deferred.
+ * tool_search does not list them, so without it the model cannot know which
+ * capabilities exist. Undefined when nothing is deferred.
+ */
+export function renderDeferredMcpSection(tools: readonly any[]): string | undefined {
+    const counts = new Map<string, number>();
+    for (const tool of tools) {
+        if (tool.exposure !== "deferred") continue;
+        const server = parseMcpToolName(tool.name)?.serverName;
+        if (server) counts.set(server, (counts.get(server) ?? 0) + 1);
+    }
+    if (counts.size === 0) return undefined;
+    const intro = `MCP servers whose tools are not declared to you yet. Load the ones a task needs with \`${PI_TOOL_SEARCH_TOOL_NAME}\` (search by task words or the server name); loaded tools stay available for the rest of the conversation.`;
+    const lines = [...counts].sort(([a], [b]) => a.localeCompare(b))
+        .map(([server, count]) => `- ${server} (${count} tool${count === 1 ? "" : "s"})`);
+    let text = [intro, ...lines].join("\n");
+    while (text.length > MAX_DEFERRED_SECTION_CHARS && lines.length > 1) {
+        lines.pop();
+        text = [intro, ...lines, `- … more servers; find their tools with \`${PI_TOOL_SEARCH_TOOL_NAME}\``].join("\n");
+    }
+    return text;
+}
+
 /**
  * Build Pi-compatible AgentTool entries for all MCP tools from all connected
  * servers. Returns an array that can be spread into the buildPiTools result.

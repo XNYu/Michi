@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { purgeWorkspacePages } from './pages/repository';
 import { LOCAL_AGENT_OWNER_ID } from './agentOwner';
 import { purgeScheduledJobsForWorkspace } from './scheduledJobs/workspacePurge';
+import { purgeWorkspaceMemories } from './memory/memoryRepository';
 import path from 'node:path';
 import {
   isAssistantWorkspaceSettings,
@@ -404,6 +405,7 @@ export function deleteWorkspace(id: string, userId?: string): void {
       purgeScheduledJobsForWorkspace(id);
       purgeWorkspacePages(id, workspace.owner_user_id ?? LOCAL_AGENT_OWNER_ID);
     }
+    purgeWorkspaceMemories(id);
     db.prepare('UPDATE workspaces SET purged_at = ? WHERE id = ? AND purged_at IS NULL')
       .run(now, id);
     db.prepare('UPDATE nodes SET purged_at = ? WHERE workspace_id = ? AND purged_at IS NULL')
@@ -529,6 +531,22 @@ export function moveTreeToWorkspace(
 
     // Tree row: just flip workspace_id.
     db.prepare('UPDATE trees SET workspace_id = ? WHERE id = ?').run(toWorkspaceId, treeId);
+
+    // The source must not keep the moved tree as its active tree: every later
+    // graph command there rejects an active tree from another workspace. Fall
+    // back the way the renderer does (projectTreeActions moveTreeToWorkspace):
+    // the most recently active unarchived tree with a live root, else none.
+    if (fromWorkspaceId !== toWorkspaceId) {
+      db.prepare(`
+        UPDATE workspaces SET active_tree_id = (
+          SELECT t.id FROM trees t JOIN nodes n ON n.id = t.root_node_id
+          WHERE t.workspace_id = workspaces.id AND t.archived_at IS NULL
+            AND n.deleted_at IS NULL AND n.purged_at IS NULL
+          ORDER BY t.last_active_at DESC LIMIT 1
+        )
+        WHERE id = ? AND active_tree_id = ?
+      `).run(fromWorkspaceId, treeId);
+    }
 
     // Nodes: every node carrying this tree_id, regardless of source workspace.
     const nodeRows = db

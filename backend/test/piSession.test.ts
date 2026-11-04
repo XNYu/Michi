@@ -362,6 +362,25 @@ test('Pi Michi chat omits metadata glue and reminders on fresh and restored turn
   }
 });
 
+test('Pi sends the Michi Memory block ahead of the Pages context for the model only', async () => {
+  const stub = stubPiForMetaAgent([]);
+  const { PiSession } = require('../src/agents/pi/PiSession') as typeof import('../src/agents/pi/PiSession');
+  const session = new PiSession('pi-memory', {
+    bridge: { spawnBranches: async () => [], saveContext: () => null, updateContext: () => null },
+    preamble: '', cwd: process.cwd(), enableFollowUps: false, workspaceId: 'workspace-1', ownerUserId: null,
+    owner: chatOwner('pi-memory'),
+  });
+  await drainPi(session, 'first question', {
+    memoryContext: '<michi-memory>\n- Reply in Chinese. (preference)\n</michi-memory>',
+    pageContext: 'Michi Pages manifest (JSON): {}',
+  });
+  await drainPi(session, 'second question');
+  assert.equal(stub.prompts[0], '<michi-memory>\n- Reply in Chinese. (preference)\n</michi-memory>\n\n---\n\nMichi Pages manifest (JSON): {}\n\n---\n\nfirst question');
+  assert.equal(stub.prompts[1], 'second question', 'a turn without a block sends none');
+  assert.deepEqual(session.getHistory().filter((m) => m.role === 'user').map((m) => m.content), ['first question', 'second question']);
+  session.destroy();
+});
+
 test('Pi Meta agent chat: a tool that slips past the allow-list stops the run with MetaAgentGuardError', async () => {
   const { assistantToolProfile } = require('../src/assistant/policy') as typeof import('../src/assistant/policy');
   const { MetaAgentGuardError } = require('../src/agents/metaAgentGuard') as typeof import('../src/agents/metaAgentGuard');
@@ -385,4 +404,18 @@ test('Pi Meta agent maintenance: only the dedicated maintenance tools, never the
   });
   assert.equal(stub.buildCalls(), 0);
   assert.deepEqual(stub.agentTools(), [...META_AGENT_MAINTENANCE_TOOL_NAMES]);
+});
+
+test('Pi automatic memory: only the four extraction tools, never maintenance or chat tools', async () => {
+  const { memoryExtractionToolProfile, MEMORY_EXTRACTION_TOOL_NAMES } = require('../src/services/memory/extractionProfile') as typeof import('../src/services/memory/extractionProfile');
+  const stub = stubPiForMetaAgent(['list_threads', 'memory_search', 'bash']);
+  const session = newPiMetaSession('n-memory', memoryExtractionToolProfile());
+  await drainPi(session, 'extract', {
+    turnId: 't-1', assistantMessageId: 'a-1',
+    maintenanceContext: {
+      workspaceId: 'workspace-1', ownerUserId: 'local-user', jobId: 'job-1', runId: 'run-1', claimedBy: 'w', configRevision: 1, planId: 'mxr-1', sources: [],
+    },
+  });
+  assert.equal(stub.buildCalls(), 0, 'no chat builtins, including a chat memory tool of the same name');
+  assert.deepEqual(stub.agentTools(), [...MEMORY_EXTRACTION_TOOL_NAMES]);
 });

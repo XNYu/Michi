@@ -47,6 +47,14 @@ const entityFields = new Set([
 const entityArrays = new Set(['nodeIds', 'chatIds', 'treeIds', 'childrenIds', 'mergeSources', 'digestSources']);
 const encodedFields = new Set(['blocks', 'digest', 'composer_draft', 'metadata', 'trim_snapshot']);
 const entityRoutes = new Set(['workspaces', 'trees', 'nodes', 'chats', 'files', 'artifacts']);
+/** Objects keyed by entity ID, e.g. the liveness feed's `backgroundSubagents.nodes` (node id → agent ids). */
+const entityKeyedContexts = new Set(['cursors', 'sourceFingerprints', 'backgroundSubagentNodes']);
+
+function childContext(context: string, key: string): string {
+  if (context === 'digest' && key === 'sources') return 'digestSources';
+  if (context === 'backgroundSubagents' && key === 'nodes') return 'backgroundSubagentNodes';
+  return key;
+}
 
 /** Translate structural references only; prose, paths and native session IDs stay opaque. */
 export function mapBackendPayload<T>(value: T, connectionId: string, direction: 'renderer' | 'server', context = ''): T {
@@ -62,7 +70,7 @@ export function mapBackendPayload<T>(value: T, connectionId: string, direction: 
   const row = value as Record<string, unknown>;
   const entityRow = ['workspace', 'workspaces', 'node', 'nodes', 'tree', 'trees'].includes(context);
   return Object.fromEntries(Object.entries(row).map(([key, item]) => {
-    const mappedKey = context === 'cursors' || context === 'sourceFingerprints' ? mapId(key) : key;
+    const mappedKey = entityKeyedContexts.has(context) ? mapId(key) : key;
     if (typeof item === 'string') {
       if (key === 'paneId') return [mappedKey, mapPaneId(item)];
       if (entityFields.has(key) || (key === 'id' && (entityRow || direction === 'server'))
@@ -74,8 +82,7 @@ export function mapBackendPayload<T>(value: T, connectionId: string, direction: 
         return [mappedKey, JSON.stringify(mapBackendPayload(parsed, connectionId, direction, key))];
       }
     }
-    return [mappedKey, mapBackendPayload(item, connectionId, direction,
-      context === 'digest' && key === 'sources' ? 'digestSources' : key)];
+    return [mappedKey, mapBackendPayload(item, connectionId, direction, childContext(context, key))];
   })) as T;
 }
 

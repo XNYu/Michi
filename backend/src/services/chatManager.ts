@@ -27,6 +27,8 @@ import {
     maintenanceToolProfile,
     MaintenanceRuntimeUnsupportedError,
 } from '../agents/maintenancePolicy';
+import { isMemoryExtractionJob } from './memory/extractionRepository';
+import { memoryExtractionBootstrapInstructions, memoryExtractionProfileHash, memoryExtractionToolProfile } from './memory/extractionProfile';
 import {
     AgentPolicyCategory,
     AgentPolicyDecision,
@@ -347,7 +349,13 @@ export class ChatManager {
                 ? 'Scheduled maintenance nodes can only be opened by their managed job'
                 : 'Maintenance profile requires a scheduled maintenance node');
         }
-        if (input.maintenance && !getDb().prepare(`
+        // A workspace's automatic memory extraction opens its own closed toolset (memory/extractionProfile.ts).
+        const memoryExtraction = input.maintenance === true && isMemoryExtractionJob(node.maintenance_job_id!);
+        if (input.maintenance && !getDb().prepare(memoryExtraction ? `
+            SELECT 1 FROM scheduled_jobs j
+            JOIN memory_extraction_cursors c ON c.job_id = j.id AND c.workspace_id = j.workspace_id
+            WHERE j.id = ? AND j.workspace_id = ? AND j.session_mode = 'fresh' AND c.owner_user_id = ?
+        ` : `
             SELECT 1 FROM scheduled_jobs j
             JOIN page_maintenance_configs c ON c.job_id = j.id AND c.workspace_id = j.workspace_id
             WHERE j.id = ? AND j.workspace_id = ? AND j.session_mode = 'fresh' AND c.owner_user_id = ?
@@ -373,10 +381,12 @@ export class ChatManager {
         const model = input.maintenance ? node.model_id ?? null : primaryProfile?.modelId ?? node.model_id ?? null;
         const provider = input.maintenance ? node.provider_id ?? null : primaryProfile?.providerId ?? node.provider_id ?? null;
         const reasoning = (input.maintenance ? node.reasoning ?? null : primaryProfile?.reasoning ?? node.reasoning ?? null) as AgentReasoning | null;
-        const maintenanceHash = input.maintenance ? maintenanceProfileHash({ runtimeId, providerId: provider, modelId: model, reasoning }) : null;
-        const bootstrap = input.maintenance
-            ? { bootstrapInstructions: MAINTENANCE_BOOTSTRAP_INSTRUCTIONS, toolProfile: maintenanceToolProfile(), profileHash: maintenanceHash }
-            : primaryAgentSessionOptions(primaryAgent);
+        const maintenanceHash = !input.maintenance ? null
+            : (memoryExtraction ? memoryExtractionProfileHash : maintenanceProfileHash)({ runtimeId, providerId: provider, modelId: model, reasoning });
+        const bootstrap = !input.maintenance ? primaryAgentSessionOptions(primaryAgent)
+            : memoryExtraction
+                ? { bootstrapInstructions: memoryExtractionBootstrapInstructions(), toolProfile: memoryExtractionToolProfile(), profileHash: maintenanceHash }
+                : { bootstrapInstructions: MAINTENANCE_BOOTSTRAP_INSTRUCTIONS, toolProfile: maintenanceToolProfile(), profileHash: maintenanceHash };
         const live = sessionRegistry.getSessionForOwner(input.nodeId, owner, input.ownerUserId);
         const nativeId = nativeResumeIdFor(runtime, node);
         const targetSignature = { runtimeId, runtimeEngine: runtime.nativeEngine, modelId: model, providerId: provider, reasoning };

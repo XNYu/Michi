@@ -900,33 +900,6 @@ export default function TerminalTopbar({
             } as React.CSSProperties}
           />
         )}
-        {showPaneCells && newPaneIds.size > 0 && (
-          <button
-            type="button"
-            aria-label={`${newPaneIds.size} new background pane${newPaneIds.size === 1 ? '' : 's'}`}
-            onClick={() => {
-              // Focus the first new pane — this also clears its "new" mark.
-              const firstNew = activePanes.find((id) => newPaneIds.has(id));
-              if (firstNew) focusPane(firstNew);
-            }}
-            style={{
-              fontFamily: 'var(--ui-font)',
-              fontSize: 'var(--fs-xs)',
-              fontWeight: 700,
-              padding: '2px 7px',
-              borderRadius: 'var(--ui-radius-pill)',
-              background: 'var(--term-accent)',
-              color: 'var(--term-bg)',
-              border: 'none',
-              cursor: 'pointer',
-              flexShrink: 0,
-              animation: 'overflow-badge-enter var(--t-decay) cubic-bezier(.34, 1.56, .64, 1) forwards',
-              WebkitAppRegion: 'no-drag',
-            } as React.CSSProperties}
-          >
-            +{newPaneIds.size}
-          </button>
-        )}
         {remoteRecoveryControl}
         {updateAvailable && !updateDismissed && (
             <span

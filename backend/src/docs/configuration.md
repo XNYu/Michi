@@ -67,6 +67,10 @@ Existing AWS environment variables take precedence over saved Bedrock configurat
 
 Local credentials are stored in `~/.michi/config.json`; hosted per-user keys use a separate encrypted vault. Use `privacy-and-data` for storage boundaries.
 
+## Pi web search
+
+Local and desktop backends, including one reached by remote or phone access, offer web search; hosted multi-user deployments other than Railway do not. In Settings → Model → Web search, choose Jina Search or Tavily and save its API key. The key stays on the backend with the other provider keys (`JINA_API_KEY` / `TAVILY_API_KEY` take precedence) and Settings only shows whether one is saved. New Pi chats then receive `web_search` and `fetch_content`; choose Disabled to remove them. Queries go to the chosen provider, and `fetch_content` fetches public pages from the backend machine. `MICHI_WEB_SEARCH_ENABLED=0` hides the feature on any backend.
+
 ## Update an installed checkout
 
 Preserve local source edits, pull the public `main` branch, run `npm install`, and rebuild the relevant target from the installation checkout. Follow the repository README for the platform you use. A local development commit is available to others only after publication.

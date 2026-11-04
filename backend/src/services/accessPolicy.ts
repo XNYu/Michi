@@ -28,6 +28,12 @@ export function resolveAccessPolicy(env: NodeJS.ProcessEnv = process.env): Acces
   };
 }
 
+/** Cloud mode isolates accounts. An access configuration resolveAccessPolicy
+ * rejects counts as cloud, so feature and permission checks fail closed. */
+export function isOwnerScopedAccess(env: NodeJS.ProcessEnv = process.env): boolean {
+  try { return resolveAccessPolicy(env).ownerScoped; } catch { return true; }
+}
+
 export interface AccessUser { id: string; email?: string; emailVerified?: boolean }
 
 export function isAuthorizedSession(policy: AccessPolicy, user: AccessUser | undefined): boolean {

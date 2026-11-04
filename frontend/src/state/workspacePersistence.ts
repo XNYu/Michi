@@ -456,9 +456,9 @@ export function serializeMessageRowsForNode(
     const persisted = messageForPersistence(m);
     // Mirror every assistant metadata field the backend projection writes
     // (turnPersistence.recipes durableMessageMetadata): a write-back that
-    // omits one silently erases it from the row.
+    // omits one silently erases it from the row. A cleared plan (`[]`) counts.
     const metadata = m.role === 'assistant'
-      ? (m.plan?.length || persisted.steeringReports?.length || persisted.subagents?.length
+      ? (Array.isArray(m.plan) || persisted.steeringReports?.length || persisted.subagents?.length
           ? { plan: m.plan, steeringReports: persisted.steeringReports, subagents: persisted.subagents } : null)
       : (m.steered || m.scheduledJobId || m.quotedText || m.attachments?.length || m.comments?.length
           ? {

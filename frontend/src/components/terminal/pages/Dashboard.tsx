@@ -32,6 +32,7 @@ import { bindPaneCaptionScroll } from '../paneCaptionScroll';
 import { afterPaneMotion, scrollWithPaneLayout } from '../paneReveal';
 import { paneEntrance, PANE_EASE } from '../paneMotion';
 import { isFreshBranch, playBranchPush } from '../branchMotion';
+import { PaneArrivalTabs, usePaneArrivals } from '../PaneArrivals';
 import { RetainedPaneContent, usePresentedPanes, usePresentedPaneFocus } from '../PanePresentation';
 
 const FilePane = lazy(() => import('../FilePane'));
@@ -103,7 +104,7 @@ export default function TerminalDashboard() {
   const openPanes = useMemo(() => presentedPanes.filter(id => paneItems[id]?.kind !== 'browser'), [presentedPanes, paneItems]);
   const exitingIds = useMemo(() => new Set([...allExitingIds].filter(id => openPanes.includes(id))), [allExitingIds, openPanes]);
   const browserItems = activePanes.flatMap(id => { const item = activeItems[id]; return item?.kind === 'browser' ? [item] : []; });
-  const { setPaneWidth, openAgentRunPane } = useChatActions();
+  const { setPaneWidth, openAgentRunPane, focusPane } = useChatActions();
   const agentDomain = useAgentDomain();
   const workflowDomain = useOptionalWorkflowDomain();
   const subscribeWorkflows = workflowDomain?.subscribeWorkspace;
@@ -180,6 +181,18 @@ export default function TerminalDashboard() {
     appReduceMotion: phone || prefs.reduceMotion,
     onExitStart: holdExits,
     onExitComplete: finishExit,
+  });
+  const paneOnScreen = (id: string) => {
+    const strip = stripRef.current;
+    const index = openPanes.indexOf(id);
+    if (!strip || index < 0 || !layout.ready) return true;
+    const left = layout.positions[index] - strip.scrollLeft;
+    const width = layout.widths[index];
+    return Math.min(left + width, strip.clientWidth) - Math.max(left, 0) >= width * 0.6;
+  };
+  const chatPanes = useMemo(() => activePanes.filter(id => activeItems[id]?.kind !== 'browser'), [activePanes, activeItems]);
+  const { arrivals, recheck: recheckArrivals } = usePaneArrivals({
+    scope: paneScope, panes: chatPanes, focusedPane, edges: activeProject?.edges, enabled: !phone, isOnScreen: paneOnScreen,
   });
   // Overlay scrollbar — native scrollbar is hidden via .hide-sb on the
   // strip; we render our own thumb as a sibling and reposition it from the
@@ -521,6 +534,9 @@ export default function TerminalDashboard() {
     return () => { for (const animation of running.values()) animation.cancel(); running.clear(); };
   }, []);
 
+  // A resize or settled layout can bring an off-screen branch into view.
+  useLayoutEffect(() => { recheckArrivals(); }, [layout.settledVersion, layout.contentWidth, recheckArrivals]);
+
   // Runs after the reveal above has scrolled the strip to the new pane.
   const previousPhonePane = useRef({ scope: paneScope, id: visiblePhonePane, ids: activePanes });
   const stopBranchPush = useRef<(() => void) | null>(null);
@@ -594,6 +610,7 @@ export default function TerminalDashboard() {
         // scrolled so they can re-sync their bounds. The DOM scroll event
         // on this container does not bubble to `window`.
         window.dispatchEvent(new Event('michi:dashboard-scroll'));
+        recheckArrivals();
       }}
       onMouseDown={handlePaneSelectionMouseDown}
       onDragEnter={handleDashDragEnter}
@@ -732,6 +749,7 @@ export default function TerminalDashboard() {
         </div>
       )}
     </div>
+      {!phone && <PaneArrivalTabs ids={arrivals} onOpen={focusPane} />}
       {!phone && overflow && (
         <div
           ref={thumbRef}

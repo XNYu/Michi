@@ -4,6 +4,8 @@ import { AnimatePresence, motion, useIsPresent, useMotionValue, usePresence, typ
 import { DUR, TRANSITION } from '../../motion/tokens';
 import { useOverlayFocus } from './useOverlayFocus';
 import { useFrozenGlass } from './useFrozenGlass';
+import { getElectron } from '../../lib/electronBridge';
+import './OverlaySurface.css';
 import './ModalShell.css';
 
 /**
@@ -49,10 +51,9 @@ export interface ModalShellProps {
    *  and closes on the spot (⌘K: dismissed straight into what was picked).
    *  'none' opens and closes on the spot. */
   motion?: 'standard' | 'enter' | 'none';
-  /** 'live' (default): the panel's frost is a live backdrop-filter. 'frozen':
-   *  on desktop, blurred once from a capture of the window as it opens, so it
-   *  can't blink while a reply streams behind it (useFrozenGlass). The modal
-   *  (scrim and panel) shows a capture later, at most 150ms. */
+  /** Desktop defaults to 'frozen': one blurred window capture, with an opaque
+   *  fallback on failure/resize. Web defaults to 'live'. The modal waits at
+   *  most 150ms for capture before showing the fallback. */
   glass?: 'live' | 'frozen';
   /** Extra header content on the trailing side (e.g. a subtitle chip). */
   headerTrailing?: React.ReactNode;
@@ -115,7 +116,7 @@ export function ModalShell({
   dismissible = true,
   layer = 'modal',
   motion: motionMode = 'standard',
-  glass = 'live',
+  glass = getElectron() ? 'frozen' : 'live',
   headerTrailing,
   children,
   ...rest
@@ -245,7 +246,11 @@ function ModalLayers({
   // routing (escapeLayers matches dialog roles), inert, and click-through.
   const leaving = !useIsPresent();
   const dismiss = dismissible && !leaving ? onClose : undefined;
-  const glass = useFrozenGlass(paneRef, frozenGlass);
+  // A stacked/replacement modal must appear immediately. Capturing here
+  // would bake the old dialog into its background and leave a blank frame
+  // when the hand-over below hides the retiring scrim. Choose once per open.
+  const [allowCapture] = React.useState(() => modalsOnScreen.size === 0);
+  const glass = useFrozenGlass(paneRef, frozenGlass, allowCapture);
   // While frozen glass captures the window, neither scrim nor panel is drawn
   // (the capture is the page as it was); the entrance plays once it is done.
   const holding = glass.phase === 'capturing';
@@ -321,7 +326,7 @@ function ModalLayers({
       >
         <motion.div
           ref={paneRef}
-          className="ui-modal-panel term-glass"
+          className="ui-modal-panel ui-overlay-surface term-glass"
           data-glass={glass.phase === 'live' ? undefined : glass.phase}
           tabIndex={-1}
           role={leaving ? undefined : 'dialog'}

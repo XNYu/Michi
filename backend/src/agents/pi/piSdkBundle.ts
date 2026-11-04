@@ -4,7 +4,5 @@
 export * as ai from '@earendil-works/pi-ai/compat';
 export * as core from '@earendil-works/pi-agent-core';
 export * as coding from '@earendil-works/pi-coding-agent';
-// @ts-ignore - exports subpath is resolved by esbuild
-export * as google from '@earendil-works/pi-ai/api/google-shared';
-// @ts-ignore - exports subpath is resolved by esbuild
-export * as simple from '@earendil-works/pi-ai/api/simple-options';
+// @ts-ignore - typebox ships ESM-only types; esbuild resolves it
+export * as typebox from 'typebox';

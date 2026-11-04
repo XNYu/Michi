@@ -7,6 +7,8 @@ import { watchDue } from './watches';
 import type { ScheduledJobRecord } from '../scheduledJobs/repository';
 import { LOCAL_AGENT_OWNER_ID, workspaceOwnerMatches } from '../agentOwner';
 import { isSystemWorkspaceSettings } from 'michi-shared';
+import { isMemoryExtractionJob } from '../memory/extractionRepository';
+import { memoryExtractionHasWork } from '../memory/extractionRun';
 
 export const MAINTENANCE_CHECK_INTERVAL_MS = 60_000;
 
@@ -39,6 +41,17 @@ export function maintenanceHasWork(workspaceId: string, ownerUserId: string, now
   return conversationCompletionCounter(workspaceId) > config.completionCursor;
 }
 
+/**
+ * Discovery for one execution identity. A workspace has up to two: its Pages
+ * maintenance, and its automatic memory extraction (memory/extractionRun.ts),
+ * which shares this coordinator's lease, capacity, backoff and pauses.
+ */
+export function maintenanceExecutionHasWork(record: Pick<ScheduledJobRecord, 'id' | 'workspaceId' | 'ownerUserId'>, now: number): boolean {
+  const ownerUserId = record.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
+  if (isMemoryExtractionJob(record.id)) return memoryExtractionHasWork({ jobId: record.id, workspaceId: record.workspaceId, ownerUserId }, now);
+  return maintenanceHasWork(record.workspaceId, ownerUserId, now);
+}
+
 /** One coordinator shares the existing host lease and execution admission.
  * Workspace records are execution identities, not independently timed jobs.
  * Pending work is durable in plans/cursors/requests; wakeups are only hints.
@@ -68,7 +81,7 @@ export class MaintenanceCoordinator {
       const retryMs = Math.min(60 * 60_000, MAINTENANCE_CHECK_INTERVAL_MS * 2 ** Math.min(6, Math.max(0, record.consecutiveFailures - 1)));
       if (record.consecutiveFailures > 0 && record.lastRunAt !== null && now < record.updatedAt + retryMs) continue;
       try {
-        if (!maintenanceHasWork(record.workspaceId, record.ownerUserId ?? LOCAL_AGENT_OWNER_ID, now)) continue;
+        if (!maintenanceExecutionHasWork(record, now)) continue;
         if (start(record)) break;
       } catch (error) {
         log.warn('scheduler', 'maintenance discovery failed', { workspaceId: record.workspaceId, error: String(error) });

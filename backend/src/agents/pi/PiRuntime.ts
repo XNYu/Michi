@@ -16,7 +16,8 @@ import type {
 } from "../types";
 import type { AgentToolBridge } from "../toolBridge";
 import { sameOwner } from "../types";
-import { chatOwner, isRunOwner } from "../ownerMapping";
+import { chatNodeOf, chatOwner, isRunOwner } from "../ownerMapping";
+import type { PlanEntry } from "michi-shared";
 import { PendingSessionAcquisitions } from "../sessionAcquisition";
 import { PiSession, type PiSessionDeps } from "./PiSession";
 import { isMetaAgentProfile } from "../metaAgentGuard";
@@ -181,6 +182,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             requestedReasoning: opts.reasoning ?? null,
             initialMessages,
             restoreNative: opts.replayHistory !== undefined,
+            initialPlan: initialPlanFor(owner, opts, opts.branchContext),
         };
         const session = await createPiSession(id, sessionDeps);
         this.sessions.set(id, session as AgentSession & { destroy(): void; dispose?(): Promise<void> });
@@ -280,6 +282,7 @@ export class PiRuntime implements AgentRuntimeWithProviders {
             requestedProvider: opts.provider ?? null,
             requestedModel: opts.model ?? null,
             requestedReasoning: opts.reasoning ?? null,
+            initialPlan: initialPlanFor(owner, opts),
         };
         const session = await createPiSession(opts.sessionId, { ...sessionDeps, restoreNative: true });
         this.sessions.set(opts.sessionId, session as AgentSession & { destroy(): void; dispose?(): Promise<void> });
@@ -354,6 +357,34 @@ export class PiRuntime implements AgentRuntimeWithProviders {
     async shutdown(): Promise<void> {
         await Promise.allSettled([...this.acquisitions.values()]);
         await Promise.allSettled([...this.sessions.keys()].map((id) => this.releaseSession(id)));
+    }
+}
+
+/**
+ * The persisted plan a chat session's todo list starts from. Only ordinary
+ * chats get the todo tool; Runs, the assistant and maintenance start empty.
+ * A lookup failure starts empty rather than failing the session.
+ */
+function initialPlanFor(
+    owner: RuntimeSessionOwner,
+    opts: NewAgentSessionOptions | LoadAgentSessionOptions,
+    branch?: NewAgentSessionOptions['branchContext'],
+): PlanEntry[] | null {
+    const nodeId = chatNodeOf(owner);
+    if (nodeId === undefined || opts.toolProfile?.restricted
+        || isAssistantProfile(opts.toolProfile) || isMaintenanceProfile(opts.toolProfile)) return null;
+    try {
+        return getRuntimeDeps().historyStore.getPlanSnapshot?.({
+            nodeId,
+            userId: opts.ownerUserId ?? null,
+            ...(branch ? { branch: {
+                parentNodeId: branch.parentNodeId,
+                ...(branch.boundaryMessageId === undefined ? {} : { boundaryMessageId: branch.boundaryMessageId }),
+            } } : {}),
+        }) ?? null;
+    } catch (error) {
+        console.warn(`[piRuntime] plan snapshot for ${nodeId} unavailable:`, (error as Error).message);
+        return null;
     }
 }
 

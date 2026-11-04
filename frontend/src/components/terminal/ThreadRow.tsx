@@ -9,8 +9,10 @@ import type { MenuSection } from '../ContextMenu';
 import type { ContextMenuSection } from '../../lib/threadRowContextMenu';
 import type { ProjectEdge, Tree } from '../../state/chatTypes';
 import type { OpenState } from '../../state/sidebarSelectors';
-import { treeHasUnread, buildBranchChildrenOf } from '../../state/sidebarSelectors';
+import { treeHasUnread, buildBranchChildrenOf, isNodeUnread } from '../../state/sidebarSelectors';
+import { isVisibleConversationNode } from '../../state/conversationVisibility';
 import { rowGeom, rowPadding, caretKebabClearance, CARD_FILL, CARD_FILL_SELECT } from './sidebarRowStyle';
+import { UnreadDot, UNREAD_DOT_LEAD, UNREAD_TITLE_WEIGHT, type UnreadMark } from './UnreadDot';
 import { useNewPanePulse } from './useNewPanePulse';
 import { useTreePrefetchIntent } from '../../state/treePrefetch';
 import { deriveTitleFromUserText } from '../../state/assistantParsing';
@@ -130,7 +132,13 @@ export default function ThreadRow({
       treeHasUnread({ rootNodeId }, projectEdges, nodes, focusedNodeId, branchChildrenOf),
     [rootNodeId, projectEdges, focusedNodeId, branchChildrenOf],
   );
-  const unread = useStructuralSelector(unreadSelector);
+  const treeUnread = useStructuralSelector(unreadSelector);
+  // The root itself vs. something in its tree: the root gets the solid dot and
+  // a brighter title; a collapsed thread hiding an unread branch gets the ring.
+  const ownUnread = !!n && isVisibleConversationNode(n) && isNodeUnread(n, focusedNodeId);
+  const unreadMark: UnreadMark = ownUnread
+    ? 'self'
+    : treeUnread && hasBranches && !expanded ? 'within' : 'none';
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -273,10 +281,10 @@ export default function ThreadRow({
               }),
           // Shared with classic. Focus/selection is carried by colour (mid → fg)
           // and the fill, never by weight: the title keeps 450 in every state so
-          // it doesn't widen and re-truncate as the selection moves. 900 stays
-          // reserved for unread.
-          color: isActive || selected || menu ? 'var(--term-fg)' : 'var(--term-mid)',
-          fontWeight: unread ? 900 : 450,
+          // it doesn't widen and re-truncate as the selection moves. Only an
+          // unread root changes weight, alongside its dot (see UnreadDot).
+          color: isActive || selected || menu || ownUnread ? 'var(--term-fg)' : 'var(--term-mid)',
+          fontWeight: ownUnread ? UNREAD_TITLE_WEIGHT : 450,
           fontSize: 'var(--sb-fs, var(--fs-xl))',
           fontFamily: 'var(--ui-font)',
           position: 'relative',
@@ -287,10 +295,19 @@ export default function ThreadRow({
         <div
           style={
             geom.isCard
-              ? { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }
+              ? { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, position: 'relative' }
               : { display: 'contents' }
           }
         >
+        {/* Card modes: anchored to this first line, so the dot centres on the
+            title line of a two-line card and sits in the gutter just left of
+            the title (or pin). Classic: the line is display:contents, so the
+            dot anchors to the Row and lands in its left padding, before the
+            chevron. */}
+        <UnreadDot
+          mark={unreadMark}
+          left={geom.isCard ? -UNREAD_DOT_LEAD : 'calc(1px + var(--sb-inset, 0px))'}
+        />
         {geom.chevronLeading && (
           <Chevron
             expanded={expanded}

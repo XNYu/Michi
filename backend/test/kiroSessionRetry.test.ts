@@ -158,6 +158,36 @@ describe('AcpAgentSession Pages turn context and attribution', () => {
     assert.equal(session.getActivePageTurnAttribution(), null);
     assert.equal(activeGetter, undefined);
   });
+
+  it('sends the Michi Memory block ahead of the Pages context, after the first-message preamble, and keeps it out of history', async () => {
+    const prompts: string[] = [];
+    const client = {
+      async *prompt(_sid: string, text: string) {
+        prompts.push(text);
+        yield { sessionUpdate: 'turn_end', stopReason: 'end_turn' };
+      },
+    };
+    const runtime = {
+      host: michiTestHost(),
+      ensureClient: async () => client,
+      getCurrentMode: () => null,
+      getCurrentModel: () => null,
+    } as unknown as AcpAgentRuntime;
+    const session = new AcpAgentSession('node-memory', 'sid-memory', runtime, '/tmp', {
+      owner: { mode: 'interactive', key: 'node-memory' },
+    });
+    session.primeFirstMessage('FIRST-MESSAGE PREAMBLE');
+
+    for await (const _event of session.send('first question', {
+      memoryContext: '<michi-memory>\n- Reply in Chinese. (preference)\n</michi-memory>',
+      pageContext: 'Michi Pages manifest (JSON): {}',
+    })) { /* drain */ }
+    for await (const _event of session.send('second question')) { /* drain */ }
+
+    assert.match(prompts[0]!, /^FIRST-MESSAGE PREAMBLE\n<michi-memory>\n- Reply in Chinese\. \(preference\)\n<\/michi-memory>\n\n---\n\nMichi Pages manifest \(JSON\): \{\}\n\n---\n\nfirst question/);
+    assert.match(prompts[1]!, /^second question/, 'a turn without a block sends none');
+    assert.deepEqual(session.getHistory().filter((m) => m.role === 'user').map((m) => m.content), ['first question', 'second question']);
+  });
 });
 
 describe('AcpAgentSession auto-retry is visible to the UI', () => {

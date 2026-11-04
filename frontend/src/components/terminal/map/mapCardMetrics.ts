@@ -1,4 +1,4 @@
-// Shared MapCard geometry for every Map layout engine (dagre, ELK, orbit) and
+// Shared MapCard geometry for the Map layout (ELK, with its dagre stand-in) and
 // the camera. Real card heights are measured in the DOM (see Map.tsx); these
 // are only first-frame estimates before a measurement lands.
 

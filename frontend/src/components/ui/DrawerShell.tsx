@@ -3,6 +3,7 @@ import { motion, MotionConfigContext, type Transition } from 'motion/react';
 import { DUR, EASE } from '../../motion/tokens';
 import './DrawerShell.css';
 import { useOverlayFocus } from './useOverlayFocus';
+import './OverlaySurface.css';
 
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 const EXIT_TIMEOUT_MS = 220;
@@ -123,7 +124,8 @@ export function DrawerShell({
       )}
       <div
         ref={panelRef}
-        className="ui-drawer-panel term-glass drawer-shell-panel"
+        className="ui-drawer-panel ui-overlay-surface term-glass drawer-shell-panel"
+        data-glass="solid"
         data-state={open ? 'open' : 'closed'}
         data-motion={instant ? 'instant' : 'standard'}
         tabIndex={-1}

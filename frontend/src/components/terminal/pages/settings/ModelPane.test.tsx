@@ -288,6 +288,26 @@ describe('ModelPane Kiro sidecar title setting', () => {
     expect(setPref).toHaveBeenCalledExactlyOnceWith('enableKiroSidecarTitles', true);
   });
 
+  // The backend decides availability (desktop backends and Railway report
+  // providers; other hosted backends and the kill switch omit them).
+  it('shows Web search exactly when the backend reports search providers', () => {
+    const base = { runtime: 'kiro', label: 'Kiro', capabilities: {}, availableRuntimes: [], hasRequiredKey: true };
+    agentStatus = base;
+    const view = render(<ModelPane activeProjectId={null} />);
+    expect(screen.queryByText('Web search')).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Web search provider' })).toBeNull();
+
+    agentStatus = { ...base, webSearchProvider: null, webSearchProviders: [
+      { id: 'jina', label: 'Jina Search', keyLabel: 'Jina API key', keyUrl: 'https://jina.ai/reader/', description: '', hasKey: false },
+    ] };
+    view.rerender(<ModelPane activeProjectId={null} />);
+    expect(screen.getByText('Web search')).toBeTruthy();
+    const provider = screen.getByRole('combobox', { name: 'Web search provider' }) as HTMLSelectElement;
+    expect(provider.value).toBe('');
+    expect(within(provider).getByRole('option', { name: 'Jina Search (key required)' })).toBeTruthy();
+    expect(screen.queryByLabelText('Jina Search API key')).toBeNull();
+  });
+
   it('configures the selected web-search provider without exposing its saved key', async () => {
     agentStatus = {
       runtime: 'pi',

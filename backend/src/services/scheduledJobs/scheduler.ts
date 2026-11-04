@@ -1,4 +1,7 @@
-import { MaintenanceCoordinator, maintenanceHasWork, maintenanceCoordinatorState } from '../metaAgent/maintenanceCoordinator';
+import { MaintenanceCoordinator, maintenanceExecutionHasWork, maintenanceCoordinatorState } from '../metaAgent/maintenanceCoordinator';
+import { isMemoryExtractionJob } from '../memory/extractionRepository';
+import { failMemoryExtractionRun, planMemoryExtractionRun, settleMemoryExtractionRun } from '../memory/extractionRun';
+import { sweepMemoryExtraction } from '../memory/extractionService';
 import { getScheduledJobSettings } from './settings';
 import { randomUUID } from 'node:crypto';
 import {
@@ -148,6 +151,9 @@ interface ActiveRun {
   attentionRequested?: boolean;
   homeRun?: Extract<HomeRunPlan, { id: string }>;
   watchRun?: WatchRunPlan;
+  /** A workspace's automatic memory extraction (memory/extractionRun.ts); bound like a watch check. */
+  memoryExtraction?: boolean;
+  memoryRun?: { id: string; prompt: string };
 }
 
 const NOTIFICATION_REPLAY_WINDOW_MS = 24 * 3_600_000;
@@ -507,7 +513,7 @@ export class ScheduledJobScheduler {
       const owner = found.record.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
       if (maintenanceCoordinatorState(owner).paused) return refuse('paused', 'Automatic maintenance is paused');
       if (found.activeRunId) return refuse('running', 'Already updating this workspace');
-      if (!maintenanceHasWork(found.record.workspaceId, owner, now)) return refuse('no_work', 'Already up to date');
+      if (!maintenanceExecutionHasWork(found.record, now)) return refuse('no_work', 'Already up to date');
     }
     if (!this.acquireOwnership(now)) return refuse('lease_lost', 'Another Michi process owns scheduled execution');
     const result = this.launch(found.record, 'manual', now);
@@ -583,6 +589,7 @@ export class ScheduledJobScheduler {
       for (const active of this.active.values()) if (active.executionEnded) this.releaseEndedExecution(active);
       if (!this.acquireOwnership(now) || !this.running) return;
       sweepMetaAgentHome(this, now);
+      sweepMemoryExtraction(this, now);
       for (const job of this.repo.listScheduledJobs()) {
         if (job.nextRunAt === null || job.nextRunAt > now) break;
         if (this.activeCount() >= this.maxConcurrentRuns) break;
@@ -694,7 +701,8 @@ export class ScheduledJobScheduler {
 
   /** `error` null: the run's turn succeeded, so it passed its check. Other errors leave the stored check as it is. */
   private recordMetaAgentCheck(job: ScheduledJobRecord, active: ActiveRun, error: unknown | null): void {
-    if (!active.runtimeProfile) return;
+    // Automatic memory checks a different closed toolset; its result says nothing about Pages maintenance's.
+    if (!active.runtimeProfile || active.memoryExtraction) return;
     const failure = error === null ? null : metaAgentGuardFailureOf(error);
     if (error !== null && !failure) return;
     try {
@@ -756,6 +764,23 @@ export class ScheduledJobScheduler {
       }
       if (managedMaintenance && (!managedMaintenance.enabled || managedMaintenance.paused)) {
         throw new Error('Workspace maintenance is paused');
+      }
+      if (!managedMaintenance && job.executionKind === 'maintenance' && isMemoryExtractionJob(job.id)) {
+        active.memoryExtraction = true;
+        const ownerUserId = job.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
+        // Resolved once per run, like maintenance: the Meta agent's runtime, model and credentials.
+        const { followsGlobal: _followsGlobal, ...profile } = resolveMetaAgentRuntime(ownerUserId);
+        const availability = maintenanceRuntimeAvailability(profile.runtimeId);
+        if (!availability.available) throw new Error(availability.reason ?? `Runtime "${profile.runtimeId}" is unavailable for automatic memory`);
+        const plan = planMemoryExtractionRun({ jobId: job.id, workspaceId: job.workspaceId, ownerUserId, runId: run.id, now: this.clock() });
+        if (plan.kind === 'skip') {
+          // Nothing to read, or held since discovery: no session, no model call, not a failure.
+          this.finalize(active, 'succeeded', plan.summary, null, this.clock());
+          return;
+        }
+        active.memoryRun = { id: plan.id, prompt: plan.prompt };
+        active.runtimeProfile = profile;
+        active.maintenanceConfigRevision = plan.configRevision;
       }
       if (managedMaintenance) {
         const plan = planHomeRun({ workspaceId: job.workspaceId, ownerUserId: job.ownerUserId ?? LOCAL_AGENT_OWNER_ID,
@@ -849,11 +874,12 @@ export class ScheduledJobScheduler {
       const watchRun = active.watchRun;
       const ownerUserId = job.ownerUserId ?? LOCAL_AGENT_OWNER_ID;
       // The workspace's instructions join every run that writes this workspace; the Spaces Home summary spans all of them.
-      const prompt = watchRun ? watchRun.prompt
+      const memoryRun = active.memoryRun;
+      const prompt = memoryRun ? memoryRun.prompt : watchRun ? watchRun.prompt
         : homeRun?.kind === 'home-summary' ? homeRun.prompt
           : managedMaintenance ? withWorkspaceInstructions(homeRun?.prompt ?? job.prompt, job.workspaceId, ownerUserId)
             : job.prompt;
-      const boundRun = homeRun ?? watchRun;
+      const boundRun = homeRun ?? watchRun ?? memoryRun;
       const handle = await this.deps.executor.start(prompt === job.prompt ? job : { ...job, prompt }, run, {
         onAttention: (kind) => this.onAttention(job, active, kind),
         signal: active.controller.signal,
@@ -917,6 +943,14 @@ export class ScheduledJobScheduler {
         error = settled.error;
         summary = settled.summary ?? summary;
       }
+      if (active.memoryRun) {
+        // Commits the staged candidates and the cursor only with every receipt; the reply never settles it.
+        const settled = settleMemoryExtractionRun({ id: active.memoryRun.id, ownerUserId: job.ownerUserId ?? LOCAL_AGENT_OWNER_ID,
+          status, error, turnId: handle.turnId, claimedBy: this.instanceId, now: this.clock() });
+        status = settled.status;
+        error = settled.error;
+        summary = settled.summary ?? summary;
+      }
       const page = active.conversationBatch;
       let consumed = false;
       if (page && status === 'succeeded') {
@@ -945,6 +979,7 @@ export class ScheduledJobScheduler {
       this.recordMetaAgentCheck(job, active, error ?? message);
       if (active.homeRun) failHomeRun(active.homeRun.id, job.ownerUserId ?? LOCAL_AGENT_OWNER_ID, message, this.clock(), error);
       if (active.watchRun) failWatchRun(active.watchRun.id, job.ownerUserId ?? LOCAL_AGENT_OWNER_ID, message, this.clock());
+      if (active.memoryRun) failMemoryExtractionRun(active.memoryRun.id, job.ownerUserId ?? LOCAL_AGENT_OWNER_ID, message, this.clock(), active.cancelRequested);
       if (!active.finalized) {
         log.warn('scheduler', 'scheduled run could not start', { jobId: job.id, runId: run.id, error: message });
         const status = active.timedOut ? 'timed_out' : active.cancelRequested ? 'cancelled' : 'failed';

@@ -2,12 +2,8 @@
 .ui-drawer-panel.drawer-shell-panel {
   max-width: 100vw;
   min-width: 0;
-  background: var(--term-surface);
-  /* The surface is opaque, so .term-glass's blur shows nothing here. It only
-     re-blurs the pane behind on every repaint, which flickers the whole
-     drawer in Chrome while a reply streams under it. */
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  /* Opaque material comes from OverlaySurface.css, shared with menus and
+     modal capture fallbacks. */
   color: var(--term-fg);
   opacity: 1;
   animation: none;

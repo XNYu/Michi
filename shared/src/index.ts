@@ -37,3 +37,4 @@ export * from './database/viewModel';
 export * from './artifactType';
 
 export * from './mobileAccess';
+export * from './memory';

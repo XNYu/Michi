@@ -14,6 +14,19 @@ function michiToolName(update: Record<string, any>): string | undefined {
     return typeof update.title === 'string' ? MICHI_TOOL_TITLE.exec(update.title)?.[1] : undefined;
 }
 
+/**
+ * An agy MCP tool name as server and tool. agy joins them with `_`, so a
+ * server name with `_` in it cannot be told apart: Michi's prefix is matched
+ * first, any other splits at the first `_`.
+ */
+function mcpToolName(name: string): { server: string; tool: string } | undefined {
+    if (name.startsWith(MICHI_TOOL_PREFIX) && name.length > MICHI_TOOL_PREFIX.length) {
+        return { server: 'michi', tool: name.slice(MICHI_TOOL_PREFIX.length) };
+    }
+    const match = /^mcp_([^_]+)_(.+)$/.exec(name);
+    return match ? { server: match[1], tool: match[2] } : undefined;
+}
+
 /** agy 1.4.12 answers session/new, session/prompt and session/list this way while signed out. */
 function isAuthenticationRequired(error: { code?: number; message?: string } | string): boolean {
     if (typeof error === 'string') return /authentication required/i.test(error);
@@ -45,6 +58,7 @@ export const ANTIGRAVITY_KIRO_FLAVOR: AcpAgentFlavor = {
     tools: {
         title: michiToolName,
         name: (toolCall) => typeof toolCall?.name === 'string' ? toolCall.name : undefined,
+        mcpName: mcpToolName,
     },
     signIn: {
         matches: isAuthenticationRequired,

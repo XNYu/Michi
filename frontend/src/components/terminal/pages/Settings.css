@@ -62,7 +62,6 @@
   border-left-color: var(--term-accent);
   background: var(--term-alt);
   color: var(--term-accent);
-  font-weight: 600;
 }
 
 .terminal-settings-category:focus-visible,
@@ -251,7 +250,7 @@
 }
 .settings-radio__input:checked { border-color: var(--term-accent); background: var(--term-accent); box-shadow: inset 0 0 0 2px var(--term-surface); }
 .settings-radio__label { font-family: var(--ui-font); font-size: var(--fs-md); color: var(--term-mid); }
-.settings-radio__option.is-active .settings-radio__label { color: var(--term-fg); font-weight: 600; }
+.settings-radio__option.is-active .settings-radio__label { color: var(--term-fg); }
 .settings-radio__description { display: block; margin-top: 2px; font-size: var(--fs-sm); color: var(--term-muted); }
 
 .settings-toggle { display: flex; align-items: center; gap: 10px; padding: 4px 6px; margin: 0 -6px; }
@@ -697,11 +696,11 @@
 .settings-window__item svg { flex: none; color: var(--term-faint); }
 .settings-window__item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-window__item em { color: var(--term-muted); font-size: var(--fs-sm); font-style: normal; font-variant-numeric: tabular-nums; }
+/* Selection is the bar, tint and accent; the weight stays put so the label never reflows. */
 .settings-window__item[aria-current='page'] {
   border-left-color: var(--term-accent);
   background: var(--term-alt);
   color: var(--term-accent);
-  font-weight: 600;
 }
 .settings-window__item[aria-current='page'] svg { color: var(--term-accent); }
 .settings-window__item:focus-visible { outline: 2px solid var(--term-accent); outline-offset: -2px; }

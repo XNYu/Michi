@@ -5,7 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import Ajv from 'ajv';
 import { McpSlotRegistry, buildMcpServerForSlot } from '../src/services/mcpServer';
 import { buildPiTools } from '../src/agents/pi/piTools';
-import { loadPiAi } from '../src/agents/pi/piAi';
+import { loadPiAi, loadPiTypebox } from '../src/agents/pi/piAi';
 import { configureRuntimeDeps, __resetRuntimeDeps } from '../src/agents/runtimeDeps';
 import { AGENT_RUN_TOOL_NAMES } from '../src/agents/runToolBridge';
 import { chatOwner, runOwner } from './helpers/owners';
@@ -58,7 +58,7 @@ test('real SDK catalogs and real TypeBox schemas share navigation, Agent Run and
   const invoker = { invoke: async () => ({ ok: true }) } as any;
   const profile = { allowedToolNames: ['submit_agent_result'], runWorkerTools: { submitAgentResult: () => ({}) } };
   const commonOpts = { bridge: {} as any, cwd: '/tmp', parentChatId: 'p', workspaceId: null, enableFollowUps: true,
-    imageQuota: { usedBytes: 0, limitBytes: 1 } as any, seenPaths: new Set<string>(), Type: pi.Type, agentRunTools: invoker,
+    imageQuota: { usedBytes: 0, limitBytes: 1 } as any, seenPaths: new Set<string>(), Type: (await loadPiTypebox()).Type, agentRunTools: invoker,
     owner: chatOwner('node-fixture') };
   const piTools = [...buildPiTools(commonOpts), ...buildPiTools({ ...commonOpts, owner, toolProfile: profile } as any)];
   const mcpTools = await catalog(t, { agentRuns: invoker });
@@ -75,7 +75,11 @@ test('real SDK catalogs and real TypeBox schemas share navigation, Agent Run and
   assert.equal(validate({ query: 'x', limit: 50 }), true);
   for (const limit of [0, 1.5, 51]) assert.equal(validate({ query: 'x', limit }), false);
   const piSearch = piTools.find(tool => tool.name === 'search_messages');
-  for (const limit of [0, 1.5, 51]) assert.throws(() => pi.validateToolArguments(piSearch, { name: piSearch.name, arguments: { query: 'x', limit, __tool_use_purpose: 'search' } }));
+  const piArgs = (limit: unknown) => pi.validateToolArguments(piSearch, { name: piSearch.name, arguments: { query: 'x', limit, __tool_use_purpose: 'search' } });
+  for (const limit of [0, 51]) assert.throws(() => piArgs(limit));
+  // Pi 1.5 (pi-schema) coerces loose arguments before validating: a fractional
+  // integer is truncated instead of rejected, so it can never exceed the bounds.
+  assert.equal(piArgs(1.5).limit, 1);
 });
 
 test('unsupported optional MCP capabilities are absent even when explicitly allowlisted', async t => {

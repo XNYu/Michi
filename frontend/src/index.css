@@ -1259,6 +1259,38 @@ body {
   border-radius: var(--sb-radius, 0px);
 }
 
+/* ── Sidebar unread dot (see UnreadDot.tsx) ─────────────────────────────────
+   Solid = the row itself has an unopened reply; ring = a collapsed row hiding
+   one. Always mounted at scale(0) so only a CHANGE animates: rows that mount
+   already unread paint settled, a reply landing on a visible row pops in, and
+   opening it removes the dot at once. */
+.sb-unread-dot {
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  pointer-events: none;
+  transform: scale(0);
+}
+.sb-unread-dot[data-unread='self'],
+.sb-unread-dot[data-unread='within'] {
+  transform: scale(1);
+  transition: transform var(--t-enter) cubic-bezier(.3, 1.6, .5, 1);
+}
+.sb-unread-dot[data-unread='self'] { background: var(--term-digest); }
+.sb-unread-dot[data-unread='within'] { box-shadow: inset 0 0 0 1.5px var(--term-digest); }
+.sb-unread-dot--inline {
+  position: relative;
+  top: auto;
+  margin-top: 0;
+  flex-shrink: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-unread-dot { transition: none !important; }
+}
+
 /* ── Card-mode row fills ───────────────────────────────────────────────────
    A selected row must TINT whatever is behind the sidebar, not cover it.
 
@@ -1534,7 +1566,7 @@ html[data-vibrancy="on"],
 /* ── Background pane entrance indicators ─────────────────────────
    Layer 1: caption cell entrance — accent bg highlight fade-out.
    Layer 1b: sidebar bar pulse (2 cycles then stop).
-   Layer 2: overflow badge spring entrance.
+   An off-screen branch also gets a tab on the strip's edge (PaneArrivals).
    All compositor-friendly (opacity/transform only on pulsing
    elements). Callers apply these via transient className. */
 @keyframes pane-entrance-bg {
@@ -1550,12 +1582,6 @@ html[data-vibrancy="on"],
 @keyframes bar-pulse-once {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.3; }
-}
-/* The "+N" badge sits in the Topbar's flex row (align-items: center), so it
-   only scales: a translate here would stay applied under `forwards`. */
-@keyframes overflow-badge-enter {
-  0%   { opacity: 0; transform: scale(0.6); }
-  100% { opacity: 1; transform: scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
   .stream-token-reveal {

@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import ThreadRow from './ThreadRow';
 import { reduceNodes } from '../../state/chatReducers';
-import type { ChatNodeState } from '../../state/chatTypes';
+import type { ChatNodeState, ProjectEdge } from '../../state/chatTypes';
 
 function makeNode(): ChatNodeState {
   return {
@@ -16,6 +16,9 @@ const mockStoreState = {
   treeSelection: new Set<string>(),
   focusedNodeId: null as string | null,
   node: makeNode(),
+  /** What useStructuralSelector reads: the tree's nodes, branches included. */
+  nodes: {} as Record<string, ChatNodeState>,
+  projects: [] as Array<{ id: string; edges: ProjectEdge[] }>,
 };
 const structuralSelectors: Array<(nodes: Record<string, unknown>) => unknown> = [];
 
@@ -33,7 +36,7 @@ vi.mock('../../state/chatStore', () => ({
     clearTreeSelection: vi.fn(),
   }),
   useChatProjects: () => ({
-    projects: [],
+    projects: mockStoreState.projects,
     openPanes: [],
     focusedPane: null,
     treeSelection: mockStoreState.treeSelection,
@@ -41,7 +44,7 @@ vi.mock('../../state/chatStore', () => ({
   }),
   useStructuralSelector: (selector: (nodes: Record<string, unknown>) => unknown) => {
     structuralSelectors.push(selector);
-    return selector({});
+    return selector(mockStoreState.nodes);
   },
 }));
 
@@ -81,7 +84,44 @@ describe('ThreadRow', () => {
     vi.clearAllMocks();
     structuralSelectors.length = 0;
     mockStoreState.node = makeNode();
+    mockStoreState.nodes = {};
+    mockStoreState.projects = [];
     localStorage.clear();
+  });
+
+  describe('unread dot', () => {
+    const dot = () => document.querySelector('[data-sidebar-row="n1"] .sb-unread-dot') as HTMLElement;
+    const title = () => screen.getByText('Root title').closest('[data-sidebar-row]') as HTMLElement;
+    const unreadBranch = (): ChatNodeState => ({
+      ...makeNode(), nodeId: 'b1', title: 'Branch', lastAssistantAt: 5, viewedAt: 1,
+    });
+
+    it('is solid on an unread root and brightens its title, without the old 900 weight', () => {
+      mockStoreState.node = { ...makeNode(), lastAssistantAt: 5, viewedAt: 1 };
+      mockStoreState.nodes = { n1: mockStoreState.node };
+      renderThreadRow({ isActive: false });
+      expect(dot().dataset.unread).toBe('self');
+      expect(title().style.fontWeight).toBe('520');
+      expect(title().style.color).toBe('var(--term-fg)');
+    });
+
+    it('rings a collapsed thread whose unread reply is in a branch, and clears once expanded', () => {
+      mockStoreState.nodes = { n1: mockStoreState.node, b1: unreadBranch() };
+      mockStoreState.projects = [{ id: 'p1', edges: [{ source: 'n1', target: 'b1', kind: 'branch' } as ProjectEdge] }];
+      const { rerender } = renderThreadRow({ isActive: false, hasBranches: true, expanded: false });
+      expect(dot().dataset.unread).toBe('within');
+      // The root itself is read: its title keeps the read weight and colour.
+      expect(title().style.fontWeight).toBe('450');
+      expect(title().style.color).toBe('var(--term-mid)');
+
+      rerender({ isActive: false, hasBranches: true, expanded: true });
+      expect(dot().dataset.unread).toBe('none');
+    });
+
+    it('stays mounted at "none" on a read row, so a reply arriving later animates in', () => {
+      renderThreadRow();
+      expect(dot().dataset.unread).toBe('none');
+    });
   });
 
   it('shows the first message while waiting, then accepts the main response title', () => {

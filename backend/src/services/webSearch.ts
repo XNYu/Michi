@@ -39,24 +39,35 @@ export interface WebSearchResponse {
 export class WebSearchUnavailableError extends Error {}
 
 /**
+ * The cloud account whose vault holds the key. A desktop backend has one
+ * credential store: Agent Runs and maintenance sessions there carry the
+ * synthetic local owner, and must read the key Settings saved, as Pi model
+ * keys do (see PiSession).
+ */
+function credentialOwner(userId: string | undefined): string | undefined {
+  return process.env.MICHI_CLOUD === "1" ? userId : undefined;
+}
+
+/**
  * Reads the key from the same encrypted per-user vault used by model keys in
  * cloud mode. Desktop retains the established env-then-local-config behavior.
  */
 export function getWebSearchApiKey(provider: WebSearchProviderId, userId?: string): string | null {
   const slot = webSearchKeySlot(provider);
-  if (userId) {
-    return getUserProviderKey(userId, slot);
+  const owner = credentialOwner(userId);
+  if (owner) {
+    return getUserProviderKey(owner, slot);
   }
   const envKey = process.env[getWebSearchProvider(provider).envVar];
   return envKey || getProviderApiKey(slot);
 }
 
 export function setWebSearchApiKey(provider: WebSearchProviderId, key: string, userId?: string): void {
-  storeProviderApiKey(webSearchKeySlot(provider), key, userId);
+  storeProviderApiKey(webSearchKeySlot(provider), key, credentialOwner(userId));
 }
 
 export function clearWebSearchApiKey(provider: WebSearchProviderId, userId?: string): void {
-  storeProviderApiKey(webSearchKeySlot(provider), null, userId);
+  storeProviderApiKey(webSearchKeySlot(provider), null, credentialOwner(userId));
 }
 
 export function getWebSearchProviderStatuses(userId?: string): WebSearchProviderStatus[] {

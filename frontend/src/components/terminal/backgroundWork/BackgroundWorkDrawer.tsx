@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { workflowProgress } from 'michi-shared';
 import { DrawerShell, type DrawerShellProps } from '../../ui/DrawerShell';
+import { usePhoneLayout } from '../../../hooks/usePhoneLayout';
 import {
   chatLabel,
   shallowArrayEqual,
@@ -56,6 +57,23 @@ const MONO = 'var(--font-mono)';
 const DRAWER_WIDTH = 640;
 
 const ellipsis: React.CSSProperties = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+
+const BODY: React.CSSProperties = { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' };
+
+/**
+ * A phone fills its screen with the drawer and reads it at arm's length:
+ * the chrome scale (sized for a desktop window) steps up for everything in
+ * it, expanded agent and workflow detail included, and each row takes two
+ * lines (stackedRow) so the larger name, summary and status still fit.
+ */
+const PHONE_BODY = {
+  ...BODY,
+  '--fs-2xs': '11px',
+  '--fs-xs': '12px',
+  '--fs-sm': '13px',
+  '--fs-md': '15px',
+  '--fs-lg': '16px',
+} as React.CSSProperties;
 
 function itemKey(nodeId: string, focus: BackgroundWorkFocus): string {
   return JSON.stringify([nodeId, focus.kind, focus.kind === 'subagent' ? focus.sessionId : focus.runKey]);
@@ -161,6 +179,21 @@ const rowButton: React.CSSProperties = {
   cursor: 'pointer',
 };
 
+/** A phone's row: name and status, then (under the name) summary and meta. */
+const stackedRow: React.CSSProperties = { ...rowButton, flexDirection: 'column', alignItems: 'stretch', gap: 3, padding: '8px 14px' };
+const rowLine: React.CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 8, width: '100%', minWidth: 0 };
+/** The status dot and the gap after it: the second line starts under the name. */
+const subLine: React.CSSProperties = { ...rowLine, paddingLeft: 16, boxSizing: 'border-box' };
+
+function nameStyle(stacked: boolean, failed: boolean): React.CSSProperties {
+  return {
+    ...ellipsis,
+    ...(stacked ? { flex: 1, fontSize: 'var(--fs-md)' } : { flexShrink: 0, maxWidth: '35%', fontSize: 'var(--fs-sm)' }),
+    fontWeight: 600,
+    color: failed ? 'var(--term-danger)' : 'var(--term-fg)',
+  };
+}
+
 function Chevron({ open }: { open: boolean }) {
   return <span aria-hidden style={{ flexShrink: 0, width: 10, textAlign: 'center', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{open ? '▾' : '▸'}</span>;
 }
@@ -195,8 +228,19 @@ const SubagentWorkRow = React.memo(function SubagentWorkRow({ subagent, active, 
   const summary = subagentSummary(subagent, { running: tone === 'running' });
   const tools = subagentToolCount(subagent);
   const name = subagentDisplayName(subagent);
+  const stacked = usePhoneLayout();
+  const dot = <StatusDot color={SUBAGENT_TONE_COLOR[tone]} live={active} />;
+  const nameText = <span style={nameStyle(stacked, tone === 'failed')}>{name}</span>;
+  const summaryText = summary ? <SubagentSummaryText summary={summary} /> : <span style={{ flex: 1 }} />;
+  const meta = (
+    <span style={{ display: 'inline-flex', gap: 6, flexShrink: 0, fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
+      <SubagentDuration subagent={subagent} active={active} />
+      {tools > 0 && <span>{tools} {tools === 1 ? 'tool' : 'tools'}</span>}
+    </span>
+  );
+  const status = <span style={{ flexShrink: 0, fontSize: 'var(--fs-xs)', color: SUBAGENT_TONE_COLOR[tone] }}>{SUBAGENT_TONE_LABEL[tone]}</span>;
   return (
-    <div data-testid="background-subagent-row" data-background-work-key={rowKey} data-subagent-id={subagent.sessionId} data-active={active ? 'true' : undefined}>
+    <div data-testid="background-subagent-row" data-background-work-key={rowKey} data-subagent-id={subagent.sessionId} data-active={active ? 'true' : undefined} data-stacked={stacked ? 'true' : undefined}>
       <button
         type="button"
         aria-expanded={expanded}
@@ -204,17 +248,16 @@ const SubagentWorkRow = React.memo(function SubagentWorkRow({ subagent, active, 
         aria-label={`${name}, ${SUBAGENT_TONE_LABEL[tone]}${summary ? `: ${summary.text}` : ''}`}
         onClick={() => onToggle(rowKey)}
         className="t-hover-bg-alt"
-        style={rowButton}
+        style={stacked ? stackedRow : rowButton}
       >
-        <StatusDot color={SUBAGENT_TONE_COLOR[tone]} live={active} />
-        <span style={{ ...ellipsis, flexShrink: 0, maxWidth: '35%', fontSize: 'var(--fs-sm)', fontWeight: 600, color: tone === 'failed' ? 'var(--term-danger)' : 'var(--term-fg)' }}>{name}</span>
-        {summary ? <SubagentSummaryText summary={summary} /> : <span style={{ flex: 1 }} />}
-        <span style={{ display: 'inline-flex', gap: 6, flexShrink: 0, fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
-          <SubagentDuration subagent={subagent} active={active} />
-          {tools > 0 && <span>{tools} {tools === 1 ? 'tool' : 'tools'}</span>}
-        </span>
-        <span style={{ flexShrink: 0, fontSize: 'var(--fs-xs)', color: SUBAGENT_TONE_COLOR[tone] }}>{SUBAGENT_TONE_LABEL[tone]}</span>
-        <Chevron open={expanded} />
+        {stacked ? (
+          <>
+            <span data-row-line="" style={rowLine}>{dot}{nameText}{status}<Chevron open={expanded} /></span>
+            <span data-row-line="" style={subLine}>{summaryText}{meta}</span>
+          </>
+        ) : (
+          <>{dot}{nameText}{summaryText}{meta}{status}<Chevron open={expanded} /></>
+        )}
       </button>
       {expanded && (
         <div style={{ padding: '2px 14px 10px 30px' }}>
@@ -254,6 +297,7 @@ const WorkflowWorkRow = React.memo(function WorkflowWorkRow({ runKey, rowKey, ex
   onToggle: (key: string) => void;
 }) {
   const { resource } = useWorkflowRun(runKey);
+  const stacked = usePhoneLayout();
   if (!resource) return null;
   const run = resource.value;
   const live = run.status === 'running' || run.status === 'paused';
@@ -262,37 +306,50 @@ const WorkflowWorkRow = React.memo(function WorkflowWorkRow({ runKey, rowKey, ex
   const finished = live ? undefined : firstPlainLine(run.result) ?? firstPlainLine(run.statusDetail);
   const approvals = run.approvals?.length ?? 0;
   const color = WORKFLOW_STATUS_COLOR[run.status];
+  const lead = (
+    <>
+      <StatusDot color={color} live={run.status === 'running'} />
+      <span aria-hidden style={{ flexShrink: 0, color: 'var(--term-mauve)', fontSize: 'var(--fs-xs)' }}>⧉</span>
+      <span style={nameStyle(stacked, run.status === 'failed')}>{run.name}</span>
+    </>
+  );
+  const nowText = (
+    <span data-testid="background-workflow-now" style={{ ...ellipsis, flex: 1, fontFamily: now ? MONO : undefined, fontSize: now ? 'var(--fs-xs)' : 'var(--fs-sm)' }}>
+      {now ? (
+        <>
+          <span style={{ color: 'var(--term-muted)' }}>now ❯ </span>
+          <span style={{ color: run.status === 'paused' ? 'var(--term-select)' : 'var(--term-accent)' }}>{now}</span>
+        </>
+      ) : finished ? (
+        <span style={{ color: run.status === 'failed' ? 'var(--term-danger)' : 'var(--term-mid)' }}>{finished}</span>
+      ) : null}
+    </span>
+  );
+  const approval = approvals > 0 && <span style={{ flexShrink: 0, fontSize: 'var(--fs-xs)', color: 'var(--term-select)' }}>needs approval</span>;
+  const steps = progress.total > 0 && (
+    <span style={{ flexShrink: 0, fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
+      {progress.done}/{progress.total} {run.runtime === 'claude' ? 'agents' : 'steps'}
+    </span>
+  );
+  const status = <span style={{ flexShrink: 0, fontSize: 'var(--fs-xs)', color }}>{WORKFLOW_STATUS_LABEL[run.status]}</span>;
   return (
-    <div data-testid="background-workflow-row" data-background-work-key={rowKey} data-run-key={runKey} data-active={live ? 'true' : undefined}>
+    <div data-testid="background-workflow-row" data-background-work-key={rowKey} data-run-key={runKey} data-active={live ? 'true' : undefined} data-stacked={stacked ? 'true' : undefined}>
       <button
         type="button"
         aria-expanded={expanded}
         aria-label={`Workflow ${run.name}, ${WORKFLOW_STATUS_LABEL[run.status]}${approvals > 0 ? ', needs approval' : ''}`}
         onClick={() => onToggle(rowKey)}
         className="t-hover-bg-alt"
-        style={rowButton}
+        style={stacked ? stackedRow : rowButton}
       >
-        <StatusDot color={color} live={run.status === 'running'} />
-        <span aria-hidden style={{ flexShrink: 0, color: 'var(--term-mauve)', fontSize: 'var(--fs-xs)' }}>⧉</span>
-        <span style={{ ...ellipsis, flexShrink: 0, maxWidth: '35%', fontSize: 'var(--fs-sm)', fontWeight: 600, color: run.status === 'failed' ? 'var(--term-danger)' : 'var(--term-fg)' }}>{run.name}</span>
-        <span data-testid="background-workflow-now" style={{ ...ellipsis, flex: 1, fontFamily: now ? MONO : undefined, fontSize: now ? 'var(--fs-xs)' : 'var(--fs-sm)' }}>
-          {now ? (
-            <>
-              <span style={{ color: 'var(--term-muted)' }}>now ❯ </span>
-              <span style={{ color: run.status === 'paused' ? 'var(--term-select)' : 'var(--term-accent)' }}>{now}</span>
-            </>
-          ) : finished ? (
-            <span style={{ color: run.status === 'failed' ? 'var(--term-danger)' : 'var(--term-mid)' }}>{finished}</span>
-          ) : null}
-        </span>
-        {approvals > 0 && <span style={{ flexShrink: 0, fontSize: 'var(--fs-xs)', color: 'var(--term-select)' }}>needs approval</span>}
-        {progress.total > 0 && (
-          <span style={{ flexShrink: 0, fontFamily: MONO, fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>
-            {progress.done}/{progress.total} {run.runtime === 'claude' ? 'agents' : 'steps'}
-          </span>
+        {stacked ? (
+          <>
+            <span data-row-line="" style={rowLine}>{lead}{approval}{status}<Chevron open={expanded} /></span>
+            {(now || finished || steps) && <span data-row-line="" style={subLine}>{nowText}{steps}</span>}
+          </>
+        ) : (
+          <>{lead}{nowText}{approval}{steps}{status}<Chevron open={expanded} /></>
         )}
-        <span style={{ flexShrink: 0, fontSize: 'var(--fs-xs)', color }}>{WORKFLOW_STATUS_LABEL[run.status]}</span>
-        <Chevron open={expanded} />
       </button>
       {expanded && <WorkflowRunExpanded backendConnectionId={resource.backendConnectionId} runId={run.id} />}
     </div>
@@ -322,6 +379,7 @@ function FoldLine({ count, failed, noun, open, controls, onClick }: {
   controls: string;
   onClick: () => void;
 }) {
+  const stacked = usePhoneLayout();
   return (
     <button
       type="button"
@@ -331,7 +389,7 @@ function FoldLine({ count, failed, noun, open, controls, onClick }: {
       aria-label={`${count} finished ${noun}${failed > 0 ? `, ${failed} failed` : ''}`}
       onClick={onClick}
       className="t-hover-bg-alt"
-      style={rowButton}
+      style={stacked ? { ...rowButton, padding: stackedRow.padding } : rowButton}
     >
       <span aria-hidden style={{ width: 8, flexShrink: 0, textAlign: 'center', fontSize: 'var(--fs-xs)', color: 'var(--term-muted)' }}>{open ? '▾' : '▸'}</span>
       <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>{count} finished</span>
@@ -470,7 +528,7 @@ const SCOPES: Array<{ value: Scope; label: string }> = [
   { value: 'thread', label: 'Whole thread' },
 ];
 
-function ScopeSwitch({ scope, onChange }: { scope: Scope; onChange: (scope: Scope) => void }) {
+function ScopeSwitch({ scope, onChange, phone }: { scope: Scope; onChange: (scope: Scope) => void; phone: boolean }) {
   return (
     <div role="group" aria-label="Show background work for" style={{ display: 'inline-flex', border: '1px solid var(--term-line)', flexShrink: 0 }}>
       {SCOPES.map(({ value, label }, index) => {
@@ -485,7 +543,8 @@ function ScopeSwitch({ scope, onChange }: { scope: Scope; onChange: (scope: Scop
             style={{
               border: 0,
               borderLeft: index > 0 ? '1px solid var(--term-line)' : 0,
-              padding: '3px 10px',
+              // A finger-sized target on a phone.
+              padding: phone ? '8px 12px' : '3px 10px',
               background: active ? 'var(--term-alt)' : 'transparent',
               color: active ? 'var(--term-fg)' : 'var(--term-muted)',
               fontFamily: 'var(--ui-font)',
@@ -631,6 +690,7 @@ export default function BackgroundWorkDrawer({ open, onClose, motion, onPresence
   }, [open, focusKey, requestSeq, groups]);
 
   const conversationTitle = scope === 'conversation' ? groups[0]?.title : undefined;
+  const phone = usePhoneLayout();
 
   return (
     <DrawerShell
@@ -644,23 +704,26 @@ export default function BackgroundWorkDrawer({ open, onClose, motion, onPresence
         <span data-testid="background-work-running" style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-accent)', fontFamily: 'var(--ui-font)' }}>{running} running</span>
       ) : undefined}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: '1px solid var(--term-line)', minWidth: 0 }}>
-        <ScopeSwitch scope={scope} onChange={setScope} />
-        {conversationTitle && <span style={{ ...ellipsis, fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>{conversationTitle}</span>}
-      </div>
-      <div ref={listRef} data-testid="background-work-list" className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 18px' }}>
-        {nothing ? (
-          <div style={{ padding: '28px 18px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)' }}>
-              {scope === 'thread' ? 'Nothing is running in this thread.' : 'Nothing is running in this conversation.'}
-            </span>
-            <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
-              Subagents and workflows an agent starts show up here while they run, along with everything from its latest reply.
-            </span>
-          </div>
-        ) : shown.map((group) => (
-          <WorkGroup key={group.node.nodeId} group={group} showHeader={scope === 'thread'} expandedKey={expandedKey} onToggle={onToggle} openFolds={openFolds} onSetFold={onSetFold} />
-        ))}
+      <div data-testid="background-work-body" style={phone ? PHONE_BODY : BODY}>
+        {/* A title the switch leaves no room for takes its own line on a phone. */}
+        <div style={{ display: 'flex', flexWrap: phone ? 'wrap' : undefined, alignItems: 'center', gap: phone ? '8px 10px' : 10, padding: '8px 14px', borderBottom: '1px solid var(--term-line)', minWidth: 0 }}>
+          <ScopeSwitch scope={scope} onChange={setScope} phone={phone} />
+          {conversationTitle && <span style={{ ...ellipsis, fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>{conversationTitle}</span>}
+        </div>
+        <div ref={listRef} data-testid="background-work-list" className="term-scrollbar" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 0 18px' }}>
+          {nothing ? (
+            <div style={{ padding: '28px 18px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 'var(--fs-md)', color: 'var(--term-mid)' }}>
+                {scope === 'thread' ? 'Nothing is running in this thread.' : 'Nothing is running in this conversation.'}
+              </span>
+              <span style={{ fontSize: 'var(--fs-sm)', color: 'var(--term-muted)' }}>
+                Subagents and workflows an agent starts show up here while they run, along with everything from its latest reply.
+              </span>
+            </div>
+          ) : shown.map((group) => (
+            <WorkGroup key={group.node.nodeId} group={group} showHeader={scope === 'thread'} expandedKey={expandedKey} onToggle={onToggle} openFolds={openFolds} onSetFold={onSetFold} />
+          ))}
+        </div>
       </div>
     </DrawerShell>
   );

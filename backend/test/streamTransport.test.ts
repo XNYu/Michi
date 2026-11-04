@@ -225,3 +225,24 @@ test('remote-proxied panes/presence/keepalive keeps route authorization', async 
   assert.deepEqual(frames[0], { type: 'headers', id: 'one', status: 200 });
   assert.equal(f.requests[0].path, path);
 });
+
+// The memory change feed (routes/memories.ts) is a persistent GET feed like the other
+// subscriptions; only its exact path is allowlisted, and the route still checks the owner.
+test('forwards the memory change feed as GET, and nothing else under memories', async (t) => {
+  const f = await fixture(t);
+  const { socket, frames } = await f.connect();
+  socket.send(JSON.stringify({ type: 'open', id: 'feed', path: '/api/memories/changes/stream', method: 'GET' }));
+  await until(() => frames.some((frame) => frame.type === 'data' && frame.id === 'feed'));
+  assert.deepEqual(frames[0], { type: 'headers', id: 'feed', status: 200 });
+  assert.equal(f.requests[0].path, '/api/memories/changes/stream');
+  assert.equal(f.requests[0].cookie, 'fixture=session');
+  const rejected = [
+    { path: '/api/memories/changes/stream', method: 'POST' },
+    { path: '/api/memories', method: 'GET' },
+    { path: '/api/memories/mem-1', method: 'GET' },
+    { path: '/api/memories/changes/stream/extra', method: 'GET' },
+  ];
+  rejected.forEach((open, i) => socket.send(JSON.stringify({ type: 'open', id: `no-${i}`, ...open })));
+  await until(() => frames.filter((frame) => frame.type === 'error').length === rejected.length);
+  assert.equal(f.requests.length, 1);
+});

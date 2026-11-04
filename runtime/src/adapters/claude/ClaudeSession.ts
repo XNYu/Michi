@@ -585,6 +585,7 @@ export class ClaudeSession implements AgentSession {
       // path rather than dropping them silently; the CLI can Read them itself.
       const { images: imageAttachments, promptNote } = prepareAttachments(input?.attachments);
       const textForModel = (this.host.profile.maintenancePromptPrefix?.(maintenanceContext) ?? '')
+        + (input?.memoryContext ? `${input.memoryContext}\n\n---\n\n` : '')
         + (input?.pageContext ? `${input.pageContext}\n\n---\n\n` : '')
         + (reminder ? outgoingText + reminder : outgoingText) + promptNote;
 

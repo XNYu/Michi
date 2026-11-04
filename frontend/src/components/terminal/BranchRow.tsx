@@ -1,15 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { DUR, EASE } from '../../motion/tokens';
 import { isFresh } from '../../motion/useFresh';
-import { useChatNode, useChatProjects } from '../../state/chatStore';
+import { useChatNode, useChatProjects, useStructuralSelector } from '../../state/chatStore';
 import type { ProjectEdge } from '../../state/chatTypes';
 import { usePrefs } from '../../state/prefs';
 import { Row, RowKebab } from './primitives';
 import { Chevron, CARD_FILL, CARD_FILL_SELECT, PinMark } from './ThreadRow';
 import { rowGeom, rowPadding, caretKebabClearance } from './sidebarRowStyle';
 import type { TreeNode } from '../../state/tree';
-import { isNodeUnread, type OpenState } from '../../state/sidebarSelectors';
+import { branchSubtreeHasUnread, isNodeUnread, type OpenState } from '../../state/sidebarSelectors';
+import { UnreadDot, UNREAD_DOT_LEAD, UNREAD_TITLE_WEIGHT, type UnreadMark } from './UnreadDot';
 import { relativeTime } from '../../lib/relativeTime';
 import { useNewPanePulse } from './useNewPanePulse';
 import { useTreePrefetchIntent } from '../../state/treePrefetch';
@@ -133,6 +134,15 @@ export default function BranchRow({
   const menuOpen = !!isMenuTarget?.(node.nodeId);
   const { focusedNodeId, projects } = useChatProjects();
   const unread = !!n && isNodeUnread(n, focusedNodeId);
+  // A collapsed branch hides its sub-branches, so an unread one below it shows
+  // here as a ring. Expanded, each sub-branch shows its own dot.
+  const hiddenUnreadSelector = useCallback(
+    (nodes: Parameters<typeof branchSubtreeHasUnread>[1]) =>
+      hasChildren && !expanded && branchSubtreeHasUnread(node.children, nodes, focusedNodeId),
+    [hasChildren, expanded, node.children, focusedNodeId],
+  );
+  const hiddenUnread = useStructuralSelector(hiddenUnreadSelector);
+  const unreadMark: UnreadMark = unread ? 'self' : hiddenUnread ? 'within' : 'none';
   // Decided once, on mount: a row a branch, fan-out or spawn just added grows
   // in under its parent. Hydrated rows, and rows shown by expanding a thread
   // (100+ times a day), render settled. Looked up in every workspace, so a
@@ -252,9 +262,9 @@ export default function BranchRow({
                   : '2px solid transparent',
               }),
           // Same as ThreadRow: focus/selection changes colour and fill, not
-          // weight. 900 stays reserved for unread.
-          color: focused || selected || menuOpen ? 'var(--term-fg)' : 'var(--term-mid)',
-          fontWeight: unread ? 900 : 450,
+          // weight. Only an unread branch changes weight, alongside its dot.
+          color: focused || selected || menuOpen || unread ? 'var(--term-fg)' : 'var(--term-mid)',
+          fontWeight: unread ? UNREAD_TITLE_WEIGHT : 450,
           fontSize: 'var(--sb-fs, var(--fs-xl))',
           fontFamily: 'var(--ui-font)',
         }}
@@ -287,6 +297,15 @@ export default function BranchRow({
             }}
           />
         )}
+        {/* In the gutter just left of where the row's content starts: before the
+            pin/title in card modes, before the chevron in classic. Kept mid-row
+            so the entrance wash stays the first child and the rail the last. */}
+        <UnreadDot
+          mark={unreadMark}
+          left={geom.isCard
+            ? `calc(${cardPaddingLeft} - ${UNREAD_DOT_LEAD}px)`
+            : `calc(${1 + depth * 10}px + var(--sb-inset, 0px))`}
+        />
         {!!n?.pinnedAt && <PinMark />}
         {renaming ? (
           <input

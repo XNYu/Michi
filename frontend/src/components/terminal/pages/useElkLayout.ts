@@ -1,13 +1,11 @@
 /**
- * ELK.js-based layout engine for the Map page.
+ * ELK.js-based layout engine for the Map page — the Map's only layout:
+ * ELK layered, left-to-right, with orthogonal edge routing. Over dagre it adds
+ * built-in edge routing, better crossing minimization and edge-node obstacle
+ * avoidance.
  *
- * Replaces dagre with Eclipse Layout Kernel (ELK) which provides:
- * - Built-in edge routing (orthogonal / polyline / spline)
- * - Better crossing minimization
- * - Edge-node obstacle avoidance
- *
- * The hook returns the same shape as the dagre `layout` memo so Map.tsx can
- * swap between engines via a single boolean toggle.
+ * The hook returns the same shape as Map.tsx's synchronous dagre pass, which
+ * stands in only until ELK's first asynchronous result lands.
  */
 import { useState, useEffect, useRef } from 'react';
 import type { ELK, ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk-api';
@@ -44,8 +42,6 @@ const NODE_SEP = 48;
 const RANK_SEP = 110;
 const PAD = 36;
 
-export type ElkRoutingStyle = 'SPLINES' | 'POLYLINE' | 'ORTHOGONAL';
-
 interface UseElkLayoutParams {
   enabled: boolean;
   trees: readonly Tree[];
@@ -56,7 +52,6 @@ interface UseElkLayoutParams {
   /** Layout height per card id (measured; CARD_H when unknown). */
   cardHeights: ReadonlyMap<string, number>;
   graphChildren: Map<string, string[]>;
-  routingStyle?: ElkRoutingStyle;
 }
 
 function collectReachableIds(
@@ -86,7 +81,6 @@ export function useElkLayout({
   mode,
   cardHeights,
   graphChildren,
-  routingStyle = 'SPLINES',
 }: UseElkLayoutParams): ElkLayoutResult {
   const [result, setResult] = useState<ElkLayoutResult>(null);
   // Generation counter to discard stale async results.
@@ -159,7 +153,7 @@ export function useElkLayout({
         'elk.layered.spacing.nodeNodeBetweenLayers': String(RANK_SEP),
         'elk.spacing.nodeNode': String(NODE_SEP),
         'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-        'elk.edgeRouting': routingStyle,
+        'elk.edgeRouting': 'ORTHOGONAL',
         // Edge-node spacing: ensure edges keep generous distance from node boxes.
         'elk.spacing.edgeNode': '30',
         'elk.layered.spacing.edgeEdgeBetweenLayers': '24',
@@ -225,20 +219,19 @@ export function useElkLayout({
       setResult(null);
     });
     return () => { genRef.current += 1; };
-  }, [enabled, trees, activeTree, edges, liveSet, mode, cardHeights, graphChildren, routingStyle]);
+  }, [enabled, trees, activeTree, edges, liveSet, mode, cardHeights, graphChildren]);
 
   return result;
 }
 
 /**
- * Render an SVG path `d` from ELK edge sections.
- * Returns a smooth path for splines, or a polyline for orthogonal/polyline routing.
+ * Render an SVG path `d` from ELK's orthogonal edge sections: straight
+ * segments through each bend point.
  */
 export function elkEdgePathD(
   sections: ElkEdgeSection[],
   sourcePos: { x: number; y: number },
   targetPos: { x: number; y: number },
-  routingStyle: ElkRoutingStyle,
 ): string {
   if (sections.length === 0) {
     // Fallback: simple bezier between card edges (same as dagre default).
@@ -263,39 +256,7 @@ export function elkEdgePathD(
       const ey = endPoint.y + PAD;
       const dx = Math.max(30, Math.abs(ex - sx) * 0.4);
       parts.push(`C${sx + dx},${sy} ${ex - dx},${ey} ${ex},${ey}`);
-    } else if (routingStyle === 'SPLINES') {
-      // Smooth curve through bend points.
-      // Build point list: start → bends → end, then use smooth cubic segments.
-      const pts = [
-        { x: sx, y: sy },
-        ...bendPoints.map((bp) => ({ x: bp.x + PAD, y: bp.y + PAD })),
-        { x: endPoint.x + PAD, y: endPoint.y + PAD },
-      ];
-
-      // For 2 points (just start→end) this is a line.
-      // For 3+ points, use cubic bezier with computed control points.
-      if (pts.length === 2) {
-        parts.push(`L${pts[1].x},${pts[1].y}`);
-      } else {
-        // Catmull-Rom-style smooth: for each segment, compute tangent-aligned control points.
-        for (let i = 1; i < pts.length; i++) {
-          const prev = pts[i - 1];
-          const curr = pts[i];
-          const next = pts[Math.min(i + 1, pts.length - 1)];
-          const prevPrev = pts[Math.max(0, i - 2)];
-
-          // Control point 1: continuation of previous direction.
-          const cp1x = prev.x + (curr.x - prevPrev.x) / 6;
-          const cp1y = prev.y + (curr.y - prevPrev.y) / 6;
-          // Control point 2: anticipation of next direction.
-          const cp2x = curr.x - (next.x - prev.x) / 6;
-          const cp2y = curr.y - (next.y - prev.y) / 6;
-
-          parts.push(`C${cp1x},${cp1y} ${cp2x},${cp2y} ${curr.x},${curr.y}`);
-        }
-      }
     } else {
-      // Polyline / orthogonal: straight segments through each bend point.
       for (const bp of bendPoints) {
         parts.push(`L${bp.x + PAD},${bp.y + PAD}`);
       }

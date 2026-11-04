@@ -3,6 +3,7 @@ import { NormalizedEvent } from '../../contract/events';
 import { ClaudeEnvelope } from './claudeEnvelopeParser';
 import { getClaudeModelEntry } from './claudeModelCatalog';
 import { createClaudeSubagentTracker } from './claudeSubagentTracker';
+import { claudeToolIdentity } from './claudeMcpConfig';
 
 /** The model a turn's context share is measured against until the CLI names its own. */
 export const CLAUDE_FALLBACK_MODEL = 'claude-sonnet-4-6-20250514';
@@ -417,6 +418,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void, options: T
               kindType: 'tool',
               detail,
               inputJson,
+              ...claudeToolIdentity(name),
             });
           } else {
             emit({
@@ -427,6 +429,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void, options: T
               kindType: 'tool',
               detail,
               inputJson,
+              ...claudeToolIdentity(name),
             });
           }
         }
@@ -495,6 +498,7 @@ export function createTranslator(emit: (ev: NormalizedEvent) => void, options: T
               // input_json_delta and the final assistant envelope backfills
               // the full input as `detail` via tool_call_update.
               detail: '',
+              ...claudeToolIdentity(name),
             });
           }
         }

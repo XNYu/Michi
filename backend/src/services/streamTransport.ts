@@ -10,7 +10,7 @@ const ENDPOINT = `/api${STREAM_TRANSPORT_PATH}`;
 const TICKET_TTL_MS = 30_000;
 const MAX_CHANNELS = 256;
 const MAX_BUFFER_BYTES = 8 * 1024 * 1024;
-const STREAM_PATH = /^\/api\/(?:backend-connections\/[a-zA-Z0-9_-]+\/proxy\/)?(chats\/background\/subscribe|chats\/[a-zA-Z0-9_-]+\/(message|stream)|workspaces\/[a-zA-Z0-9_-]+\/watch\/stream|agent-runs\/subscribe|workflow-runs\/subscribe|digests\/stream|panes\/subscribe|panes\/presence\/keepalive)$/;
+const STREAM_PATH = /^\/api\/(?:backend-connections\/[a-zA-Z0-9_-]+\/proxy\/)?(chats\/background\/subscribe|chats\/[a-zA-Z0-9_-]+\/(message|stream)|workspaces\/[a-zA-Z0-9_-]+\/watch\/stream|agent-runs\/subscribe|workflow-runs\/subscribe|digests\/stream|panes\/subscribe|panes\/presence\/keepalive|memories\/changes\/stream)$/;
 
 interface Ticket {
   expires: number;

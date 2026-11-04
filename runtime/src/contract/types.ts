@@ -40,6 +40,14 @@ export interface AgentTurnInput {
   userMessageId?: string;
   /** Trusted, bounded Pages context rendered for the model only. */
   pageContext?: string;
+  /**
+   * Trusted, bounded memory block the host keeps for the user (Michi
+   * Memory), rendered for the model only, ahead of pageContext, and never
+   * kept in history. The host decides which turns carry one (for example a
+   * session's first turn and turns after the memory changed); adapters send
+   * it as given.
+   */
+  memoryContext?: string;
   /** Server-owned scheduler/batch authority; never sourced from model tool args. */
   maintenanceContext?: MaintenanceTurnContext;
   attachments?: ReadonlyArray<{
@@ -136,7 +144,7 @@ export interface RuntimeToolProfile {
    * backend (assistantToolProfile / maintenanceToolProfile); runtimes check
    * what they actually expose against allowedToolNames and fail closed.
    */
-  metaAgentToolset?: 'chat' | 'maintenance';
+  metaAgentToolset?: 'chat' | 'maintenance' | 'memory';
 }
 
 export interface RuntimePermissionRequest {

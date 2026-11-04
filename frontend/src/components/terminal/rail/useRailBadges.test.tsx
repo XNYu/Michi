@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, renderHook, screen } from '@testing-library/react';
 import type { MetaAgentInfo } from '../../../services/api/metaAgent';
 import { resetMetaAgentStore } from '../../../state/metaAgent/useMetaAgent';
+import { notePendingMemories, resetMemoryNotifications } from '../../../state/memory/memoryNotifications';
 import { AreaRail } from './AreaRail';
 import { useRailBadges } from './useRailBadges';
 
@@ -48,6 +49,7 @@ beforeEach(() => {
   api.sectionsSince = [];
   api.toastSuccess.mockReset();
   resetMetaAgentStore();
+  resetMemoryNotifications();
 });
 
 const workspace = (id: string, state: string, total: number) => ({
@@ -67,6 +69,20 @@ describe('useRailBadges', () => {
     expect(result.current.settingsAlert).toBe(true);
     render(<AreaRail area="spaces" onSelect={() => {}} badges={result.current} />);
     expect(screen.getByRole('button', { name: 'Settings, needs attention' })).toBeTruthy();
+  });
+
+  it('counts memories waiting for approval on Settings, unless the Meta agent needs attention', async () => {
+    api.fetchMetaAgent.mockResolvedValue(INFO);
+    const { result } = renderHook(() => useRailBadges());
+    await flush();
+    expect(result.current.memoryPending).toBe(0);
+    act(() => notePendingMemories(2));
+    expect(result.current.memoryPending).toBe(2);
+    const view = render(<AreaRail area="spaces" onSelect={() => {}} badges={result.current} />);
+    const settings = screen.getByRole('button', { name: 'Settings, 2 memories waiting for confirmation' });
+    expect(settings.querySelector('.area-rail__count')?.textContent).toBe('2');
+    view.rerender(<AreaRail area="spaces" onSelect={() => {}} badges={{ ...result.current, memoryPending: 1, settingsAlert: true }} />);
+    expect(screen.getByRole('button', { name: 'Settings, needs attention' }).querySelector('.area-rail__count')).toBeNull();
   });
 
   it('keeps Settings plain when the checks passed', async () => {

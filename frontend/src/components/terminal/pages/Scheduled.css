@@ -151,7 +151,7 @@
 .sched-choice[aria-checked='true'] .sched-choice-dot { border-color: var(--term-accent); }
 .sched-choice[aria-checked='true'] .sched-choice-dot::after { content: ''; position: absolute; inset: 2px; background: var(--term-accent); }
 .sched-choice-label { display: block; font-size: var(--fs-md); color: var(--term-mid); }
-.sched-choice[aria-checked='true'] .sched-choice-label { color: var(--term-fg); font-weight: 600; }
+.sched-choice[aria-checked='true'] .sched-choice-label { color: var(--term-fg); }
 .sched-choice-desc { display: block; margin-top: 2px; font-size: var(--fs-sm); line-height: 1.5; color: var(--term-muted); }
 .sched-toggle { display: flex; align-items: center; gap: 10px; min-height: 32px; font-size: var(--fs-md); color: var(--term-mid); cursor: pointer; }
 .sched-editor-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 24px; border-top: 1px solid var(--term-line); }

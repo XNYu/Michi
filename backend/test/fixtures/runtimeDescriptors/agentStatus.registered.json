@@ -324,9 +324,9 @@
         "notes": "Agent.abort()"
       },
       "compact": {
-        "availability": "native_unwired",
-        "confidence": "unknown",
-        "notes": "SDK auto-compaction is active; manual compact has no host route"
+        "availability": "native",
+        "confidence": "native",
+        "notes": "AgentSession.compact() between turns via POST /chats/:chatId/compact"
       },
       "retry": {
         "availability": "invisible",

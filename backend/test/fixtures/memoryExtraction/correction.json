@@ -1,0 +1,337 @@
+[
+  {
+    "id": "zh-not-but-indent-width",
+    "description": "不是 A，是 B: the user corrects an indentation width stated earlier.",
+    "turns": [
+      { "role": "user", "text": "缩进用 4 个空格。" },
+      { "role": "assistant", "text": "好的，我按 4 个空格缩进。" },
+      { "role": "user", "text": "不是 4 个，是 2 个空格，我之前看错文件了。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["2", "空格"] }],
+      "correction": { "pattern": "zh_not_but" }
+    }
+  },
+  {
+    "id": "zh-not-er-shi-package-manager",
+    "description": "不是 A 而是 B: the assistant used the wrong package manager.",
+    "turns": [
+      { "role": "assistant", "text": "我用 npm install 装好了依赖。" },
+      { "role": "user", "text": "包管理器不是 npm 而是 pnpm，你上次也弄混了。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["pnpm"] }],
+      "correction": { "pattern": "zh_not_but" }
+    }
+  },
+  {
+    "id": "zh-wrong-should-be-api-prefix",
+    "description": "不对，应该是…: the user corrects the API prefix.",
+    "turns": [
+      { "role": "assistant", "text": "新接口我挂在 /api/v1/memories 下面。" },
+      { "role": "user", "text": "不对，API 前缀应该是 /api/v2。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["/api/v2"] }],
+      "correction": { "pattern": "zh_wrong_should_be" }
+    }
+  },
+  {
+    "id": "zh-i-was-wrong-production-db",
+    "description": "我之前说错了: the user corrects a fact they gave earlier.",
+    "turns": [
+      { "role": "user", "text": "生产环境用的是 Postgres 14。" },
+      { "role": "assistant", "text": "好的，我按 Postgres 14 写迁移。" },
+      { "role": "user", "text": "我之前说错了，生产环境是 MySQL 8，不是 Postgres。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "fact", "scopeHint": "workspace", "bodyIncludes": ["MySQL"] }],
+      "correction": { "pattern": "zh_i_was_wrong" }
+    }
+  },
+  {
+    "id": "zh-correction-marker-release-branch",
+    "description": "更正一下: the user restates which branch releases come from.",
+    "turns": [
+      { "role": "user", "text": "发版都从 main 打 tag。" },
+      { "role": "assistant", "text": "明白。" },
+      { "role": "user", "text": "更正一下：发版分支是 release，不是 main。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "fact", "scopeHint": "workspace", "bodyIncludes": ["release"] }],
+      "correction": { "pattern": "zh_correction_marker" }
+    }
+  },
+  {
+    "id": "zh-from-now-on-no-emoji-commits",
+    "description": "以后别…: the user stops a habit the assistant showed.",
+    "turns": [
+      { "role": "assistant", "text": "已提交：✨ feat: add memory store" },
+      { "role": "user", "text": "以后别在提交信息里加 emoji 了。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["emoji"] }],
+      "correction": { "pattern": "zh_from_now_on_dont" }
+    }
+  },
+  {
+    "id": "zh-dont-again-moment",
+    "description": "别再…: the user stops the assistant from using a replaced library.",
+    "turns": [
+      { "role": "assistant", "text": "我用 moment.js 格式化了日期。" },
+      { "role": "user", "text": "别再用 moment.js 了，项目里已经统一换成 dayjs。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["dayjs"] }],
+      "correction": { "pattern": "zh_dont_again" }
+    }
+  },
+  {
+    "id": "zh-bu-yao-zai-stdout-logs",
+    "description": "不要再…: the user corrects where logs go.",
+    "turns": [
+      { "role": "assistant", "text": "我在服务里加了 console.log 输出到 stdout。" },
+      { "role": "user", "text": "不要再把日志打到 stdout 了，统一写到 logs/ 目录。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["logs"] }],
+      "correction": { "pattern": "zh_dont_again" }
+    }
+  },
+  {
+    "id": "zh-change-to-vitest",
+    "description": "改成…: the user changes the test framework decision.",
+    "turns": [
+      { "role": "user", "text": "前端测试先用 Jest。" },
+      { "role": "assistant", "text": "好的，我配了 jest.config.js。" },
+      { "role": "user", "text": "测试框架改成 Vitest，Jest 那套配置可以删了。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "decision", "scopeHint": "workspace", "bodyIncludes": ["Vitest"] }],
+      "correction": { "pattern": "zh_change_to" }
+    }
+  },
+  {
+    "id": "zh-huan-cheng-default-port",
+    "description": "换成…: the user changes the default port with a reason.",
+    "turns": [
+      { "role": "assistant", "text": "开发服务器默认监听 3000。" },
+      { "role": "user", "text": "把默认端口换成 3001 吧，3000 老被别的项目占用。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "fact", "scopeHint": "workspace", "bodyIncludes": ["3001"] }],
+      "correction": { "pattern": "zh_change_to" }
+    }
+  },
+  {
+    "id": "zh-gai-yong-date-fns",
+    "description": "改用…: the user replaces one library with another.",
+    "turns": [
+      { "role": "assistant", "text": "日期处理我用了 dayjs。" },
+      { "role": "user", "text": "日期处理改用 date-fns，不用 dayjs 了。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["date-fns"] }],
+      "correction": { "pattern": "zh_change_to" }
+    }
+  },
+  {
+    "id": "zh-switch-back-webpack",
+    "description": "还是用回…: the user reverts an earlier decision.",
+    "turns": [
+      { "role": "user", "text": "构建换成 Vite 试试。" },
+      { "role": "assistant", "text": "已迁移到 Vite，有两个插件不兼容。" },
+      { "role": "user", "text": "还是用回 webpack 吧，Vite 的插件跟我们的代码生成不兼容。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "decision", "scopeHint": "workspace", "bodyIncludes": ["webpack"] }],
+      "correction": { "pattern": "zh_switch_back" }
+    }
+  },
+  {
+    "id": "zh-prefer-instead-jest",
+    "description": "还是用…吧: the user abandons a migration and keeps the current tool.",
+    "turns": [
+      { "role": "assistant", "text": "迁移到 Vitest 需要改 300 多个测试文件。" },
+      { "role": "user", "text": "算了，还是用 Jest 吧，迁移成本太高。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "decision", "scopeHint": "workspace", "bodyIncludes": ["Jest"] }],
+      "correction": { "pattern": "zh_prefer_instead" }
+    }
+  },
+  {
+    "id": "zh-no-longer-use-redux",
+    "description": "不用…了: the user states the project dropped a library.",
+    "turns": [
+      { "role": "assistant", "text": "我在 Redux store 里加了一个 slice。" },
+      { "role": "user", "text": "我们不用 Redux 了，状态都放到 Zustand 里。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "decision", "scopeHint": "workspace", "bodyIncludes": ["Zustand"] }],
+      "correction": { "pattern": "zh_no_longer_use" }
+    }
+  },
+  {
+    "id": "mixed-no-longer-use-lint-config",
+    "description": "不用…了 with English terms: the user replaces the lint preset.",
+    "turns": [
+      { "role": "assistant", "text": "ESLint 继承了 airbnb 的规则。" },
+      { "role": "user", "text": "Lint 规则不用 airbnb 了，换成我们自己的 eslint-config-michi。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["eslint-config-michi"] }],
+      "correction": { "pattern": "zh_no_longer_use" }
+    }
+  },
+  {
+    "id": "zh-use-instead-dayjs",
+    "description": "用 B 代替 A: the user replaces a dependency.",
+    "turns": [
+      { "role": "assistant", "text": "我引入了 moment 处理时区。" },
+      { "role": "user", "text": "用 dayjs 代替 moment，体积小很多。" }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["dayjs"] }],
+      "correction": { "pattern": "zh_use_instead" }
+    }
+  },
+  {
+    "id": "en-actually-yaml-indent",
+    "description": "Actually, …: the user narrows an indentation rule.",
+    "turns": [
+      { "role": "user", "text": "Indent with 4 spaces." },
+      { "role": "assistant", "text": "Reformatted the YAML files with 4 spaces." },
+      { "role": "user", "text": "Actually, use 2 spaces for YAML files; 4 is only for Python." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["YAML"] }],
+      "correction": { "pattern": "en_actually" }
+    }
+  },
+  {
+    "id": "en-no-i-meant-log-bucket",
+    "description": "No, I meant …: the user clarifies which bucket logs go to.",
+    "turns": [
+      { "role": "user", "text": "Logs go to the shared bucket." },
+      { "role": "assistant", "text": "Got it, logs go to the shared S3 bucket." },
+      { "role": "user", "text": "No, I meant the team's own bucket, michi-logs-team, not the shared one." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "fact", "scopeHint": "workspace", "bodyIncludes": ["michi-logs-team"] }],
+      "correction": { "pattern": "en_i_meant" }
+    }
+  },
+  {
+    "id": "en-not-but-staging-region",
+    "description": "not X but Y: the user corrects the staging region.",
+    "turns": [
+      { "role": "assistant", "text": "I'll point the staging config at us-east-1." },
+      { "role": "user", "text": "The staging region is not us-east-1 but eu-west-1." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "fact", "scopeHint": "workspace", "bodyIncludes": ["eu-west-1"] }],
+      "correction": { "pattern": "en_not_but" }
+    }
+  },
+  {
+    "id": "en-x-not-y-db-port",
+    "description": "It's X, not Y: the user corrects a port they mistyped.",
+    "turns": [
+      { "role": "user", "text": "The test database listens on 5432." },
+      { "role": "assistant", "text": "Updated .env.test to port 5432." },
+      { "role": "user", "text": "It's port 5433, not 5432 — I mistyped it before." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "fact", "scopeHint": "workspace", "bodyIncludes": ["5433"] }],
+      "correction": { "pattern": "en_x_not_y" }
+    }
+  },
+  {
+    "id": "en-from-now-on-e2e",
+    "description": "From now on, don't …: the user limits when the slow suite runs.",
+    "turns": [
+      { "role": "assistant", "text": "Running the full e2e suite to verify the change." },
+      { "role": "user", "text": "From now on, don't run the e2e suite unless I ask; it takes 20 minutes." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "preference", "scopeHint": "workspace", "bodyIncludes": ["e2e"] }],
+      "correction": { "pattern": "en_from_now_on" }
+    }
+  },
+  {
+    "id": "en-dont-again-type-annotations",
+    "description": "don't … anymore: the user stops a code style the assistant used.",
+    "turns": [
+      { "role": "assistant", "text": "Added explicit return types to every helper in test/helpers." },
+      { "role": "user", "text": "Please don't add explicit return types to test helpers anymore." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["test helpers"] }],
+      "correction": { "pattern": "en_dont_again" }
+    }
+  },
+  {
+    "id": "en-change-to-snake-case",
+    "description": "Change it to …: the user corrects the casing the assistant chose.",
+    "turns": [
+      { "role": "assistant", "text": "I named the response fields in camelCase: createdAt, updatedAt." },
+      { "role": "user", "text": "Change it to snake_case, the public API uses snake_case everywhere." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["snake_case"] }],
+      "correction": { "pattern": "en_change_to" }
+    }
+  },
+  {
+    "id": "en-switch-back-npm",
+    "description": "switch back to …: the user reverts a tooling decision with a reason.",
+    "turns": [
+      { "role": "user", "text": "Let's try pnpm for this repo." },
+      { "role": "assistant", "text": "Switched to pnpm; electron-rebuild now fails on node-pty." },
+      { "role": "user", "text": "Let's switch back to npm, pnpm broke the Electron rebuild." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "decision", "scopeHint": "workspace", "bodyIncludes": ["npm"] }],
+      "correction": { "pattern": "en_switch_back" }
+    }
+  },
+  {
+    "id": "en-i-was-wrong-ci-node",
+    "description": "I was wrong: the user corrects a CI fact.",
+    "turns": [
+      { "role": "user", "text": "CI runs on Node 20." },
+      { "role": "assistant", "text": "Noted, I'll avoid Node 22 APIs." },
+      { "role": "user", "text": "I was wrong earlier: the CI uses Node 22, not Node 20." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "fact", "scopeHint": "workspace", "bodyIncludes": ["22"] }],
+      "correction": { "pattern": "en_i_was_wrong" }
+    }
+  },
+  {
+    "id": "en-scratch-that-default-branch",
+    "description": "Scratch that: the user withdraws a rename of the default branch.",
+    "turns": [
+      { "role": "user", "text": "Let's use trunk as the default branch name." },
+      { "role": "assistant", "text": "I'll update the CI config to use trunk." },
+      { "role": "user", "text": "Scratch that, keep the default branch as main." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["main"] }],
+      "correction": { "pattern": "en_scratch_that" }
+    }
+  },
+  {
+    "id": "en-use-instead-fetch",
+    "description": "Use X instead: the user rejects a new dependency.",
+    "turns": [
+      { "role": "assistant", "text": "I'll add axios for the HTTP calls." },
+      { "role": "user", "text": "Use the built-in fetch instead, we don't want extra dependencies." }
+    ],
+    "expected": {
+      "candidates": [{ "kind": "convention", "scopeHint": "workspace", "bodyIncludes": ["fetch"] }],
+      "correction": { "pattern": "en_use_instead" }
+    }
+  }
+]

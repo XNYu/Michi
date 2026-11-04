@@ -6,6 +6,7 @@ import { useChatProjects, useStructuralSelector } from '../../../state/chatStore
 import { isArchiveGroupId } from '../../../state/trashActions';
 import { isVisibleConversationNode } from '../../../state/conversationVisibility';
 import { useMetaAgentSettingsAlert } from '../../../state/metaAgent/useMetaAgentOverview';
+import { useMemoryBadge } from '../../../state/memory/memoryNotifications';
 import { useBackendConnections } from '../../../state/useBackendConnections';
 import { useAuthSession } from '../../../services/auth';
 import { LOCAL_BACKEND_CONNECTION_ID } from '../../../config/backendConnections';
@@ -22,6 +23,7 @@ const GeneralTopicPage = React.lazy(() => import('./GeneralTopicPage'));
 const ModelPane = React.lazy(() => import('../pages/settings/ModelPane').then(module => ({ default: module.ModelPane })));
 const MetaAgentSettings = React.lazy(() => import('../settings/metaAgent/MetaAgentSettings').then(module => ({ default: module.MetaAgentSettings })));
 const BackupPane = React.lazy(() => import('../pages/settings/BackupPane').then(module => ({ default: module.BackupPane })));
+const MemoryPane = React.lazy(() => import('../pages/settings/MemoryPane').then(module => ({ default: module.MemoryPane })));
 
 function SectionContent({ children }: { children: React.ReactNode }) {
   return <React.Suspense fallback={<div role="status">Loading settings…</div>}>{children}</React.Suspense>;
@@ -57,8 +59,14 @@ function findSetting(root: HTMLElement, label: string): HTMLElement | null {
 
 export type SettingsLevel = 'menu' | 'section';
 
+/** "3", or "200+" past the pending list's limit; "" for none. */
+function memoryPendingLabel(count: number, more: boolean): string {
+  if (count <= 0) return '';
+  return more ? `${count}+` : String(count);
+}
+
 /** The desktop window's navigation: search, then every page in its group. */
-function WindowNav({ page, query, onQuery, onOpen, onNav, onSubmit, history, metaAgentAlert, searchRef }: {
+function WindowNav({ page, query, onQuery, onOpen, onNav, onSubmit, history, metaAgentAlert, memoryPending, searchRef }: {
   page: SettingsPage;
   query: string;
   onQuery: (query: string) => void;
@@ -67,6 +75,8 @@ function WindowNav({ page, query, onQuery, onOpen, onNav, onSubmit, history, met
   onSubmit: () => void;
   history: { trash: number; archived: number };
   metaAgentAlert: boolean;
+  /** Memories waiting for approval, shown as Memory's count ("" for none). */
+  memoryPending: string;
   searchRef: React.RefObject<HTMLInputElement | null>;
 }) {
   const signedIn = !!useAuthSession()?.user;
@@ -110,11 +120,15 @@ function WindowNav({ page, query, onQuery, onOpen, onNav, onSubmit, history, met
             if ((item.page === 'account' && !signedIn) || info.only === 'phone') return null;
             const Icon = info.icon;
             const status = alert[item.page];
+            const count = item.page === 'memory' ? memoryPending : '';
+            const countId = `${headingId}-${item.page}`;
             return <button key={item.page} type="button" className="settings-window__item"
               aria-current={item.page === page && !query ? 'page' : undefined}
               aria-label={status ? `${info.label}, ${status}` : undefined}
+              aria-describedby={count ? countId : undefined}
               onClick={() => onOpen(item.page)}>
               <Icon size={14} strokeWidth={1.75} aria-hidden="true" /><span>{info.label}</span>
+              {count && <em id={countId} aria-hidden="true">{count}</em>}
               {status && <i className="settings-window__alert" aria-hidden="true" />}
             </button>;
           })}
@@ -173,6 +187,8 @@ export default function SettingsMain({ page, onPageChange, workspaceReady = true
   const { activeProject } = useChatProjects();
   const history = useHistoryCounts();
   const metaAgentAlert = useMetaAgentSettingsAlert();
+  const memoryBadge = useMemoryBadge();
+  const memoryPending = workspaceReady ? memoryPendingLabel(memoryBadge.pendingCount, memoryBadge.pendingMore) : '';
   const label = SETTINGS_PAGES[page].label;
   const contentId = useId();
   const [ownView, setOwnView] = useState<SettingsLevel>('menu');
@@ -267,6 +283,9 @@ export default function SettingsMain({ page, onPageChange, workspaceReady = true
     case 'backup':
       body = workspaceReady ? <BackupPane /> : waiting;
       break;
+    case 'memory':
+      body = workspaceReady ? <MemoryPane onNav={onNav} /> : waiting;
+      break;
     default:
       body = <GeneralTopicPage page={page} workspaceReady={workspaceReady} onNav={onNav} />;
   }
@@ -285,7 +304,7 @@ export default function SettingsMain({ page, onPageChange, workspaceReady = true
       <div className="terminal-settings terminal-settings--drawer" data-page={page} data-cards="" data-stacked="" data-view={view}>
         <div className="terminal-settings-layout">
           <aside className="terminal-settings-sidebar term-scrollbar">
-            <PhoneSettingsMenu onOpen={(next) => openPage(next)} onNav={onNav} metaAgentAlert={metaAgentAlert} rowRef={setRowRef}
+            <PhoneSettingsMenu onOpen={(next) => openPage(next)} onNav={onNav} metaAgentAlert={metaAgentAlert} memoryPending={memoryPending} rowRef={setRowRef}
               history={workspaceReady ? history : { trash: 0, archived: 0 }} />
           </aside>
           {content}
@@ -298,7 +317,7 @@ export default function SettingsMain({ page, onPageChange, workspaceReady = true
       <div className="terminal-settings terminal-settings--window" data-page={page} data-cards="">
         <WindowNav page={page} query={query} onQuery={setQuery} onOpen={(next) => openPage(next)} onNav={onNav}
           onSubmit={() => { if (results[0]) pick(results[0]); }}
-          history={workspaceReady ? history : { trash: 0, archived: 0 }} metaAgentAlert={metaAgentAlert} searchRef={searchRef} />
+          history={workspaceReady ? history : { trash: 0, archived: 0 }} metaAgentAlert={metaAgentAlert} memoryPending={memoryPending} searchRef={searchRef} />
         {query.trim() ? <SearchResults query={query} results={results} onPick={pick} /> : content}
       </div>
     </SettingsLayoutContext.Provider>

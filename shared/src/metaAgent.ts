@@ -53,8 +53,8 @@ export interface MetaAgentResolvedRuntime {
   followsGlobal: boolean;
 }
 
-/** Which closed toolset a run uses. */
-export type MetaAgentToolset = 'maintenance' | 'chat';
+/** Which closed toolset a run uses; memory is automatic memory extraction. */
+export type MetaAgentToolset = 'maintenance' | 'chat' | 'memory';
 
 /**
  * `code` of the chat stream `error` frame that ends a Meta agent turn stopped
